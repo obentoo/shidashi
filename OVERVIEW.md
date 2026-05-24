@@ -452,8 +452,8 @@ stages/                          # raiz do projeto (este repo)
 │   └── init/
 │       ├── systemd/{recipe.yaml, portage/}
 │       └── openrc/{recipe.yaml, portage/}
+├── seeds/stage3.toml            # pointer pinado do stage3 (§10/§11)
 ├── scripts/
-│   ├── pretend-resolve.sh       # descobridor de ciclos (§18.7)
 │   └── postinstall.d/           # customizações idempotentes
 └── .github/workflows/release.yml
 
@@ -583,7 +583,7 @@ O `make.conf` de referência (já organizado em grupos nomeados) mapeia diretame
 ### Fase 0 — Fundação (MVP)
 - [ ] Esqueleto Python (≥3.14) + pydantic + estrutura de receitas por eixo.
 - [ ] `recipe.py` + `cli.py`: `recipe show/validate` (deep-merge dos eixos) — primeiro entregável real.
-- [ ] `scripts/pretend-resolve.sh` (descoberta de ciclos, custo segundos).
+- [ ] `kaji pretend <arch> <flavor> <init>` (descoberta de ciclos, custo segundos).
 - [ ] Wrapper `systemd-nspawn`.
 - [ ] Detector de stage3 (pointer file).
 - [ ] Pipeline mínimo: **`v3 × minimal × systemd`** → stage4 tarball, depois `v3 × kde × systemd`.
@@ -618,7 +618,7 @@ O `make.conf` de referência (já organizado em grupos nomeados) mapeia diretame
 
 > Registra o que um **teste de resolução** (`emerge --pretend`, **sem compilar**) revelou
 > sobre o pipeline real, e os refinamentos de arquitetura que decorreram dele.
-> Ferramenta: `scripts/pretend-resolve.sh` — esqueleto de `seed → apply_portage → run`.
+> Ferramenta: `kaji pretend <arch> <flavor> <init>` — pipeline `seed → apply_portage → run`.
 
 ### 18.1 Metodologia
 
@@ -699,11 +699,12 @@ Requisito: a USE final do *settle-pass* da Factory **==** a USE que o Assembler 
 (senão `--usepkgonly` falha sem match). Vale um teste automatizado que compare a USE
 prometida pelo fragmento com a gravada no `BUILD_ID`.
 
-### 18.7 `pretend-resolve` como descobridor de ciclos
+### 18.7 `kaji pretend` como descobridor de ciclos
 
-A ferramenta de teste é promovida a **instrumento de curadoria**: roda o `--pretend`, colhe
-as quebras sugeridas ("break this cycle by changing USE X") e **alimenta manualmente** o
-`use_break` dos steps da recipe. Deixa de ser só teste e vira parte do pipeline de curadoria.
+O comando `kaji pretend <arch> <flavor> <init>` é promovido a **instrumento de curadoria**:
+roda o `emerge --pretend` dentro do container, colhe as quebras sugeridas ("break this cycle
+by changing USE X") e **alimenta manualmente** o `use_break` dos steps da recipe. Deixa de ser
+só teste e vira parte do pipeline de curadoria.
 
 ---
 

@@ -43,9 +43,6 @@ jobs:
       - name: Pytest
         run: pytest
 
-      - name: Shell syntax check
-        run: bash -n scripts/pretend-resolve.sh
-
   weekly-release:
     name: weekly-release (scaffold — needs Gentoo runner)
     # GATED: este job NAO roda. A matriz arch x init x desktop exige um runner
