@@ -12,6 +12,9 @@ import os
 from pathlib import Path
 
 _ENV_VAR = "KAJI_VARIANTS_DIR"
+_SCRATCH_ENV = "KAJI_SCRATCH"
+_CACHE_ENV = "KAJI_CACHE"
+_SEEDS_ENV = "KAJI_SEEDS_DIR"
 
 
 class UnknownAxisError(Exception):
@@ -81,3 +84,42 @@ def recipe_path(axis: str, name: str) -> Path:
 def base_path() -> Path:
     """Devolve ``variants_dir()/"base"/"base.yaml"`` (R1.3)."""
     return variants_dir() / "base" / "base.yaml"
+
+
+def scratch_dir() -> Path:
+    """Devolve o diretório de scratch do fluxo *pretend* (R6.2).
+
+    Honra ``KAJI_SCRATCH`` (lida a cada chamada, como :func:`variants_dir`);
+    na ausência usa o default ``/var/tmp/kaji-pretend``. Todo estado efêmero
+    da resolução (rootfs seedado) é confinado aqui.
+    """
+    override = os.environ.get(_SCRATCH_ENV)
+    if override:
+        return Path(override)
+    return Path("/var/tmp/kaji-pretend")
+
+
+def cache_dir() -> Path:
+    """Devolve o diretório de cache de stage3 baixados (R2.5).
+
+    Honra ``KAJI_CACHE`` (lida a cada chamada); default ``/var/cache/kaji``.
+    O tarball verificado é guardado aqui para reuso entre execuções.
+    """
+    override = os.environ.get(_CACHE_ENV)
+    if override:
+        return Path(override)
+    return Path("/var/cache/kaji")
+
+
+def seeds_dir() -> Path:
+    """Devolve o diretório ``seeds/`` do repo (pointer pinado) (R2.1).
+
+    Honra ``KAJI_SEEDS_DIR`` (lida a cada chamada); na ausência resolve
+    ``seeds/`` relativo à raiz do projeto (mesma resolução de
+    :func:`variants_dir`: o diretório-pai do pacote ``kaji``).
+    """
+    override = os.environ.get(_SEEDS_ENV)
+    if override:
+        return Path(override)
+    project_root = Path(__file__).resolve().parent.parent
+    return project_root / "seeds"

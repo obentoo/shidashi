@@ -1,0 +1,24 @@
+# Pointer pinado do stage3 (OVERVIEW §10/§11) — consumido por kaji.seed.load_pointer.
+#
+# Um único snapshot compartilhado por init; uma tabela por init com o filename
+# do tarball nomultilib e seu SHA-256. A URL do mirror é montada por stage3_url
+# como <base_url>/<snapshot>/<filename>, e o sibling <filename>.DIGESTS.asc é
+# baixado junto para a verificação GPG.
+#
+# TODO(host): os campos sha256 abaixo são PLACEHOLDERS (64 zeros). Preencher no
+# host Gentoo lendo o .DIGESTS do mirror para o snapshot pinado, p.ex.:
+#   curl -s <base_url>/<snapshot>/<filename>.DIGESTS \
+#     | awk '/SHA256/{getline; print}'  # (linha do hash SHA256 do tarball)
+# A correção do parse deste arquivo é exercida por tests/test_seed.py com TOML
+# sintético; o digest real só é necessário para o download verificado em host.
+
+snapshot = "20260518T170330Z"
+base_url = "https://distfiles.gentoo.org/releases/amd64/autobuilds"
+
+[systemd]
+filename = "stage3-amd64-nomultilib-systemd-20260518T170330Z.tar.xz"
+sha256   = "0000000000000000000000000000000000000000000000000000000000000000"
+
+[openrc]
+filename = "stage3-amd64-nomultilib-openrc-20260518T170330Z.tar.xz"
+sha256   = "0000000000000000000000000000000000000000000000000000000000000000"
