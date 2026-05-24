@@ -30,6 +30,8 @@ from kaji.recipe import (
     load_init,
     merge,
 )
+from kaji.resolve import PretendReport, ResolveError, pretend_resolve
+from kaji.seed import SeedError
 
 app = typer.Typer(no_args_is_help=True, help="Kaji — forja de builds e ISOs do bentoo.")
 recipe_app = typer.Typer(no_args_is_help=True, help="Inspeciona e valida receitas resolvidas.")
@@ -148,6 +150,64 @@ def recipe_list() -> None:
     for axis in ("arch", "flavor", "init"):
         names = config.available_names(axis)
         typer.echo(f"{axis}: {', '.join(names) if names else '(nenhum)'}")
+
+
+def _render_report_pretty(report: PretendReport) -> None:
+    """Renderiza o :class:`PretendReport` como tabelas ``rich`` (R1.1)."""
+    console = Console()
+    pkgs = Table(title=f"pretend {report.arch} × {report.flavor} × {report.init}")
+    pkgs.add_column("pacotes resolvidos", style="bold cyan")
+    for atom in report.packages:
+        pkgs.add_row(atom)
+    if not report.packages:
+        pkgs.add_row("—")
+    console.print(pkgs)
+
+    cycles = Table(title="sugestões de quebra de ciclo (use_break)")
+    cycles.add_column("atom", style="bold")
+    cycles.add_column("USE")
+    for cb in report.cycle_breaks:
+        sign = "+" if cb.enable else "-"
+        cycles.add_row(cb.atom, f"{sign}{cb.flag}")
+    if not report.cycle_breaks:
+        cycles.add_row("—", "(sem ciclos)")
+    console.print(cycles)
+
+
+@app.command("pretend")
+def pretend(
+    arch: str,
+    flavor: str,
+    init: str,
+    output_format: Annotated[
+        OutputFormat,
+        typer.Option("--format", help="Formato de saída: pretty (default) ou json."),
+    ] = OutputFormat.pretty,
+    no_download: Annotated[
+        bool, typer.Option("--no-download", help="Usar só o cache; nunca tocar a rede.")
+    ] = False,
+    keep: Annotated[
+        bool, typer.Option("--keep", help="Preservar o rootfs de scratch após o run.")
+    ] = False,
+) -> None:
+    """Resolve a receita contra a árvore real via ``emerge --pretend`` (R1.1–R1.4).
+
+    Sucesso (mesmo com ciclos reportados) → lista de pacotes + sugestões e exit 0.
+    Erros conhecidos → mensagem amigável + exit 1, sem traceback. Num hard-conflict
+    (``ResolveError`` com ``raw_output``) a saída crua do emerge vai para stderr.
+    """
+    try:
+        report = pretend_resolve(arch, flavor, init, download=not no_download, keep=keep)
+    except (SeedError, ResolveError, config.UnknownAxisError, RecipeConflictError) as err:
+        if isinstance(err, ResolveError) and err.raw_output:
+            _err_console.print(err.raw_output)
+        _err_console.print(f"[bold red]erro:[/bold red] {err}")
+        raise typer.Exit(1) from err
+
+    if output_format is OutputFormat.json:
+        typer.echo(report.model_dump_json(indent=2))
+    else:
+        _render_report_pretty(report)
 
 
 _STUB_MSG = "não implementado na Fase 0"
