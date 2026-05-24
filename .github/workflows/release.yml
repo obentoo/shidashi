@@ -1,0 +1,68 @@
+# Kaji CI — qualidade (real) + release semanal (scaffold, gated).
+#
+# Dois gatilhos:
+#   * push / pull_request -> job `quality` (real): roda em runner padrao, sem
+#     Gentoo. Lint + tipos + testes + checagem de sintaxe do script.
+#   * schedule (semanal)  -> job `weekly-release` (scaffold): a matriz
+#     arch x init x desktop. Gated com `if: false` porque precisa de um
+#     runner self-hosted Gentoo (OVERVIEW fase 4) — documenta a intencao sem
+#     quebrar a CI.
+name: release
+
+on:
+  push:
+  pull_request:
+  schedule:
+    # toda semana, domingo 00:00 UTC — apenas para o scaffold gated abaixo.
+    - cron: "0 0 * * 0"
+
+jobs:
+  quality:
+    name: quality (lint + types + tests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install (editable + dev)
+        run: pip install -e .[dev]
+
+      - name: Ruff check
+        run: ruff check .
+
+      - name: Ruff format --check
+        run: ruff format --check .
+
+      - name: Mypy (strict)
+        run: mypy .
+
+      - name: Pytest
+        run: pytest
+
+      - name: Shell syntax check
+        run: bash -n scripts/pretend-resolve.sh
+
+  weekly-release:
+    name: weekly-release (scaffold — needs Gentoo runner)
+    # GATED: este job NAO roda. A matriz arch x init x desktop exige um runner
+    # self-hosted Gentoo (stage3 + emerge + systemd-nspawn), indisponivel nos
+    # runners hospedados do GitHub. Habilitar na OVERVIEW fase 4 trocando o
+    # `if` por uma condicao real (ex.: github.event_name == 'schedule').
+    if: false
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [v3, znver5, arrowlake]
+        init: [systemd, openrc]
+        desktop: [minimal, kde, gnome, xfce, wm]
+    steps:
+      - uses: actions/checkout@v4
+      # TODO(phase-4): seed stage3 -> kaji factory -> kaji assemble -> publicar
+      #   o artefato da combinacao arch x desktop x init da matriz.
+      - name: Placeholder
+        run: echo "scaffold — habilitar na fase 4 num runner Gentoo"
