@@ -65,9 +65,7 @@ def _resolved_recipe_stub() -> Any:
 
 
 def _entry_points() -> Iterator[tuple[str, Callable[[], Any]]]:
-    factory = importlib.import_module("kaji.factory")
     assembler = importlib.import_module("kaji.assembler")
-    phases = importlib.import_module("kaji.phases")
     binhost = importlib.import_module("kaji.binhost")
     image = importlib.import_module("kaji.image")
 
@@ -77,8 +75,9 @@ def _entry_points() -> Iterator[tuple[str, Callable[[], Any]]]:
     # (tarefa 3) preencheu o wrapper systemd-nspawn; seus testes vivem agora em
     # tests/test_container.py. Por isso não figuram mais nos entry-points abaixo.
 
-    yield "factory.FactoryResult", lambda: factory.FactoryResult(_P, ())
-    yield "factory.Factory", lambda: factory.Factory(rr, _P)
+    # NB: factory.FactoryResult/Factory deixaram de ser stubs — a story 003
+    # (grupo 6) preencheu o orquestrador; seus testes vivem agora em
+    # tests/test_factory.py. Por isso não figuram mais nos entry-points acima.
 
     yield "assembler.Assembler", lambda: assembler.Assembler(rr, _P)
 
