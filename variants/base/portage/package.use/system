@@ -1,0 +1,69 @@
+# Security
+app-admin/doas persist
+app-admin/sudo-rs system-names
+
+# Boot
+# NOTE: `sys-apps/systemd boot ukify` factored out to
+# variants/init/systemd/portage/package.use (init-specific, Kaji R8.4/R8.5).
+sys-boot/grub mount
+
+# Firmware
+sys-firmware/intel-microcode initramfs
+
+# Filesystem
+sys-fs/lvm2 lvm thin
+
+# Containers
+sys-apps/flatpak kde policykit
+
+# Fonts
+media-libs/freetype brotli harfbuzz
+media-fonts/noto-emoji buildfont
+
+# Firewall
+net-firewall/iptables nftables
+
+# Network
+net-misc/networkmanager bluetooth connection-sharing nftables policykit resolvconf
+
+# Hardware
+app-laptop/laptop-mode-tools apm
+
+# Crypto
+dev-libs/openssl quic
+
+# Emulation
+app-emulation/vkd3d spirv-tools
+app-emulation/wine-gecko abi_x86_32
+dev-util/mingw64-toolchain abi_x86_32
+
+# Nvidia
+dev-util/nvidia-cuda-toolkit profiler
+media-libs/libde265 dec265 enc265
+
+# Messaging
+net-im/telegram-desktop qt6 qt6-imageformats
+net-im/discord appindicator
+
+# P2P
+net-p2p/syncthing tools
+net-p2p/transmission -gtk
+
+# LLM
+sci-ml/ollama nvidia
+dev-util/hip -video_cards_amdgpu
+sci-ml/ollama cuda -video_cards_amdgpu
+acct-user/ollama cuda
+
+# Cluster
+sys-cluster/minikube libvirt
+
+# X11
+x11-apps/xinit twm
+x11-base/xorg-server xvfb
+x11-base/xwayland libei
+
+# Python
+dev-python/pyqt5 declarative gui network widgets printsupport svg
+dev-python/QtPy gui printsupport svg
+dev-python/pyqt6 qml

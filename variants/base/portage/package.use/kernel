@@ -1,0 +1,6 @@
+sys-kernel/gentoo-sources experimental symlink
+sys-kernel/cachyos-sources -auto-cpu-optimization mgeneric_v3 kcfi
+sys-kernel/linux-firmware initramfs compress-zstd
+sys-kernel/installkernel -grub dracut systemd systemd-boot
+sys-kernel/gentoo-kernel savedconfig experimental
+sys-kernel/bentoo-sources experimental symlink

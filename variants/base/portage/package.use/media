@@ -1,0 +1,34 @@
+# FFmpeg
+media-video/ffmpeg chromium cuda libass libaom libdrm modplug mp3 nvenc opencl openh264 opus speex srt svg theora truetype v4l vpx vorbis webp svt-av1 xvid jpeg2k fdk x264 lame
+
+# Video tools
+media-video/obs-studio fdk lua_single_target_luajit pipewire speex v4l
+media-video/handbrake gtk x265
+media-video/simplescreenrecorder mp3 theora v4l vorbis vpx x264
+media-video/mkvtoolnix gui
+media-video/vlc libass live lua_single_target_lua5-1 matroska mp3 mtp opus v4l vpx x264 x265 vaapi ogg vorbis
+
+# Audio
+media-sound/pulseaudio -daemon libsamplerate realtime
+media-sound/pulseaudio-daemon ofono-headset
+media-plugins/alsa-plugins libsamplerate speex
+media-plugins/gst-plugins-meta flac libass libde265 nvcodec x264
+
+# Graphics
+media-gfx/blender llvm_slot_20
+media-gfx/inkscape cdr exif imagemagick jpeg lcms spell svg2
+media-gfx/gimp -X
+media-gfx/imagemagick -openmp fftw fontconfig jbig jpeg jpeg2k lcms opencl openexr pango svg tiff webp truetype xml
+media-gfx/graphviz fontconfig
+media-gfx/qrencode png
+
+# Image
+media-libs/libwebp gif
+media-libs/freeimage jpeg jpeg2k png webp
+media-libs/libpng -apng
+media-libs/opencv contrib contribdnn features2d
+
+# GUI toolkits
+gui-libs/gtk gstreamer
+x11-libs/wxGTK:3.0 webkit
+x11-libs/wxGTK:3.2 -webkit

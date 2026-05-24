@@ -1,0 +1,13 @@
+# variants/flavor/wm/recipe.yaml — Wayland-only WMs (OVERVIEW §8).
+# Vitrine Wayland: Hyprland (default) · Sway · niri — sem dependência X11,
+# coerente com base wayland + seatd/elogind (o seat vem do fragmento de init).
+# USE característica: wayland -qt6 -gnome -kde.
+# sets: [wm] — placeholder de set (curado via pretend-resolve, §18.7).
+# override_ok: true — flavor livre: o usuário troca compositor/USE sem forkar.
+flavor: wm
+use_prefer:
+  add:  [wayland]
+  drop: [qt6, gnome, kde]
+sets:
+  - wm
+override_ok: true

@@ -1,0 +1,4 @@
+# CURATION: fed by pretend-resolve (§18.7) — Wayland WM atoms (Hyprland/Sway/niri).
+# No real source edition exists for the WM flavor yet (only editions/plasma is
+# shipped), so NO package atoms are fabricated here. Populate by curating a
+# Wayland-WM world set and validating with `kaji pretend-resolve` before trusting.

@@ -1,0 +1,33 @@
+# Rust
+dev-lang/rust clippy llvm_targets_WebAssembly lto profiler rustfmt rust-analyzer rust-src rust_sysroots_wasm system-llvm
+dev-lang/rust-bin clippy rustfmt
+virtual/rust profiler
+
+# PHP
+app-eselect/eselect-php fpm
+dev-lang/php argon2 cgi curl exif fpm ftp gd inifile intl mysql mysqli pcntl pdo soap sockets sodium spell tidy webp xmlreader xmlrpc xmlwriter xslt zip
+
+# Node.js
+net-libs/nodejs corepack inspector npm system-icu
+
+# Database
+dev-db/postgresql icu llvm xml
+dev-db/sqlitebrowser sqlcipher
+
+# LLVM
+llvm-runtimes/clang-runtime libcxx
+llvm-core/llvm -debug
+dev-util/spirv-llvm-translator llvm_slot_22
+llvm-core/libclc llvm_slot_22
+
+# Java
+dev-java/openjdk gentoo-vm
+
+# GCC
+sys-devel/gcc graphite
+
+# Nginx
+www-servers/nginx lua_single_target_luajit pcre-jit rtmp nginx_modules_http_headers_more nginx_modules_http_image_filter
+
+# Editors
+app-editors/zed llvm_slot_21

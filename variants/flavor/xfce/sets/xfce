@@ -1,0 +1,4 @@
+# CURATION: fed by pretend-resolve (§18.7) — XFCE desktop atoms.
+# No real source edition exists for XFCE yet (only editions/plasma is shipped),
+# so NO package atoms are fabricated here. Populate by curating an XFCE world set
+# and validating with `kaji pretend-resolve` before trusting.

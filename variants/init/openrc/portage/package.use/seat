@@ -1,0 +1,7 @@
+# OpenRC seat layer (OVERVIEW §8, init↔seat coupling).
+# On OpenRC the seat/logind stack is elogind + seatd (systemd-logind is absent).
+# Enable elogind/policykit integration and seatd's libseat backend so Wayland
+# sessions (wm flavor) get a working seat without systemd.
+sys-auth/elogind policykit
+sys-auth/seatd builtin server
+sys-auth/pambase elogind -systemd

@@ -1,0 +1,22 @@
+#!/bin/bash
+# sccache integration for Rust packages
+
+# Export sccache as rustc wrapper for cargo (Unix socket bypasses network-sandbox)
+export RUSTC_WRAPPER="/usr/bin/sccache"
+export CARGO_BUILD_RUSTC_WRAPPER="/usr/bin/sccache"
+export SCCACHE_SERVER_UDS="/var/cache/sccache/sccache.sock"
+export SCCACHE_DIR="/var/cache/sccache"
+export SCCACHE_CACHE_SIZE="10G"
+
+# Show sccache stats after each package install
+post_pkg_preinst() {
+    if [[ -n $(pidof sccache) ]]; then
+        local stats=$(SCCACHE_SERVER_UDS=/var/cache/sccache/sccache.sock sccache --show-stats 2>/dev/null | grep -E "Compile requests |Cache hits |Cache misses ")
+        if [[ -n "${stats}" ]]; then
+            einfo "sccache stats:"
+            while IFS= read -r line; do
+                einfo "  ${line}"
+            done <<< "${stats}"
+        fi
+    fi
+}

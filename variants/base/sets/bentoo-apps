@@ -1,0 +1,175 @@
+# CURATION: seeded by heuristic split of editions/plasma world generic atoms; refine via pretend-resolve (§18.7)
+#
+# `bentoo-apps` = general-purpose, non-graphical-stack, NON-kde applications and
+# system tooling shared by every bentoo release: shells, dev tooling, portage
+# helpers, containers, networking, filesystem/firmware utilities, browsers.
+# DE-specific atoms (kde-*/plasma/Qt) belong in the flavor set, not here.
+# Conservative seed — verify/trim against `kaji pretend-resolve` before trusting.
+
+# System administration
+app-admin/metalog
+app-admin/rasdaemon
+app-admin/spectre-meltdown-checker
+app-admin/sudo-rs
+app-admin/sysstat
+
+# Archivers
+app-arch/p7zip
+app-arch/rar
+app-arch/unrar
+
+# Containers / orchestration
+app-containers/docker
+app-containers/docker-buildx
+app-containers/docker-cli
+app-containers/docker-compose
+app-containers/docker-swarm
+app-containers/kompose
+app-containers/podman
+app-containers/podman-compose
+sys-cluster/kubeadm
+sys-cluster/kubectl
+sys-cluster/kubelet
+sys-cluster/minikube
+
+# Editors
+app-editors/nano
+app-editors/vim
+
+# Emulation / virtualization
+app-emulation/dxvk
+app-emulation/libvirt
+app-emulation/qemu
+app-emulation/qemu-guest-agent
+app-emulation/virt-manager
+app-emulation/virtualbox
+app-emulation/virtualbox-additions
+app-emulation/vkd3d-proton
+app-emulation/wine-staging
+
+# Portage tooling
+app-eselect/eselect-repository
+app-portage/bentoolkit
+app-portage/cpuid2cpuflags
+app-portage/eix
+app-portage/genlop
+app-portage/gentoolkit
+app-portage/pycargoebuild
+
+# Shells
+app-shells/starship
+app-shells/zsh
+app-shells/zsh-completions
+
+# Misc tooling
+app-laptop/laptop-mode-tools
+app-misc/neofetch
+
+# Development toolchains
+dev-db/sqlitebrowser
+dev-debug/gdb
+dev-java/openjdk
+dev-lang/php
+dev-lang/rust
+dev-python/pip
+dev-python/uv
+dev-util/cargo-tarpaulin
+dev-util/ccache
+dev-util/github-cli
+dev-util/meld
+dev-util/pkgdev
+dev-util/rustup
+dev-util/sccache
+dev-vcs/git-filter-repo
+dev-vcs/git-lfs
+net-libs/nodejs
+sys-devel/distcc
+
+# Graphics applications (non-DE)
+media-gfx/gimp
+media-gfx/graphviz
+media-gfx/inkscape
+media-sound/audacity
+media-video/mkvtoolnix
+media-video/obs-studio
+media-plugins/obs-pipewire-audio-capture
+
+# Networking
+net-analyzer/netdata
+net-dns/bind-tools
+net-dns/dnscrypt-proxy
+net-ftp/filezilla
+net-im/dino
+net-im/discord
+net-im/element-desktop-bin
+net-im/telegram-desktop
+net-libs/webkit-gtk:4.1
+net-misc/anydesk
+net-misc/ntp
+net-misc/nxplayer
+net-misc/postman-bin
+net-misc/r8168
+net-misc/remmina
+net-misc/telnet-bsd
+net-misc/whois
+net-p2p/bisq-bin
+net-p2p/qbittorrent
+net-p2p/syncthing
+net-print/cups-meta
+net-print/hplip-plugin
+net-vpn/networkmanager-fortisslvpn
+net-vpn/networkmanager-openvpn
+net-vpn/wireguard-tools
+
+# Mail
+mail-client/thunderbird
+mail-mta/proton-mail-bridge
+
+# Applications / desktop integration helpers
+dev-libs/libayatana-appindicator-glib
+x11-misc/libinput-gestures
+
+# System utilities
+sys-apps/bleachbit
+sys-apps/earlyoom
+sys-apps/flatpak
+sys-apps/fwupd
+sys-apps/haveged
+sys-apps/irqbalance
+sys-apps/iucode_tool
+sys-apps/lm-sensors
+sys-apps/lshw
+sys-apps/memtest86+
+sys-apps/nvme-cli
+sys-apps/pciutils
+sys-apps/usbutils
+sys-auth/rtkit
+
+# Storage / filesystems
+sys-block/fio
+sys-block/zram-init
+sys-fs/btrfs-progs
+sys-fs/dmraid
+sys-fs/exfatprogs
+sys-fs/fuse
+sys-fs/fuse:0
+sys-fs/mdadm
+sys-fs/ntfs3g
+sys-fs/squashfs-tools
+
+# Kernel / firmware / boot
+sys-firmware/intel-microcode
+sys-kernel/dracut
+sys-kernel/gentoo-kernel
+sys-kernel/linux-firmware
+virtual/dist-kernel
+
+# Process monitoring
+sys-process/htop
+sys-process/iotop
+
+# Browsers
+www-client/brave-browser
+www-client/chromium
+www-client/firefox
+www-client/librewolf

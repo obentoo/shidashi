@@ -1,0 +1,9 @@
+dev-qt/qtquickcontrols2 widgets
+dev-qt/qtgui evdev jpeg eglfs
+dev-qt/qtprintsupport cups
+dev-qt/qtmultimedia qml
+dev-qt/qtcore icu
+dev-qt/qtwebchannel qml
+dev-qt/qtwebengine widgets
+dev-qt/qtsql mysql
+dev-qt/qtwayland compositor

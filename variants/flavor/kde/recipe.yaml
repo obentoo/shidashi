@@ -1,0 +1,13 @@
+# variants/flavor/kde/recipe.yaml — flavor KDE Plasma (OVERVIEW §8/§14).
+# Sem profile de DE: a âncora é só no-multilib[/systemd]; a "camada KDE" vem de
+# use_prefer + portage/package.use + sets (§14, Resolução de profile).
+# `sets: [kde]` — `graphics` já é fornecido por base (o merge faz união-única;
+# o exemplo ilustrativo §14 repetia `graphics`, redundante aqui).
+# override_ok: false — KDE é curado e autoritativo (§14).
+flavor: kde
+use_prefer:
+  add:  [qt6, kde, wayland]
+  drop: [gtk, gnome, webkit]
+sets:
+  - kde
+override_ok: false

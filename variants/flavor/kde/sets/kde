@@ -1,0 +1,37 @@
+# factored from editions/plasma/var/lib/portage/world
+#
+# KDE/Plasma/Qt desktop atoms of the plasma edition's world set. Generic atoms
+# (shells, dev tooling, browsers, fonts, audio/video stack…) were split into the
+# base sets (graphics / bentoo-apps); only the KDE-specific layer lives here.
+
+# KDE applications
+kde-apps/ark
+kde-apps/dolphin
+kde-apps/gwenview
+kde-apps/kcalc
+kde-apps/kdenlive
+kde-apps/kdialog
+kde-apps/konsole
+kde-apps/okular
+
+# KDE misc
+kde-misc/kdeconnect
+
+# Plasma desktop
+kde-plasma/kde-gtk-config
+kde-plasma/plasma-login-manager
+kde-plasma/plasma-meta
+kde-plasma/print-manager
+kde-plasma/spectacle
+
+# KDE / Qt integration atoms
+app-cdr/dolphin-plugins-mountiso
+sys-block/partitionmanager
+x11-themes/kvantum
+
+# Office (curated with KDE USE in plasma's package.use/libreoffice)
+app-office/libreoffice
+app-office/onlyoffice-bin
+
+# IRC client (Qt/KDE)
+net-irc/konversation

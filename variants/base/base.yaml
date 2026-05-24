@@ -1,0 +1,19 @@
+# variants/base/base.yaml — fragmento BASE da receita (R8.1).
+#
+# Âncora de profile comum a TODOS os flavors: no-multilib é o padrão do bentoo
+# (OVERVIEW §3/§14). O eixo `init` acrescenta /systemd (ou nada p/ openrc); o
+# flavor NÃO toca o profile (toda a camada gráfica vem de use_prefer+sets).
+#
+# `sets` aqui são os sets genéricos herdados por qualquer release; o flavor
+# acrescenta os seus (ex.: kde). As phases abaixo são a lista canônica de build
+# em fases (OVERVIEW §6.4); a phase `desktop` PRECISA chamar-se exatamente
+# "desktop" — o merge a omite quando o flavor não tem sets (ex.: minimal).
+profile_base: default/linux/amd64/23.0/no-multilib
+sets:
+  - graphics
+  - bentoo-apps
+phases:
+  - { name: rebuild, packages: [], use_break: [] }
+  - { name: graphics, packages: [], use_break: [] }
+  - { name: desktop, packages: [], use_break: [] }
+  - { name: apps, packages: [], use_break: [] }

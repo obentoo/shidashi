@@ -1,0 +1,5 @@
+media-libs/mesa d3d9 lm-sensors opencl -llvm_slot_21 llvm_slot_22
+dev-util/mesa_clc -llvm_slot_21 llvm_slot_22
+media-libs/libvpx postproc
+x11-libs/libdrm video_cards_radeon
+media-libs/vulkan-loader layers

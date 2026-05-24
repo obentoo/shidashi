@@ -1,0 +1,30 @@
+# KDE Plasma Desktop
+kde-misc/kdeconnect bluetooth
+kde-plasma/spectacle kipi share
+kde-apps/dolphin activities semantic-desktop
+kde-apps/ark zip
+kde-plasma/plasma-meta bluetooth cups
+kde-apps/kdenlive semantic-desktop share v4l
+kde-frameworks/prison qml
+kde-frameworks/kitemmodels qml
+kde-plasma/kde-cli-tools kdesu
+kde-apps/kio-extras activities mtp phonon taglib
+kde-apps/gwenview activities kipi share
+kde-apps/okular epub markdown
+kde-frameworks/kconfig qml
+kde-plasma/kwin lock plasma
+kde-frameworks/sonnet qml
+kde-frameworks/kfilemetadata taglib
+kde-plasma/powerdevil brightness-control
+sys-power/upower policykit
+
+# KDE-specific dependencies
+sys-apps/systemd policykit
+dev-qt/qt5compat qml icu
+dev-qt/qtbase libproxy icu cups
+
+# xdg-desktop-portal-kde
+x11-base/xwayland libei
+
+# KDE print manager
+kde-plasma/print-manager gtk

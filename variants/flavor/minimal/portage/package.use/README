@@ -1,0 +1,4 @@
+# CURATION: fed by pretend-resolve (§18.7).
+# minimal is console-only (no graphical layer), so it has no factored source.
+# Any per-package USE overrides for the minimal flavor go here once discovered
+# via `kaji pretend-resolve`. No package lists are fabricated.

@@ -1,0 +1,11 @@
+# variants/flavor/xfce/recipe.yaml — XFCE (OVERVIEW §8).
+# USE característica: gtk -qt6 -gnome.
+# sets: [xfce] — placeholder de set (curado via pretend-resolve, §18.7).
+# override_ok: false — XFCE é curado e autoritativo (§14).
+flavor: xfce
+use_prefer:
+  add:  [gtk]
+  drop: [qt6, gnome]
+sets:
+  - xfce
+override_ok: false

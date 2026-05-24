@@ -1,0 +1,13 @@
+# variants/arch/znver5/recipe.yaml — AMD Zen 5 (OVERVIEW §9.1 + exemplo §14).
+# Zen 5 tem AVX-512 → classe v4, GOAMD64 v4. Tier 1: o host 9950X é Zen 5, então
+# roda nativamente os binpkgs znver5 → runnable_on_build_host: true.
+# cpu_flags_x86 inclui a família AVX-512 (avx512f/bw/cd/dq/vl/vbmi…), setada
+# manualmente (§9.3).
+arch: znver5
+common_flags: "-march=znver5 -O2 -pipe"
+goamd64: v4
+rustflags: "-C target-cpu=znver5 -C link-arg=-fuse-ld=mold"
+cpu_flags_x86: [aes, avx, avx2, avx512f, avx512bw, avx512cd, avx512dq,
+                avx512vl, avx512vbmi, avx512vbmi2, vaes, vpclmulqdq, gfni, sha]
+runnable_on_build_host: true
+tier: 1

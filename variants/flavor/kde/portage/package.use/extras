@@ -1,0 +1,8 @@
+# Remmina with KDE wallet support
+net-misc/remmina kwallet
+
+# Megasync Dolphin plugin
+net-misc/megasync dolphin
+
+# Flatpak KDE integration
+sys-apps/flatpak kde

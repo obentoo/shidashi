@@ -1,0 +1,4 @@
+*/* PYTHON_TARGETS: python3_13 python3_14
+*/* PYTHON_SINGLE_TARGET: python3_13
+*/* RUBY_TARGETS: -ruby32 -ruby33 ruby34 ruby40
+*/* PHP_TARGETS: php8-5

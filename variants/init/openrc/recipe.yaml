@@ -1,0 +1,12 @@
+# variants/init/openrc/recipe.yaml — init OpenRC (OVERVIEW §8/§14).
+# profile_suffix: "" — profile SEM /systemd (fica em no-multilib puro).
+# use_prefer: liga elogind+udev (seat = elogind+seatd) e derruba systemd (§8,
+# acoplamento init↔seat). phases_prepend acrescenta a phase `seat` ANTES das
+# phases de base, instalando elogind/seatd cedo.
+init: openrc
+profile_suffix: ""
+use_prefer:
+  add:  [elogind, udev]
+  drop: [systemd]
+phases_prepend:
+  - { name: seat, packages: [sys-auth/elogind, sys-auth/seatd] }

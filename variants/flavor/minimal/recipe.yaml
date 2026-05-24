@@ -1,0 +1,11 @@
+# variants/flavor/minimal/recipe.yaml — console-only, sem ambiente gráfico (OVERVIEW §8/§14).
+# stage4 base (modelo Arch/Debian-netinst): só TTY, sem compositor. É o "controle"
+# do piloto e praticamente o tronco do fork-point.
+# sets: [] — nenhum set de desktop; consome só os de base. Como sets é vazio, o
+# merge OMITE a phase `desktop`.
+# override_ok: true — flavor livre: camadas posteriores podem ajustar a USE.
+flavor: minimal
+use_prefer:
+  drop: [qt6, kde, gnome, gtk]
+sets: []
+override_ok: true

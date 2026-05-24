@@ -1,0 +1,5 @@
+# Needed version 2 by Appimage and Flatpak
+>sys-fs/fuse-3.17.4
+
+# Need by PySide
+>media-libs/pulseaudio-qt-1.7.0

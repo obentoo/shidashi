@@ -1,0 +1,72 @@
+media-libs/mlt fftw libsamplerate opencv xml frei0r
+sys-apps/fwupd agent bluetooth dell fastboot flashrom gnutls gusb modemmanager nvme policykit spi synaptics thunderbolt tpm uefi
+app-text/xmlto text
+sys-libs/libseccomp static-libs
+x11-libs/libdrm libkms
+dev-libs/libxml2 icu
+sys-libs/zlib minizip
+www-client/w3m imlib
+dev-util/ostree curl
+dev-libs/libjcat gpg pkcs7
+app-text/ghostscript-gpl cups
+dev-libs/nss utils
+media-plugins/gst-plugins-meta ogg v4l vorbis theora
+media-libs/gst-plugins-base theora
+media-gfx/krita fftw openexr tiff
+dev-lang/python sqlite
+dev-db/redis lua_single_target_luajit
+net-dns/dnsmasq script
+app-crypt/pinentry gnome-keyring
+app-emulation/vmware-workstation vmware-tools-linux vmware-tools-windows
+app-emulation/open-vm-tools gtkmm
+app-i18n/ibus gtk
+app-containers/docker overlay
+net-dns/dnscrypt-proxy pie
+app-editors/vim lua_single_target_luajit
+dev-vcs/git python_single_target_python3_8
+media-libs/libvpx postproc svc
+media-libs/libsdl2 haptic
+sys-apps/file -python
+net-firewall/nftables json xtables
+media-video/pipewire bluetooth extra flatpak gstreamer jack-client pipewire-alsa sndfile
+app-admin/pass zsh-completion
+mail-mta/proton-mail-bridge gui
+media-libs/opencolorio -opengl
+media-libs/libva utils
+sys-boot/plymouth gtk
+net-misc/remmina kwallet rdp spice ssh vnc -zeroconf -appindicator
+media-gfx/graphicsmagick jbig jpeg lcms png svg tiff webp
+app-crypt/gcr gtk
+net-libs/libssh server
+net-p2p/go-ethereum devtools
+dev-libs/libdbusmenu gtk3
+dev-db/mariadb galera innodb-lz4 innodb-lzo xml
+net-vpn/mullvad-vpn gui
+sys-apps/busybox mdev
+media-libs/harfbuzz icu
+x11-libs/gdk-pixbuf jpeg
+net-libs/zeromq drafts
+dev-python/numpy lapack
+media-video/mpv lua_single_target_luajit
+media-gfx/gimp jpeg2k webp
+media-sound/jack2 ieee1394
+sys-fs/dmraid intel_led led
+sys-process/htop lm-sensors
+app-i18n/man-pages-l10n -l10n_fa
+sys-apps/systemd-utils boot kernel-install
+sys-libs/libcap static-libs
+net-misc/curl -adns
+media-libs/libcanberra gtk2
+dev-libs/cyrus-sasl kerberos
+app-misc/mime-types nginx
+media-libs/libbluray aacs bdplus java utils
+media-libs/libbdplus aacs
+sys-libs/ncurses -gpm
+dev-libs/elfutils debuginfod libarchive
+net-libs/gnutls pkcs11 tools
+sys-apps/xdg-desktop-portal flatpak
+sci-physics/bullet double-precision
+media-libs/opensubdiv tbb
+dev-qt/qtmultimedia widgets
+virtual/zlib minizip
+app-emulation/qemu -pin-upstream-blobs

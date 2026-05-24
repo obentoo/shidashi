@@ -1,0 +1,3 @@
+=net-libs/nodejs-25.2.1
+=media-libs/opencv-4.13.0
+>=dev-libs/tree-sitter-0.26

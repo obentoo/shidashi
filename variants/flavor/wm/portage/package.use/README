@@ -1,0 +1,5 @@
+# CURATION: fed by pretend-resolve (§18.7).
+# The WM flavor (Hyprland/Sway/niri, Wayland-only) has no factored source edition
+# yet (only editions/plasma is shipped). Per-package USE for the WM layer goes
+# here once curated and validated via `kaji pretend-resolve`. No package lists are
+# fabricated.
