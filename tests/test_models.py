@@ -1,4 +1,14 @@
-"""Testes dos modelos de receita e loaders YAML (kaji.recipe)."""
+"""Testes dos modelos de receita e loaders YAML (kaji.recipe).
+
+Story 003 (1.1): novo modelo ``UseBreak`` (frozen, ``extra="forbid"``),
+``Phase.use_break`` passa de ``tuple[UseToken]`` para ``tuple[UseBreak]`` e
+``FlavorFragment`` ganha ``use_break: dict[str, tuple[UseBreak, ...]]`` (mapa
+phase-name → breaks). As fixtures abaixo já refletem a NOVA forma. ``UseBreak``
+é importado de forma tolerante (``try_import``) só para não abortar a coleção do
+pytest inteiro enquanto o símbolo não existe — cada teste falha (Red) no uso,
+nomeando o símbolo pendente; os casos que tocam Phase/FlavorFragment com a nova
+forma falham naturalmente (ValidationError) sob a forma antiga.
+"""
 
 from pathlib import Path
 from typing import Any
@@ -23,11 +33,19 @@ from kaji.recipe import (
     load_init,
 )
 
+from tests._pending import try_import
+
+UseBreak: Any = try_import("kaji.recipe", "UseBreak")
+
 # --- dicts válidos representativos por modelo ---------------------------------
 
-VALID: dict[type, dict[str, Any]] = {
+VALID: dict[Any, dict[str, Any]] = {
     UsePrefer: {"add": ["qt6"], "drop": ["-gtk"]},
-    Phase: {"name": "system", "packages": ["sys-apps/foo"], "use_break": ["-doc"]},
+    Phase: {
+        "name": "graphics",
+        "packages": ["sys-apps/foo"],
+        "use_break": [{"atom": "media-video/ffmpeg", "flag": "sdl", "enable": False}],
+    },
     BaseFragment: {
         "profile_base": "default/linux/amd64/23.0",
         "sets": ["@system"],
@@ -47,6 +65,9 @@ VALID: dict[type, dict[str, Any]] = {
         "use_prefer": {"add": ["qt6"], "drop": ["-gtk"]},
         "sets": ["@desktop"],
         "override_ok": True,
+        "use_break": {
+            "graphics": [{"atom": "media-video/ffmpeg", "flag": "sdl", "enable": False}]
+        },
     },
     InitFragment: {
         "init": "openrc",
@@ -73,13 +94,23 @@ VALID: dict[type, dict[str, Any]] = {
     },
 }
 
-ALL_MODELS = list(VALID.keys())
+# Modelos que existem hoje (parametrizáveis sem depender de UseBreak).
+EXISTING_MODELS = [
+    UsePrefer,
+    BaseFragment,
+    ArchFragment,
+    FlavorFragment,
+    InitFragment,
+    ResolvedUse,
+    ResolvedRecipe,
+    Phase,
+]
 
 
 # --- (a) cada modelo constrói a partir de um dict válido ----------------------
 
 
-@pytest.mark.parametrize("model", ALL_MODELS)
+@pytest.mark.parametrize("model", EXISTING_MODELS)
 def test_constructs_from_valid_dict(model: type) -> None:
     instance = model(**VALID[model])
     assert isinstance(instance, model)
@@ -112,12 +143,57 @@ def test_defaults_applied() -> None:
     flavor = FlavorFragment(flavor="minimal")
     assert flavor.use_prefer == UsePrefer()
     assert flavor.override_ok is False
+    # minimal não traz mapa de use_break (default vazio)
+    assert flavor.use_break == {}
+
+
+# --- UseBreak (story 003 1.1) -------------------------------------------------
+
+
+def test_use_break_enable_defaults_false() -> None:
+    ub = UseBreak(atom="media-video/ffmpeg", flag="sdl")
+    assert ub.enable is False
+    assert ub.atom == "media-video/ffmpeg"
+    assert ub.flag == "sdl"
+
+
+def test_use_break_frozen_and_extra_forbid() -> None:
+    ub = UseBreak(atom="media-video/ffmpeg", flag="sdl", enable=False)
+    with pytest.raises(ValidationError):
+        ub.flag = "x264"  # frozen
+    with pytest.raises(ValidationError):
+        UseBreak(atom="a/b", flag="c", enable=False, bogus=1)  # extra=forbid
+
+
+def test_phase_accepts_tuple_of_use_break() -> None:
+    phase = Phase(**VALID[Phase])
+    assert isinstance(phase.use_break, tuple)
+    assert isinstance(phase.use_break[0], UseBreak)
+    assert phase.use_break[0].atom == "media-video/ffmpeg"
+    assert phase.use_break[0].flag == "sdl"
+    assert phase.use_break[0].enable is False
+
+
+def test_phase_use_break_defaults_empty() -> None:
+    phase = Phase(name="rebuild")
+    assert phase.use_break == ()
+
+
+def test_flavor_fragment_parses_use_break_map() -> None:
+    flavor = FlavorFragment(**VALID[FlavorFragment])
+    assert "graphics" in flavor.use_break
+    breaks = flavor.use_break["graphics"]
+    assert isinstance(breaks, tuple)
+    assert isinstance(breaks[0], UseBreak)
+    assert breaks[0].atom == "media-video/ffmpeg"
+    assert breaks[0].flag == "sdl"
+    assert breaks[0].enable is False
 
 
 # --- (b) chave desconhecida levanta ValidationError ---------------------------
 
 
-@pytest.mark.parametrize("model", ALL_MODELS)
+@pytest.mark.parametrize("model", EXISTING_MODELS)
 def test_unknown_key_rejected(model: type) -> None:
     payload = {**VALID[model], "bogus_key": 123}
     with pytest.raises(ValidationError):
@@ -127,7 +203,7 @@ def test_unknown_key_rejected(model: type) -> None:
 # --- (c) instâncias são imutáveis (frozen) ------------------------------------
 
 
-@pytest.mark.parametrize("model", ALL_MODELS)
+@pytest.mark.parametrize("model", EXISTING_MODELS)
 def test_instances_are_frozen(model: type) -> None:
     instance = model(**VALID[model])
     field = next(iter(type(instance).model_fields))
@@ -162,6 +238,7 @@ def test_load_flavor(tmp_path: Path) -> None:
     frag = load_flavor(p)
     assert frag == FlavorFragment(**VALID[FlavorFragment])
     assert frag.use_prefer.add == ("qt6",)
+    assert frag.use_break["graphics"][0].flag == "sdl"
 
 
 def test_load_init(tmp_path: Path) -> None:

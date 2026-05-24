@@ -11,3 +11,8 @@ use_prefer:
 sets:
   - kde
 override_ok: false
+# Quebra de ciclo curada (§18.7): durante o break-pass da phase `graphics`,
+# força media-video/ffmpeg[-sdl] OFF para romper a dependência circular.
+use_break:
+  graphics:
+    - { atom: media-video/ffmpeg, flag: sdl, enable: false }

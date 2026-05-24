@@ -23,11 +23,26 @@ class UsePrefer(BaseModel):
     drop: tuple[UseToken, ...] = ()
 
 
+class UseBreak(BaseModel):
+    """Quebra de ciclo curada: força uma USE flag durante o break-pass (R4.1).
+
+    Frozen pydantic com ``extra="forbid"``. ``atom`` é o pacote, ``flag`` a USE
+    flag e ``enable`` o sinal: ``enable=False`` (padrão) força a flag OFF durante
+    o break-pass; ``enable=True`` força-a ON. Espelha :class:`resolve.CycleBreak`
+    porém sem ``raw_line`` — aqui é dado curado, não extraído de saída.
+    """
+
+    model_config = _STRICT
+    atom: str
+    flag: str
+    enable: bool = False
+
+
 class Phase(BaseModel):
     model_config = _STRICT
     name: str
     packages: tuple[str, ...] = ()
-    use_break: tuple[UseToken, ...] = ()
+    use_break: tuple[UseBreak, ...] = ()
 
 
 class BaseFragment(BaseModel):
@@ -54,6 +69,7 @@ class FlavorFragment(BaseModel):
     use_prefer: UsePrefer = UsePrefer()
     sets: tuple[str, ...] = ()
     override_ok: bool = False
+    use_break: dict[str, tuple[UseBreak, ...]] = {}  # phase-name → breaks curados
 
 
 class InitFragment(BaseModel):
@@ -189,6 +205,11 @@ def merge(
     - **sets (R2.4):** união ordenada-única de ``base.sets + flavor.sets``.
     - **phases (R2.5):** ``init.phases_prepend + base.phases``; quando
       ``flavor.sets == ()`` omite-se a phase de nome ``"desktop"``.
+    - **use_break (R4.1/R4.5/R4.6):** depois de montadas as phases, cada uma cujo
+      nome é chave em ``flavor.use_break`` é substituída por
+      ``phase.model_copy(update={"use_break": flavor.use_break[name]})``. Phases
+      sem entrada preservam ``use_break`` vazio; a ordem é mantida. O flavor é a
+      única fonte de curadoria de quebra de ciclo.
     """
     profile = (
         f"{base.profile_base}/{init.profile_suffix}" if init.profile_suffix else base.profile_base
@@ -204,6 +225,15 @@ def merge(
     if flavor.sets == ():
         base_phases = tuple(p for p in base_phases if p.name != "desktop")
     phases = init.phases_prepend + base_phases
+    # injeta os use_break curados do flavor na phase de mesmo nome (R4.1/R4.5/
+    # R4.6); phases sem entrada no mapa preservam o use_break vazio. A ordem das
+    # phases já montadas é mantida.
+    phases = tuple(
+        p.model_copy(update={"use_break": flavor.use_break[p.name]})
+        if p.name in flavor.use_break
+        else p
+        for p in phases
+    )
 
     return ResolvedRecipe(
         arch=arch.arch,
