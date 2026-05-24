@@ -25,7 +25,6 @@ from kaji.recipe import (
     UsePrefer,
     merge,
 )
-
 from tests._pending import try_import
 
 UseBreak: Any = try_import("kaji.recipe", "UseBreak")

@@ -28,7 +28,6 @@ import pytest
 
 from kaji import factory, phases
 from kaji.recipe import Phase, ResolvedRecipe, ResolvedUse
-
 from tests._pending import try_import
 
 Factory: Any = try_import("kaji.factory", "Factory")

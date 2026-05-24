@@ -24,7 +24,6 @@ from pathlib import Path
 from typing import Any
 
 from kaji.recipe import Phase, ResolvedRecipe, ResolvedUse
-
 from tests._pending import try_import
 
 UseBreak: Any = try_import("kaji.recipe", "UseBreak")

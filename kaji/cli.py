@@ -13,6 +13,7 @@ usuário.
 """
 
 from enum import StrEnum
+from pathlib import Path
 from typing import Annotated
 
 import typer
@@ -21,6 +22,7 @@ from rich.console import Console
 from rich.table import Table
 
 from kaji import config
+from kaji.factory import Factory, FactoryError, FactoryResult
 from kaji.recipe import (
     RecipeConflictError,
     ResolvedRecipe,
@@ -103,7 +105,8 @@ def _render_pretty(resolved: ResolvedRecipe) -> None:
         phases_table.add_row(
             phase.name,
             " ".join(phase.packages) or "—",
-            " ".join(phase.use_break) or "—",
+            ", ".join(f"{b.atom} {'' if b.enable else '-'}{b.flag}" for b in phase.use_break)
+            or "—",
         )
     console.print(phases_table)
 
@@ -210,14 +213,102 @@ def pretend(
         _render_report_pretty(report)
 
 
-_STUB_MSG = "não implementado na Fase 0"
+def _render_factory_pretty(result: FactoryResult, arch: str, flavor: str, init: str) -> None:
+    """Renderiza o :class:`FactoryResult` como tabelas ``rich`` (R1.1)."""
+    console = Console()
+    summary = Table(title=f"factory {arch} × {flavor} × {init}")
+    summary.add_column("campo", style="bold cyan")
+    summary.add_column("valor")
+    summary.add_row("pkgdir", str(result.pkgdir))
+    summary.add_row("phases", " → ".join(result.phases) or "—")
+    fork = str(result.fork_point) if result.fork_point is not None else "—"
+    reuse = "reusado" if result.fork_point_reused else "criado"
+    summary.add_row("fork_point", f"{fork} ({reuse})")
+    console.print(summary)
+
+    atoms = Table(title="átomos construídos")
+    atoms.add_column("built_atoms", style="green")
+    for atom in result.built_atoms:
+        atoms.add_row(atom)
+    if not result.built_atoms:
+        atoms.add_row("—")
+    console.print(atoms)
+
+    settle = Table(title="settle-pass")
+    settle.add_column("settle_atoms", style="bold")
+    for atom in result.settle_atoms:
+        settle.add_row(atom)
+    if not result.settle_atoms:
+        settle.add_row("—")
+    console.print(settle)
 
 
 @app.command("factory")
-def factory(arch: str, flavor: str, init: str) -> None:
-    """Stub: construção de stage4 (não implementado na Fase 0) (R6.2)."""
-    typer.echo(f"factory: {_STUB_MSG}")
-    raise typer.Exit(2)
+def factory(
+    arch: str,
+    flavor: str,
+    init: str,
+    output_format: Annotated[
+        OutputFormat,
+        typer.Option("--format", help="Formato de saída: pretty (default) ou json."),
+    ] = OutputFormat.pretty,
+    emptytree: Annotated[
+        bool,
+        typer.Option(
+            "--emptytree/--no-emptytree",
+            help="Reconstruir a árvore inteira (--emptytree, default) ou reaproveitar binpkgs.",
+        ),
+    ] = True,
+    pkgdir_opt: Annotated[
+        Path | None,
+        typer.Option("--pkgdir", help="PKGDIR host-side de saída (default: por arch)."),
+    ] = None,
+    keep: Annotated[
+        bool, typer.Option("--keep", help="Preservar o rootfs de scratch após o build.")
+    ] = False,
+    no_download: Annotated[
+        bool, typer.Option("--no-download", help="Usar só o cache; nunca tocar a rede.")
+    ] = False,
+) -> None:
+    """Constrói os binpkgs (stage4) da receita num container nspawn (R1.1–R1.5/R8.x).
+
+    Sucesso → relatório de fases/átomos/fork-point + exit 0. Erros conhecidos
+    (``FactoryError``/``SeedError``/``ResolveError``/eixo desconhecido/conflito de
+    receita), incluindo a guarda de root, viram mensagem amigável + exit 1, sem
+    traceback; uma ``FactoryError`` imprime a fase que falhou e a ``output`` do emerge.
+    """
+    try:
+        resolved = _resolve(arch, flavor, init)
+    except (config.UnknownAxisError, RecipeConflictError) as err:
+        _err_console.print(f"[bold red]erro:[/bold red] {err}")
+        raise typer.Exit(1) from err
+
+    pkgdir = pkgdir_opt if pkgdir_opt is not None else config.pkgdir(arch)
+    try:
+        result = Factory(resolved, pkgdir).build(
+            emptytree=emptytree, download=not no_download, keep=keep
+        )
+    except FactoryError as err:
+        if err.phase:
+            _err_console.print(f"[bold red]falha na fase[/bold red] {err.phase}: {err}")
+        else:
+            _err_console.print(f"[bold red]erro:[/bold red] {err}")
+        if err.output:
+            _err_console.print(err.output)
+        raise typer.Exit(1) from err
+    except (SeedError, ResolveError, config.UnknownAxisError, RecipeConflictError) as err:
+        if isinstance(err, ResolveError) and err.raw_output:
+            _err_console.print(err.raw_output)
+        _err_console.print(f"[bold red]erro:[/bold red] {err}")
+        raise typer.Exit(1) from err
+
+    if output_format is OutputFormat.json:
+        typer.echo(result.model_dump_json(indent=2))
+    else:
+        _render_factory_pretty(result, arch, flavor, init)
+
+
+_STUB_MSG = "não implementado na Fase 0"
 
 
 @app.command("assemble")

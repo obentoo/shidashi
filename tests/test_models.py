@@ -32,7 +32,6 @@ from kaji.recipe import (
     load_flavor,
     load_init,
 )
-
 from tests._pending import try_import
 
 UseBreak: Any = try_import("kaji.recipe", "UseBreak")
