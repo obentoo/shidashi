@@ -15,9 +15,12 @@ NB: a tarefa T7.2 ADICIONARÁ a este arquivo um teste de integração (importar
 extensível; T7.2 não é implementada aqui.
 """
 
+import sys
+from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
 import pytest
+from typer.testing import CliRunner
 
 import kaji.portage_api as portage_api
 from kaji.portage_api import (
@@ -131,3 +134,120 @@ def test_module_object_satisfies_require_portage_return(
     monkeypatch.setattr(portage_api, "PORTAGE_AVAILABLE", True)
     monkeypatch.setattr(portage_api, "_portage", fake_mod)
     assert require_portage() is fake_mod
+
+
+# --- T7.2: o caminho recipe/CLI nunca import-aciona portage_api (R7.3) -------
+#
+# INTEGRAÇÃO: exercita o caminho livre de Portage de ponta a ponta (importar
+# ``kaji.recipe`` e ``kaji.cli``, rodar ``recipe show``/``validate`` via Typer
+# CliRunner sobre uma árvore variants/ em tmp_path) e prova que NADA nesse
+# caminho importa ``kaji.portage_api``. Como esse módulo já está carregado pelo
+# topo deste arquivo de teste, removemo-lo de ``sys.modules`` ANTES de exercitar
+# o caminho e asseguramos que ele NÃO reaparece depois — isto é, o
+# recipe/CLI path não dispara ``import kaji.portage_api`` (o Portage está
+# ausente: o portão jamais é acionado).
+
+_runner = CliRunner()
+
+_BASE_YAML = """\
+profile_base: default/linux/amd64/23.0/no-multilib
+sets:
+  - graphics
+  - bentoo-apps
+phases:
+  - name: rebuild
+  - name: desktop
+  - name: apps
+"""
+
+_ARCH_V3 = """\
+arch: v3
+common_flags: "-O2 -march=x86-64-v3 -pipe"
+goamd64: v3
+rustflags: "-C target-cpu=x86-64-v3"
+cpu_flags_x86:
+  - sse4_2
+  - avx2
+tier: 1
+runnable_on_build_host: true
+"""
+
+_FLAVOR_MINIMAL = """\
+flavor: minimal
+sets: []
+override_ok: true
+"""
+
+_INIT_SYSTEMD = """\
+init: systemd
+profile_suffix: systemd
+use_prefer:
+  add: [systemd]
+"""
+
+_RECIPES = {
+    ("flavor", "minimal"): _FLAVOR_MINIMAL,
+    ("arch", "v3"): _ARCH_V3,
+    ("init", "systemd"): _INIT_SYSTEMD,
+}
+
+
+@pytest.fixture
+def variants_tree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Monta uma árvore variants/ mínima e aponta KAJI_VARIANTS_DIR para ela.
+
+    Espelha o padrão de fixture de tests/test_cli.py (subconjunto suficiente
+    para um merge limpo de ``v3 × minimal × systemd``).
+    """
+    root = tmp_path / "variants"
+    base = root / "base" / "base.yaml"
+    base.parent.mkdir(parents=True, exist_ok=True)
+    base.write_text(_BASE_YAML, encoding="utf-8")
+    for (axis, name), text in _RECIPES.items():
+        recipe = root / axis / name / "recipe.yaml"
+        recipe.parent.mkdir(parents=True, exist_ok=True)
+        recipe.write_text(text, encoding="utf-8")
+    monkeypatch.setenv("KAJI_VARIANTS_DIR", str(root))
+    return root
+
+
+def test_recipe_cli_path_never_imports_portage_api(variants_tree: Path) -> None:
+    # parte de um estado em que portage_api NÃO está carregado: removemos o
+    # módulo (e o pacote-pai, para garantir que um re-import de kaji não o puxe)
+    for name in ("kaji.portage_api", "kaji.recipe", "kaji.cli", "kaji"):
+        sys.modules.pop(name, None)
+    assert "kaji.portage_api" not in sys.modules
+
+    # importar a camada de receitas e a CLI NÃO deve acionar portage_api
+    import kaji.cli as cli
+    import kaji.recipe as recipe
+
+    assert "kaji.portage_api" not in sys.modules
+
+    # exercita o merge diretamente pela camada de receitas (Portage ausente)
+    resolved = recipe.merge(
+        recipe.load_base(_BASE_PATH(variants_tree)),
+        recipe.load_arch(_RECIPE_PATH(variants_tree, "arch", "v3")),
+        recipe.load_flavor(_RECIPE_PATH(variants_tree, "flavor", "minimal")),
+        recipe.load_init(_RECIPE_PATH(variants_tree, "init", "systemd")),
+    )
+    assert resolved.arch == "v3"
+    assert "kaji.portage_api" not in sys.modules
+
+    # exercita o caminho da CLI: recipe show / validate saem com 0 sem Portage
+    show = _runner.invoke(cli.app, ["recipe", "show", "v3", "minimal", "systemd"])
+    assert show.exit_code == 0, show.stdout
+    validate = _runner.invoke(cli.app, ["recipe", "validate", "v3", "minimal", "systemd"])
+    assert validate.exit_code == 0, validate.stdout
+
+    # prova central de R7.3: nenhum passo do caminho recipe/CLI importou
+    # portage_api (o módulo continua fora de sys.modules)
+    assert "kaji.portage_api" not in sys.modules
+
+
+def _BASE_PATH(root: Path) -> Path:
+    return root / "base" / "base.yaml"
+
+
+def _RECIPE_PATH(root: Path, axis: str, name: str) -> Path:
+    return root / axis / name / "recipe.yaml"
