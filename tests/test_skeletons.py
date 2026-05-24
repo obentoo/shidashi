@@ -82,12 +82,10 @@ def _entry_points() -> Iterator[tuple[str, Callable[[], Any]]]:
 
     yield "assembler.Assembler", lambda: assembler.Assembler(rr, _P)
 
-    yield "phases.PhaseResult", lambda: phases.PhaseResult(object(), None)
-    yield "phases.run_phase", lambda: phases.run_phase(object(), rr, object())
-    yield "phases.run_phases", lambda: phases.run_phases(object(), rr)
-    # NB: phases.fork_point deixou de ser stub — a story 003 (tarefa 3.4) o
-    # implementou como decisão de reuso pura; seus testes vivem agora em
-    # tests/test_phases.py. Por isso não figura mais nos entry-points acima.
+    # NB: phases.PhaseResult/run_phase/run_phases/fork_point deixaram de ser
+    # stubs — a story 003 (grupos 3–5) preencheu a camada de planejamento e
+    # execução de fases; seus testes vivem agora em tests/test_phases.py e
+    # tests/test_factory.py. Por isso não figuram mais nos entry-points acima.
 
     yield "binhost.BinpkgRef", lambda: binhost.BinpkgRef("cat/pkg-1", (), 1)
     yield "binhost.Binhost", lambda: binhost.Binhost(_P, "v3")

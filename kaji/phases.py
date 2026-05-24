@@ -15,30 +15,56 @@ Camada de planejamento PURA da story 003 (grupos 3 + 4.1):
   restauração do tronco como tarball (escrita atômica via temp + ``os.replace``;
   I/O contra uma árvore em disco, sem nspawn).
 
-A orquestração privilegiada (``run_phase``/``run_phases``) da story 003 tarefa 5
-ainda é esqueleto: cada corpo levanta ``NotImplementedError``.
+A orquestração privilegiada (``run_phase``/``settle_pass``/``run_phases``) da
+story 003 tarefa 5 roda ``emerge`` *dentro* do container (nspawn) — exige root e
+é exercida pelos testes de integração host-gated. Falhas de ``emerge`` (exit
+não-zero) são embrulhadas em :class:`FactoryError`.
 """
 
 import os
+import subprocess
 import tarfile
 from pathlib import Path
 
+import pydantic
+
 from kaji.container import Container
-from kaji.recipe import Phase, ResolvedRecipe
+from kaji.recipe import Phase, ResolvedRecipe, UseBreak
 from kaji.resolve import _iter_atom_lines
 
 _USE_BREAK_FILE = ("etc", "portage", "package.use", "zz-kaji-use-break")
 
 
-class PhaseResult:
-    """Resultado da execução de uma única fase (OVERVIEW §6.4).
+class FactoryError(Exception):
+    """Falha ao construir uma fase/stage dentro do container (OVERVIEW §6.4).
 
-    Carrega a fase executada e o caminho do snapshot do fork-point quando houver
-    (OVERVIEW §6.5). Esqueleto: o construtor ainda não é implementado.
+    Carrega a ``phase`` em que ocorreu (``None`` quando não atrelada a uma fase)
+    e a ``output`` capturada do ``emerge`` (stdout+stderr) para diagnóstico.
+
+    Definida aqui (e não em :mod:`kaji.factory`) para evitar import circular:
+    ``factory`` importa de ``phases`` (orquestra fases), e ``phases`` precisa
+    levantar este erro; ``kaji.factory`` re-exporta o símbolo.
     """
 
-    def __init__(self, phase: Phase, snapshot: Path | None) -> None:
-        raise NotImplementedError("Fase 0 — ver OVERVIEW §6.4")
+    def __init__(self, message: str, *, phase: str | None = None, output: str = "") -> None:
+        super().__init__(message)
+        self.phase = phase
+        self.output = output
+
+
+class PhaseResult(pydantic.BaseModel):
+    """Resultado da execução de uma única fase (OVERVIEW §6.4).
+
+    Value object *frozen*: a fase executada, os átomos construídos
+    (:func:`parse_built_atoms` da saída do ``emerge``) e o caminho do snapshot do
+    fork-point quando houver (OVERVIEW §6.5; ``None`` quando a fase não materializa
+    fork-point). ``arbitrary_types_allowed`` admite :class:`~pathlib.Path`.
+    """
+
+    model_config = pydantic.ConfigDict(frozen=True, arbitrary_types_allowed=True)
+    phase: Phase
+    built_atoms: tuple[str, ...]
+    snapshot: Path | None
 
 
 # --- 3.1 phase_target / phase_emerge_argv (PURO) -----------------------------
@@ -204,14 +230,108 @@ def restore_fork_point(tarball: Path, rootfs: Path) -> None:
         tar.extractall(rootfs, filter="tar")
 
 
-# --- orquestração (story 003 tarefa 5 — esqueleto) ---------------------------
+# --- orquestração privilegiada (story 003 tarefa 5) --------------------------
 
 
-def run_phase(container: Container, recipe: ResolvedRecipe, phase: Phase) -> PhaseResult:
-    """Executa uma fase (um ``emerge`` ordenado) dentro do container (OVERVIEW §6.4)."""
-    raise NotImplementedError("Fase 0 — ver OVERVIEW §6.4")
+def _run_emerge(container: Container, argv: list[str], *, phase: str) -> tuple[str, ...]:
+    """Roda um ``emerge`` no container e devolve os átomos construídos (R3.4/R8.3).
+
+    Embrulha um ``emerge`` não-zero (``CalledProcessError``) em
+    :class:`FactoryError` carregando ``phase`` e a saída capturada
+    (stdout+stderr). Sucesso → :func:`parse_built_atoms` sobre stdout+stderr.
+    """
+    try:
+        result = container.run(argv, check=True)
+    except subprocess.CalledProcessError as exc:
+        output = (exc.output or "") + (exc.stderr or "")
+        raise FactoryError(
+            f"emerge falhou na fase {phase!r}", phase=phase, output=output
+        ) from exc
+    return parse_built_atoms(result.stdout + result.stderr)
 
 
-def run_phases(container: Container, recipe: ResolvedRecipe) -> tuple[PhaseResult, ...]:
-    """Executa todas as fases da receita na ordem definida (OVERVIEW §6.4)."""
-    raise NotImplementedError("Fase 0 — ver OVERVIEW §6.4")
+def run_phase(
+    container: Container, recipe: ResolvedRecipe, phase: Phase, *, emptytree: bool
+) -> PhaseResult:
+    """Executa uma fase (um ``emerge`` ordenado) dentro do container (R3.1/R3.4/R4.1).
+
+    PRIVILEGIADO (``emerge`` roda dentro do nspawn). Escreve o ``package.use``
+    transitório do break-pass da fase (:func:`write_use_break`), roda
+    ``emerge --verbose`` com o(s) alvo(s) de :func:`phase_emerge_argv`
+    (``--emptytree`` só em ``rebuild`` quando ``emptytree``) e devolve um
+    :class:`PhaseResult` com os átomos de :func:`parse_built_atoms`
+    (``snapshot=None`` — o fork-point é materializado por :func:`run_phases`).
+    Um ``emerge`` com saída não-zero (``CalledProcessError``) é embrulhado em
+    :class:`FactoryError` carregando o nome da fase e a saída capturada (R8.3).
+    """
+    write_use_break(container.rootfs, phase)
+    argv = phase_emerge_argv(phase, recipe, emptytree=emptytree)
+    built = _run_emerge(container, argv, phase=phase.name)
+    return PhaseResult(phase=phase, built_atoms=built, snapshot=None)
+
+
+def settle_pass(
+    container: Container, recipe: ResolvedRecipe, breaks: tuple[UseBreak, ...]
+) -> PhaseResult:
+    """Settle-pass: re-emerge os átomos quebrados com o USE final (R4.2/R4.3/R4.4).
+
+    PRIVILEGIADO. Quando ``breaks`` é vazio é um **no-op**: devolve um
+    :class:`PhaseResult` da fase ``settle`` sem átomos e **sem** chamar
+    ``container.run`` (nenhum ``emerge``; R4.4). Caso contrário remove o
+    ``package.use`` transitório do break-pass (:func:`clear_use_break`) e re-emerge
+    os átomos distintos das quebras (ordenados) com ``--newuse --oneshot`` para
+    reconstruí-los com o USE definitivo. Falha de ``emerge`` (não-zero) embrulha em
+    :class:`FactoryError` (``phase="settle"``).
+    """
+    settle = Phase(name="settle")
+    if not breaks:
+        return PhaseResult(phase=settle, built_atoms=(), snapshot=None)
+    clear_use_break(container.rootfs)
+    atoms = sorted({b.atom for b in breaks})
+    built = _run_emerge(
+        container, ["emerge", "--verbose", "--newuse", "--oneshot", *atoms], phase="settle"
+    )
+    return PhaseResult(phase=settle, built_atoms=built, snapshot=None)
+
+
+def run_phases(
+    container: Container,
+    recipe: ResolvedRecipe,
+    *,
+    emptytree: bool,
+    resume_at: str | None = None,
+    snapshot: str,
+    fork_points_dir: Path,
+) -> tuple[PhaseResult, ...]:
+    """Orquestra todas as fases da receita na ordem definida (R3.1/R3.2/R4.x/R5.x).
+
+    PRIVILEGIADO. Quando ``resume_at`` é dado (restauração de um fork-point), as
+    fases até e incluindo ``resume_at`` são puladas — o tronco já está no rootfs.
+    Cada fase restante roda via :func:`run_phase`; ao concluir a última fase do
+    tronco (:func:`trunk_phase_names`) o rootfs é capturado num fork-point via
+    :func:`snapshot_fork_point` em ``fork_points_dir`` sob a chave
+    ``<arch>-<flavor>-<init>-<snapshot>.tar`` (R5.1/R5.2). As quebras de ciclo de
+    todas as fases são acumuladas e reconciliadas por um :func:`settle_pass` final
+    (R4.2/R4.3). Devolve a tupla de :class:`PhaseResult` das fases executadas.
+    """
+    trunk = trunk_phase_names(recipe)
+    last_trunk = trunk[-1] if trunk else None
+    fork_key = f"{recipe.arch}-{recipe.flavor}-{recipe.init}-{snapshot}.tar"
+
+    skipping = resume_at is not None
+    results: list[PhaseResult] = []
+    accumulated: tuple[UseBreak, ...] = ()
+    for phase in recipe.phases:
+        accumulated += phase.use_break
+        if skipping:
+            # pula o tronco já materializado pelo fork-point restaurado, até e
+            # incluindo a fase nomeada por resume_at.
+            if phase.name == resume_at:
+                skipping = False
+            continue
+        results.append(run_phase(container, recipe, phase, emptytree=emptytree))
+        if phase.name == last_trunk:
+            snapshot_fork_point(container.rootfs, fork_points_dir / fork_key)
+
+    results.append(settle_pass(container, recipe, accumulated))
+    return tuple(results)
