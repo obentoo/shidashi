@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kaji 鍛冶 — Canvas de Fluxos</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/dist/svg-pan-zoom.min.js"></script>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --border:#30363d; --fg:#e6edf3;
+    --muted:#8b949e; --accent:#f0883e; --accent2:#58a6ff;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    background:var(--bg); color:var(--fg);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    display:flex; flex-direction:column; overflow:hidden;
+  }
+  header{
+    display:flex; align-items:center; gap:.9rem; padding:.55rem .9rem;
+    background:linear-gradient(180deg,#161b22,#0d1117);
+    border-bottom:1px solid var(--border); flex:0 0 auto; z-index:10;
+  }
+  header .brand{font-size:1.05rem; font-weight:600; white-space:nowrap}
+  header .brand .kanji{color:var(--accent)}
+  header .spacer{flex:1}
+  .nav-btn, .zoom-btn, .home{
+    background:var(--panel); color:var(--fg); border:1px solid var(--border);
+    border-radius:7px; padding:.35rem .6rem; font-size:.85rem; cursor:pointer;
+    line-height:1; display:inline-flex; align-items:center; gap:.35rem; text-decoration:none;
+  }
+  .nav-btn:hover,.zoom-btn:hover,.home:hover{border-color:var(--accent2); color:#fff}
+  .nav-btn:disabled{opacity:.4; cursor:default}
+  select#topic{
+    background:var(--panel); color:var(--fg); border:1px solid var(--border);
+    border-radius:7px; padding:.35rem .5rem; font-size:.88rem; max-width:46vw;
+  }
+  .counter{color:var(--muted); font-size:.8rem; font-variant-numeric:tabular-nums; white-space:nowrap}
+  .group{display:flex; align-items:center; gap:.35rem}
+  main{flex:1; position:relative; overflow:hidden}
+  /* boards ficam SEMPRE com dimensão real (display:flex) para o Mermaid medir o texto;
+     a troca é por opacity/z-index — render em display:none gera translate(NaN). */
+  .board{position:absolute; inset:0; display:flex; flex-direction:column; opacity:0; pointer-events:none; z-index:0}
+  .board.active{opacity:1; pointer-events:auto; z-index:1}
+  .board .caption{padding:.7rem 1rem .2rem; flex:0 0 auto}
+  .board .caption h2{font-size:1.15rem}
+  .board .caption h2 .num{color:var(--accent)}
+  .board .caption p{color:var(--muted); font-size:.9rem; margin-top:.15rem; max-width:90ch}
+  .stage{
+    flex:1; margin:.4rem .8rem .8rem; border:1px solid var(--border);
+    border-radius:10px; background:
+      radial-gradient(circle at 1px 1px, rgba(255,255,255,.05) 1px, transparent 0) 0 0/24px 24px,
+      var(--panel);
+    overflow:hidden; position:relative; cursor:grab;
+  }
+  .stage:active{cursor:grabbing}
+  .stage .mermaid{width:100%; height:100%; display:flex; align-items:center; justify-content:center}
+  .stage .mermaid svg{width:100%; height:100%; max-width:none!important}
+  .hint{
+    position:absolute; right:10px; bottom:8px; font-size:.72rem; color:var(--muted);
+    background:rgba(13,17,23,.7); border:1px solid var(--border); border-radius:6px; padding:.25rem .5rem;
+    pointer-events:none;
+  }
+  footer{
+    flex:0 0 auto; text-align:center; color:var(--muted); font-size:.75rem;
+    padding:.35rem; border-top:1px solid var(--border);
+  }
+</style>
+</head>
+<body>
+<header>
+  <span class="brand"><span class="kanji">鍛冶</span> Kaji · Canvas</span>
+  <div class="group">
+    <button class="nav-btn" id="prev" title="Anterior (←)">‹</button>
+    <select id="topic" aria-label="Selecionar fluxo"></select>
+    <button class="nav-btn" id="next" title="Próximo (→)">›</button>
+    <span class="counter" id="counter"></span>
+  </div>
+  <span class="spacer"></span>
+  <div class="group">
+    <button class="zoom-btn" id="zoomOut" title="Menos zoom (−)">−</button>
+    <button class="zoom-btn" id="zoomReset" title="Reenquadrar (0)">reset</button>
+    <button class="zoom-btn" id="zoomIn" title="Mais zoom (+)">+</button>
+  </div>
+  <a class="home" href="index.html" title="Voltar à documentação">📄 docs</a>
+</header>
+
+<main id="main"></main>
+
+<footer>arraste para mover · roda do mouse para zoom · ← → troca de fluxo · diagramas Mermaid + svg-pan-zoom</footer>
+
+<script>
+/* ---- definição dos fluxos (um "board" por tópico) ---- */
+const BOARDS = [
+  {
+    num: "1", title: "Visão geral — dois subsistemas",
+    desc: "A Factory carrega o custo de compilação (horas); o Assembler apenas seleciona binários prontos (segundos). O binhost é a fronteira.",
+    code: `flowchart LR
+    S["stage3 oficial<br/>(seed no-multilib)"]:::seed --> F
+    subgraph FAC["PACKAGE FACTORY · por (arch × flavor × init)"]
+      direction TB
+      F["container isolado<br/>systemd-nspawn"]:::proc --> F2["emerge em FASES<br/>ccache / sccache / mold"]:::proc
+      F2 --> F3["binpkgs gpkg<br/>multi-instance"]:::art
+    end
+    F3 --> BH[("BINHOST<br/>por arch")]:::store
+    BH --> A
+    subgraph ASM["ISO ASSEMBLER · por (arch × init × desktop)"]
+      direction TB
+      A["emerge --usepkgonly<br/>(sem compilar)"]:::proc --> A2["mksquashfs zstd<br/>+ dracut dmsquash-live"]:::proc
+      A2 --> A3["grub-mkrescue / xorriso"]:::proc
+    end
+    A3 --> ISO["ISO live<br/>+ .sha256 + .asc"]:::art
+    classDef seed fill:#1f6feb,stroke:#388bfd,color:#fff;
+    classDef proc fill:#21262d,stroke:#30363d,color:#e6edf3;
+    classDef art fill:#2d2114,stroke:#f0883e,color:#f0c08e;
+    classDef store fill:#13261a,stroke:#3fb950,color:#7ee787;`
+  },
+  {
+    num: "2", title: "Fluxo de release semanal (cron: domingo 00:00)",
+    desc: "Decisão crítica: toolchain-bump. Semana normal reusa o tronco (delta rápido); bump recria tudo limpo (--emptytree), sem resíduo.",
+    code: `flowchart TD
+    T["⏰ Trigger — cron domingo 00:00"]:::trig --> P["Lê pointer-files no-multilib<br/>latest-stage3-amd64-nomultilib-{systemd,openrc}.txt"]:::proc
+    P --> C{"Mudou desde<br/>o último build?"}:::dec
+    C -->|"Não"| Z["Encerra — nada a fazer"]:::stop
+    C -->|"Sim"| D{"Toolchain-bump?<br/>GCC / glibc / binutils major<br/>ou novo pin de snapshot"}:::dec
+    D -->|"Sim"| W["WIPE TOTAL · emerge --emptytree<br/>+ @preserved-rebuild + subslots<br/>(build limpo, sem resíduo)"]:::wipe
+    D -->|"Não"| DL["DELTA · emerge --newuse<br/>(reusa tronco persistente)"]:::delta
+    W --> FAC["PACKAGE FACTORY<br/>matriz arch × flavor × init"]:::proc
+    DL --> FAC
+    FAC --> ASM["ISO ASSEMBLER<br/>matriz arch × init × desktop"]:::proc
+    ASM --> PUB["PUBLISH<br/>checksum SHA256 + assinatura GPG + upload"]:::art
+    PUB --> REG["Registra hashes:<br/>stage3 · snapshot · receitas · toolchain"]:::store
+    classDef trig fill:#1f6feb,stroke:#388bfd,color:#fff;
+    classDef proc fill:#21262d,stroke:#30363d,color:#e6edf3;
+    classDef dec fill:#2b2517,stroke:#f0883e,color:#f0c08e;
+    classDef wipe fill:#3d1518,stroke:#f85149,color:#ffb3ad;
+    classDef delta fill:#13261a,stroke:#3fb950,color:#7ee787;
+    classDef art fill:#2d2114,stroke:#f0883e,color:#f0c08e;
+    classDef store fill:#161b22,stroke:#30363d,color:#8b949e;
+    classDef stop fill:#161b22,stroke:#30363d,color:#8b949e;`
+  },
+  {
+    num: "3", title: "Package Factory — build em fases",
+    desc: "Cada fase é um emerge próprio, ordenado, com o /etc/portage do flavor aplicado. A ordenação resolve deterministicamente os ciclos.",
+    code: `flowchart TD
+    P0["Fase 0 · stage3 base<br/>(já pronto)"]:::done --> P1["Fase 1 · rebuild<br/>emerge --newuse @world<br/>reflete make.conf (flavor/arch)"]:::proc
+    P1 --> P2["Fase 2 · graphics<br/>@graphics — wayland, mesa,<br/>pipewire, dbus, seat"]:::proc
+    P2 --> FK{"Flavor tem<br/>desktop?"}:::dec
+    FK -->|"minimal"| SKIP["(pula a fase de desktop)"]:::skip
+    FK -->|"kde / gnome / xfce / wm"| P3["Fase 3 · desktop<br/>@kde | @gnome | @xfce | @wm"]:::proc
+    SKIP --> P4["Fase 4 · apps<br/>@bentoo-apps"]:::proc
+    P3 --> P4
+    P4 --> OUT["binpkgs do flavor<br/>→ binhost (arch)"]:::art
+    classDef done fill:#13261a,stroke:#3fb950,color:#7ee787;
+    classDef proc fill:#21262d,stroke:#30363d,color:#e6edf3;
+    classDef dec fill:#2b2517,stroke:#f0883e,color:#f0c08e;
+    classDef skip fill:#161b22,stroke:#30363d,color:#8b949e;
+    classDef art fill:#2d2114,stroke:#f0883e,color:#f0c08e;`
+  },
+  {
+    num: "4", title: "Quebra de dependência circular (use_break)",
+    desc: "Ciclo real: libsdl2 → pipewire → ffmpeg → libsdl2. Curado manualmente por flavor: compila com a USE desligada, depois religa.",
+    code: `flowchart LR
+    PR["pretend-resolve.sh<br/>(emerge --pretend)"]:::tool --> CUR["curadoria manual<br/>do use_break na recipe"]:::dec
+    CUR --> BP["BREAK-PASS<br/>ffmpeg#91;-sdl#93;<br/>(binpkg transiente)"]:::trans
+    BP --> SP["SETTLE-PASS<br/>ffmpeg#91;sdl#93; final<br/>(parceiro do ciclo ja presente)"]:::art
+    SP --> GC{"GC ciente de USE"}:::dec
+    GC -->|"transiente"| PODA["podar (só build-pool)"]:::stop
+    GC -->|"final"| KEEP["publicar (publish-pool)"]:::art
+    classDef tool fill:#1f6feb,stroke:#388bfd,color:#fff;
+    classDef dec fill:#2b2517,stroke:#f0883e,color:#f0c08e;
+    classDef trans fill:#3d1518,stroke:#f85149,color:#ffb3ad;
+    classDef art fill:#2d2114,stroke:#f0883e,color:#f0c08e;
+    classDef stop fill:#161b22,stroke:#30363d,color:#8b949e;`
+  },
+  {
+    num: "5", title: "Fork-point & particionamento do binhost",
+    desc: "As fases iniciais dependem só do init. O fork por desktop ocorre tarde — o tronco compila uma vez por init; só a fase de desktop ramifica.",
+    code: `flowchart LR
+    S3["stage3"]:::seed --> RB["rebuild"]:::proc --> SE["seat<br/>(por init)"]:::proc --> GR["graphics"]:::proc
+    GR --> M["minimal<br/>(= tronco)"]:::art
+    GR --> K["+kde → binpkgs kde"]:::art
+    GR --> G["+gnome → binpkgs gnome"]:::art
+    GR --> X["+xfce → binpkgs xfce"]:::art
+    GR --> WM["+wm → binpkgs Hyprland/Sway/niri"]:::art
+    M --> BH
+    K --> BH
+    G --> BH
+    X --> BH
+    WM --> BH[("BINHOST por arch<br/>v3 · znver5 · arrowlake")]:::store
+    classDef seed fill:#1f6feb,stroke:#388bfd,color:#fff;
+    classDef proc fill:#21262d,stroke:#30363d,color:#e6edf3;
+    classDef art fill:#2d2114,stroke:#f0883e,color:#f0c08e;
+    classDef store fill:#13261a,stroke:#3fb950,color:#7ee787;`
+  },
+  {
+    num: "6", title: "ISO Assembler — imune a ciclo",
+    desc: "Ciclo é fenômeno de build-time. O Assembler navega o grafo multi-instance e extrai a fatia do flavor pela USE final.",
+    code: `flowchart TD
+    SEED["container seeda stage3"]:::seed --> RES["resolve USE final do flavor"]:::proc
+    RES --> MATCH{"match multi-instance<br/>no binhost"}:::dec
+    MATCH -->|"poppler#91;qt6#93;"| KDE["ISO KDE"]:::art
+    MATCH -->|"poppler#91;gtk#93;"| GN["ISO GNOME / XFCE"]:::art
+    MATCH -->|"sem DE"| MIN["ISO minimal"]:::art
+    KDE --> SQ
+    GN --> SQ
+    MIN --> SQ["mksquashfs zstd -19<br/>(rootfs read-only)"]:::proc
+    SQ --> DR["dracut dmsquash-live<br/>(overlayfs em RAM)"]:::proc
+    DR --> ISO["grub-mkrescue / xorriso<br/>→ ISO híbrida BIOS+UEFI"]:::art
+    classDef seed fill:#1f6feb,stroke:#388bfd,color:#fff;
+    classDef proc fill:#21262d,stroke:#30363d,color:#e6edf3;
+    classDef dec fill:#2b2517,stroke:#f0883e,color:#f0c08e;
+    classDef art fill:#2d2114,stroke:#f0883e,color:#f0c08e;`
+  },
+  {
+    num: "7", title: "Matriz de eixos componíveis",
+    desc: "Uma release é a tupla base + arch + flavor + init, resolvida por deep-merge. Os eixos não se multiplicam de forma ingênua (desktop ≈ flavor).",
+    code: `flowchart LR
+    subgraph ARCH["arch"]
+      direction TB
+      a1["v3 — Tier 1"]:::t1
+      a2["znver5 — Tier 1"]:::t1
+      a3["arrowlake — Tier 2 (QEMU)"]:::t2
+    end
+    subgraph FLV["flavor"]
+      direction TB
+      f0["minimal (só TTY)"]
+      f1["kde (Qt)"]
+      f2["gnome (GTK)"]
+      f3["xfce (GTK)"]
+      f4["wm (Hyprland/Sway/niri)"]
+    end
+    subgraph INI["init"]
+      direction TB
+      i1["systemd"]
+      i2["openrc (elogind+seatd)"]
+    end
+    ARCH --> R["deep-merge → recipe<br/>profile + USE + flags"]:::art
+    FLV --> R
+    INI --> R
+    classDef t1 fill:#13261a,stroke:#3fb950,color:#7ee787;
+    classDef t2 fill:#3d2a14,stroke:#f0883e,color:#f0c08e;
+    classDef art fill:#21262d,stroke:#58a6ff,color:#cfe3ff;`
+  }
+];
+
+/* ---- montar os boards (DOM seguro, sem innerHTML) ---- */
+const main = document.getElementById('main');
+const select = document.getElementById('topic');
+
+function el(tag, cls, text){
+  const n = document.createElement(tag);
+  if(cls) n.className = cls;
+  if(text != null) n.textContent = text;
+  return n;
+}
+
+BOARDS.forEach((b, i) => {
+  const board = el('section', 'board');
+  board.dataset.index = i;
+
+  const caption = el('div', 'caption');
+  const h2 = el('h2');
+  h2.appendChild(el('span', 'num', b.num + '.'));
+  h2.appendChild(document.createTextNode(' ' + b.title));
+  caption.appendChild(h2);
+  caption.appendChild(el('p', null, b.desc));
+
+  const stage = el('div', 'stage');
+  const graph = el('div', 'mermaid', b.code);   // textContent = definição Mermaid
+  stage.appendChild(graph);
+  stage.appendChild(el('div', 'hint', 'scroll = zoom · drag = mover'));
+
+  board.appendChild(caption);
+  board.appendChild(stage);
+  main.appendChild(board);
+
+  const opt = el('option', null, b.num + '. ' + b.title);
+  opt.value = i;
+  select.appendChild(opt);
+});
+
+/* ---- render + pan/zoom ---- */
+const instances = {};
+let current = 0;
+
+function fitInstance(i){
+  const inst = instances[i];
+  if(!inst) return;
+  inst.resize(); inst.fit(); inst.center();
+}
+
+function activate(i){
+  i = Math.max(0, Math.min(BOARDS.length - 1, i));
+  document.querySelectorAll('.board').forEach(b => b.classList.toggle('active', +b.dataset.index === i));
+  current = i;
+  select.value = i;
+  document.getElementById('counter').textContent = (i + 1) + ' / ' + BOARDS.length;
+  document.getElementById('prev').disabled = (i === 0);
+  document.getElementById('next').disabled = (i === BOARDS.length - 1);
+  const svg = document.querySelector('.board[data-index="' + i + '"] .mermaid svg');
+  if(svg && !instances[i]){
+    svg.setAttribute('width', '100%'); svg.setAttribute('height', '100%');
+    svg.style.maxWidth = 'none';
+    instances[i] = svgPanZoom(svg, {
+      zoomEnabled:true, panEnabled:true, controlIconsEnabled:false,
+      fit:true, center:true, minZoom:0.2, maxZoom:20, zoomScaleSensitivity:0.35
+    });
+  }
+  requestAnimationFrame(() => fitInstance(i));
+}
+
+mermaid.initialize({
+  startOnLoad:false, theme:'dark',
+  themeVariables:{ fontFamily:'-apple-system,"Segoe UI",Roboto,sans-serif', fontSize:'14px' },
+  flowchart:{ curve:'basis', padding:14, useMaxWidth:false }
+});
+
+mermaid.run({ querySelector:'.mermaid' }).then(() => activate(0));
+
+/* ---- controles ---- */
+document.getElementById('prev').onclick = () => activate(current - 1);
+document.getElementById('next').onclick = () => activate(current + 1);
+select.onchange = e => activate(+e.target.value);
+document.getElementById('zoomIn').onclick   = () => instances[current] && instances[current].zoomIn();
+document.getElementById('zoomOut').onclick  = () => instances[current] && instances[current].zoomOut();
+document.getElementById('zoomReset').onclick = () => fitInstance(current);
+
+window.addEventListener('keydown', e => {
+  if(e.target.tagName === 'SELECT') return;
+  if(e.key === 'ArrowRight') activate(current + 1);
+  else if(e.key === 'ArrowLeft') activate(current - 1);
+  else if(e.key === '+' || e.key === '=') instances[current] && instances[current].zoomIn();
+  else if(e.key === '-' || e.key === '_') instances[current] && instances[current].zoomOut();
+  else if(e.key === '0') fitInstance(current);
+});
+
+window.addEventListener('resize', () => fitInstance(current));
+</script>
+</body>
+</html>

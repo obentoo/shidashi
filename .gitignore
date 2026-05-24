@@ -1,0 +1,22 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# epic story drafts (planning scratch, not tracked)
+.epic/stories/**/.draft/
+
+# artefatos de build do Kaji
+/work/
+*.iso
+*.squashfs
+*.tar.xz
+*.tar.zst
+/binhost/
+/releases/
