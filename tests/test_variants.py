@@ -141,9 +141,9 @@ def test_base_make_conf_keeps_unrelated_groups_verbatim() -> None:
 
 
 def test_base_package_use_system_drops_init_specific_systemd_line() -> None:
-    system = (
-        _VARIANTS_DIR / "base" / "portage" / "package.use" / "system"
-    ).read_text(encoding="utf-8")
+    system = (_VARIANTS_DIR / "base" / "portage" / "package.use" / "system").read_text(
+        encoding="utf-8"
+    )
     # a linha sys-apps/systemd boot ukify migrou p/ init/systemd
     assert "sys-apps/systemd boot ukify" not in _live_text(system)
     # mas linhas vizinhas não-init continuam (ex.: grub mount)
@@ -200,9 +200,7 @@ def test_arch_make_conf_mirrors_recipe_flags() -> None:
     # os knobs de CPU andam juntos (§9.3): make.conf espelha o recipe.yaml
     for name in ("v3", "znver5", "arrowlake"):
         arch = _load_arch(name)
-        mk = (_VARIANTS_DIR / "arch" / name / "portage" / "make.conf").read_text(
-            encoding="utf-8"
-        )
+        mk = (_VARIANTS_DIR / "arch" / name / "portage" / "make.conf").read_text(encoding="utf-8")
         assert f'COMMON_FLAGS="{arch.common_flags}"' in mk
         assert 'CHOST="x86_64-pc-linux-gnu"' in mk
         for flag in arch.cpu_flags_x86:
@@ -245,9 +243,7 @@ def test_gnome_and_xfce_are_curated_flavors() -> None:
 
 
 def test_merge_minimal_omits_desktop_phase() -> None:
-    resolved = merge(
-        _load_base(), _load_arch("v3"), _load_flavor("minimal"), _load_init("systemd")
-    )
+    resolved = merge(_load_base(), _load_arch("v3"), _load_flavor("minimal"), _load_init("systemd"))
     names = [p.name for p in resolved.phases]
     assert "desktop" not in names
     # as demais phases de base permanecem
@@ -275,7 +271,5 @@ def test_openrc_merge_profile_has_no_systemd_suffix() -> None:
 
 
 def test_openrc_merge_prepends_seat_phase() -> None:
-    resolved = merge(
-        _load_base(), _load_arch("v3"), _load_flavor("minimal"), _load_init("openrc")
-    )
+    resolved = merge(_load_base(), _load_arch("v3"), _load_flavor("minimal"), _load_init("openrc"))
     assert resolved.phases[0].name == "seat"

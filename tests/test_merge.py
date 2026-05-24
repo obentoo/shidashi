@@ -63,9 +63,7 @@ def make_flavor(
     sets: tuple[str, ...] = ("@desktop",),
     override_ok: bool = False,
 ) -> FlavorFragment:
-    return FlavorFragment(
-        flavor=flavor, use_prefer=use_prefer, sets=sets, override_ok=override_ok
-    )
+    return FlavorFragment(flavor=flavor, use_prefer=use_prefer, sets=sets, override_ok=override_ok)
 
 
 def make_init(
@@ -239,9 +237,7 @@ def test_sets_ordered_unique_union() -> None:
 
 
 def test_phases_prepend_then_base_with_desktop_kept() -> None:
-    base = make_base(
-        phases=(Phase(name="system"), Phase(name="desktop"), Phase(name="late"))
-    )
+    base = make_base(phases=(Phase(name="system"), Phase(name="desktop"), Phase(name="late")))
     init = make_init(phases_prepend=(Phase(name="early"),))
     flavor = make_flavor(sets=("@desktop",))  # sets não vazio -> mantém desktop
     r = merge(base, make_arch(), flavor, init)
@@ -250,9 +246,7 @@ def test_phases_prepend_then_base_with_desktop_kept() -> None:
 
 
 def test_phases_empty_flavor_sets_omits_desktop() -> None:
-    base = make_base(
-        phases=(Phase(name="system"), Phase(name="desktop"), Phase(name="late"))
-    )
+    base = make_base(phases=(Phase(name="system"), Phase(name="desktop"), Phase(name="late")))
     init = make_init(phases_prepend=(Phase(name="early"),))
     flavor = make_flavor(flavor="minimal", sets=())  # sets vazio -> omite desktop
     r = merge(base, make_arch(), flavor, init)

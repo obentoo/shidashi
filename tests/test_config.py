@@ -67,9 +67,7 @@ def test_variants_dir_reads_env_fresh_each_call(
     ("axis", "name"),
     [(axis, name) for axis, names in _FIXTURE.items() for name in names],
 )
-def test_axis_dir_resolves_every_fixture(
-    variants_tree: Path, axis: str, name: str
-) -> None:
+def test_axis_dir_resolves_every_fixture(variants_tree: Path, axis: str, name: str) -> None:
     resolved = axis_dir(axis, name)
     assert resolved == variants_tree / axis / name
     assert resolved.is_dir()
@@ -79,9 +77,7 @@ def test_axis_dir_resolves_every_fixture(
     ("axis", "name"),
     [(axis, name) for axis, names in _FIXTURE.items() for name in names],
 )
-def test_recipe_path_resolves_every_fixture(
-    variants_tree: Path, axis: str, name: str
-) -> None:
+def test_recipe_path_resolves_every_fixture(variants_tree: Path, axis: str, name: str) -> None:
     resolved = recipe_path(axis, name)
     assert resolved == variants_tree / axis / name / "recipe.yaml"
     assert resolved.is_file()
@@ -100,9 +96,7 @@ def test_base_path_points_at_base_yaml(variants_tree: Path) -> None:
 
 
 @pytest.mark.parametrize("axis", list(_FIXTURE))
-def test_available_names_returns_sorted_fixture(
-    variants_tree: Path, axis: str
-) -> None:
+def test_available_names_returns_sorted_fixture(variants_tree: Path, axis: str) -> None:
     assert available_names(axis) == sorted(_FIXTURE[axis])
 
 

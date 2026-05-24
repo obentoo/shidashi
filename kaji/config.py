@@ -28,8 +28,7 @@ class UnknownAxisError(Exception):
         self.available = available
         disponiveis = ", ".join(available) if available else "(nenhum)"
         super().__init__(
-            f"valor {name!r} desconhecido para o eixo {axis!r}; "
-            f"disponíveis: {disponiveis}"
+            f"valor {name!r} desconhecido para o eixo {axis!r}; disponíveis: {disponiveis}"
         )
 
 

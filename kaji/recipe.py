@@ -100,8 +100,7 @@ class RecipeConflictError(Exception):
         self.layer_a = layer_a
         self.layer_b = layer_b
         super().__init__(
-            f"conflito na USE flag {flag!r} entre as camadas "
-            f"{layer_a!r} e {layer_b!r}"
+            f"conflito na USE flag {flag!r} entre as camadas {layer_a!r} e {layer_b!r}"
         )
 
 
@@ -192,9 +191,7 @@ def merge(
       ``flavor.sets == ()`` omite-se a phase de nome ``"desktop"``.
     """
     profile = (
-        f"{base.profile_base}/{init.profile_suffix}"
-        if init.profile_suffix
-        else base.profile_base
+        f"{base.profile_base}/{init.profile_suffix}" if init.profile_suffix else base.profile_base
     )
 
     use_state = _accumulate_use(flavor, init)
