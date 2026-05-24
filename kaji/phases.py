@@ -11,12 +11,16 @@ Camada de planejamento PURA da story 003 (grupos 3 + 4.1):
   ``emerge --verbose`` (reusa o matcher de :mod:`kaji.resolve`).
 * **3.4** :func:`fork_point` / :func:`trunk_phase_names` — decisão de reuso do
   tronco (só sonda o filesystem) e nomes das fases do tronco.
+* **4.1** :func:`snapshot_fork_point` / :func:`restore_fork_point` — captura e
+  restauração do tronco como tarball (escrita atômica via temp + ``os.replace``;
+  I/O contra uma árvore em disco, sem nspawn).
 
-A orquestração privilegiada (``run_phase``/``run_phases``) e o snapshot/restore
-do fork-point (story 003 tarefa 4) ainda são esqueleto: cada corpo levanta
-``NotImplementedError``.
+A orquestração privilegiada (``run_phase``/``run_phases``) da story 003 tarefa 5
+ainda é esqueleto: cada corpo levanta ``NotImplementedError``.
 """
 
+import os
+import tarfile
 from pathlib import Path
 
 from kaji.container import Container
@@ -159,6 +163,45 @@ def trunk_phase_names(recipe: ResolvedRecipe) -> tuple[str, ...]:
             break
         names.append(phase.name)
     return tuple(names)
+
+
+# --- 4.1 snapshot / restore do fork-point (tarball, I/O em disco) ------------
+
+
+def snapshot_fork_point(rootfs: Path, dest: Path) -> Path:
+    """Captura ``rootfs`` num tarball em ``dest`` e devolve ``dest`` (R5.1/R5.2).
+
+    Escrita atômica: o tar é gravado primeiro num arquivo temporário irmão de
+    ``dest`` (mesmo diretório, logo mesmo filesystem) e só então promovido via
+    :func:`os.replace`, que consome o nome temporário — em caso de sucesso não
+    fica nenhum temp pendente ao lado de ``dest``. Falha durante a escrita remove
+    o temp parcial. O ``arcname=""`` mantém o conteúdo do rootfs na raiz do tar,
+    de modo que :func:`restore_fork_point` o reconstrua diretamente sob outro
+    diretório (layout relativo preservado). Ownership/devices fiéis de um rootfs
+    real exigem root (coberto pelo teste de integração host-gated); a árvore em
+    tmp faz round-trip de conteúdo + layout sem root.
+    """
+    tmp = dest.with_name(f".{dest.name}.tmp")
+    try:
+        with tarfile.open(tmp, "w") as tar:
+            tar.add(rootfs, arcname="")
+        os.replace(tmp, dest)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+    return dest
+
+
+def restore_fork_point(tarball: Path, rootfs: Path) -> None:
+    """Extrai ``tarball`` dentro de ``rootfs`` (R5.1/R5.2).
+
+    Usa o filtro ``"tar"`` na extração para preservar ownership/permissões quando
+    rodando como root (o teste de integração host-gated verifica ``st_uid == 0``);
+    sob a árvore tmp sem root isto degrada para conteúdo + layout relativo, que é
+    o que o round-trip unitário exige.
+    """
+    with tarfile.open(tarball, "r") as tar:
+        tar.extractall(rootfs, filter="tar")
 
 
 # --- orquestração (story 003 tarefa 5 — esqueleto) ---------------------------
