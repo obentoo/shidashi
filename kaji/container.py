@@ -31,19 +31,24 @@ def _nspawn_argv(
     argv: Sequence[str],
     *,
     binds: Sequence[tuple[Path, Path]],
+    binds_rw: Sequence[tuple[Path, Path]] = (),
     ephemeral: bool,
 ) -> list[str]:
-    """Monta a linha de comando ``systemd-nspawn`` (R4.4). **Pura**, sem efeitos.
+    """Monta a linha de comando ``systemd-nspawn`` (R4.4/R7.1/R7.2). **Pura**, sem efeitos.
 
     Forma: ``["systemd-nspawn", "--directory", <rootfs>, ("--ephemeral")?,
-    ("--bind-ro=src:dst" por bind, na ordem), "--", *argv]``. Os binds vêm antes
-    do separador ``--``; o ``argv`` do comando vem depois.
+    ("--bind-ro=src:dst" por bind RO, na ordem), ("--bind=src:dst" por bind RW,
+    na ordem, *após* todos os RO), "--", *argv]``. Os binds vêm antes do
+    separador ``--``; o ``argv`` do comando vem depois. Sem ``binds_rw`` o argv
+    é idêntico ao da story 002 (R7.3 back-compat).
     """
     cmd: list[str] = ["systemd-nspawn", "--directory", str(rootfs)]
     if ephemeral:
         cmd.append("--ephemeral")
     for src, dst in binds:
         cmd.append(f"--bind-ro={src}:{dst}")
+    for src, dst in binds_rw:
+        cmd.append(f"--bind={src}:{dst}")
     cmd.append("--")
     cmd.extend(argv)
     return cmd
@@ -65,10 +70,12 @@ class Container:
         *,
         ephemeral: bool = False,
         binds: Sequence[tuple[Path, Path]] = (),
+        binds_rw: Sequence[tuple[Path, Path]] = (),
     ) -> None:
         self.rootfs = rootfs
         self.ephemeral = ephemeral
         self.binds: tuple[tuple[Path, Path], ...] = tuple(binds)
+        self.binds_rw: tuple[tuple[Path, Path], ...] = tuple(binds_rw)
 
     def run(
         self,
@@ -84,7 +91,13 @@ class Container:
         comando sai com código não-zero, levanta ``CalledProcessError`` (com o
         ``stderr`` anexado), em vez de retornar silenciosamente.
         """
-        cmd = _nspawn_argv(self.rootfs, argv, binds=self.binds, ephemeral=self.ephemeral)
+        cmd = _nspawn_argv(
+            self.rootfs,
+            argv,
+            binds=self.binds,
+            binds_rw=self.binds_rw,
+            ephemeral=self.ephemeral,
+        )
         proc = subprocess.run(
             cmd,
             capture_output=True,

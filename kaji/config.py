@@ -123,3 +123,58 @@ def seeds_dir() -> Path:
         return Path(override)
     project_root = Path(__file__).resolve().parent.parent
     return project_root / "seeds"
+
+
+def build_root() -> Path:
+    """Devolve a raiz dos rootfs de build (R5.1/R8.2): ``scratch_dir()/build``.
+
+    Cada flavor/arch monta seu rootfs efêmero sob este diretório. Herda o
+    override ``KAJI_SCRATCH`` (lido por chamada) de :func:`scratch_dir`.
+    """
+    return scratch_dir() / "build"
+
+
+def pkgdir(arch: str) -> Path:
+    """Devolve o ``PKGDIR`` de pacotes binários por arch (R6.2): ``cache_dir()/binpkgs/<arch>``.
+
+    Particionado por ``arch`` para que variantes de microarquitetura (``v3``,
+    ``znver5``, …) não compartilhem binpkgs incompatíveis. Herda o override
+    ``KAJI_CACHE`` (lido por chamada) de :func:`cache_dir`.
+    """
+    return cache_dir() / "binpkgs" / arch
+
+
+def ccache_dir() -> Path:
+    """Devolve o diretório ``ccache`` compartilhado (R6.2): ``cache_dir()/ccache``.
+
+    Compartilhado entre flavors/archs (cache de compilação C/C++). Herda o
+    override ``KAJI_CACHE`` (lido por chamada).
+    """
+    return cache_dir() / "ccache"
+
+
+def sccache_dir() -> Path:
+    """Devolve o diretório ``sccache`` compartilhado (R6.2): ``cache_dir()/sccache``.
+
+    Compartilhado entre flavors/archs (cache de compilação Rust). Herda o
+    override ``KAJI_CACHE`` (lido por chamada).
+    """
+    return cache_dir() / "sccache"
+
+
+def distdir() -> Path:
+    """Devolve o ``DISTDIR`` compartilhado (R6.2): ``cache_dir()/distfiles``.
+
+    Compartilhado entre flavors/archs (tarballs de fonte baixados). Herda o
+    override ``KAJI_CACHE`` (lido por chamada).
+    """
+    return cache_dir() / "distfiles"
+
+
+def fork_points_dir() -> Path:
+    """Devolve o diretório de *fork points* (R6.2): ``cache_dir()/fork-points``.
+
+    Guarda os marcos de fork entre estágios de build. Herda o override
+    ``KAJI_CACHE`` (lido por chamada).
+    """
+    return cache_dir() / "fork-points"
