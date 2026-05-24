@@ -213,36 +213,50 @@ def variants_tree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 def test_recipe_cli_path_never_imports_portage_api(variants_tree: Path) -> None:
     # parte de um estado em que portage_api NÃO está carregado: removemos o
-    # módulo (e o pacote-pai, para garantir que um re-import de kaji não o puxe)
-    for name in ("kaji.portage_api", "kaji.recipe", "kaji.cli", "kaji"):
-        sys.modules.pop(name, None)
-    assert "kaji.portage_api" not in sys.modules
+    # módulo (e o pacote-pai, para garantir que um re-import de kaji não o puxe).
+    # Reimportar kaji.recipe cria NOVAS classes pydantic; se não restaurarmos
+    # sys.modules ao final, testes posteriores (ex.: test_resolve) que importam
+    # essas classes em momentos distintos veem cópias divergentes (model_type).
+    # Por isso salvamos e restauramos os módulos afetados num try/finally.
+    _names = ("kaji.portage_api", "kaji.recipe", "kaji.cli", "kaji")
+    _saved = {name: sys.modules.get(name) for name in _names}
+    try:
+        for name in _names:
+            sys.modules.pop(name, None)
+        assert "kaji.portage_api" not in sys.modules
 
-    # importar a camada de receitas e a CLI NÃO deve acionar portage_api
-    import kaji.cli as cli
-    import kaji.recipe as recipe
+        # importar a camada de receitas e a CLI NÃO deve acionar portage_api
+        import kaji.cli as cli
+        import kaji.recipe as recipe
 
-    assert "kaji.portage_api" not in sys.modules
+        assert "kaji.portage_api" not in sys.modules
 
-    # exercita o merge diretamente pela camada de receitas (Portage ausente)
-    resolved = recipe.merge(
-        recipe.load_base(_BASE_PATH(variants_tree)),
-        recipe.load_arch(_RECIPE_PATH(variants_tree, "arch", "v3")),
-        recipe.load_flavor(_RECIPE_PATH(variants_tree, "flavor", "minimal")),
-        recipe.load_init(_RECIPE_PATH(variants_tree, "init", "systemd")),
-    )
-    assert resolved.arch == "v3"
-    assert "kaji.portage_api" not in sys.modules
+        # exercita o merge diretamente pela camada de receitas (Portage ausente)
+        resolved = recipe.merge(
+            recipe.load_base(_BASE_PATH(variants_tree)),
+            recipe.load_arch(_RECIPE_PATH(variants_tree, "arch", "v3")),
+            recipe.load_flavor(_RECIPE_PATH(variants_tree, "flavor", "minimal")),
+            recipe.load_init(_RECIPE_PATH(variants_tree, "init", "systemd")),
+        )
+        assert resolved.arch == "v3"
+        assert "kaji.portage_api" not in sys.modules
 
-    # exercita o caminho da CLI: recipe show / validate saem com 0 sem Portage
-    show = _runner.invoke(cli.app, ["recipe", "show", "v3", "minimal", "systemd"])
-    assert show.exit_code == 0, show.stdout
-    validate = _runner.invoke(cli.app, ["recipe", "validate", "v3", "minimal", "systemd"])
-    assert validate.exit_code == 0, validate.stdout
+        # exercita o caminho da CLI: recipe show / validate saem com 0 sem Portage
+        show = _runner.invoke(cli.app, ["recipe", "show", "v3", "minimal", "systemd"])
+        assert show.exit_code == 0, show.stdout
+        validate = _runner.invoke(cli.app, ["recipe", "validate", "v3", "minimal", "systemd"])
+        assert validate.exit_code == 0, validate.stdout
 
-    # prova central de R7.3: nenhum passo do caminho recipe/CLI importou
-    # portage_api (o módulo continua fora de sys.modules)
-    assert "kaji.portage_api" not in sys.modules
+        # prova central de R7.3: nenhum passo do caminho recipe/CLI importou
+        # portage_api (o módulo continua fora de sys.modules)
+        assert "kaji.portage_api" not in sys.modules
+    finally:
+        # restaura os módulos originais para não poluir o resto da suíte
+        for name, module in _saved.items():
+            if module is not None:
+                sys.modules[name] = module
+            else:
+                sys.modules.pop(name, None)
 
 
 def _BASE_PATH(root: Path) -> Path:

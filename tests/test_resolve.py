@@ -290,7 +290,7 @@ def test_parse_packages_empty_when_no_ebuild_lines() -> None:
 def test_cycle_break_is_frozen() -> None:
     cb = CycleBreak(atom="x/y-1", flag="foo", enable=True, raw_line="raw")
     with pytest.raises(Exception):  # noqa: B017
-        cb.flag = "bar"  # type: ignore[misc]
+        cb.flag = "bar"
 
 
 def test_pretend_report_holds_packages_and_breaks() -> None:

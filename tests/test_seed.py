@@ -92,7 +92,7 @@ def test_stage3_pointer_is_frozen() -> None:
         sha256="0" * 64,
     )
     with pytest.raises(Exception):  # noqa: B017 (frozen → ValidationError/Error)
-        p.init = "openrc"  # type: ignore[misc]
+        p.init = "openrc"
 
 
 # --- stage3_url (R2.1) -------------------------------------------------------
@@ -123,7 +123,7 @@ def test_verify_digest_passes_on_match(tmp_path: Path) -> None:
     tarball.write_bytes(blob)
     good = hashlib.sha256(blob).hexdigest()
     # match → não levanta, retorna None
-    assert verify_digest(tarball, good) is None
+    assert verify_digest(tarball, good) is None  # type: ignore[func-returns-value]
 
 
 def test_verify_digest_raises_on_mismatch(tmp_path: Path) -> None:
