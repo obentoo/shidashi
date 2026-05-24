@@ -85,7 +85,9 @@ def _entry_points() -> Iterator[tuple[str, Callable[[], Any]]]:
     yield "phases.PhaseResult", lambda: phases.PhaseResult(object(), None)
     yield "phases.run_phase", lambda: phases.run_phase(object(), rr, object())
     yield "phases.run_phases", lambda: phases.run_phases(object(), rr)
-    yield "phases.fork_point", lambda: phases.fork_point(rr)
+    # NB: phases.fork_point deixou de ser stub — a story 003 (tarefa 3.4) o
+    # implementou como decisão de reuso pura; seus testes vivem agora em
+    # tests/test_phases.py. Por isso não figura mais nos entry-points acima.
 
     yield "binhost.BinpkgRef", lambda: binhost.BinpkgRef("cat/pkg-1", (), 1)
     yield "binhost.Binhost", lambda: binhost.Binhost(_P, "v3")

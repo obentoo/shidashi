@@ -13,6 +13,7 @@ via ``import portage``.
 
 import configparser
 import os
+from collections.abc import Iterator
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
@@ -143,14 +144,15 @@ def bind_repos(repos_conf_dir: Path) -> list[tuple[Path, Path]]:
 # --- emerge output parsing (R5.2) — puro -------------------------------------
 
 
-def parse_packages(emerge_output: str) -> tuple[str, ...]:
-    """Extrai a lista de átomos resolvidos das linhas ``[ebuild ...]`` (R5.2). Pura.
+def _iter_atom_lines(emerge_output: str) -> Iterator[str]:
+    """Itera os átomos ``cat/pkg-version`` das linhas ``[ebuild ...]``. Pura.
 
-    Para cada linha que começa com ``[ebuild`` toma o primeiro token após o
-    ``]`` e descarta o sufixo de slot/repo (``:slot::repo``), devolvendo
-    ``cat/pkg-version``. Saída sem linhas ``[ebuild ...]`` → tupla vazia.
+    Matcher compartilhado (R5.2 / R3.4): para cada linha cujo strip começa com
+    ``[ebuild`` toma o primeiro token após o ``]`` e descarta o sufixo de
+    slot/repo (``:slot::repo``), devolvendo ``cat/pkg-version``. Consumido tanto
+    por :func:`parse_packages` (resolve) quanto por
+    :func:`kaji.phases.parse_built_atoms`.
     """
-    atoms: list[str] = []
     for line in emerge_output.splitlines():
         stripped = line.strip()
         if not stripped.startswith("[ebuild"):
@@ -161,8 +163,18 @@ def parse_packages(emerge_output: str) -> tuple[str, ...]:
         tokens = after[1].split()
         if not tokens:
             continue
-        atoms.append(tokens[0].split(":", 1)[0])
-    return tuple(atoms)
+        yield tokens[0].split(":", 1)[0]
+
+
+def parse_packages(emerge_output: str) -> tuple[str, ...]:
+    """Extrai a lista de átomos resolvidos das linhas ``[ebuild ...]`` (R5.2). Pura.
+
+    Para cada linha que começa com ``[ebuild`` toma o primeiro token após o
+    ``]`` e descarta o sufixo de slot/repo (``:slot::repo``), devolvendo
+    ``cat/pkg-version``. Saída sem linhas ``[ebuild ...]`` → tupla vazia.
+    Delega o casamento de linha a :func:`_iter_atom_lines`.
+    """
+    return tuple(_iter_atom_lines(emerge_output))
 
 
 def parse_cycle_breaks(emerge_output: str) -> tuple[CycleBreak, ...]:
