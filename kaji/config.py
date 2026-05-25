@@ -11,6 +11,8 @@ lida a cada chamada para que testes possam fazer ``monkeypatch``.
 import os
 from pathlib import Path
 
+from kaji.recipe import ResolvedRecipe
+
 _ENV_VAR = "KAJI_VARIANTS_DIR"
 _SCRATCH_ENV = "KAJI_SCRATCH"
 _CACHE_ENV = "KAJI_CACHE"
@@ -178,3 +180,22 @@ def fork_points_dir() -> Path:
     ``KAJI_CACHE`` (lido por chamada).
     """
     return cache_dir() / "fork-points"
+
+
+def state_dir() -> Path:
+    """Devolve o diretório de estado de build persistido (R6.1): ``cache_dir()/state``.
+
+    O estado de progresso de cada build vive aqui, sob o cache, para sobreviver ao
+    teardown do rootfs efêmero. Herda o override ``KAJI_CACHE`` (lido por chamada).
+    """
+    return cache_dir() / "state"
+
+
+def build_state_path(recipe: ResolvedRecipe) -> Path:
+    """Devolve o caminho do estado de uma receita (R6.1): ``state_dir()/<chave>.json``.
+
+    A chave ``<arch>-<flavor>-<init>`` espelha a convenção de rootfs/fork-point,
+    isolando o progresso por variante. Herda o override ``KAJI_CACHE`` (lido por
+    chamada) de :func:`state_dir`.
+    """
+    return state_dir() / f"{recipe.arch}-{recipe.flavor}-{recipe.init}.json"
