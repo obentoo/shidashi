@@ -26,6 +26,25 @@ class CommandResult:
         self.stderr = stderr
 
 
+def _emit_binds(
+    binds: Sequence[tuple[Path, Path]],
+    binds_rw: Sequence[tuple[Path, Path]],
+) -> list[str]:
+    """Bloco de binds do ``systemd-nspawn``: ``--bind-ro=`` (RO) e depois ``--bind=`` (RW).
+
+    Emite ``--bind-ro=src:dst`` por bind RO na ordem declarada, seguido de
+    ``--bind=src:dst`` por bind RW na ordem declarada (todos os RW *após* os RO).
+    Único ponto de verdade do bloco — compartilhado por :func:`_nspawn_argv` e
+    :func:`_nspawn_shell_argv` para que a paridade seja estrutural (R7.2).
+    """
+    block: list[str] = []
+    for src, dst in binds:
+        block.append(f"--bind-ro={src}:{dst}")
+    for src, dst in binds_rw:
+        block.append(f"--bind={src}:{dst}")
+    return block
+
+
 def _nspawn_argv(
     rootfs: Path,
     argv: Sequence[str],
@@ -45,12 +64,28 @@ def _nspawn_argv(
     cmd: list[str] = ["systemd-nspawn", "--directory", str(rootfs)]
     if ephemeral:
         cmd.append("--ephemeral")
-    for src, dst in binds:
-        cmd.append(f"--bind-ro={src}:{dst}")
-    for src, dst in binds_rw:
-        cmd.append(f"--bind={src}:{dst}")
+    cmd.extend(_emit_binds(binds, binds_rw))
     cmd.append("--")
     cmd.extend(argv)
+    return cmd
+
+
+def _nspawn_shell_argv(
+    rootfs: Path,
+    *,
+    binds: Sequence[tuple[Path, Path]] = (),
+    binds_rw: Sequence[tuple[Path, Path]] = (),
+) -> list[str]:
+    """Monta a linha de um shell interativo ``systemd-nspawn`` (R7.1/R7.2). **Pura**.
+
+    Forma: ``["systemd-nspawn", "--directory", <rootfs>, ("--bind-ro=src:dst"),
+    ("--bind=src:dst" após os RO)]`` — o MESMO bloco de binds de
+    :func:`_nspawn_argv` (via :func:`_emit_binds`), porém **SEM** comando final
+    (sem o separador ``--`` nem argv), de modo que o nspawn caia no shell de
+    login do container. Não altera o argv de :func:`_nspawn_argv` (R8.4).
+    """
+    cmd: list[str] = ["systemd-nspawn", "--directory", str(rootfs)]
+    cmd.extend(_emit_binds(binds, binds_rw))
     return cmd
 
 
@@ -111,6 +146,20 @@ class Container:
                 proc.returncode, cmd, output=proc.stdout, stderr=proc.stderr
             )
         return result
+
+    def shell(self) -> None:
+        """Abre um shell interativo no rootfs *vivo* e devolve quando ele sai (R7.1/R7.3).
+
+        Monta a linha via :func:`_nspawn_shell_argv` (mesmos binds RO/RW do
+        build) e executa com ``subprocess.run`` de stdio **herdado** — sem
+        ``capture_output``/``text``/``check`` — para que o terminal do usuário
+        se acople ao container. Reaproveita o rootfs persistente
+        (``ephemeral=False``), então mudanças feitas no shell persistem na
+        próxima fase; retorna ao sair **sem** derrubar o rootfs.
+        """
+        subprocess.run(
+            _nspawn_shell_argv(self.rootfs, binds=self.binds, binds_rw=self.binds_rw)
+        )
 
     def __enter__(self) -> Container:
         if shutil.which("systemd-nspawn") is None:
