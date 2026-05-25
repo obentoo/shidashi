@@ -21,14 +21,18 @@ story 003 tarefa 5 roda ``emerge`` *dentro* do container (nspawn) — exige root
 não-zero) são embrulhadas em :class:`FactoryError`.
 """
 
+import dataclasses
 import os
 import re
 import subprocess
 import tarfile
+from collections.abc import Callable
+from enum import StrEnum
 from pathlib import Path
 
 import pydantic
 
+from kaji import state
 from kaji.container import Container
 from kaji.recipe import Phase, ResolvedRecipe, UseBreak
 from kaji.resolve import _atom_from_ebuild_line, _iter_atom_lines
@@ -54,19 +58,51 @@ class FactoryError(Exception):
         self.output = output
 
 
+class CheckpointDecision(StrEnum):
+    """Decisão do usuário num checkpoint pós-fase do build interativo (R2.2/R2.3).
+
+    ``StrEnum`` (não ``(str, Enum)`` — UP042) cujos membros valem o próprio nome:
+    ``CONTINUE`` segue para a próxima fase, ``STOP`` interrompe o laço sem rodar o
+    settle (R1.3), ``SHELL`` abre um shell no container e re-apresenta o MESMO
+    checkpoint. Definida aqui (e não em :mod:`kaji.factory`) para evitar import
+    circular ``factory → phases``; ``kaji.factory`` re-exporta o símbolo (Task 6).
+    """
+
+    CONTINUE = "CONTINUE"
+    STOP = "STOP"
+    SHELL = "SHELL"
+
+
+class FailureDecision(StrEnum):
+    """Decisão do usuário ante a falha de uma fase do build interativo (R3.1–R3.4).
+
+    ``StrEnum`` (UP042): ``RETRY`` re-roda a MESMA fase (mesmo argv) e ``ABORT``
+    persiste o estado e levanta :class:`FactoryError`. NÃO há opção de pular uma
+    fase falha (R3.4). Definida aqui pelo mesmo motivo de import circular que
+    :class:`CheckpointDecision`; re-exportada por :mod:`kaji.factory` (Task 6).
+    """
+
+    RETRY = "RETRY"
+    ABORT = "ABORT"
+
+
 class PhaseResult(pydantic.BaseModel):
     """Resultado da execução de uma única fase (OVERVIEW §6.4).
 
     Value object *frozen*: a fase executada, os átomos construídos
-    (:func:`parse_built_atoms` da saída do ``emerge``) e o caminho do snapshot do
+    (:func:`parse_built_atoms` da saída do ``emerge``), o caminho do snapshot do
     fork-point quando houver (OVERVIEW §6.5; ``None`` quando a fase não materializa
-    fork-point). ``arbitrary_types_allowed`` admite :class:`~pathlib.Path`.
+    fork-point) e a ``output`` crua do ``emerge --verbose`` (stdout+stderr) para o
+    driver compor o diff da fase SEM re-rodar emerge (R4.1). ``output`` é defaultada
+    a ``""`` — mantém válida a construção da story 003 que não a informa.
+    ``arbitrary_types_allowed`` admite :class:`~pathlib.Path`.
     """
 
     model_config = pydantic.ConfigDict(frozen=True, arbitrary_types_allowed=True)
     phase: Phase
     built_atoms: tuple[str, ...]
     snapshot: Path | None
+    output: str = ""
 
 
 # --- 3.1 phase_target / phase_emerge_argv (PURO) -----------------------------
@@ -469,12 +505,17 @@ def restore_fork_point(tarball: Path, rootfs: Path) -> None:
 # --- orquestração privilegiada (story 003 tarefa 5) --------------------------
 
 
-def _run_emerge(container: Container, argv: list[str], *, phase: str) -> tuple[str, ...]:
-    """Roda um ``emerge`` no container e devolve os átomos construídos (R3.4/R8.3).
+def _run_emerge(
+    container: Container, argv: list[str], *, phase: str
+) -> tuple[tuple[str, ...], str]:
+    """Roda um ``emerge`` no container; devolve ``(átomos, saída crua)`` (R3.4/R8.3).
 
     Embrulha um ``emerge`` não-zero (``CalledProcessError``) em
     :class:`FactoryError` carregando ``phase`` e a saída capturada
-    (stdout+stderr). Sucesso → :func:`parse_built_atoms` sobre stdout+stderr.
+    (stdout+stderr). No sucesso devolve a tupla de :func:`parse_built_atoms`
+    JUNTO da saída crua ``stdout+stderr`` — o driver stepwise reusa essa saída
+    para compor o diff da fase (:func:`parse_emerge_plan`/:func:`compute_phase_diff`)
+    SEM re-rodar emerge (R4.1).
     """
     try:
         result = container.run(argv, check=True)
@@ -483,7 +524,8 @@ def _run_emerge(container: Container, argv: list[str], *, phase: str) -> tuple[s
         raise FactoryError(
             f"emerge falhou na fase {phase!r}", phase=phase, output=output
         ) from exc
-    return parse_built_atoms(result.stdout + result.stderr)
+    raw_output = result.stdout + result.stderr
+    return parse_built_atoms(raw_output), raw_output
 
 
 def run_phase(
@@ -502,8 +544,8 @@ def run_phase(
     """
     write_use_break(container.rootfs, phase)
     argv = phase_emerge_argv(phase, recipe, emptytree=emptytree)
-    built = _run_emerge(container, argv, phase=phase.name)
-    return PhaseResult(phase=phase, built_atoms=built, snapshot=None)
+    built, output = _run_emerge(container, argv, phase=phase.name)
+    return PhaseResult(phase=phase, built_atoms=built, snapshot=None, output=output)
 
 
 def settle_pass(
@@ -524,10 +566,10 @@ def settle_pass(
         return PhaseResult(phase=settle, built_atoms=(), snapshot=None)
     clear_use_break(container.rootfs)
     atoms = sorted({b.atom for b in breaks})
-    built = _run_emerge(
+    built, output = _run_emerge(
         container, ["emerge", "--verbose", "--newuse", "--oneshot", *atoms], phase="settle"
     )
-    return PhaseResult(phase=settle, built_atoms=built, snapshot=None)
+    return PhaseResult(phase=settle, built_atoms=built, snapshot=None, output=output)
 
 
 def run_phases(
@@ -571,3 +613,200 @@ def run_phases(
 
     results.append(settle_pass(container, recipe, accumulated))
     return tuple(results)
+
+
+# --- 5.1/5.2 (story 004) orquestração stepwise interativa --------------------
+
+
+CheckpointHook = Callable[[str, PhaseDiff], CheckpointDecision]
+FailureHook = Callable[[str, Exception], FailureDecision]
+
+
+@dataclasses.dataclass
+class _RunState:
+    """Estado mutável acumulado ao longo das fases do build stepwise (R4.1/R6.1).
+
+    Concentra o progresso corrente — ``completed`` (nomes de fase já encerradas),
+    ``phase_diffs`` (diff por fase), ``accumulated_breaks`` (quebras de ciclo
+    acumuladas) e ``prior_atoms`` (todos os átomos construídos até aqui, base do
+    ``prior_atoms`` de :func:`compute_phase_diff`) — e sabe se persistir via
+    :meth:`persist` (``state.save_state`` módulo-qualificado; ``OSError`` propaga).
+    Isolar o estado num objeto evita capturar variáveis de laço numa closure de
+    persistência no caminho de ABORT.
+    """
+
+    recipe: ResolvedRecipe
+    state_path: Path
+    snapshot: str
+    completed: tuple[str, ...]
+    phase_diffs: tuple[PhaseDiff, ...] = ()
+    accumulated_breaks: tuple[UseBreak, ...] = ()
+    prior_atoms: tuple[str, ...] = ()
+
+    def record(self, phase: Phase, diff: PhaseDiff, built_atoms: tuple[str, ...]) -> None:
+        """Incorpora uma fase concluída: nome, diff, quebras e átomos construídos."""
+        self.completed += (phase.name,)
+        self.phase_diffs += (diff,)
+        self.accumulated_breaks += phase.use_break
+        self.prior_atoms += built_atoms
+
+    def persist(self) -> None:
+        """Persiste o :class:`~kaji.state.BuildState` corrente (R6.1; ``OSError`` propaga)."""
+        state.save_state(
+            self.state_path,
+            state.BuildState(
+                arch=self.recipe.arch,
+                flavor=self.recipe.flavor,
+                init=self.recipe.init,
+                snapshot=self.snapshot,
+                recipe_hash=state.recipe_hash(self.recipe),
+                seed_done=True,
+                completed_phases=self.completed,
+                accumulated_breaks=self.accumulated_breaks,
+                phase_diffs=self.phase_diffs,
+            ),
+        )
+
+
+def _run_phase_retrying(
+    container: Container,
+    recipe: ResolvedRecipe,
+    phase: Phase,
+    *,
+    emptytree: bool,
+    on_failure: FailureHook | None,
+    on_abort: Callable[[], None],
+) -> PhaseResult:
+    """Roda uma fase via :func:`run_phase` num laço de retry guiado por ``on_failure``.
+
+    Numa falha (``FactoryError`` — que :func:`run_phase` levanta embrulhando o
+    ``CalledProcessError`` do emerge): sem ``on_failure`` re-levanta (caminho
+    não-interativo ``--until``; o estado das fases anteriores já está persistido e
+    o rootfs é mantido → exit 1, R3.5). Com ``on_failure``, consulta
+    ``on_failure(phase.name, err)``: ``RETRY`` re-roda a MESMA fase (mesmo argv —
+    novo laço); ``ABORT`` invoca ``on_abort`` (persistir o estado das fases
+    anteriores) e levanta a :class:`FactoryError`. NUNCA pula uma fase falha (R3.4).
+    """
+    while True:
+        try:
+            return run_phase(container, recipe, phase, emptytree=emptytree)
+        except (FactoryError, subprocess.CalledProcessError) as err:
+            if on_failure is None:
+                raise
+            if on_failure(phase.name, err) is FailureDecision.RETRY:
+                continue
+            on_abort()
+            if isinstance(err, FactoryError):
+                raise
+            raise FactoryError(
+                f"build abortado na fase {phase.name!r}", phase=phase.name
+            ) from err
+
+
+def run_phases_stepwise(
+    container: Container,
+    recipe: ResolvedRecipe,
+    *,
+    emptytree: bool,
+    completed: tuple[str, ...],
+    until: str | None,
+    snapshot: str,
+    fork_points_dir: Path,
+    state_path: Path,
+    on_checkpoint: CheckpointHook | None = None,
+    on_failure: FailureHook | None = None,
+) -> tuple[PhaseResult, ...]:
+    """Orquestra as fases do build passo-a-passo, com checkpoints e retry (R1.x/R2.x/R3.x/R5.x).
+
+    PRIVILEGIADO. Itera o plano de :func:`plan_phase_run` (resume a partir de
+    ``completed``, parando após ``until`` inclusive). Por fase:
+
+    * roda-a via :func:`run_phase` num laço de retry (:func:`_run_phase_retrying`):
+      sem ``on_failure`` uma falha propaga com o estado anterior persistido e o
+      rootfs mantido (R3.5); com ``on_failure``, ``RETRY`` re-roda a mesma fase e
+      ``ABORT`` persiste e levanta (R3.1–R3.3); jamais pula (R3.4);
+    * compõe o diff via :func:`compute_phase_diff` a partir da saída capturada da
+      fase (sem re-rodar emerge), com ``prior_atoms`` = todos os átomos das fases
+      anteriores (R4.1/R4.2);
+    * captura o fork-point por-fase em :func:`phase_snapshot_path` via
+      :func:`snapshot_fork_point` (R5.1/R5.2);
+    * acumula ``completed``/``phase_diffs``/quebras e persiste o
+      :class:`~kaji.state.BuildState` via ``state.save_state`` (módulo-qualificado
+      para ser monkeypatchável; ``OSError`` propaga — um build que não consegue
+      gravar progresso falha alto);
+    * consulta ``on_checkpoint(phase.name, diff)`` (``None`` ⇒ auto-CONTINUE) e
+      honra a :class:`CheckpointDecision`: ``CONTINUE`` segue; ``STOP`` interrompe o
+      laço SEM settle (R1.3/R2.3); ``SHELL`` abre ``container.shell()`` e
+      re-apresenta o MESMO checkpoint.
+
+    Ao fim roda :func:`settle_pass` e o anexa SOMENTE quando o plano alcançou a
+    fase FINAL da receita e NÃO houve stop antecipado (R1.3): sem STOP e ``until``
+    ``None`` ou igual ao nome da última fase. Devolve a tupla de
+    :class:`PhaseResult` das fases executadas (incluindo o settle quando rodou).
+    """
+    plan = plan_phase_run(recipe, completed=completed, until=until)
+    final_phase = recipe.phases[-1].name if recipe.phases else None
+
+    run = _RunState(
+        recipe=recipe, state_path=state_path, snapshot=snapshot, completed=completed
+    )
+    results: list[PhaseResult] = []
+    stopped = False
+
+    for phase in plan:
+        result = _run_phase_retrying(
+            container,
+            recipe,
+            phase,
+            emptytree=emptytree,
+            on_failure=on_failure,
+            on_abort=run.persist,
+        )
+        results.append(result)
+
+        entries, blockers = parse_emerge_plan(result.output)
+        diff = compute_phase_diff(
+            phase.name, entries, blockers, prior_atoms=run.prior_atoms
+        )
+
+        snapshot_fork_point(
+            container.rootfs,
+            phase_snapshot_path(
+                recipe, snapshot=snapshot, phase=phase.name, fork_points_dir=fork_points_dir
+            ),
+        )
+
+        run.record(phase, diff, result.built_atoms)
+        run.persist()
+
+        if _checkpoint_decision(on_checkpoint, container, phase.name, diff) is (
+            CheckpointDecision.STOP
+        ):
+            stopped = True
+            break
+
+    reached_final = bool(plan) and plan[-1].name == final_phase
+    if reached_final and not stopped and (until is None or until == final_phase):
+        results.append(settle_pass(container, recipe, run.accumulated_breaks))
+    return tuple(results)
+
+
+def _checkpoint_decision(
+    on_checkpoint: CheckpointHook | None,
+    container: Container,
+    phase_name: str,
+    diff: PhaseDiff,
+) -> CheckpointDecision:
+    """Resolve a decisão do checkpoint pós-fase honrando ``SHELL`` (R2.2/R2.3).
+
+    Sem ``on_checkpoint`` ⇒ auto-``CONTINUE``. Caso contrário consulta o hook; numa
+    decisão ``SHELL`` abre ``container.shell()`` e re-apresenta o MESMO checkpoint
+    (re-chama o hook), repetindo até uma decisão terminal ``CONTINUE``/``STOP``.
+    """
+    if on_checkpoint is None:
+        return CheckpointDecision.CONTINUE
+    while True:
+        decision = on_checkpoint(phase_name, diff)
+        if decision is not CheckpointDecision.SHELL:
+            return decision
+        container.shell()
