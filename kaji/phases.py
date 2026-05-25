@@ -22,6 +22,7 @@ não-zero) são embrulhadas em :class:`FactoryError`.
 """
 
 import os
+import re
 import subprocess
 import tarfile
 from pathlib import Path
@@ -30,7 +31,8 @@ import pydantic
 
 from kaji.container import Container
 from kaji.recipe import Phase, ResolvedRecipe, UseBreak
-from kaji.resolve import _iter_atom_lines
+from kaji.resolve import _atom_from_ebuild_line, _iter_atom_lines
+from kaji.state import EmergePlanEntry, PhaseDiff
 
 _USE_BREAK_FILE = ("etc", "portage", "package.use", "zz-kaji-use-break")
 
@@ -198,6 +200,139 @@ def trunk_phase_names(recipe: ResolvedRecipe) -> tuple[str, ...]:
             break
         names.append(phase.name)
     return tuple(names)
+
+
+# --- 3.1 (story 004) parse_emerge_plan (PURO) --------------------------------
+
+
+def _clean_use_flag(token: str) -> str:
+    """Normaliza um token de USE-delta ao nome puro da flag. Pura.
+
+    Remove os parênteses externos, o sinal ``-`` de desabilitação e os marcadores
+    de mudança ``%``/``*`` (em qualquer combinação), devolvendo só o nome da flag
+    (ex.: ``(sound%)`` → ``sound``; ``-wayland*`` → ``wayland``;
+    ``(rsync-verify%*)`` → ``rsync-verify``).
+    """
+    return token.strip("()").lstrip("-").rstrip("%*")
+
+
+def _use_changes_from_segment(stripped: str) -> tuple[str, ...]:
+    """Extrai as USE-deltas do segmento ``USE="..."`` de uma linha ``[ebuild]``. Pura.
+
+    Lê apenas o conteúdo entre aspas do primeiro ``USE="..."`` e devolve as flags
+    *alteradas* — as marcadas por ``()``/``%``/``*`` (default mudou, mudou desde a
+    última build, asterisco). Flags sem marcador (ex.: ``X``, ``vulkan``) são
+    estado corrente, não delta, e são ignoradas. Sem segmento ``USE`` ou sem
+    flags marcadas → tupla vazia.
+    """
+    match = re.search(r'USE="([^"]*)"', stripped)
+    if match is None:
+        return ()
+    changes: list[str] = []
+    for token in match.group(1).split():
+        if "(" in token or "%" in token or "*" in token:
+            flag = _clean_use_flag(token)
+            if flag:
+                changes.append(flag)
+    return tuple(changes)
+
+
+def parse_emerge_plan(
+    output: str,
+) -> tuple[tuple[EmergePlanEntry, ...], tuple[str, ...]]:
+    """Parseia uma saída ``emerge --verbose`` em entradas de plano + blockers (R4.1/R4.3). Pura.
+
+    Caminha as linhas ``[ebuild ...]`` reusando o núcleo de casamento compartilhado
+    :func:`kaji.resolve._atom_from_ebuild_line` (mesmo átomo de
+    :func:`parse_built_atoms`), lendo de cada uma: a coluna de operação (o token
+    logo após ``[ebuild`` — ``N``/``R``/``rR``/``U``/``D``/``r``/``NS``/``UD``) em
+    :attr:`~kaji.state.EmergePlanEntry.op` e as USE-deltas do segmento
+    ``USE="..."`` (:func:`_use_changes_from_segment`) em ``use_changes``. Linhas
+    ``[blocks B ...]`` são coletadas (cruas, stripadas) na segunda tupla. Saída sem
+    merge (ex.: ``"Nothing to merge"``) → ``((), ())``. NÃO faz I/O nem dispara
+    emerge — opera sobre a saída já capturada.
+    """
+    entries: list[EmergePlanEntry] = []
+    blockers: list[str] = []
+    for line in output.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("[blocks"):
+            blockers.append(stripped)
+            continue
+        atom = _atom_from_ebuild_line(stripped)
+        if atom is None:
+            continue
+        # coluna de op = tokens entre ``[ebuild`` e ``]`` (ex.: ``N``, ``rR``);
+        # _atom_from_ebuild_line já garantiu o prefixo e a presença do ``]``.
+        op_column = stripped[len("[ebuild") :].split("]", 1)[0].split()
+        if not op_column:
+            continue
+        entries.append(
+            EmergePlanEntry(
+                atom=atom,
+                op=op_column[0],
+                use_changes=_use_changes_from_segment(stripped),
+            )
+        )
+    return tuple(entries), tuple(blockers)
+
+
+# --- 3.2 (story 004) compute_phase_diff (PURO) -------------------------------
+
+
+def _category_pn(atom: str) -> str:
+    """Reduz ``cat/pkg-version`` ao identificador ``cat/pkg`` (version-stripped). Pura.
+
+    Remove o sufixo de versão do nome do pacote — tudo a partir do último ``-``
+    seguido de dígito (cobre revisões ``-rN``, que são parte da versão). Assim
+    ``media-libs/mesa-24.0.7`` e ``media-libs/mesa-24.0.5`` colapsam ambos em
+    ``media-libs/mesa``, permitindo casar rebuilds por category/PN
+    independentemente da versão. Átomos sem componente de versão são devolvidos
+    inalterados.
+    """
+    return re.sub(r"-\d.*$", "", atom)
+
+
+def compute_phase_diff(
+    phase: str,
+    plan_entries: tuple[EmergePlanEntry, ...],
+    blockers: tuple[str, ...],
+    *,
+    prior_atoms: tuple[str, ...],
+) -> PhaseDiff:
+    """Classifica o plano de uma fase num :class:`~kaji.state.PhaseDiff` (R4.1/R4.2). Pura.
+
+    A partir das entradas de :func:`parse_emerge_plan` compõe o diff da fase
+    ``phase``:
+
+    * ``built`` — os átomos das entradas, na ordem;
+    * ``unexpected_rebuilds`` — entradas com op ``R``/``rR`` cujo identificador
+      category/PN (:func:`_category_pn`, *version-stripped*) já consta em
+      ``prior_atoms`` (uma fase reconstruindo o que uma fase anterior já
+      construiu, R4.2) — registra o átomo da entrada (com versão);
+    * ``use_changes`` — todas as flags das entradas que carregam ``use_changes``,
+      achatadas na ordem;
+    * ``blockers`` — passthrough do argumento ``blockers``.
+
+    NÃO faz I/O nem dispara emerge.
+    """
+    prior_pn = {_category_pn(atom) for atom in prior_atoms}
+    built = tuple(entry.atom for entry in plan_entries)
+    unexpected_rebuilds = tuple(
+        entry.atom
+        for entry in plan_entries
+        if entry.op in ("R", "rR") and _category_pn(entry.atom) in prior_pn
+    )
+    use_changes = tuple(
+        flag for entry in plan_entries for flag in entry.use_changes
+    )
+    return PhaseDiff(
+        phase=phase,
+        built=built,
+        unexpected_rebuilds=unexpected_rebuilds,
+        use_changes=use_changes,
+        blockers=blockers,
+    )
 
 
 # --- 2.1 (story 004) checkpoint_sequence / plan_phase_run (PURO) -------------

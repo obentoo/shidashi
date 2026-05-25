@@ -144,6 +144,26 @@ def bind_repos(repos_conf_dir: Path) -> list[tuple[Path, Path]]:
 # --- emerge output parsing (R5.2) — puro -------------------------------------
 
 
+def _atom_from_ebuild_line(stripped: str) -> str | None:
+    """Extrai ``cat/pkg-version`` de uma linha ``[ebuild ...]`` já stripada. Pura.
+
+    Núcleo compartilhado do matcher ``[ebuild ...]`` (R5.2 / R3.4 / R4.1): exige
+    que ``stripped`` comece com ``[ebuild``, toma o primeiro token após o ``]`` e
+    descarta o sufixo de slot/repo (``:slot::repo``). Devolve ``None`` quando a
+    linha não casa (não começa com ``[ebuild``, sem ``]`` ou sem token). Reusado
+    por :func:`_iter_atom_lines` e por :func:`kaji.phases.parse_emerge_plan`.
+    """
+    if not stripped.startswith("[ebuild"):
+        return None
+    after = stripped.split("]", 1)
+    if len(after) != 2:
+        return None
+    tokens = after[1].split()
+    if not tokens:
+        return None
+    return tokens[0].split(":", 1)[0]
+
+
 def _iter_atom_lines(emerge_output: str) -> Iterator[str]:
     """Itera os átomos ``cat/pkg-version`` das linhas ``[ebuild ...]``. Pura.
 
@@ -151,19 +171,13 @@ def _iter_atom_lines(emerge_output: str) -> Iterator[str]:
     ``[ebuild`` toma o primeiro token após o ``]`` e descarta o sufixo de
     slot/repo (``:slot::repo``), devolvendo ``cat/pkg-version``. Consumido tanto
     por :func:`parse_packages` (resolve) quanto por
-    :func:`kaji.phases.parse_built_atoms`.
+    :func:`kaji.phases.parse_built_atoms`. Delega o casamento de linha a
+    :func:`_atom_from_ebuild_line`.
     """
     for line in emerge_output.splitlines():
-        stripped = line.strip()
-        if not stripped.startswith("[ebuild"):
-            continue
-        after = stripped.split("]", 1)
-        if len(after) != 2:
-            continue
-        tokens = after[1].split()
-        if not tokens:
-            continue
-        yield tokens[0].split(":", 1)[0]
+        atom = _atom_from_ebuild_line(line.strip())
+        if atom is not None:
+            yield atom
 
 
 def parse_packages(emerge_output: str) -> tuple[str, ...]:
