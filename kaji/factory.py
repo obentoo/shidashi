@@ -21,14 +21,35 @@ from pathlib import Path
 
 import pydantic
 
-from kaji import config
+from kaji import config, state
 from kaji.container import Container
-from kaji.phases import FactoryError, fork_point, restore_fork_point, run_phases, trunk_phase_names
+from kaji.phases import (
+    CheckpointDecision,
+    CheckpointHook,
+    FactoryError,
+    FailureDecision,
+    FailureHook,
+    PhaseResult,
+    fork_point,
+    latest_resumable,
+    restore_fork_point,
+    run_phases,
+    run_phases_stepwise,
+    trunk_phase_names,
+)
 from kaji.recipe import ResolvedRecipe
 from kaji.resolve import apply_portage, bind_repos
-from kaji.seed import extract_stage3, fetch_stage3, load_pointer
+from kaji.seed import Stage3Pointer, extract_stage3, fetch_stage3, load_pointer
+from kaji.state import PhaseDiff
 
-__all__ = ["Factory", "FactoryError", "FactoryResult"]
+__all__ = [
+    "CheckpointDecision",
+    "Factory",
+    "FactoryError",
+    "FactoryResult",
+    "FailureDecision",
+    "StaleStateError",
+]
 
 # Caminhos fixos do container, definidos pelo ``make.conf`` base (OVERVIEW §6.3):
 # a Factory escolhe os diretórios *host-side* (sob ``cache_dir()``) e os bind-monta
@@ -47,6 +68,13 @@ class FactoryResult(pydantic.BaseModel):
     ``pkgdir`` produzido, os ``built_atoms`` compilados, os nomes das ``phases``
     executadas, o ``fork_point`` materializado/reusado (``None`` quando não há),
     ``fork_point_reused`` (reuso do tronco) e os ``settle_atoms`` do settle-pass.
+
+    Os campos do build interativo (story 004) são **defaultados** para manter a
+    construção da story 003 (sem eles) válida apesar do ``extra="forbid"`` (R8.2):
+    ``stopped_at`` é o rótulo onde um stepwise parou cedo (``--until``/STOP) ou
+    ``None`` quando rodou até o fim; ``phase_diffs`` o histórico de
+    :class:`~kaji.state.PhaseDiff` por fase e ``completed_phases`` os nomes das
+    fases já encerradas — ambos lidos do estado persistido pelo stepwise.
     """
 
     model_config = pydantic.ConfigDict(frozen=True, extra="forbid", arbitrary_types_allowed=True)
@@ -56,6 +84,95 @@ class FactoryResult(pydantic.BaseModel):
     fork_point: Path | None
     fork_point_reused: bool
     settle_atoms: tuple[str, ...]
+    stopped_at: str | None = None
+    phase_diffs: tuple[PhaseDiff, ...] = ()
+    completed_phases: tuple[str, ...] = ()
+
+
+class StaleStateError(FactoryError):
+    """Estado de build persistido obsoleto frente ao snapshot/receita atuais (R6.3).
+
+    Levantada por :meth:`Factory.build_stepwise` quando :func:`kaji.state.is_stale`
+    acusa divergência (snapshot do stage3 ou hash da receita mudou) e nem
+    ``--reset`` nem ``--force-resume`` foram passados — o stepwise NUNCA prossegue
+    silenciosamente sobre progresso obsoleto. Subclasse de :class:`FactoryError`
+    (carrega a mesma ``phase``/``output``); a CLI (Task 7) a captura para emitir um
+    prompt/diagnóstico e sair com código 1, distinguindo-a de uma falha de emerge.
+    """
+
+
+def _require_root() -> None:
+    """Guarda de privilégio (R8.1): levanta :class:`FactoryError` se não-root.
+
+    Primeira coisa que :meth:`Factory.build` e :meth:`Factory.build_stepwise`
+    chamam — **antes** de qualquer fetch/extração/I/O de estado. O Kaji nunca
+    escala privilégios sozinho; a mensagem é acionável e menciona ``root``.
+    """
+    if os.geteuid() != 0:
+        raise FactoryError(
+            "kaji factory requer root (systemd-nspawn + extração de stage3); "
+            "rode como root — o Kaji não escala privilégios sozinho"
+        )
+
+
+def _fresh_seed(rootfs: Path, pointer: Stage3Pointer, *, download: bool) -> None:
+    """Seeda um rootfs **fresco** a partir do stage3 do ``pointer`` (R1.4/R8.2).
+
+    :func:`kaji.seed.fetch_stage3` (cache de :func:`kaji.config.cache_dir`) seguido
+    de :func:`kaji.seed.extract_stage3` (que já cria ``rootfs``). É o corpo EXATO
+    do ramo fresh original de :meth:`Factory.build` — sem ``rmtree``/``mkdir`` extra,
+    para que o comportamento one-shot não mude (R8.2). Sub-passo PRIVILEGIADO
+    compartilhado pelo caminho fresh de :func:`_seed_or_restore` e pelo caso "sem
+    estado" de :meth:`Factory.build_stepwise`; ``fetch_stage3``/``extract_stage3``
+    são globais do módulo (monkeypatcháveis nos testes).
+    """
+    tarball = fetch_stage3(pointer, cache_dir=config.cache_dir(), download=download)
+    extract_stage3(tarball, rootfs)
+
+
+def _seed_or_restore(
+    recipe: ResolvedRecipe,
+    rootfs: Path,
+    pointer: Stage3Pointer,
+    *,
+    snapshot: str,
+    fork_points_dir: Path,
+    download: bool,
+) -> tuple[str | None, Path, bool]:
+    """Decide entre reusar o fork-point do tronco e um seed fresco (R5.1/R5.2/R8.2).
+
+    Bloco *seed-or-restore* extraído de :meth:`Factory.build` SEM mudança de
+    comportamento (R8.2): se :func:`kaji.phases.fork_point` acha o tronco pinado
+    para ``snapshot``, restaura-o num rootfs limpo e devolve
+    ``(resume_at, fork_point_path, True)`` onde ``resume_at`` é a última fase do
+    tronco; senão faz :func:`_fresh_seed` e devolve ``(None, <chave do tronco>,
+    False)`` — o caminho fresco compartilhado com o stepwise. PRIVILEGIADO.
+    """
+    existing = fork_point(recipe, snapshot=snapshot, fork_points_dir=fork_points_dir)
+    if existing is not None:
+        shutil.rmtree(rootfs, ignore_errors=True)
+        rootfs.mkdir(parents=True, exist_ok=True)
+        restore_fork_point(existing, rootfs)
+        trunk = trunk_phase_names(recipe)
+        resume_at = trunk[-1] if trunk else None
+        return resume_at, existing, True
+    _fresh_seed(rootfs, pointer, download=download)
+    fork_point_path = fork_points_dir / (
+        f"{recipe.arch}-{recipe.flavor}-{recipe.init}-{snapshot}.tar"
+    )
+    return None, fork_point_path, False
+
+
+def _prepare_portage(rootfs: Path, recipe: ResolvedRecipe) -> None:
+    """Sobrepõe os layers de portage e instala os sets da receita (R6.4/R8.2).
+
+    Bloco *portage-apply* extraído de :meth:`Factory.build` SEM mudança de
+    comportamento (R8.2): :func:`kaji.resolve.apply_portage` (layers sob
+    :func:`kaji.config.variants_dir`) seguido de :meth:`Factory._install_sets`.
+    Compartilhado por :meth:`Factory.build` e :meth:`Factory.build_stepwise`.
+    """
+    apply_portage(rootfs, recipe, variants_dir=config.variants_dir())
+    Factory._install_sets(rootfs, recipe)
 
 
 def _build_binds(
@@ -121,11 +238,7 @@ class Factory:
            ``emerge`` já sobe como :class:`FactoryError` de ``run_phase``/
            ``settle_pass`` e propaga.
         """
-        if os.geteuid() != 0:
-            raise FactoryError(
-                "kaji factory requer root (systemd-nspawn + extração de stage3); "
-                "rode como root — o Kaji não escala privilégios sozinho"
-            )
+        _require_root()
 
         recipe = self.recipe
         rootfs = config.build_root() / f"{recipe.arch}-{recipe.flavor}-{recipe.init}"
@@ -134,26 +247,16 @@ class Factory:
         snapshot = pointer.snapshot
         fork_points_dir = config.fork_points_dir()
 
-        existing = fork_point(recipe, snapshot=snapshot, fork_points_dir=fork_points_dir)
-        if existing is not None:
-            shutil.rmtree(rootfs, ignore_errors=True)
-            rootfs.mkdir(parents=True, exist_ok=True)
-            restore_fork_point(existing, rootfs)
-            trunk = trunk_phase_names(recipe)
-            resume_at = trunk[-1] if trunk else None
-            fork_point_path: Path | None = existing
-            fork_point_reused = True
-        else:
-            tarball = fetch_stage3(pointer, cache_dir=config.cache_dir(), download=download)
-            extract_stage3(tarball, rootfs)
-            resume_at = None
-            fork_point_path = fork_points_dir / (
-                f"{recipe.arch}-{recipe.flavor}-{recipe.init}-{snapshot}.tar"
-            )
-            fork_point_reused = False
+        resume_at, fork_point_path, fork_point_reused = _seed_or_restore(
+            recipe,
+            rootfs,
+            pointer,
+            snapshot=snapshot,
+            fork_points_dir=fork_points_dir,
+            download=download,
+        )
 
-        apply_portage(rootfs, recipe, variants_dir=config.variants_dir())
-        self._install_sets(rootfs, recipe)
+        _prepare_portage(rootfs, recipe)
 
         binds_ro, binds_rw = _build_binds(
             recipe, pkgdir=self.pkgdir, repos_conf_dir=rootfs / "etc" / "portage" / "repos.conf"
@@ -197,6 +300,269 @@ class Factory:
         if not keep_rootfs:
             shutil.rmtree(rootfs, ignore_errors=True)
         return result
+
+    def build_stepwise(
+        self,
+        *,
+        until: str | None = None,
+        interactive: bool = False,
+        emptytree: bool = True,
+        download: bool = True,
+        reset: bool = False,
+        force_resume: bool = False,
+        on_checkpoint: CheckpointHook | None = None,
+        on_failure: FailureHook | None = None,
+    ) -> FactoryResult:
+        """Constrói os binpkgs passo-a-passo, com resume/checkpoints (OVERVIEW §6, R1.x/R2.x/R6.x).
+
+        Variante interativa/resumível de :meth:`build`. Ordem:
+
+        1. **Guarda de root** (R8.1, :func:`_require_root`) — PRIMEIRA coisa, antes
+           de qualquer fetch/extração/I/O de estado.
+        2. Resolve ``snapshot`` (pointer do stage3) e ``recipe_hash``; o caminho do
+           estado persistido é :func:`kaji.config.build_state_path`.
+        3. ``reset`` (R6.4): limpa o estado persistido e remove o rootfs, recomeçando
+           do zero. Senão carrega o estado: se existe e está obsoleto
+           (:func:`kaji.state.is_stale`) e nem ``force_resume`` → levanta
+           :class:`StaleStateError` (R6.3) — NUNCA prossegue sobre progresso stale.
+        4. **Seed-or-restore** em três casos: (a) há fases completadas →
+           :func:`kaji.phases.latest_resumable` + :func:`restore_fork_point` (se o
+           tarball some/corrompe, levanta :class:`FactoryError` e MANTÉM o rootfs);
+           (b) ``seed_done`` mas sem fases (ex.: ``--until seed`` anterior) → reusa o
+           rootfs persistente AS-IS (R1.4); (c) sem estado/``reset`` → seed fresco
+           (:func:`_fresh_seed`), marca ``seed_done`` e persiste; se ``interactive``,
+           checkpoint ``"seed"`` honrando CONTINUE/STOP/SHELL (R2.5).
+        5. :func:`_prepare_portage` (layers + sets).
+        6. Abre um :class:`Container` **não-efêmero** persistente (binds RO/RW).
+        7. :func:`kaji.phases.run_phases_stepwise` (resume, checkpoints, retry,
+           snapshot por fase, persistência por fase).
+        8. Monta o :class:`FactoryResult` estendido (``stopped_at``/``phase_diffs``/
+           ``completed_phases`` lidos do estado persistido).
+        9. **Teardown: NUNCA auto-deleta o rootfs** — stop, conclusão e falha TODOS
+           o mantêm (R1.6); só ``reset`` (passo 3) o remove. Uma falha de ``emerge``
+           sobe como :class:`FactoryError` (estado já persistido pelo stepwise,
+           rootfs mantido) e propaga → CLI exit 1.
+        """
+        _require_root()
+
+        recipe = self.recipe
+        rootfs = config.build_root() / f"{recipe.arch}-{recipe.flavor}-{recipe.init}"
+        pointer = load_pointer(recipe.init, seeds_dir=config.seeds_dir())
+        snapshot = pointer.snapshot
+        fork_points_dir = config.fork_points_dir()
+        state_path = config.build_state_path(recipe)
+        rh = state.recipe_hash(recipe)
+
+        if reset:
+            state.clear_state(state_path)
+            shutil.rmtree(rootfs, ignore_errors=True)
+            loaded: state.BuildState | None = None
+        else:
+            loaded = state.load_state(state_path)
+            if (
+                loaded is not None
+                and state.is_stale(loaded, snapshot=snapshot, recipe_hash=rh)
+                and not force_resume
+            ):
+                raise StaleStateError(
+                    f"estado de build obsoleto para {recipe.arch}-{recipe.flavor}-"
+                    f"{recipe.init} (snapshot/receita mudaram); rode com --reset para "
+                    "recomeçar do zero ou --force-resume para retomar assim mesmo"
+                )
+
+        completed = loaded.completed_phases if loaded is not None else ()
+        seed_done = loaded.seed_done if loaded is not None else False
+
+        stopped_at_seed = self._seed_or_restore_stepwise(
+            recipe,
+            rootfs,
+            pointer,
+            snapshot=snapshot,
+            recipe_hash=rh,
+            fork_points_dir=fork_points_dir,
+            state_path=state_path,
+            completed=completed,
+            seed_done=seed_done,
+            interactive=interactive,
+            download=download,
+            on_checkpoint=on_checkpoint,
+        )
+        if stopped_at_seed:
+            return self._assemble_result(state_path, stopped_at="seed", results=())
+
+        _prepare_portage(rootfs, recipe)
+
+        binds_ro, binds_rw = _build_binds(
+            recipe, pkgdir=self.pkgdir, repos_conf_dir=rootfs / "etc" / "portage" / "repos.conf"
+        )
+
+        # Teardown rule (R1.6): o stepwise NUNCA auto-deleta o rootfs — stop,
+        # conclusão e falha TODOS o mantêm; só ``reset`` (acima) o remove. Por isso
+        # NÃO há cláusula de remoção aqui, e uma falha de emerge propaga com o
+        # estado já persistido por run_phases_stepwise e o rootfs intacto (R3.5).
+        with Container(rootfs, ephemeral=False, binds=binds_ro, binds_rw=binds_rw) as container:
+            results = run_phases_stepwise(
+                container,
+                recipe,
+                emptytree=emptytree,
+                completed=completed,
+                until=until,
+                snapshot=snapshot,
+                fork_points_dir=fork_points_dir,
+                state_path=state_path,
+                on_checkpoint=on_checkpoint,
+                on_failure=on_failure,
+            )
+
+        return self._assemble_result(
+            state_path, stopped_at=self._stopped_label(results, until=until), results=results
+        )
+
+    def _seed_or_restore_stepwise(
+        self,
+        recipe: ResolvedRecipe,
+        rootfs: Path,
+        pointer: Stage3Pointer,
+        *,
+        snapshot: str,
+        recipe_hash: str,
+        fork_points_dir: Path,
+        state_path: Path,
+        completed: tuple[str, ...],
+        seed_done: bool,
+        interactive: bool,
+        download: bool,
+        on_checkpoint: CheckpointHook | None,
+    ) -> bool:
+        """Resolve o seed-or-restore do stepwise nos três casos (R1.4/R2.5/R5.2/R6.4).
+
+        Devolve ``True`` se um checkpoint ``"seed"`` interativo pediu STOP (o
+        chamador retorna cedo, rootfs mantido); ``False`` caso o build deva seguir.
+
+        * (a) ``completed`` não-vazio → :func:`kaji.phases.latest_resumable` e, se há
+          snapshot por-fase, :func:`restore_fork_point` num rootfs limpo. Se o
+          restore levanta (tarball sumiu/corrompido — ``latest_resumable`` só sondou
+          ``.exists()``), embrulha em :class:`FactoryError` e MANTÉM o rootfs
+          (Reviewer #8) — não segue com rootfs indefinido.
+        * (b) ``seed_done`` sem fases completadas → reusa o rootfs persistente AS-IS,
+          sem re-fetch/extract e sem restore (R1.4 — Reviewer #5).
+        * (c) sem estado → :func:`_fresh_seed`, marca ``seed_done`` e persiste; se
+          ``interactive`` apresenta o checkpoint ``"seed"`` (CONTINUE/STOP/SHELL,
+          R2.5) — no seed o Container ainda não está aberto, então SHELL abre um
+          shell transitório sobre o rootfs persistente.
+        """
+        if completed:
+            phase, path = latest_resumable(
+                recipe, snapshot=snapshot, completed=completed, fork_points_dir=fork_points_dir
+            )
+            if path is not None:
+                shutil.rmtree(rootfs, ignore_errors=True)
+                rootfs.mkdir(parents=True, exist_ok=True)
+                try:
+                    restore_fork_point(path, rootfs)
+                except Exception as err:  # tarball sumiu/corrompido entre o probe e o uso
+                    raise FactoryError(
+                        f"falha ao restaurar o snapshot da fase {phase!r} de {path}: {err}; "
+                        "o rootfs foi mantido — rode com --reset para recomeçar do zero"
+                    ) from err
+            return False
+
+        if seed_done:
+            # (b) seed já feito por um --until seed anterior, sem fases completadas:
+            # reusa o rootfs persistente como está — não re-seeda nem restaura (R1.4).
+            return False
+
+        # (c) sem estado: seed fresco e persiste o marco seed_done.
+        _fresh_seed(rootfs, pointer, download=download)
+        state.save_state(
+            state_path,
+            state.BuildState(
+                arch=recipe.arch,
+                flavor=recipe.flavor,
+                init=recipe.init,
+                snapshot=snapshot,
+                recipe_hash=recipe_hash,
+                seed_done=True,
+            ),
+        )
+        if interactive:
+            return self._seed_checkpoint(rootfs, recipe, on_checkpoint)
+        return False
+
+    @staticmethod
+    def _seed_checkpoint(
+        rootfs: Path, recipe: ResolvedRecipe, on_checkpoint: CheckpointHook | None
+    ) -> bool:
+        """Apresenta o checkpoint ``"seed"`` e devolve ``True`` se o usuário pediu STOP (R2.5).
+
+        Sem ``on_checkpoint`` ⇒ auto-CONTINUE (devolve ``False``). Caso contrário
+        consulta o hook com um :class:`~kaji.state.PhaseDiff` base (fase ``"seed"``,
+        sem átomos): CONTINUE segue (``False``); STOP interrompe (``True``); SHELL
+        abre um shell transitório sobre o rootfs persistente (o Container do build
+        ainda não está aberto no seed) e re-apresenta o MESMO checkpoint.
+        """
+        if on_checkpoint is None:
+            return False
+        diff = PhaseDiff(phase="seed", built=())
+        while True:
+            decision = on_checkpoint("seed", diff)
+            if decision is CheckpointDecision.CONTINUE:
+                return False
+            if decision is CheckpointDecision.STOP:
+                return True
+            Container(rootfs, ephemeral=False).shell()
+
+    def _assemble_result(
+        self, state_path: Path, *, stopped_at: str | None, results: tuple[PhaseResult, ...]
+    ) -> FactoryResult:
+        """Monta o :class:`FactoryResult` estendido lendo o estado persistido (R6.1).
+
+        ``phase_diffs``/``completed_phases`` vêm do :class:`~kaji.state.BuildState`
+        relido (a fonte de verdade do progresso, persistido por fase); na ausência
+        de estado caem para ``()``. ``built_atoms``/``settle_atoms``/``phases`` são
+        derivados das fases efetivamente executadas em ``results`` (o settle só
+        consta quando rodou), espelhando :meth:`build`.
+        """
+        persisted = state.load_state(state_path)
+        phase_diffs = persisted.phase_diffs if persisted is not None else ()
+        completed_phases = persisted.completed_phases if persisted is not None else ()
+
+        phase_names = tuple(r.phase.name for r in results if r.phase.name != "settle")
+        built_atoms: tuple[str, ...] = ()
+        settle_atoms: tuple[str, ...] = ()
+        for r in results:
+            if r.phase.name == "settle":
+                settle_atoms = r.built_atoms
+            else:
+                built_atoms += r.built_atoms
+
+        return FactoryResult(
+            pkgdir=self.pkgdir,
+            built_atoms=built_atoms,
+            phases=phase_names,
+            fork_point=None,
+            fork_point_reused=False,
+            settle_atoms=settle_atoms,
+            stopped_at=stopped_at,
+            phase_diffs=phase_diffs,
+            completed_phases=completed_phases,
+        )
+
+    @staticmethod
+    def _stopped_label(results: tuple[PhaseResult, ...], *, until: str | None) -> str | None:
+        """Rótulo onde o stepwise parou: última fase quando parou cedo, senão ``None``.
+
+        ``None`` (rodou até o fim) quando o settle-pass rodou — :func:`run_phases_stepwise`
+        só anexa o settle ao alcançar a fase FINAL sem STOP antecipado. Caso contrário
+        (``--until`` curto ou STOP) devolve o nome da última fase real executada, ou
+        ``until`` quando nenhuma fase rodou (tudo já estava completado).
+        """
+        if any(r.phase.name == "settle" for r in results):
+            return None
+        real = [r.phase.name for r in results if r.phase.name != "settle"]
+        if real:
+            return real[-1]
+        return until
 
     @staticmethod
     def _install_sets(rootfs: Path, recipe: ResolvedRecipe) -> None:
