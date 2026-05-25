@@ -163,6 +163,15 @@ def parse_built_atoms(emerge_output: str) -> tuple[str, ...]:
 # --- 3.4 decisão de fork-point (PURO, só sonda o filesystem) -----------------
 
 
+def _variant_key(recipe: ResolvedRecipe) -> str:
+    """Prefixo de chave por variante: ``<arch>-<flavor>-<init>`` (R5.1/R5.2). Puro.
+
+    Componente comum às chaves de fork-point (tronco e por-fase) e ao estado de
+    build (:func:`kaji.config.build_state_path`), isolando o build por variante.
+    """
+    return f"{recipe.arch}-{recipe.flavor}-{recipe.init}"
+
+
 def fork_point(
     recipe: ResolvedRecipe, *, snapshot: str, fork_points_dir: Path
 ) -> Path | None:
@@ -172,7 +181,7 @@ def fork_point(
     ``fork_points_dir``. Devolve o caminho se o arquivo existir, senão ``None``.
     Apenas sonda o filesystem — não cria, extrai nem escreve nada.
     """
-    candidate = fork_points_dir / f"{recipe.arch}-{recipe.flavor}-{recipe.init}-{snapshot}.tar"
+    candidate = fork_points_dir / f"{_variant_key(recipe)}-{snapshot}.tar"
     return candidate if candidate.exists() else None
 
 
@@ -189,6 +198,98 @@ def trunk_phase_names(recipe: ResolvedRecipe) -> tuple[str, ...]:
             break
         names.append(phase.name)
     return tuple(names)
+
+
+# --- 2.1 (story 004) checkpoint_sequence / plan_phase_run (PURO) -------------
+
+
+def checkpoint_sequence(recipe: ResolvedRecipe) -> tuple[str, ...]:
+    """Sequência de checkpoints do build: ``seed`` + fases + ``settle`` (R2.5). Puro.
+
+    O ``seed`` é o checkpoint 0 (o stage3 seedado, antes de qualquer fase) e
+    ``settle`` o checkpoint final (settle-pass de reconciliação do USE). Ambos são
+    rótulos de checkpoint/``--until`` apenas — NUNCA membros de
+    ``completed_phases``/``phase_diffs``/snapshots por fase, que rastreiam só as
+    fases reais da receita.
+    """
+    return ("seed", *(p.name for p in recipe.phases), "settle")
+
+
+def plan_phase_run(
+    recipe: ResolvedRecipe, *, completed: tuple[str, ...], until: str | None
+) -> tuple[Phase, ...]:
+    """Plano de fases a rodar do ponto de resume até ``until`` (R1.1/R1.2/R1.4/R1.5). Puro.
+
+    Parte de ``recipe.phases``, descarta toda fase cujo nome está em ``completed``
+    (resume pula o que já foi construído) e, quando ``until`` não é ``None``, para
+    **após** a fase nomeada por ``until`` (inclusive). ``until="seed"`` ⇒ plano
+    vazio (apenas seed, nenhuma fase). ``until`` inválido — fora de
+    ``{"seed"} ∪ {nomes de fase}`` — levanta :class:`ValueError` cuja mensagem
+    **lista os nomes válidos** (incluindo ``"seed"``); a CLI mapeia esse erro para
+    exit 1. ``seed`` e ``settle`` são rótulos de checkpoint, não fases: nunca
+    entram em ``completed`` nem no plano devolvido.
+    """
+    phase_names = tuple(p.name for p in recipe.phases)
+    valid = ("seed", *phase_names)
+    if until is not None and until not in valid:
+        raise ValueError(
+            f"--until {until!r} inválido; valores válidos: {', '.join(valid)}"
+        )
+    plan: list[Phase] = []
+    for phase in recipe.phases:
+        if phase.name in completed:
+            continue
+        plan.append(phase)
+        if phase.name == until:
+            break
+    if until == "seed":
+        return ()
+    return tuple(plan)
+
+
+# --- 2.2 (story 004) phase_snapshot_path / latest_resumable (PURO) -----------
+
+
+def phase_snapshot_path(
+    recipe: ResolvedRecipe, *, snapshot: str, phase: str, fork_points_dir: Path
+) -> Path:
+    """Caminho do snapshot por-fase sob ``fork_points_dir`` (R5.1/R5.2). Puro.
+
+    A chave é ``<arch>-<flavor>-<init>-<snapshot>-<phase>.tar`` — DISTINTA da chave
+    do fork-point do tronco da story 003 (:func:`fork_point`, que omite ``phase``):
+    cada fase completada materializa seu próprio snapshot para resume granular. Não
+    sonda nem escreve nada — apenas compõe o caminho.
+    """
+    return fork_points_dir / f"{_variant_key(recipe)}-{snapshot}-{phase}.tar"
+
+
+def latest_resumable(
+    recipe: ResolvedRecipe,
+    *,
+    snapshot: str,
+    completed: tuple[str, ...],
+    fork_points_dir: Path,
+) -> tuple[str | None, Path | None]:
+    """Última fase completada com snapshot em disco e seu caminho (R5.2). Puro.
+
+    Caminha as fases completadas na ordem de ``recipe.phases`` (não na ordem de
+    ``completed``) e devolve a ÚLTIMA cujo :func:`phase_snapshot_path` existe no
+    disco, junto do caminho — o ponto de restauração do resume. Se nenhuma fase
+    completada tem snapshot em disco devolve ``(None, None)``. Apenas sonda o
+    filesystem.
+    """
+    found: tuple[str, Path] | None = None
+    for phase in recipe.phases:
+        if phase.name not in completed:
+            continue
+        candidate = phase_snapshot_path(
+            recipe, snapshot=snapshot, phase=phase.name, fork_points_dir=fork_points_dir
+        )
+        if candidate.exists():
+            found = (phase.name, candidate)
+    if found is None:
+        return (None, None)
+    return found
 
 
 # --- 4.1 snapshot / restore do fork-point (tarball, I/O em disco) ------------
@@ -316,7 +417,7 @@ def run_phases(
     """
     trunk = trunk_phase_names(recipe)
     last_trunk = trunk[-1] if trunk else None
-    fork_key = f"{recipe.arch}-{recipe.flavor}-{recipe.init}-{snapshot}.tar"
+    fork_key = f"{_variant_key(recipe)}-{snapshot}.tar"
 
     skipping = resume_at is not None
     results: list[PhaseResult] = []
