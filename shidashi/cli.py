@@ -429,7 +429,7 @@ def factory(
         Path | None,
         typer.Option(
             "--work-dir",
-            help="Raiz de trabalho: cache+scratch sob <DIR> (vence SHIDASHI_CACHE/SHIDASHI_SCRATCH).",
+            help="Raiz de trabalho: cache+scratch sob <DIR> (vence SHIDASHI_CACHE/_SCRATCH).",
         ),
     ] = None,
 ) -> None:
