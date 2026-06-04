@@ -7,12 +7,13 @@ Mantém-se livre de qualquer acoplamento com Portage: não importa
 """
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict
 
 type UseToken = str  # uma USE flag, opcionalmente negada: "qt6", "-gtk"
+type SeedSource = Literal["download", "catalyst"]  # fonte do stage3 semente (story 005)
 
 _STRICT = ConfigDict(frozen=True, extra="forbid")
 
@@ -61,6 +62,9 @@ class ArchFragment(BaseModel):
     cpu_flags_x86: tuple[str, ...]
     runnable_on_build_host: bool = False
     tier: int = 2
+    # fonte do stage3 semente (story 005): "download" baixa o genérico (default,
+    # retrocompatível); "catalyst" gera um stage3 com -march do alvo via Catalyst.
+    seed_source: SeedSource = "download"
 
 
 class FlavorFragment(BaseModel):
@@ -102,6 +106,9 @@ class ResolvedRecipe(BaseModel):
     sets: tuple[str, ...]
     phases: tuple[Phase, ...]
     portage_layers: tuple[str, ...]
+    # default "download" mantém retrocompatível quem constrói ResolvedRecipe
+    # diretamente; merge() sempre o preenche explicitamente a partir do arch.
+    seed_source: SeedSource = "download"
 
 
 class RecipeConflictError(Exception):
@@ -255,6 +262,7 @@ def merge(
             f"flavor/{flavor.flavor}",
             f"init/{init.init}",
         ),
+        seed_source=arch.seed_source,
     )
 
 

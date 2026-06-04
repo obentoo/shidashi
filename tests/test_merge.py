@@ -14,6 +14,7 @@ importado de forma tolerante para não abortar a coleção enquanto não existe.
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
 
 from shidashi.recipe import (
     ArchFragment,
@@ -25,6 +26,7 @@ from shidashi.recipe import (
     UsePrefer,
     merge,
 )
+from shidashi.state import recipe_hash
 from tests._pending import try_import
 
 UseBreak: Any = try_import("shidashi.recipe", "UseBreak")
@@ -57,7 +59,11 @@ def make_arch(
     cpu_flags_x86: tuple[str, ...] = ("sse2", "avx"),
     runnable_on_build_host: bool = True,
     tier: int = 1,
+    seed_source: str | None = None,
 ) -> ArchFragment:
+    # seed_source omitido (None) exercita o default do modelo (R1.1); quando
+    # fornecido, é passado para validar valores explícitos/ inválidos.
+    extra = {} if seed_source is None else {"seed_source": seed_source}
     return ArchFragment(
         arch=arch,
         common_flags=common_flags,
@@ -66,6 +72,7 @@ def make_arch(
         cpu_flags_x86=cpu_flags_x86,
         runnable_on_build_host=runnable_on_build_host,
         tier=tier,
+        **extra,
     )
 
 
@@ -147,6 +154,35 @@ def test_arch_knobs_copied_through() -> None:
     assert r.cpu_flags_x86 == ("sse2", "avx", "avx2")
     assert r.runnable_on_build_host is False
     assert r.tier == 2
+
+
+# --- seed_source (R1.1–R1.4, story 005) ---------------------------------------
+
+
+def test_seed_source_defaults_to_download() -> None:
+    # arch sem seed_source -> default "download" propagado à receita resolvida.
+    r = merge(make_base(), make_arch(), make_flavor(), make_init())
+    assert r.seed_source == "download"
+
+
+def test_seed_source_catalyst_surfaces_on_resolved() -> None:
+    r = merge(make_base(), make_arch(seed_source="catalyst"), make_flavor(), make_init())
+    assert r.seed_source == "catalyst"
+
+
+def test_seed_source_invalid_value_rejected() -> None:
+    # qualquer valor fora de {download, catalyst} falha no load do fragmento.
+    with pytest.raises(ValidationError):
+        make_arch(seed_source="metro")
+
+
+def test_seed_source_changes_recipe_hash() -> None:
+    # incluir seed_source na receita resolvida sensibiliza o recipe_hash, de modo
+    # que estado persistido anterior é detectado como obsoleto (is_stale).
+    base, flavor, init = make_base(), make_flavor(), make_init()
+    h_download = recipe_hash(merge(base, make_arch(seed_source="download"), flavor, init))
+    h_catalyst = recipe_hash(merge(base, make_arch(seed_source="catalyst"), flavor, init))
+    assert h_download != h_catalyst
 
 
 # --- portage_layers (R2.7) ----------------------------------------------------
