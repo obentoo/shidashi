@@ -12,6 +12,9 @@ build/
 # epic story drafts (planning scratch, not tracked)
 .epic/stories/**/.draft/
 
+# estado local do agente (Claude Code) — config/memória de sessão, não do projeto
+.claude/
+
 # artefatos de build do Shidashi
 /work/
 *.iso
