@@ -155,9 +155,7 @@ def use_break_lines(phase: Phase) -> tuple[str, ...]:
     sinal é ``""`` (habilita) quando ``enable`` é verdadeiro e ``"-"``
     (desabilita) caso contrário. Fase sem quebras → tupla vazia.
     """
-    return tuple(
-        f"{ub.atom} {'' if ub.enable else '-'}{ub.flag}" for ub in phase.use_break
-    )
+    return tuple(f"{ub.atom} {'' if ub.enable else '-'}{ub.flag}" for ub in phase.use_break)
 
 
 def write_use_break(rootfs: Path, phase: Phase) -> Path | None:
@@ -210,9 +208,7 @@ def _variant_key(recipe: ResolvedRecipe) -> str:
     return f"{recipe.arch}-{recipe.flavor}-{recipe.init}"
 
 
-def fork_point(
-    recipe: ResolvedRecipe, *, snapshot: str, fork_points_dir: Path
-) -> Path | None:
+def fork_point(recipe: ResolvedRecipe, *, snapshot: str, fork_points_dir: Path) -> Path | None:
     """Devolve o snapshot do tronco a reusar antes da fase de desktop (R5.1/R5.2).
 
     A chave do tarball é ``<arch>-<flavor>-<init>-<snapshot>.tar`` sob
@@ -359,9 +355,7 @@ def compute_phase_diff(
         for entry in plan_entries
         if entry.op in ("R", "rR") and _category_pn(entry.atom) in prior_pn
     )
-    use_changes = tuple(
-        flag for entry in plan_entries for flag in entry.use_changes
-    )
+    use_changes = tuple(flag for entry in plan_entries for flag in entry.use_changes)
     return PhaseDiff(
         phase=phase,
         built=built,
@@ -403,9 +397,7 @@ def plan_phase_run(
     phase_names = tuple(p.name for p in recipe.phases)
     valid = ("seed", *phase_names)
     if until is not None and until not in valid:
-        raise ValueError(
-            f"--until {until!r} inválido; valores válidos: {', '.join(valid)}"
-        )
+        raise ValueError(f"--until {until!r} inválido; valores válidos: {', '.join(valid)}")
     plan: list[Phase] = []
     for phase in recipe.phases:
         if phase.name in completed:
@@ -521,9 +513,7 @@ def _run_emerge(
         result = container.run(argv, check=True)
     except subprocess.CalledProcessError as exc:
         output = (exc.output or "") + (exc.stderr or "")
-        raise FactoryError(
-            f"emerge falhou na fase {phase!r}", phase=phase, output=output
-        ) from exc
+        raise FactoryError(f"emerge falhou na fase {phase!r}", phase=phase, output=output) from exc
     raw_output = result.stdout + result.stderr
     return parse_built_atoms(raw_output), raw_output
 
@@ -698,9 +688,7 @@ def _run_phase_retrying(
             on_abort()
             if isinstance(err, FactoryError):
                 raise
-            raise FactoryError(
-                f"build abortado na fase {phase.name!r}", phase=phase.name
-            ) from err
+            raise FactoryError(f"build abortado na fase {phase.name!r}", phase=phase.name) from err
 
 
 def run_phases_stepwise(
@@ -747,9 +735,7 @@ def run_phases_stepwise(
     plan = plan_phase_run(recipe, completed=completed, until=until)
     final_phase = recipe.phases[-1].name if recipe.phases else None
 
-    run = _RunState(
-        recipe=recipe, state_path=state_path, snapshot=snapshot, completed=completed
-    )
+    run = _RunState(recipe=recipe, state_path=state_path, snapshot=snapshot, completed=completed)
     results: list[PhaseResult] = []
     stopped = False
 
@@ -765,9 +751,7 @@ def run_phases_stepwise(
         results.append(result)
 
         entries, blockers = parse_emerge_plan(result.output)
-        diff = compute_phase_diff(
-            phase.name, entries, blockers, prior_atoms=run.prior_atoms
-        )
+        diff = compute_phase_diff(phase.name, entries, blockers, prior_atoms=run.prior_atoms)
 
         snapshot_fork_point(
             container.rootfs,

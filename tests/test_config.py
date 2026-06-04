@@ -133,9 +133,7 @@ def test_recipe_path_unknown_name_raises_with_available(variants_tree: Path) -> 
 # --- catalyst paths (R3.5, story 005) ----------------------------------------
 
 
-def test_catalyst_dir_is_arch_partitioned(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_catalyst_dir_is_arch_partitioned(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # default sob cache_dir()/catalyst/<arch>; particionado por arch como pkgdir.
     monkeypatch.delenv("SHIDASHI_CATALYST_DIR", raising=False)
     monkeypatch.setenv("SHIDASHI_CACHE", str(tmp_path))
@@ -150,8 +148,6 @@ def test_catalyst_dir_honors_dedicated_override(
     assert catalyst_dir("znver5") == tmp_path / "cat" / "znver5"
 
 
-def test_catalyst_spec_dir_under_scratch(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_catalyst_spec_dir_under_scratch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SHIDASHI_SCRATCH", str(tmp_path))
     assert catalyst_spec_dir("znver5") == tmp_path / "catalyst" / "znver5"

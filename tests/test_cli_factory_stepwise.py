@@ -130,13 +130,9 @@ def test_factory_help_lists_new_flags() -> None:
 # --- R2.6 --step sem TTY → exit 1 --------------------------------------------
 
 
-def test_step_without_tty_exits_1(
-    monkeypatch: pytest.MonkeyPatch, variants_tree: Path
-) -> None:
+def test_step_without_tty_exits_1(monkeypatch: pytest.MonkeyPatch, variants_tree: Path) -> None:
     _force_tty(monkeypatch, False)
-    monkeypatch.setattr(
-        cli, "Factory", _fake_factory(lambda **_k: _fake_result()), raising=False
-    )
+    monkeypatch.setattr(cli, "Factory", _fake_factory(lambda **_k: _fake_result()), raising=False)
     result = runner.invoke(app, ["factory", "v3", "minimal", "systemd", "--step"])
     assert result.exit_code == 1
     combined = result.stdout + (result.stderr or "")
@@ -151,9 +147,7 @@ def test_step_with_json_format_exits_1(
     monkeypatch: pytest.MonkeyPatch, variants_tree: Path
 ) -> None:
     _force_tty(monkeypatch, True)
-    monkeypatch.setattr(
-        cli, "Factory", _fake_factory(lambda **_k: _fake_result()), raising=False
-    )
+    monkeypatch.setattr(cli, "Factory", _fake_factory(lambda **_k: _fake_result()), raising=False)
     result = runner.invoke(
         app, ["factory", "v3", "minimal", "systemd", "--step", "--format", "json"]
     )
@@ -175,16 +169,12 @@ def test_until_propagates_to_build_stepwise(
         return _fake_result()
 
     monkeypatch.setattr(cli, "Factory", _fake_factory(_spy), raising=False)
-    result = runner.invoke(
-        app, ["factory", "v3", "minimal", "systemd", "--until", "rebuild"]
-    )
+    result = runner.invoke(app, ["factory", "v3", "minimal", "systemd", "--until", "rebuild"])
     assert result.exit_code == 0, result.stdout
     assert captured.get("until") == "rebuild"
 
 
-def test_step_sets_interactive_true(
-    monkeypatch: pytest.MonkeyPatch, variants_tree: Path
-) -> None:
+def test_step_sets_interactive_true(monkeypatch: pytest.MonkeyPatch, variants_tree: Path) -> None:
     _force_tty(monkeypatch, True)
     captured: dict[str, object] = {}
 
@@ -201,16 +191,12 @@ def test_step_sets_interactive_true(
 # --- R1.5 --until inválido → exit 1 (ValueError de plan_phase_run) -----------
 
 
-def test_until_invalid_phase_exits_1(
-    monkeypatch: pytest.MonkeyPatch, variants_tree: Path
-) -> None:
+def test_until_invalid_phase_exits_1(monkeypatch: pytest.MonkeyPatch, variants_tree: Path) -> None:
     def _raise(**_k: object) -> Any:
         raise ValueError("fase inválida 'bogus'; válidas: seed, rebuild, graphics, apps")
 
     monkeypatch.setattr(cli, "Factory", _fake_factory(_raise), raising=False)
-    result = runner.invoke(
-        app, ["factory", "v3", "minimal", "systemd", "--until", "bogus"]
-    )
+    result = runner.invoke(app, ["factory", "v3", "minimal", "systemd", "--until", "bogus"])
     assert result.exit_code == 1
     combined = result.stdout + (result.stderr or "")
     assert "Traceback" not in combined
@@ -224,26 +210,22 @@ def test_clean_stop_exits_0_and_reports_stopped_at(
     monkeypatch: pytest.MonkeyPatch, variants_tree: Path
 ) -> None:
     monkeypatch.setattr(
-        cli, "Factory", _fake_factory(lambda **_k: _fake_result(stopped_at="rebuild")),
+        cli,
+        "Factory",
+        _fake_factory(lambda **_k: _fake_result(stopped_at="rebuild")),
         raising=False,
     )
-    result = runner.invoke(
-        app, ["factory", "v3", "minimal", "systemd", "--until", "rebuild"]
-    )
+    result = runner.invoke(app, ["factory", "v3", "minimal", "systemd", "--until", "rebuild"])
     assert result.exit_code == 0, result.stdout
     assert "rebuild" in result.stdout
 
 
-def test_abort_factory_error_exits_1(
-    monkeypatch: pytest.MonkeyPatch, variants_tree: Path
-) -> None:
+def test_abort_factory_error_exits_1(monkeypatch: pytest.MonkeyPatch, variants_tree: Path) -> None:
     def _raise(**_k: object) -> Any:
         raise FactoryError("abortado pelo usuário", phase="rebuild", output="!!! build break")
 
     monkeypatch.setattr(cli, "Factory", _fake_factory(_raise), raising=False)
-    result = runner.invoke(
-        app, ["factory", "v3", "minimal", "systemd", "--until", "rebuild"]
-    )
+    result = runner.invoke(app, ["factory", "v3", "minimal", "systemd", "--until", "rebuild"])
     assert result.exit_code == 1
     combined = result.stdout + (result.stderr or "")
     assert "Traceback" not in combined

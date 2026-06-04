@@ -157,9 +157,7 @@ class Container:
         (``ephemeral=False``), então mudanças feitas no shell persistem na
         próxima fase; retorna ao sair **sem** derrubar o rootfs.
         """
-        subprocess.run(
-            _nspawn_shell_argv(self.rootfs, binds=self.binds, binds_rw=self.binds_rw)
-        )
+        subprocess.run(_nspawn_shell_argv(self.rootfs, binds=self.binds, binds_rw=self.binds_rw))
 
     def __enter__(self) -> Container:
         if shutil.which("systemd-nspawn") is None:

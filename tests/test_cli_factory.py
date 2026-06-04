@@ -136,9 +136,7 @@ def test_factory_help_shows_options() -> None:
 # --- sucesso pretty exit 0 (R1.1) --------------------------------------------
 
 
-def test_factory_success_pretty_exit0(
-    monkeypatch: pytest.MonkeyPatch, variants_tree: Path
-) -> None:
+def test_factory_success_pretty_exit0(monkeypatch: pytest.MonkeyPatch, variants_tree: Path) -> None:
     monkeypatch.setattr(cli, "Factory", _fake_factory(lambda **_k: _fake_result()), raising=False)
     result = runner.invoke(app, ["factory", "v3", "minimal", "systemd"])
     assert result.exit_code == 0, result.stdout
@@ -193,9 +191,7 @@ def test_factory_seed_error_exit1(monkeypatch: pytest.MonkeyPatch, variants_tree
     assert "sha256" in combined.lower()
 
 
-def test_factory_resolve_error_exit1(
-    monkeypatch: pytest.MonkeyPatch, variants_tree: Path
-) -> None:
+def test_factory_resolve_error_exit1(monkeypatch: pytest.MonkeyPatch, variants_tree: Path) -> None:
     def _raise(**_k: object) -> Any:
         raise ResolveError("repo 'bentoo' ausente; rode emerge --sync")
 
@@ -241,9 +237,7 @@ def test_factory_pkgdir_override_used(
 
     monkeypatch.setattr(cli, "Factory", _capture_init, raising=False)
     override = tmp_path / "custom-pkgdir"
-    result = runner.invoke(
-        app, ["factory", "v3", "minimal", "systemd", "--pkgdir", str(override)]
-    )
+    result = runner.invoke(app, ["factory", "v3", "minimal", "systemd", "--pkgdir", str(override)])
     assert result.exit_code == 0, result.stdout
     assert seen["pkgdir"] == override
 
@@ -269,9 +263,7 @@ def test_apply_work_dir_none_is_noop(monkeypatch: pytest.MonkeyPatch) -> None:
     assert os.environ["SHIDASHI_CACHE"] == "/preexistente"
 
 
-def test_apply_work_dir_overrides_env(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_apply_work_dir_overrides_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("SHIDASHI_CACHE", "/antigo")  # env do usuário
     cli._apply_work_dir(tmp_path / "w")  # flag vence
     assert os.environ["SHIDASHI_CACHE"] == str(tmp_path / "w" / "cache")
@@ -293,9 +285,7 @@ def test_factory_work_dir_derives_pkgdir(
 
     monkeypatch.setattr(cli, "Factory", _capture_init, raising=False)
     work = tmp_path / "work"
-    result = runner.invoke(
-        app, ["factory", "v3", "minimal", "systemd", "--work-dir", str(work)]
-    )
+    result = runner.invoke(app, ["factory", "v3", "minimal", "systemd", "--work-dir", str(work)])
     assert result.exit_code == 0, result.stdout
     # sem --pkgdir, o binhost deriva do cache sob o work-dir
     assert seen["pkgdir"] == work / "cache" / "binpkgs" / "v3"
@@ -317,8 +307,7 @@ def test_factory_pkgdir_beats_work_dir(
     override = tmp_path / "custom-pkgdir"
     result = runner.invoke(
         app,
-        ["factory", "v3", "minimal", "systemd",
-         "--work-dir", str(work), "--pkgdir", str(override)],
+        ["factory", "v3", "minimal", "systemd", "--work-dir", str(work), "--pkgdir", str(override)],
     )
     assert result.exit_code == 0, result.stdout
     assert seen["pkgdir"] == override  # --pkgdir vence o cache derivado do work-dir

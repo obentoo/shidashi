@@ -83,9 +83,7 @@ def test_build_root_honors_scratch_env_per_call(
 # --- pkgdir partitions per arch ----------------------------------------------
 
 
-def test_pkgdir_under_cache_binpkgs_arch(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_pkgdir_under_cache_binpkgs_arch(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("SHIDASHI_CACHE", str(tmp_path / "cache"))
     assert config.pkgdir("v3") == tmp_path / "cache" / "binpkgs" / "v3"
 
@@ -115,9 +113,7 @@ def test_fork_points_dir_under_cache(monkeypatch: pytest.MonkeyPatch, tmp_path: 
     assert config.fork_points_dir() == tmp_path / "cache" / "fork-points"
 
 
-def test_cache_helpers_read_env_per_call(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_cache_helpers_read_env_per_call(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("SHIDASHI_CACHE", str(tmp_path / "a"))
     assert config.fork_points_dir() == tmp_path / "a" / "fork-points"
     monkeypatch.setenv("SHIDASHI_CACHE", str(tmp_path / "b"))

@@ -63,7 +63,10 @@ def make_arch(
 ) -> ArchFragment:
     # seed_source omitido (None) exercita o default do modelo (R1.1); quando
     # fornecido, é passado para validar valores explícitos/ inválidos.
-    extra = {} if seed_source is None else {"seed_source": seed_source}
+    # dict[str, Any] (não str): permite que o **spread carregue valores inválidos
+    # como "metro" sem violar o campo Literal — a rejeição fica com o pydantic
+    # (test_seed_source_invalid_value_rejected).
+    extra: dict[str, Any] = {} if seed_source is None else {"seed_source": seed_source}
     return ArchFragment(
         arch=arch,
         common_flags=common_flags,
@@ -313,9 +316,7 @@ def _ffmpeg_break() -> Any:
 
 def test_merge_injects_flavor_use_break_onto_matching_phase() -> None:
     brk = _ffmpeg_break()
-    base = make_base(
-        phases=(Phase(name="rebuild"), Phase(name="graphics"), Phase(name="desktop"))
-    )
+    base = make_base(phases=(Phase(name="rebuild"), Phase(name="graphics"), Phase(name="desktop")))
     flavor = make_flavor(flavor="kde", sets=("@kde",), use_break={"graphics": (brk,)})
     r = merge(base, make_arch(), flavor, make_init(phases_prepend=()))
     by_name = {p.name: p for p in r.phases}
@@ -334,9 +335,7 @@ def test_merge_minimal_empty_map_leaves_all_phases_without_breaks() -> None:
 
 def test_merge_injection_respects_desktop_omit_and_phase_order() -> None:
     brk = _ffmpeg_break()
-    base = make_base(
-        phases=(Phase(name="rebuild"), Phase(name="graphics"), Phase(name="desktop"))
-    )
+    base = make_base(phases=(Phase(name="rebuild"), Phase(name="graphics"), Phase(name="desktop")))
     flavor = make_flavor(flavor="minimal", sets=(), use_break={"desktop": (brk,)})
     r = merge(base, make_arch(), flavor, make_init(phases_prepend=(Phase(name="early"),)))
     assert tuple(p.name for p in r.phases) == ("early", "rebuild", "graphics")
@@ -346,9 +345,7 @@ def test_merge_injection_respects_desktop_omit_and_phase_order() -> None:
 
 def test_merge_injection_preserves_phase_order_with_break() -> None:
     brk = _ffmpeg_break()
-    base = make_base(
-        phases=(Phase(name="rebuild"), Phase(name="graphics"), Phase(name="desktop"))
-    )
+    base = make_base(phases=(Phase(name="rebuild"), Phase(name="graphics"), Phase(name="desktop")))
     flavor = make_flavor(flavor="kde", sets=("@kde",), use_break={"graphics": (brk,)})
     r = merge(base, make_arch(), flavor, make_init(phases_prepend=(Phase(name="early"),)))
     assert tuple(p.name for p in r.phases) == ("early", "rebuild", "graphics", "desktop")

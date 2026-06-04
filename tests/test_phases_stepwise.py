@@ -234,9 +234,7 @@ def test_compute_phase_diff_flags_unexpected_rebuild() -> None:
         EmergePlanEntry(atom="media-libs/mesa-24.0.7", op="R"),
         EmergePlanEntry(atom="media-video/ffmpeg-6.1.1", op="N"),
     )
-    diff = compute_phase_diff(
-        "graphics", entries, (), prior_atoms=("media-libs/mesa-24.0.5",)
-    )
+    diff = compute_phase_diff("graphics", entries, (), prior_atoms=("media-libs/mesa-24.0.5",))
     # mesa foi construída numa phase anterior (mesma category/PN) e agora rebuild → unexpected
     assert any("mesa" in a for a in diff.unexpected_rebuilds)
     assert diff.phase == "graphics"
@@ -250,9 +248,7 @@ def test_compute_phase_diff_clean_phase_has_empty_rebuilds() -> None:
 
 
 def test_compute_phase_diff_surfaces_use_changes_and_blockers() -> None:
-    entries = (
-        EmergePlanEntry(atom="media-libs/libsdl2-2.30.5", op="N", use_changes=("sound",)),
-    )
+    entries = (EmergePlanEntry(atom="media-libs/libsdl2-2.30.5", op="N", use_changes=("sound",)),)
     diff = compute_phase_diff(
         "graphics", entries, ("<sys-libs/foo-2 blocking bar",), prior_atoms=()
     )

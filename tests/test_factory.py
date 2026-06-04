@@ -27,7 +27,7 @@ from typing import Any
 import pytest
 
 from shidashi import factory, phases
-from shidashi.recipe import Phase, ResolvedRecipe, ResolvedUse
+from shidashi.recipe import Phase, ResolvedRecipe, ResolvedUse, SeedSource
 from tests._pending import try_import
 
 Factory: Any = try_import("shidashi.factory", "Factory")
@@ -45,7 +45,7 @@ def _recipe(
     flavor: str = "kde",
     sets: tuple[str, ...] = ("graphics", "bentoo-apps", "kde"),
     phases_: tuple[Phase, ...] = (),
-    seed_source: str = "download",
+    seed_source: SeedSource = "download",
 ) -> ResolvedRecipe:
     return ResolvedRecipe(
         arch="v3",
@@ -105,9 +105,9 @@ def test_factory_result_is_frozen_and_typed() -> None:
 
 def test_factory_error_carries_phase_and_output() -> None:
     err = FactoryError("emerge failed", phase="graphics", output="!!! error log")
-    assert isinstance(err, Exception)
     assert err.phase == "graphics"
     assert err.output == "!!! error log"
+    assert isinstance(err, Exception)  # narrow só ao final: err é Any (try_import)
 
 
 # --- 6.1 _build_binds --------------------------------------------------------

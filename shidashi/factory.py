@@ -291,9 +291,7 @@ class Factory:
 
         keep_rootfs = keep
         try:
-            with Container(
-                rootfs, ephemeral=False, binds=binds_ro, binds_rw=binds_rw
-            ) as container:
+            with Container(rootfs, ephemeral=False, binds=binds_ro, binds_rw=binds_rw) as container:
                 results = run_phases(
                     container,
                     recipe,

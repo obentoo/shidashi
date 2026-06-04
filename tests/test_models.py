@@ -64,9 +64,7 @@ VALID: dict[Any, dict[str, Any]] = {
         "use_prefer": {"add": ["qt6"], "drop": ["-gtk"]},
         "sets": ["@desktop"],
         "override_ok": True,
-        "use_break": {
-            "graphics": [{"atom": "media-video/ffmpeg", "flag": "sdl", "enable": False}]
-        },
+        "use_break": {"graphics": [{"atom": "media-video/ffmpeg", "flag": "sdl", "enable": False}]},
     },
     InitFragment: {
         "init": "openrc",

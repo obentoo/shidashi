@@ -7,18 +7,19 @@ isolada noutro helper e testada por monkeypatch.
 """
 
 import hashlib
+import shutil
 from pathlib import Path
+from typing import TypedDict
 
 import pytest
 
 import shidashi.catalyst as cat
 from shidashi.catalyst import CatalystError, build_stage3_catalyst, render_specs
+from shidashi.recipe import ResolvedRecipe, merge
 from tests.test_merge import make_arch, make_base, make_flavor, make_init
 
-from shidashi.recipe import merge  # isort: skip
 
-
-def _resolved(*, arch: str = "znver5", seed_source: str = "catalyst"):
+def _resolved(*, arch: str = "znver5", seed_source: str = "catalyst") -> ResolvedRecipe:
     return merge(
         make_base(),
         make_arch(arch=arch, seed_source=seed_source),
@@ -40,8 +41,21 @@ def _parse(spec_text: str) -> dict[str, str]:
 
 
 _CONFDIR = Path("variants/arch/znver5/portage")
-_KW = dict(seed_subpath="amd64/stage3-amd64-nomultilib-systemd-20260524T170105Z",
-           version_stamp="20260524T170105Z", snapshot_treeish="abc123", confdir=_CONFDIR)
+
+
+class _SpecKW(TypedDict):
+    seed_subpath: str
+    version_stamp: str
+    snapshot_treeish: str
+    confdir: Path
+
+
+_KW: _SpecKW = {
+    "seed_subpath": "amd64/stage3-amd64-nomultilib-systemd-20260524T170105Z",
+    "version_stamp": "20260524T170105Z",
+    "snapshot_treeish": "abc123",
+    "confdir": _CONFDIR,
+}
 
 
 def test_render_specs_three_targets_in_order() -> None:
@@ -95,14 +109,22 @@ _SEED = Path("/var/cache/shidashi/stage3-amd64-nomultilib-systemd-20260524T17010
 _STAMP = "20260524T170105Z"
 
 
-def _build_kw(tmp_path: Path) -> dict:
-    return dict(
-        version_stamp=_STAMP,
-        snapshot_treeish="abc123",
-        confdir=Path("variants/arch/znver5/portage"),
-        scratch_dir=tmp_path / "scratch",
-        output_dir=tmp_path / "out",
-    )
+class _BuildKW(TypedDict):
+    version_stamp: str
+    snapshot_treeish: str
+    confdir: Path
+    scratch_dir: Path
+    output_dir: Path
+
+
+def _build_kw(tmp_path: Path) -> _BuildKW:
+    return {
+        "version_stamp": _STAMP,
+        "snapshot_treeish": "abc123",
+        "confdir": Path("variants/arch/znver5/portage"),
+        "scratch_dir": tmp_path / "scratch",
+        "output_dir": tmp_path / "out",
+    }
 
 
 def _stage3_name() -> str:
@@ -113,7 +135,7 @@ def test_build_invokes_catalyst_per_stage_in_order(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # R3.2 — um catalyst por spec, na ordem stage1→2→3; R3.5/R4.1 retorna tarball+sha.
-    monkeypatch.setattr(cat.shutil, "which", lambda _: "/usr/bin/catalyst")
+    monkeypatch.setattr(shutil, "which", lambda _: "/usr/bin/catalyst")
     out = tmp_path / "out"
     calls: list[str] = []
 
@@ -133,7 +155,7 @@ def test_build_missing_catalyst_raises_before_building(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # R3.3 — catalyst ausente no PATH falha ANTES de qualquer build.
-    monkeypatch.setattr(cat.shutil, "which", lambda _: None)
+    monkeypatch.setattr(shutil, "which", lambda _: None)
     calls: list[str] = []
     monkeypatch.setattr(cat, "_run_catalyst", lambda s: calls.append(s.name))
     with pytest.raises(CatalystError, match="catalyst"):
@@ -141,11 +163,9 @@ def test_build_missing_catalyst_raises_before_building(
     assert calls == []
 
 
-def test_build_aborts_at_failing_stage(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_build_aborts_at_failing_stage(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # R3.4 — saída não-zero aborta no stage que falhou; stage3 não é tentado.
-    monkeypatch.setattr(cat.shutil, "which", lambda _: "/usr/bin/catalyst")
+    monkeypatch.setattr(shutil, "which", lambda _: "/usr/bin/catalyst")
     seen: list[str] = []
 
     def fake_run(spec: Path) -> None:
@@ -159,11 +179,9 @@ def test_build_aborts_at_failing_stage(
     assert seen == ["stage1.spec", "stage2.spec"]
 
 
-def test_build_missing_output_raises(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_build_missing_output_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # catalyst "rodou" mas não produziu o stage3 esperado → erro claro.
-    monkeypatch.setattr(cat.shutil, "which", lambda _: "/usr/bin/catalyst")
+    monkeypatch.setattr(shutil, "which", lambda _: "/usr/bin/catalyst")
     monkeypatch.setattr(cat, "_run_catalyst", lambda s: None)
     with pytest.raises(CatalystError, match="não produziu|stage3"):
         build_stage3_catalyst(_resolved(), _SEED, **_build_kw(tmp_path))
@@ -173,7 +191,7 @@ def test_build_cached_sha512_mismatch_raises(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # R4.3 — tarball reusado cujo sha512 difere do pin persistido → falha.
-    monkeypatch.setattr(cat.shutil, "which", lambda _: "/usr/bin/catalyst")
+    monkeypatch.setattr(shutil, "which", lambda _: "/usr/bin/catalyst")
     out = tmp_path / "out"
 
     def fake_run(spec: Path) -> None:
@@ -182,6 +200,4 @@ def test_build_cached_sha512_mismatch_raises(
 
     monkeypatch.setattr(cat, "_run_catalyst", fake_run)
     with pytest.raises(CatalystError, match="sha512"):
-        build_stage3_catalyst(
-            _resolved(), _SEED, expected_sha512="deadbeef", **_build_kw(tmp_path)
-        )
+        build_stage3_catalyst(_resolved(), _SEED, expected_sha512="deadbeef", **_build_kw(tmp_path))
