@@ -1,7 +1,8 @@
 """CLI do Shidashi (Typer) — caminho ``recipe`` livre de Portage (R7.3).
 
 Expõe o app raiz ``shidashi`` com o subgrupo ``recipe`` (``show``/``validate``/
-``list``) e os stubs de Fase 0 (``factory``/``assemble``/``release``). Os
+``list``), os comandos reais ``pretend`` (resolução), ``factory`` (build de
+binpkgs) e ``assemble`` (montagem de ISO) e o stub ``release`` (Fase 4). Os
 comandos ``recipe`` apenas resolvem caminhos (``shidashi.config``), carregam e
 fundem fragmentos (``shidashi.recipe``) e renderizam — sem jamais importar ou
 acionar ``shidashi.portage_api``.
@@ -12,7 +13,9 @@ amigável e convertidos em ``typer.Exit(1)`` — nenhum traceback escapa ao
 usuário.
 """
 
+import json
 import os
+import subprocess
 import sys
 from enum import StrEnum
 from pathlib import Path
@@ -25,6 +28,7 @@ from rich.prompt import Prompt
 from rich.table import Table
 
 from shidashi import config
+from shidashi.assembler import Assembler, AssemblerError
 from shidashi.factory import (
     CheckpointDecision,
     Factory,
@@ -33,6 +37,7 @@ from shidashi.factory import (
     FailureDecision,
     StaleStateError,
 )
+from shidashi.image import ImageError
 from shidashi.recipe import (
     RecipeConflictError,
     ResolvedRecipe,
@@ -455,9 +460,15 @@ def factory(
 
     if not step and until is None and not reset and not force_resume:
         _run_factory_oneshot(
-            resolved, pkgdir, arch, flavor, init,
-            output_format=output_format, emptytree=emptytree,
-            download=not no_download, keep=keep,
+            resolved,
+            pkgdir,
+            arch,
+            flavor,
+            init,
+            output_format=output_format,
+            emptytree=emptytree,
+            download=not no_download,
+            keep=keep,
         )
         return
 
@@ -475,10 +486,18 @@ def factory(
         raise typer.Exit(1)
 
     _run_factory_stepwise(
-        resolved, pkgdir, arch, flavor, init,
-        output_format=output_format, emptytree=emptytree,
-        download=not no_download, until=until, step=step,
-        reset=reset, force_resume=force_resume,
+        resolved,
+        pkgdir,
+        arch,
+        flavor,
+        init,
+        output_format=output_format,
+        emptytree=emptytree,
+        download=not no_download,
+        until=until,
+        step=step,
+        reset=reset,
+        force_resume=force_resume,
     )
 
 
@@ -496,9 +515,7 @@ def _run_factory_oneshot(
 ) -> None:
     """Caminho one-shot da story 003 — comportamento byte-a-byte inalterado (R8.2)."""
     try:
-        result = Factory(resolved, pkgdir).build(
-            emptytree=emptytree, download=download, keep=keep
-        )
+        result = Factory(resolved, pkgdir).build(emptytree=emptytree, download=download, keep=keep)
     except FactoryError as err:
         if err.phase:
             _err_console.print(f"[bold red]falha na fase[/bold red] {err.phase}: {err}")
@@ -553,9 +570,15 @@ def _run_factory_stepwise(
     while True:
         try:
             result = _invoke_stepwise(
-                factory_obj, until=until, interactive=step, emptytree=emptytree,
-                download=download, reset=reset, force_resume=force_resume,
-                on_checkpoint=on_checkpoint, on_failure=on_failure,
+                factory_obj,
+                until=until,
+                interactive=step,
+                emptytree=emptytree,
+                download=download,
+                reset=reset,
+                force_resume=force_resume,
+                on_checkpoint=on_checkpoint,
+                on_failure=on_failure,
             )
             break
         except StaleStateError as err:
@@ -635,11 +658,104 @@ def _resolve_stale_state(err: StaleStateError) -> tuple[bool, bool]:
 _STUB_MSG = "não implementado na Fase 0"
 
 
+def _render_assemble_pretty(iso: Path, arch: str, flavor: str, init: str) -> None:
+    """Renderiza o resultado do ``assemble`` como tabela ``rich`` (significativo num TTY)."""
+    console = Console()
+    table = Table(title=f"ISO {arch} × {flavor} × {init}")
+    table.add_column("campo", style="bold cyan")
+    table.add_column("valor")
+    table.add_row("iso", str(iso))
+    console.print(table)
+
+
 @app.command("assemble")
-def assemble(arch: str, flavor: str, init: str) -> None:
-    """Stub: montagem de ISO (não implementado na Fase 0) (R6.2)."""
-    typer.echo(f"assemble: {_STUB_MSG}")
-    raise typer.Exit(2)
+def assemble(
+    arch: str,
+    flavor: str,
+    init: str,
+    output_format: Annotated[
+        OutputFormat,
+        typer.Option("--format", help="Formato de saída: pretty (default) ou json."),
+    ] = OutputFormat.pretty,
+    output: Annotated[
+        Path | None,
+        typer.Option(
+            "--output",
+            "-o",
+            help="Caminho da ISO de saída (default: bentoo-<flavor>-<init>-<arch>.iso).",
+        ),
+    ] = None,
+    binhost_opt: Annotated[
+        Path | None,
+        typer.Option(
+            "--binhost", help="Binhost (publish-pool) host-side de saída (default: por arch)."
+        ),
+    ] = None,
+    no_download: Annotated[
+        bool, typer.Option("--no-download", help="Usar só o cache; nunca tocar a rede.")
+    ] = False,
+    keep: Annotated[
+        bool, typer.Option("--keep", help="Preservar o rootfs de scratch após a montagem.")
+    ] = False,
+    work_dir: Annotated[
+        Path | None,
+        typer.Option(
+            "--work-dir",
+            help="Raiz de trabalho: cache+scratch sob <DIR> (vence SHIDASHI_CACHE/_SCRATCH).",
+        ),
+    ] = None,
+) -> None:
+    """Monta a ISO live da receita a partir do binhost (OVERVIEW §7).
+
+    Semeia um stage3, sobrepõe os layers da receita (USE final = a dos binpkgs,
+    §18.6), puxa a fatia do flavor com ``emerge --usepkgonly`` e produz a ISO
+    híbrida (squashfs + dracut ``dmsquash-live`` + grub-mkrescue). Sucesso →
+    caminho da ISO + exit 0. Erros conhecidos (guarda de root, kernel ausente,
+    eixo desconhecido/conflito de receita, seed/resolve, falha de emerge/dracut,
+    falha de squashfs/ISO) viram mensagem amigável + exit 1, sem traceback.
+    """
+    _apply_work_dir(work_dir)
+    try:
+        resolved = _resolve(arch, flavor, init)
+    except (config.UnknownAxisError, RecipeConflictError) as err:
+        _err_console.print(f"[bold red]erro:[/bold red] {err}")
+        raise typer.Exit(1) from err
+
+    binhost = binhost_opt if binhost_opt is not None else config.pkgdir(arch)
+    iso_path = output if output is not None else Path(f"bentoo-{flavor}-{init}-{arch}.iso")
+
+    try:
+        produced = Assembler(resolved, binhost).assemble(
+            iso_path, download=not no_download, keep=keep
+        )
+    except (AssemblerError, ImageError, SeedError, ResolveError) as err:
+        if isinstance(err, ResolveError) and err.raw_output:
+            _err_console.print(err.raw_output)
+        _err_console.print(f"[bold red]erro:[/bold red] {err}")
+        raise typer.Exit(1) from err
+    except subprocess.CalledProcessError as err:
+        _err_console.print(
+            f"[bold red]falha de emerge/dracut na ISO[/bold red] (exit {err.returncode})"
+        )
+        if err.stderr:
+            _err_console.print(err.stderr)
+        raise typer.Exit(1) from err
+
+    if output_format is OutputFormat.json:
+        typer.echo(
+            json.dumps(
+                {
+                    "iso": str(produced),
+                    "arch": arch,
+                    "flavor": flavor,
+                    "init": init,
+                    "binhost": str(binhost),
+                },
+                indent=2,
+            )
+        )
+    else:
+        _render_assemble_pretty(produced, arch, flavor, init)
 
 
 @app.command("release")

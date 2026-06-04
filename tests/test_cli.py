@@ -190,16 +190,9 @@ def test_list_shows_axis_names(variants_tree: Path) -> None:
 # --- stubs (R6.2) ------------------------------------------------------------
 
 
-# NB: factory deixou de ser stub — a story 003 (grupo 7) implementou o comando
-# real `shidashi factory`; sua cobertura vive agora em tests/test_cli_factory.py
-# (incl. test_help_lists_factory_as_real_command). Por isso não há mais um
-# test_stub_factory_exit2 aqui (assemble/release seguem stubs — stories 004/005).
-
-
-def test_stub_assemble_exit2(variants_tree: Path) -> None:
-    result = runner.invoke(app, ["assemble", "v3", "kde", "systemd"])
-    assert result.exit_code == 2
-    assert "Fase 0" in result.stdout
+# NB: factory (story 003) e assemble (Fase 1) deixaram de ser stubs; suas
+# coberturas vivem em tests/test_cli_factory.py e tests/test_cli_assemble.py.
+# Só `release` segue stub (Fase 4) — exit 2 com "Fase 0".
 
 
 def test_stub_release_exit2(variants_tree: Path) -> None:

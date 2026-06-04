@@ -1,13 +1,14 @@
-"""Testes UNITÁRIOS dos módulos-esqueleto da Fase 0 (R9.1, R9.2, R9.3).
+"""Testes UNITÁRIOS dos módulos da Fase 0/1 quanto a import-safety e esqueletos (R9.1–R9.3).
 
-Os seis módulos ``container``/``factory``/``assembler``/``phases``/``binhost``/
-``image`` existem com assinaturas públicas tipadas, mas todo corpo levanta
-``NotImplementedError`` na Fase 0. Aqui prova-se que:
+Os módulos ``container``/``factory``/``phases``/``assembler``/``image`` já foram
+implementados (stories 002/003 e Fase 1) e seus testes vivem nos respectivos
+``tests/test_*.py``; ``binhost`` permanece esqueleto (Fase 2), com todo corpo
+levantando ``NotImplementedError``. Aqui prova-se que:
 
 * cada módulo importa sem exceção (e o pacote permanece import-safe — nenhum
   deles aciona ``shidashi.portage_api`` no import);
-* cada ponto de entrada público (construtores de classe e funções de módulo),
-  quando invocado, levanta ``NotImplementedError`` — não ``pass``/``None``.
+* cada ponto de entrada **ainda esqueleto** (``binhost``), quando invocado,
+  levanta ``NotImplementedError`` — não ``pass``/``None``.
 
 As entradas são iteradas explicitamente (uma tabela por módulo), sem
 introspecção mágica, para que um esquecimento (corpo com ``pass``) falhe aqui.
@@ -58,39 +59,16 @@ def test_importing_skeletons_does_not_trigger_portage_api() -> None:
 _P = Path("/nonexistent")
 
 
-def _resolved_recipe_stub() -> Any:
-    # ResolvedRecipe é um modelo pydantic frozen; para alimentar assinaturas que
-    # o exigem basta um objeto qualquer — os corpos levantam antes de usá-lo.
-    return object()
-
-
 def _entry_points() -> Iterator[tuple[str, Callable[[], Any]]]:
-    assembler = importlib.import_module("shidashi.assembler")
     binhost = importlib.import_module("shidashi.binhost")
-    image = importlib.import_module("shidashi.image")
 
-    rr = _resolved_recipe_stub()
-
-    # NB: container.CommandResult/Container deixaram de ser stubs — a story 002
-    # (tarefa 3) preencheu o wrapper systemd-nspawn; seus testes vivem agora em
-    # tests/test_container.py. Por isso não figuram mais nos entry-points abaixo.
-
-    # NB: factory.FactoryResult/Factory deixaram de ser stubs — a story 003
-    # (grupo 6) preencheu o orquestrador; seus testes vivem agora em
-    # tests/test_factory.py. Por isso não figuram mais nos entry-points acima.
-
-    yield "assembler.Assembler", lambda: assembler.Assembler(rr, _P)
-
-    # NB: phases.PhaseResult/run_phase/run_phases/fork_point deixaram de ser
-    # stubs — a story 003 (grupos 3–5) preencheu a camada de planejamento e
-    # execução de fases; seus testes vivem agora em tests/test_phases.py e
-    # tests/test_factory.py. Por isso não figuram mais nos entry-points acima.
+    # NB: container/factory/phases (stories 002/003) e assembler/image (Fase 1)
+    # deixaram de ser stubs; seus testes vivem em tests/test_container.py,
+    # tests/test_factory.py, tests/test_phases.py, tests/test_assembler.py e
+    # tests/test_image.py. Por isso não figuram mais nos entry-points abaixo.
 
     yield "binhost.BinpkgRef", lambda: binhost.BinpkgRef("cat/pkg-1", (), 1)
     yield "binhost.Binhost", lambda: binhost.Binhost(_P, "v3")
-
-    yield "image.make_squashfs", lambda: image.make_squashfs(_P, _P)
-    yield "image.build_iso", lambda: image.build_iso(_P, _P)
 
 
 _ENTRY_POINTS = list(_entry_points())
