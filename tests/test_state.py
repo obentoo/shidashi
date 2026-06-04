@@ -108,6 +108,34 @@ def test_build_state_defaults_and_collections_are_tuples() -> None:
     assert full.phase_diffs[0].phase == "rebuild"
 
 
+# --- seed_sha512 (R4.1/R4.2, story 005) -------------------------------------
+
+
+def test_build_state_seed_sha512_defaults_empty() -> None:
+    assert _state().seed_sha512 == ""
+
+
+def test_build_state_seed_sha512_round_trips(tmp_path: Path) -> None:
+    p = tmp_path / "s.json"
+    save_state(p, _state(seed_sha512="a" * 128))
+    loaded = load_state(p)
+    assert loaded is not None
+    assert loaded.seed_sha512 == "a" * 128
+
+
+def test_build_state_loads_legacy_json_without_seed_sha512(tmp_path: Path) -> None:
+    # JSON antigo (sem o campo) ainda carrega sob extra="forbid", via o default.
+    p = tmp_path / "legacy.json"
+    p.write_text(
+        '{"arch":"v3","flavor":"minimal","init":"systemd",'
+        '"snapshot":"20260524","recipe_hash":"deadbeef"}',
+        encoding="utf-8",
+    )
+    loaded = load_state(p)
+    assert loaded is not None
+    assert loaded.seed_sha512 == ""
+
+
 def test_build_state_is_frozen_and_extra_forbid() -> None:
     state = _state()
     with pytest.raises(Exception):  # noqa: B017

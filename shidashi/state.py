@@ -84,6 +84,10 @@ class BuildState(BaseModel):
     snapshot: str
     recipe_hash: str
     seed_done: bool = False
+    # SHA-512 do stage3 buildado localmente pelo Catalyst (story 005); vazio
+    # quando a seed veio por download. Aditivo/defaultado: JSON antigo (sem o
+    # campo) ainda carrega sob extra="forbid".
+    seed_sha512: str = ""
     completed_phases: tuple[str, ...] = ()
     accumulated_breaks: tuple[UseBreak, ...] = ()
     phase_diffs: tuple[PhaseDiff, ...] = ()

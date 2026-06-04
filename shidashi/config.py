@@ -17,6 +17,7 @@ _ENV_VAR = "SHIDASHI_VARIANTS_DIR"
 _SCRATCH_ENV = "SHIDASHI_SCRATCH"
 _CACHE_ENV = "SHIDASHI_CACHE"
 _SEEDS_ENV = "SHIDASHI_SEEDS_DIR"
+_CATALYST_ENV = "SHIDASHI_CATALYST_DIR"
 
 
 class UnknownAxisError(Exception):
@@ -144,6 +145,29 @@ def pkgdir(arch: str) -> Path:
     ``SHIDASHI_CACHE`` (lido por chamada) de :func:`cache_dir`.
     """
     return cache_dir() / "binpkgs" / arch
+
+
+def catalyst_dir(arch: str) -> Path:
+    """Devolve o diretório do storedir/saída do Catalyst por arch (story 005).
+
+    Particionado por ``arch`` (como :func:`pkgdir`) para que stage3 de
+    microarquiteturas distintas não colidam. Honra o override dedicado
+    ``SHIDASHI_CATALYST_DIR`` (lido por chamada); na ausência usa
+    ``cache_dir()/catalyst`` — herdando assim o override ``SHIDASHI_CACHE``.
+    """
+    override = os.environ.get(_CATALYST_ENV)
+    base = Path(override) if override else cache_dir() / "catalyst"
+    return base / arch
+
+
+def catalyst_spec_dir(arch: str) -> Path:
+    """Devolve o diretório de specs efêmeros do Catalyst por arch (story 005).
+
+    Os specs stage1/2/3 são regeneráveis a cada build, logo vivem sob o scratch:
+    ``scratch_dir()/catalyst/<arch>``. Herda o override ``SHIDASHI_SCRATCH``
+    (lido por chamada) de :func:`scratch_dir`.
+    """
+    return scratch_dir() / "catalyst" / arch
 
 
 def ccache_dir() -> Path:
