@@ -23,7 +23,11 @@ __all__ = ["ImageError", "VOLUME_ID", "build_iso", "make_squashfs"]
 # ``root=live:CDLABEL=<VOLUME_ID>`` para o dmsquash-live achar o squashfs.
 VOLUME_ID = "BENTOO"
 
-# Layout do live medium dentro da ISO (convenção do dracut dmsquash-live).
+# Layout do live medium dentro da ISO (convenção do dracut dmsquash-live). O
+# squashfs é a raiz CRUA (não o layout aninhado ``LiveOS/rootfs.img`` do Fedora):
+# o dmsquash-live só o aceita assim quando o rootfs tem ``/usr`` (ou ``/ostree``)
+# no topo — o que todo rootfs do Assembler tem (Gentoo usr-merged). Sem isso ele
+# aborta com "Failed to find a root filesystem" (verificado pelo smoke-test, §7).
 _LIVEOS_IMG = "LiveOS/squashfs.img"
 _ISO_KERNEL = "boot/vmlinuz"
 _ISO_INITRD = "boot/initramfs.img"

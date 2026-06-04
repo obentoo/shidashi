@@ -595,8 +595,8 @@ O `make.conf` de referência (já organizado em grupos nomeados) mapeia diretame
 - [x] Pipeline mínimo: **`v3 × minimal × systemd`** → stage4 tarball, depois `v3 × kde × systemd`. *(`shidashi factory` completo + testado; pilot de build em host root diferido — stories 003/004.)*
 
 ### Fase 1 — ISO
-- [ ] Assembler: squashfs + dracut `dmsquash-live` + ISO híbrida. *(em andamento)*
-- [ ] Smoke-test de boot (QEMU + nativo no 9950X) automatizado.
+- [x] Assembler: squashfs + dracut `dmsquash-live` + ISO híbrida. *(impl. + testes off-host; caminho de imagem validado por boot real — pilot de montagem via binhost da Fase 2 ainda diferido.)*
+- [x] Smoke-test de boot (QEMU + nativo no 9950X) automatizado. *(`scripts/smoke-iso.sh` + `tests/test_smoke_iso.py` host-gated; **boot validado em QEMU/KVM no 9950X** — grub → dmsquash-live monta o squashfs → systemd switch-root → userspace.)*
 
 ### Fase 2 — Binhost & Factory
 - [x] Factory com fases + cache de fork-point. *(impl. + testes; pilot host root diferido.)*
