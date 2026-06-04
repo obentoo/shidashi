@@ -6,9 +6,13 @@ relógio/aleatoriedade. A invocação privilegiada do ``catalyst`` (Task 4) é
 isolada noutro helper e testada por monkeypatch.
 """
 
+import hashlib
 from pathlib import Path
 
-from shidashi.catalyst import render_specs
+import pytest
+
+import shidashi.catalyst as cat
+from shidashi.catalyst import CatalystError, build_stage3_catalyst, render_specs
 from tests.test_merge import make_arch, make_base, make_flavor, make_init
 
 from shidashi.recipe import merge  # isort: skip
@@ -83,3 +87,101 @@ def test_render_specs_is_deterministic() -> None:
     a = render_specs(_resolved(), **_KW)
     b = render_specs(_resolved(), **_KW)
     assert a == b
+
+
+# --- build_stage3_catalyst (R3.1–R3.5, R4.1, R4.3; integração monkeypatch) ----
+
+_SEED = Path("/var/cache/shidashi/stage3-amd64-nomultilib-systemd-20260524T170105Z.tar.xz")
+_STAMP = "20260524T170105Z"
+
+
+def _build_kw(tmp_path: Path) -> dict:
+    return dict(
+        version_stamp=_STAMP,
+        snapshot_treeish="abc123",
+        confdir=Path("variants/arch/znver5/portage"),
+        scratch_dir=tmp_path / "scratch",
+        output_dir=tmp_path / "out",
+    )
+
+
+def _stage3_name() -> str:
+    return f"stage3-amd64-{_STAMP}.tar.xz"
+
+
+def test_build_invokes_catalyst_per_stage_in_order(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # R3.2 — um catalyst por spec, na ordem stage1→2→3; R3.5/R4.1 retorna tarball+sha.
+    monkeypatch.setattr(cat.shutil, "which", lambda _: "/usr/bin/catalyst")
+    out = tmp_path / "out"
+    calls: list[str] = []
+
+    def fake_run(spec: Path) -> None:
+        calls.append(spec.name)
+        if spec.name == "stage3.spec":
+            (out / _stage3_name()).write_bytes(b"STAGE3")
+
+    monkeypatch.setattr(cat, "_run_catalyst", fake_run)
+    tarball, sha = build_stage3_catalyst(_resolved(), _SEED, **_build_kw(tmp_path))
+    assert calls == ["stage1.spec", "stage2.spec", "stage3.spec"]
+    assert tarball == out / _stage3_name()
+    assert sha == hashlib.sha512(b"STAGE3").hexdigest()
+
+
+def test_build_missing_catalyst_raises_before_building(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # R3.3 — catalyst ausente no PATH falha ANTES de qualquer build.
+    monkeypatch.setattr(cat.shutil, "which", lambda _: None)
+    calls: list[str] = []
+    monkeypatch.setattr(cat, "_run_catalyst", lambda s: calls.append(s.name))
+    with pytest.raises(CatalystError, match="catalyst"):
+        build_stage3_catalyst(_resolved(), _SEED, **_build_kw(tmp_path))
+    assert calls == []
+
+
+def test_build_aborts_at_failing_stage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # R3.4 — saída não-zero aborta no stage que falhou; stage3 não é tentado.
+    monkeypatch.setattr(cat.shutil, "which", lambda _: "/usr/bin/catalyst")
+    seen: list[str] = []
+
+    def fake_run(spec: Path) -> None:
+        seen.append(spec.name)
+        if spec.name == "stage2.spec":
+            raise CatalystError("boom stage2")
+
+    monkeypatch.setattr(cat, "_run_catalyst", fake_run)
+    with pytest.raises(CatalystError, match="boom stage2"):
+        build_stage3_catalyst(_resolved(), _SEED, **_build_kw(tmp_path))
+    assert seen == ["stage1.spec", "stage2.spec"]
+
+
+def test_build_missing_output_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # catalyst "rodou" mas não produziu o stage3 esperado → erro claro.
+    monkeypatch.setattr(cat.shutil, "which", lambda _: "/usr/bin/catalyst")
+    monkeypatch.setattr(cat, "_run_catalyst", lambda s: None)
+    with pytest.raises(CatalystError, match="não produziu|stage3"):
+        build_stage3_catalyst(_resolved(), _SEED, **_build_kw(tmp_path))
+
+
+def test_build_cached_sha512_mismatch_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # R4.3 — tarball reusado cujo sha512 difere do pin persistido → falha.
+    monkeypatch.setattr(cat.shutil, "which", lambda _: "/usr/bin/catalyst")
+    out = tmp_path / "out"
+
+    def fake_run(spec: Path) -> None:
+        if spec.name == "stage3.spec":
+            (out / _stage3_name()).write_bytes(b"STAGE3")
+
+    monkeypatch.setattr(cat, "_run_catalyst", fake_run)
+    with pytest.raises(CatalystError, match="sha512"):
+        build_stage3_catalyst(
+            _resolved(), _SEED, expected_sha512="deadbeef", **_build_kw(tmp_path)
+        )
