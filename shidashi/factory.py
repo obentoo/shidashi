@@ -22,6 +22,7 @@ from pathlib import Path
 import pydantic
 
 from shidashi import config, state
+from shidashi.catalyst import build_stage3_catalyst
 from shidashi.container import Container
 from shidashi.phases import (
     CheckpointDecision,
@@ -115,19 +116,45 @@ def _require_root() -> None:
         )
 
 
-def _fresh_seed(rootfs: Path, pointer: Stage3Pointer, *, download: bool) -> None:
-    """Seeda um rootfs **fresco** a partir do stage3 do ``pointer`` (R1.4/R8.2).
+def _fresh_seed(
+    rootfs: Path, pointer: Stage3Pointer, *, download: bool, recipe: ResolvedRecipe
+) -> str:
+    """Seeda um rootfs **fresco** a partir do stage3 do ``pointer`` (R1.4/R8.2/R5.x).
 
-    :func:`shidashi.seed.fetch_stage3` (cache de :func:`shidashi.config.cache_dir`) seguido
-    de :func:`shidashi.seed.extract_stage3` (que já cria ``rootfs``). É o corpo EXATO
-    do ramo fresh original de :meth:`Factory.build` — sem ``rmtree``/``mkdir`` extra,
-    para que o comportamento one-shot não mude (R8.2). Sub-passo PRIVILEGIADO
-    compartilhado pelo caminho fresh de :func:`_seed_or_restore` e pelo caso "sem
-    estado" de :meth:`Factory.build_stepwise`; ``fetch_stage3``/``extract_stage3``
-    são globais do módulo (monkeypatcháveis nos testes).
+    Devolve o ``seed_sha512`` do stage3 buildado localmente — ``""`` quando a
+    seed veio por download (story 005). Ramifica em ``recipe.seed_source``:
+
+    * ``download`` (default): :func:`shidashi.seed.fetch_stage3` (cache de
+      :func:`shidashi.config.cache_dir`) seguido de :func:`shidashi.seed.extract_stage3`
+      (que já cria ``rootfs``). É o corpo EXATO do ramo fresh original — sem
+      ``rmtree``/``mkdir`` extra — para que o one-shot não mude (R8.2/R5.2).
+    * ``catalyst``: o stage3 genérico baixado/verificado vira a SEMENTE de
+      bootstrap de :func:`shidashi.catalyst.build_stage3_catalyst`, que gera um
+      stage3 com o ``-march`` do alvo (specs sob ``catalyst_spec_dir``, saída sob
+      ``catalyst_dir``, ``portage_confdir`` = ``variants/arch/<arch>/portage``);
+      extrai-se o tarball produzido e devolve-se seu SHA-512 (R5.1/R4.1). O
+      ``catalyst`` roda no host — NUNCA aninhado no :class:`Container`/nspawn.
+
+    Sub-passo PRIVILEGIADO compartilhado pelo caminho fresh de
+    :func:`_seed_or_restore` e pelo caso "sem estado" de :meth:`Factory.build_stepwise`;
+    ``fetch_stage3``/``extract_stage3``/``build_stage3_catalyst`` são globais do
+    módulo (monkeypatcháveis nos testes).
     """
     tarball = fetch_stage3(pointer, cache_dir=config.cache_dir(), download=download)
+    if recipe.seed_source == "catalyst":
+        stage3, seed_sha512 = build_stage3_catalyst(
+            recipe,
+            tarball,
+            version_stamp=pointer.snapshot,
+            snapshot_treeish=pointer.snapshot,
+            confdir=config.variants_dir() / "arch" / recipe.arch / "portage",
+            scratch_dir=config.catalyst_spec_dir(recipe.arch),
+            output_dir=config.catalyst_dir(recipe.arch),
+        )
+        extract_stage3(stage3, rootfs)
+        return seed_sha512
     extract_stage3(tarball, rootfs)
+    return ""
 
 
 def _seed_or_restore(
@@ -156,7 +183,7 @@ def _seed_or_restore(
         trunk = trunk_phase_names(recipe)
         resume_at = trunk[-1] if trunk else None
         return resume_at, existing, True
-    _fresh_seed(rootfs, pointer, download=download)
+    _fresh_seed(rootfs, pointer, download=download, recipe=recipe)
     fork_point_path = fork_points_dir / (
         f"{recipe.arch}-{recipe.flavor}-{recipe.init}-{snapshot}.tar"
     )
@@ -472,8 +499,10 @@ class Factory:
             # reusa o rootfs persistente como está — não re-seeda nem restaura (R1.4).
             return False
 
-        # (c) sem estado: seed fresco e persiste o marco seed_done.
-        _fresh_seed(rootfs, pointer, download=download)
+        # (c) sem estado: seed fresco e persiste o marco seed_done. Quando
+        # seed_source=catalyst, _fresh_seed devolve o sha512 do stage3 buildado
+        # localmente, pinado no BuildState (R4.1); vazio no caminho download.
+        seed_sha512 = _fresh_seed(rootfs, pointer, download=download, recipe=recipe)
         state.save_state(
             state_path,
             state.BuildState(
@@ -483,6 +512,7 @@ class Factory:
                 snapshot=snapshot,
                 recipe_hash=recipe_hash,
                 seed_done=True,
+                seed_sha512=seed_sha512,
             ),
         )
         if interactive:

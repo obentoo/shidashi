@@ -55,7 +55,7 @@ O **Shidashi** (`仕出し`, "catering — produz lotes sob encomenda e entrega"
 - **Extensibilidade por terceiros**: "receita é dado" — qualquer pessoa adiciona sua arch/init/desktop em YAML.
 
 ### Não-objetivos (escopo explicitamente fora)
-- **Não** recompila a seed chain (stage1/2/3) — isso é trabalho do Catalyst/Metro upstream.
+- Por **padrão** (`seed_source: download`) parte de um stage3 oficial pronto e **não** recompila a seed chain. **Opcionalmente**, por arch (`seed_source: catalyst` em `recipe.yaml`), o Shidashi *gera* um stage3 com o `-march` do alvo via **Catalyst** (recompila stage1→2→3), usando o stage3 genérico já verificado como semente de bootstrap — produzir microarquiteturas sob encomenda (仕出し). Ver §5.1.
 - **Não** é um instalador gráfico (Calamares/etc. é um componente *do live medium*, não do builder).
 - **Não** persegue **reprodutibilidade bit-a-bit** (ISO byte-idêntica) — apenas reprodutibilidade *de entrada*.
   Bit-a-bit em Gentoo (timestamps, build paths) custaria desproporcionalmente; fora de escopo por ora.
@@ -87,7 +87,9 @@ O **Shidashi** (`仕出し`, "catering — produz lotes sob encomenda e entrega"
 stage3 (oficial) ──▶ [camada bentoo: config + pacotes] ──▶ stage4 bentoo ──▶ ISO
 ```
 
-Diferente de Catalyst/Metro (que fazem `seed → stage1 → stage2 → stage3`), o bentoo-builder **sempre parte de um stage3 pronto** e aplica uma camada. Modelo conceitualmente próximo ao **Calculate Linux** (`cl-builder`/`cl-image`), mas sem o acoplamento ao ecossistema Calculate.
+Diferente de Catalyst/Metro (que fazem `seed → stage1 → stage2 → stage3`), o bentoo-builder **por padrão parte de um stage3 pronto** e aplica uma camada. Modelo conceitualmente próximo ao **Calculate Linux** (`cl-builder`/`cl-image`), mas sem o acoplamento ao ecossistema Calculate.
+
+**Fonte de seed opcional por arch (story 005).** Quando um arch declara `seed_source: catalyst`, o Shidashi inverte essa premissa *para aquele alvo*: invoca o **Catalyst** para produzir um stage3 com o `-march` específico (`seed → stage1 → stage2 → stage3`), tendo o stage3 genérico (já baixado e verificado por GPG+SHA-512) como **semente de bootstrap**. O `-march`/GOAMD64/CPU_FLAGS entram pelo `portage_confdir` do Catalyst — que reusa o `variants/arch/<arch>/portage/` existente — e não pelo `subarch` (que fica no baseline `amd64`). O stage3 resultante é pinado por SHA-512 no `BuildState` e segue pelo mesmo pipeline de extração → camada stage4. O default (`download`) permanece inalterado.
 
 ### 5.2 Os três eixos de variação
 

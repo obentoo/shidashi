@@ -45,6 +45,7 @@ def _recipe(
     flavor: str = "kde",
     sets: tuple[str, ...] = ("graphics", "bentoo-apps", "kde"),
     phases_: tuple[Phase, ...] = (),
+    seed_source: str = "download",
 ) -> ResolvedRecipe:
     return ResolvedRecipe(
         arch="v3",
@@ -61,6 +62,19 @@ def _recipe(
         sets=sets,
         phases=phases_,
         portage_layers=("base", "arch/v3", "flavor/kde", "init/systemd"),
+        seed_source=seed_source,
+    )
+
+
+def _pointer() -> Any:
+    from shidashi.seed import Stage3Pointer
+
+    return Stage3Pointer(
+        init="systemd",
+        base_url="https://distfiles.gentoo.org/x",
+        snapshot="20260524T170105Z",
+        filename="stage3-amd64-nomultilib-systemd-20260524T170105Z.tar.xz",
+        sha512="0" * 128,
     )
 
 
@@ -204,3 +218,94 @@ def test_full_factory_build_v3_minimal_systemd() -> None:
     # 6.2 (int): shidashi factory v3 minimal systemd produz pkgdir não-vazio +
     # fork-point. Diferido ao host privilegiado real.
     pytest.skip("integração privilegiada: requer host Gentoo seedado (Red diferido)")
+
+
+# --- seed_source seam: download vs catalyst (R5.1–R5.3, R4.1; story 005) ------
+
+
+def test_fresh_seed_download_branch_unchanged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # R5.2 — seed_source=download: fetch+extract como antes, catalyst nunca tocado.
+    generic = tmp_path / "generic.tar.xz"
+    extracted: dict[str, Any] = {}
+    monkeypatch.setattr(factory, "fetch_stage3", lambda p, **k: generic, raising=False)
+    monkeypatch.setattr(
+        factory, "extract_stage3", lambda tb, rf: extracted.update(tarball=tb), raising=False
+    )
+
+    def _no_catalyst(*_a: Any, **_k: Any) -> Any:
+        raise AssertionError("build_stage3_catalyst não deve ser chamado no download")
+
+    monkeypatch.setattr(factory, "build_stage3_catalyst", _no_catalyst, raising=False)
+    sha = factory._fresh_seed(
+        tmp_path / "rootfs", _pointer(), download=True, recipe=_recipe(seed_source="download")
+    )
+    assert sha == ""
+    assert extracted["tarball"] == generic
+
+
+def test_fresh_seed_catalyst_branch_builds_then_extracts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # R5.1 — seed_source=catalyst: fetch (semente) → build → extract do tarball gerado.
+    order: list[str] = []
+    generic = tmp_path / "generic.tar.xz"
+    cat_tarball = tmp_path / "cat-stage3.tar.xz"
+
+    def _fetch(p: Any, **k: Any) -> Path:
+        order.append("fetch")
+        return generic
+
+    def _build(recipe: Any, seed: Any, **k: Any) -> tuple[Path, str]:
+        order.append("build")
+        assert seed == generic  # a semente buildada é o stage3 genérico
+        return cat_tarball, "ab" * 64
+
+    monkeypatch.setattr(factory, "fetch_stage3", _fetch, raising=False)
+    monkeypatch.setattr(factory, "build_stage3_catalyst", _build, raising=False)
+    monkeypatch.setattr(
+        factory, "extract_stage3", lambda tb, rf: order.append(f"extract:{tb.name}"), raising=False
+    )
+    sha = factory._fresh_seed(
+        tmp_path / "rootfs", _pointer(), download=True, recipe=_recipe(seed_source="catalyst")
+    )
+    assert sha == "ab" * 64
+    assert order == ["fetch", "build", "extract:cat-stage3.tar.xz"]
+
+
+def test_stepwise_persists_catalyst_seed_sha512(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # R5.3/R4.1 — no driver stepwise (caso sem estado), o sha do stage3 buildado é
+    # persistido no BuildState.
+    from shidashi import state
+
+    monkeypatch.setattr(
+        factory,
+        "_fresh_seed",
+        lambda rootfs, pointer, *, download, recipe: "cafe" * 32,
+        raising=False,
+    )
+    state_path = tmp_path / "state.json"
+    recipe = _recipe(seed_source="catalyst")
+    fac = Factory(recipe, tmp_path / "pkg")
+    stop = fac._seed_or_restore_stepwise(
+        recipe,
+        tmp_path / "rootfs",
+        _pointer(),
+        snapshot="SNAP",
+        recipe_hash="h",
+        fork_points_dir=tmp_path / "fp",
+        state_path=state_path,
+        completed=(),
+        seed_done=False,
+        interactive=False,
+        download=True,
+        on_checkpoint=None,
+    )
+    assert stop is False
+    saved = state.load_state(state_path)
+    assert saved is not None
+    assert saved.seed_sha512 == "cafe" * 32
+    assert saved.seed_done is True
