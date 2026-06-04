@@ -1,7 +1,7 @@
 # Shidashi 仕出し — Proposta de Desenvolvimento
 
 > Documento de visão e arquitetura do **Shidashi**, a ferramenta de automação de builds e ISOs do **bentoo**.
-> Status: **Fase 0 — scaffold + validação empírica (teste de resolução)** · Linguagem: **Python ≥ 3.14** · Última atualização: 2026-05-23
+> Status: **Fase 0 concluída** (scaffold + recipe + `pretend` + `factory`, validados off-host; pilots em host root diferidos) · **Fase 1 (ISO) em andamento** · Linguagem: **Python ≥ 3.14** · Última atualização: 2026-06-04
 
 ---
 
@@ -13,7 +13,7 @@ O **Shidashi** (`仕出し`, "catering — produz lotes sob encomenda e entrega"
 
 ### Pilares
 
-1. **Layering, não seed chain** — sempre parte de um stage3 pronto; nunca recompila stage1→2→3.
+1. **Layering, não seed chain** — por **padrão** parte de um stage3 pronto e não recompila stage1→2→3; opcionalmente (`seed_source: catalyst`) gera a seed chain microarch via Catalyst (ver §5.1).
 2. **Dois subsistemas desacoplados** — *Package Factory* (compila) e *ISO Assembler* (monta).
 3. **Composição em três eixos** — `arch × flavor × init`, sem explosão combinatória.
 4. **Ambientes limpos por flavor** — KDE/Qt e GNOME/GTK nunca coexistem no mesmo build.
@@ -582,32 +582,36 @@ O `make.conf` de referência (já organizado em grupos nomeados) mapeia diretame
 
 ## 17. Roadmap de Desenvolvimento
 
+> Legenda: `[x]` implementado e validado pela suíte off-host · `[ ]` pendente.
+> *Pilots de build/boot em host Gentoo root são host-gated e seguem diferidos
+> mesmo onde o código está completo (stories 003/004); anotados inline.*
+
 ### Fase 0 — Fundação (MVP)
-- [ ] Esqueleto Python (≥3.14) + pydantic + estrutura de receitas por eixo.
-- [ ] `recipe.py` + `cli.py`: `recipe show/validate` (deep-merge dos eixos) — primeiro entregável real.
-- [ ] `shidashi pretend <arch> <flavor> <init>` (descoberta de ciclos, custo segundos).
-- [ ] Wrapper `systemd-nspawn`.
-- [ ] Detector de stage3 (pointer file).
-- [ ] Pipeline mínimo: **`v3 × minimal × systemd`** → stage4 tarball, depois `v3 × kde × systemd`.
+- [x] Esqueleto Python (≥3.14) + pydantic + estrutura de receitas por eixo.
+- [x] `recipe.py` + `cli.py`: `recipe show/validate` (deep-merge dos eixos) — primeiro entregável real.
+- [x] `shidashi pretend <arch> <flavor> <init>` (descoberta de ciclos, custo segundos).
+- [x] Wrapper `systemd-nspawn`.
+- [x] Detector de stage3 (pointer file).
+- [x] Pipeline mínimo: **`v3 × minimal × systemd`** → stage4 tarball, depois `v3 × kde × systemd`. *(`shidashi factory` completo + testado; pilot de build em host root diferido — stories 003/004.)*
 
 ### Fase 1 — ISO
-- [ ] Assembler: squashfs + dracut `dmsquash-live` + ISO híbrida.
+- [ ] Assembler: squashfs + dracut `dmsquash-live` + ISO híbrida. *(em andamento)*
 - [ ] Smoke-test de boot (QEMU + nativo no 9950X) automatizado.
 
 ### Fase 2 — Binhost & Factory
-- [ ] Factory com fases + cache de fork-point.
+- [x] Factory com fases + cache de fork-point. *(impl. + testes; pilot host root diferido.)*
 - [ ] Estratégia tronco-persistente / wipe-na-toolchain (§6.6) + fase toolchain-bump.
 - [ ] Binhost multi-instance + assinatura.
-- [ ] LibreOffice Qt vs GTK como prova de conceito.
+- [ ] LibreOffice Qt vs GTK como prova de conceito. *(variante Qt presente em `flavor/kde`; contraparte GTK pendente.)*
 
 ### Fase 3 — Matriz
-- [ ] Eixo arch: `znver5` (tier 1), `arrowlake` (tier 2, build-only, boot-test QEMU/TCG).
-- [ ] Eixo flavor: `gnome`, `xfce`, `wm` (Wayland-only: Hyprland, Sway, niri).
-- [ ] Eixo init: `openrc`.
+- [x] Eixo arch: `znver5` (tier 1), `arrowlake` (tier 2, build-only, boot-test QEMU/TCG). *(receitas v3/znver5/arrowlake completas; boot-test `arrowlake` QEMU/TCG diferido.)*
+- [ ] Eixo flavor: `gnome`, `xfce`, `wm` (Wayland-only: Hyprland, Sway, niri). *(só `kde` e `minimal` curados; `gnome`/`xfce`/`wm` ainda placeholder — sets vazios.)*
+- [x] Eixo init: `openrc`. *(systemd + openrc completos.)*
 
 ### Fase 4 — Automação
-- [ ] CI matriz semanal (cron domingo 00:00) + publicação + checksums/GPG.
-- [ ] Pin de snapshot reprodutível.
+- [ ] CI matriz semanal (cron domingo 00:00) + publicação + checksums/GPG. *(scaffold gated com `if: false`; falta runner Gentoo + leitura de pointer file + comando `release`.)*
+- [ ] Pin de snapshot reprodutível. *(pin do stage3 seed pronto; pin do snapshot `::gentoo` por release pendente.)*
 
 ### Fase 5 — Operação (opcional)
 - [ ] Dashboard de releases (FastAPI).

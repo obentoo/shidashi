@@ -2,7 +2,8 @@
 #
 # Dois gatilhos:
 #   * push / pull_request -> job `quality` (real): roda em runner padrao, sem
-#     Gentoo. Lint + tipos + testes + checagem de sintaxe do script.
+#     Gentoo. Lint (ruff check) + format (ruff format --check) + tipos (mypy) +
+#     testes (pytest).
 #   * schedule (semanal)  -> job `weekly-release` (scaffold): a matriz
 #     arch x init x desktop. Gated com `if: false` porque precisa de um
 #     runner self-hosted Gentoo (OVERVIEW fase 4) — documenta a intencao sem
