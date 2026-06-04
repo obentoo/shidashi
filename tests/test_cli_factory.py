@@ -1,7 +1,7 @@
-"""UNIT da CLI ``kaji factory`` via Typer ``CliRunner`` (story 003 7.1).
+"""UNIT da CLI ``shidashi factory`` via Typer ``CliRunner`` (story 003 7.1).
 
 Determinista no host CI: ``Factory.build`` (privilegiado) é monkeypatched no
-namespace de ``kaji.cli`` p/ devolver um ``FactoryResult`` sintético ou levantar
+namespace de ``shidashi.cli`` p/ devolver um ``FactoryResult`` sintético ou levantar
 ``FactoryError``/``SeedError``/``ResolveError`` — exercitamos só a CAMADA CLI:
 ``--help`` lista ``factory`` como comando REAL (não mais o stub exit-2),
 renderização pretty/json, mapeamento de exit codes e propagação de flags
@@ -21,20 +21,21 @@ esperado.
 """
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
 import pytest
 from typer.testing import CliRunner
 
-from kaji import cli
-from kaji.cli import app
-from kaji.resolve import ResolveError
-from kaji.seed import SeedError
+from shidashi import cli
+from shidashi.cli import app
+from shidashi.resolve import ResolveError
+from shidashi.seed import SeedError
 from tests._pending import try_import
 
-FactoryError: Any = try_import("kaji.factory", "FactoryError")
-FactoryResult: Any = try_import("kaji.factory", "FactoryResult")
+FactoryError: Any = try_import("shidashi.factory", "FactoryError")
+FactoryResult: Any = try_import("shidashi.factory", "FactoryResult")
 
 runner = CliRunner()
 
@@ -79,13 +80,13 @@ def variants_tree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         recipe = root / axis / name / "recipe.yaml"
         recipe.parent.mkdir(parents=True, exist_ok=True)
         recipe.write_text(text, encoding="utf-8")
-    monkeypatch.setenv("KAJI_VARIANTS_DIR", str(root))
+    monkeypatch.setenv("SHIDASHI_VARIANTS_DIR", str(root))
     return root
 
 
 def _fake_result() -> Any:
     return FactoryResult(
-        pkgdir=Path("/var/cache/kaji/binpkgs/v3"),
+        pkgdir=Path("/var/cache/shidashi/binpkgs/v3"),
         built_atoms=("media-libs/libsdl2-2.30.5", "sys-apps/portage-3.0.66"),
         phases=("rebuild", "graphics", "desktop"),
         fork_point=Path("/c/fork-points/v3-minimal-systemd-SNAP.tar"),
@@ -129,6 +130,7 @@ def test_factory_help_shows_options() -> None:
     assert "--no-download" in out
     assert "--keep" in out
     assert "--pkgdir" in out
+    assert "--work-dir" in out
 
 
 # --- sucesso pretty exit 0 (R1.1) --------------------------------------------
@@ -244,3 +246,79 @@ def test_factory_pkgdir_override_used(
     )
     assert result.exit_code == 0, result.stdout
     assert seen["pkgdir"] == override
+
+
+# --- _apply_work_dir (helper puro) -------------------------------------------
+
+
+def test_apply_work_dir_sets_cache_and_scratch(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # registra as chaves no monkeypatch p/ restauração no teardown (o helper
+    # muta os.environ diretamente; o undo do monkeypatch as remove ao fim).
+    monkeypatch.delenv("SHIDASHI_CACHE", raising=False)
+    monkeypatch.delenv("SHIDASHI_SCRATCH", raising=False)
+    cli._apply_work_dir(tmp_path / "w")
+    assert os.environ["SHIDASHI_CACHE"] == str(tmp_path / "w" / "cache")
+    assert os.environ["SHIDASHI_SCRATCH"] == str(tmp_path / "w" / "scratch")
+
+
+def test_apply_work_dir_none_is_noop(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SHIDASHI_CACHE", "/preexistente")
+    cli._apply_work_dir(None)
+    assert os.environ["SHIDASHI_CACHE"] == "/preexistente"
+
+
+def test_apply_work_dir_overrides_env(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("SHIDASHI_CACHE", "/antigo")  # env do usuário
+    cli._apply_work_dir(tmp_path / "w")  # flag vence
+    assert os.environ["SHIDASHI_CACHE"] == str(tmp_path / "w" / "cache")
+
+
+# --- --work-dir deriva os caminhos e --pkgdir o vence ------------------------
+
+
+def test_factory_work_dir_derives_pkgdir(
+    monkeypatch: pytest.MonkeyPatch, variants_tree: Path, tmp_path: Path
+) -> None:
+    monkeypatch.delenv("SHIDASHI_CACHE", raising=False)
+    monkeypatch.delenv("SHIDASHI_SCRATCH", raising=False)
+    seen: dict[str, object] = {}
+
+    def _capture_init(_recipe: object, pkgdir: Path) -> _FakeInstance:
+        seen["pkgdir"] = pkgdir
+        return _FakeInstance(lambda **_k: _fake_result())
+
+    monkeypatch.setattr(cli, "Factory", _capture_init, raising=False)
+    work = tmp_path / "work"
+    result = runner.invoke(
+        app, ["factory", "v3", "minimal", "systemd", "--work-dir", str(work)]
+    )
+    assert result.exit_code == 0, result.stdout
+    # sem --pkgdir, o binhost deriva do cache sob o work-dir
+    assert seen["pkgdir"] == work / "cache" / "binpkgs" / "v3"
+
+
+def test_factory_pkgdir_beats_work_dir(
+    monkeypatch: pytest.MonkeyPatch, variants_tree: Path, tmp_path: Path
+) -> None:
+    monkeypatch.delenv("SHIDASHI_CACHE", raising=False)
+    monkeypatch.delenv("SHIDASHI_SCRATCH", raising=False)
+    seen: dict[str, object] = {}
+
+    def _capture_init(_recipe: object, pkgdir: Path) -> _FakeInstance:
+        seen["pkgdir"] = pkgdir
+        return _FakeInstance(lambda **_k: _fake_result())
+
+    monkeypatch.setattr(cli, "Factory", _capture_init, raising=False)
+    work = tmp_path / "work"
+    override = tmp_path / "custom-pkgdir"
+    result = runner.invoke(
+        app,
+        ["factory", "v3", "minimal", "systemd",
+         "--work-dir", str(work), "--pkgdir", str(override)],
+    )
+    assert result.exit_code == 0, result.stdout
+    assert seen["pkgdir"] == override  # --pkgdir vence o cache derivado do work-dir

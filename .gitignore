@@ -12,7 +12,7 @@ build/
 # epic story drafts (planning scratch, not tracked)
 .epic/stories/**/.draft/
 
-# artefatos de build do Kaji
+# artefatos de build do Shidashi
 /work/
 *.iso
 *.squashfs

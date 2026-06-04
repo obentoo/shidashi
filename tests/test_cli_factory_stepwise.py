@@ -1,7 +1,7 @@
-"""UNIT da CLI ``kaji factory`` stepwise via Typer ``CliRunner`` (story 004 7.1).
+"""UNIT da CLI ``shidashi factory`` stepwise via Typer ``CliRunner`` (story 004 7.1).
 
 Determinista no host CI: ``Factory.build``/``build_stepwise`` (privilegiados) são
-monkeypatched no namespace de ``kaji.cli`` — exercitamos só a CAMADA CLI:
+monkeypatched no namespace de ``shidashi.cli`` — exercitamos só a CAMADA CLI:
 
 * guardas/usabilidade: ``--step`` sem TTY → exit 1 (monkeypatch ``isatty``);
   ``--step --format json`` → exit 1 (R2.6/R2.7);
@@ -22,12 +22,12 @@ from typing import Any
 import pytest
 from typer.testing import CliRunner
 
-from kaji import cli
-from kaji.cli import app
+from shidashi import cli
+from shidashi.cli import app
 from tests._pending import try_import
 
-FactoryError: Any = try_import("kaji.factory", "FactoryError")
-FactoryResult: Any = try_import("kaji.factory", "FactoryResult")
+FactoryError: Any = try_import("shidashi.factory", "FactoryError")
+FactoryResult: Any = try_import("shidashi.factory", "FactoryResult")
 
 runner = CliRunner()
 
@@ -70,13 +70,13 @@ def variants_tree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         recipe = root / axis / name / "recipe.yaml"
         recipe.parent.mkdir(parents=True, exist_ok=True)
         recipe.write_text(text, encoding="utf-8")
-    monkeypatch.setenv("KAJI_VARIANTS_DIR", str(root))
+    monkeypatch.setenv("SHIDASHI_VARIANTS_DIR", str(root))
     return root
 
 
 def _fake_result(**over: Any) -> Any:
     base: dict[str, Any] = dict(
-        pkgdir=Path("/var/cache/kaji/binpkgs/v3"),
+        pkgdir=Path("/var/cache/shidashi/binpkgs/v3"),
         built_atoms=("media-libs/libsdl2-2.30.5",),
         phases=("rebuild",),
         fork_point=None,
@@ -110,7 +110,7 @@ def _fake_factory(step_fn: Any) -> Any:
 
 def _force_tty(monkeypatch: pytest.MonkeyPatch, value: bool) -> None:
     # patcha o stdin REAL (stdlib sys): a CLI consulta sys.stdin.isatty() para a
-    # guarda de TTY do --step. Independe de como kaji.cli importa sys.
+    # guarda de TTY do --step. Independe de como shidashi.cli importa sys.
     monkeypatch.setattr(sys.stdin, "isatty", lambda: value, raising=False)
 
 

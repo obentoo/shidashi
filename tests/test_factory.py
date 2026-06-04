@@ -1,4 +1,4 @@
-"""UNIT + INTEGRAÇÃO de kaji.factory (story 003 grupos 5 e 6).
+"""UNIT + INTEGRAÇÃO de shidashi.factory (story 003 grupos 5 e 6).
 
 UNIT (determinista, CI não-Gentoo):
 * 6.1 ``_build_binds`` mapeia pkgdir/ccache/sccache/distdir → caminhos fixos do
@@ -26,13 +26,13 @@ from typing import Any
 
 import pytest
 
-from kaji import factory, phases
-from kaji.recipe import Phase, ResolvedRecipe, ResolvedUse
+from shidashi import factory, phases
+from shidashi.recipe import Phase, ResolvedRecipe, ResolvedUse
 from tests._pending import try_import
 
-Factory: Any = try_import("kaji.factory", "Factory")
-FactoryError: Any = try_import("kaji.factory", "FactoryError")
-FactoryResult: Any = try_import("kaji.factory", "FactoryResult")
+Factory: Any = try_import("shidashi.factory", "Factory")
+FactoryError: Any = try_import("shidashi.factory", "FactoryError")
+FactoryResult: Any = try_import("shidashi.factory", "FactoryResult")
 
 _NEEDS_HOST = os.geteuid() != 0 or shutil.which("systemd-nspawn") is None
 _skip_privileged = pytest.mark.skipif(
@@ -66,7 +66,7 @@ def _recipe(
 
 def _make_result() -> Any:
     return FactoryResult(
-        pkgdir=Path("/var/cache/kaji/binpkgs/v3"),
+        pkgdir=Path("/var/cache/shidashi/binpkgs/v3"),
         built_atoms=("media-libs/libsdl2-2.30.5",),
         phases=("rebuild", "graphics"),
         fork_point=Path("/c/fork-points/v3-kde-systemd-SNAP.tar"),
@@ -80,7 +80,7 @@ def _make_result() -> Any:
 
 def test_factory_result_is_frozen_and_typed() -> None:
     result = _make_result()
-    assert result.pkgdir == Path("/var/cache/kaji/binpkgs/v3")
+    assert result.pkgdir == Path("/var/cache/shidashi/binpkgs/v3")
     assert result.built_atoms == ("media-libs/libsdl2-2.30.5",)
     assert result.phases == ("rebuild", "graphics")
     assert result.fork_point_reused is False
@@ -102,11 +102,11 @@ def test_factory_error_carries_phase_and_output() -> None:
 def test_build_binds_maps_caches_rw_and_repos_ro(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setenv("KAJI_CACHE", str(tmp_path / "cache"))
+    monkeypatch.setenv("SHIDASHI_CACHE", str(tmp_path / "cache"))
     repo_ro = (Path("/var/db/repos/gentoo"), Path("/var/db/repos/gentoo"))
     monkeypatch.setattr(factory, "bind_repos", lambda *_a, **_k: [repo_ro], raising=False)
 
-    build_binds: Any = try_import("kaji.factory", "_build_binds")
+    build_binds: Any = try_import("shidashi.factory", "_build_binds")
     pkgdir = tmp_path / "cache" / "binpkgs" / "v3"
     binds_ro, binds_rw = build_binds(_recipe(), pkgdir=pkgdir)
 
@@ -136,7 +136,7 @@ def test_factory_build_non_root_raises_before_work(monkeypatch: pytest.MonkeyPat
     monkeypatch.setattr(factory, "fetch_stage3", _boom, raising=False)
     monkeypatch.setattr(factory, "extract_stage3", _boom, raising=False)
 
-    f = Factory(_recipe(), Path("/var/cache/kaji/binpkgs/v3"))
+    f = Factory(_recipe(), Path("/var/cache/shidashi/binpkgs/v3"))
     with pytest.raises(Exception):  # noqa: B017  (SystemExit/FactoryError/RuntimeError)
         f.build()
 
@@ -154,7 +154,7 @@ class _NoEmergeContainer:
 
 
 def test_settle_pass_empty_breaks_is_noop() -> None:
-    settle_pass: Any = try_import("kaji.phases", "settle_pass")
+    settle_pass: Any = try_import("shidashi.phases", "settle_pass")
     container = _NoEmergeContainer()
     result = settle_pass(container, _recipe(flavor="minimal"), ())
     # no-op: sem átomos de settle (R4.4)
@@ -201,6 +201,6 @@ def test_run_phases_minimal_and_kde() -> None:
 
 @_skip_privileged
 def test_full_factory_build_v3_minimal_systemd() -> None:
-    # 6.2 (int): kaji factory v3 minimal systemd produz pkgdir não-vazio +
+    # 6.2 (int): shidashi factory v3 minimal systemd produz pkgdir não-vazio +
     # fork-point. Diferido ao host privilegiado real.
     pytest.skip("integração privilegiada: requer host Gentoo seedado (Red diferido)")

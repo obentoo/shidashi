@@ -1,8 +1,8 @@
-"""UNIT (R6.2) — novos helpers de caminho de kaji.config para o fluxo pretend.
+"""UNIT (R6.2) — novos helpers de caminho de shidashi.config para o fluxo pretend.
 
-Contrato (design.md §config): ``scratch_dir()`` (env ``KAJI_SCRATCH``, default
-``/var/tmp/kaji-pretend``), ``cache_dir()`` (env ``KAJI_CACHE``) e
-``seeds_dir()`` (env ``KAJI_SEEDS_DIR``). Cada helper lê a variável de ambiente
+Contrato (design.md §config): ``scratch_dir()`` (env ``SHIDASHI_SCRATCH``, default
+``/var/tmp/shidashi-pretend``), ``cache_dir()`` (env ``SHIDASHI_CACHE``) e
+``seeds_dir()`` (env ``SHIDASHI_SEEDS_DIR``). Cada helper lê a variável de ambiente
 *por chamada* (mesmo padrão de ``variants_dir``), então forçamos o estado via
 ``monkeypatch`` — nunca dependemos do host. Comportamento observável apenas:
 override quando a env existe, default quando ausente.
@@ -18,18 +18,18 @@ from pathlib import Path
 
 import pytest
 
-from kaji import config
+from shidashi import config
 
 # --- scratch_dir -------------------------------------------------------------
 
 
 def test_scratch_dir_default_when_unset(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("KAJI_SCRATCH", raising=False)
-    assert config.scratch_dir() == Path("/var/tmp/kaji-pretend")
+    monkeypatch.delenv("SHIDASHI_SCRATCH", raising=False)
+    assert config.scratch_dir() == Path("/var/tmp/shidashi-pretend")
 
 
 def test_scratch_dir_honors_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    monkeypatch.setenv("KAJI_SCRATCH", str(tmp_path / "scratch"))
+    monkeypatch.setenv("SHIDASHI_SCRATCH", str(tmp_path / "scratch"))
     assert config.scratch_dir() == tmp_path / "scratch"
 
 
@@ -37,15 +37,15 @@ def test_scratch_dir_honors_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path)
 
 
 def test_cache_dir_honors_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    monkeypatch.setenv("KAJI_CACHE", str(tmp_path / "cache"))
+    monkeypatch.setenv("SHIDASHI_CACHE", str(tmp_path / "cache"))
     assert config.cache_dir() == tmp_path / "cache"
 
 
 def test_cache_dir_read_per_call(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     # a env é lida a cada chamada (sem estado global cacheado)
-    monkeypatch.setenv("KAJI_CACHE", str(tmp_path / "a"))
+    monkeypatch.setenv("SHIDASHI_CACHE", str(tmp_path / "a"))
     assert config.cache_dir() == tmp_path / "a"
-    monkeypatch.setenv("KAJI_CACHE", str(tmp_path / "b"))
+    monkeypatch.setenv("SHIDASHI_CACHE", str(tmp_path / "b"))
     assert config.cache_dir() == tmp_path / "b"
 
 
@@ -53,13 +53,13 @@ def test_cache_dir_read_per_call(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 
 
 def test_seeds_dir_honors_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    monkeypatch.setenv("KAJI_SEEDS_DIR", str(tmp_path / "seeds"))
+    monkeypatch.setenv("SHIDASHI_SEEDS_DIR", str(tmp_path / "seeds"))
     assert config.seeds_dir() == tmp_path / "seeds"
 
 
 def test_seeds_dir_returns_path(monkeypatch: pytest.MonkeyPatch) -> None:
     # sem env, ainda assim devolve um Path (default relativo ao repo)
-    monkeypatch.delenv("KAJI_SEEDS_DIR", raising=False)
+    monkeypatch.delenv("SHIDASHI_SEEDS_DIR", raising=False)
     assert isinstance(config.seeds_dir(), Path)
 
 
@@ -67,16 +67,16 @@ def test_seeds_dir_returns_path(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_build_root_under_scratch(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    monkeypatch.setenv("KAJI_SCRATCH", str(tmp_path / "scratch"))
+    monkeypatch.setenv("SHIDASHI_SCRATCH", str(tmp_path / "scratch"))
     assert config.build_root() == tmp_path / "scratch" / "build"
 
 
 def test_build_root_honors_scratch_env_per_call(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setenv("KAJI_SCRATCH", str(tmp_path / "a"))
+    monkeypatch.setenv("SHIDASHI_SCRATCH", str(tmp_path / "a"))
     assert config.build_root() == tmp_path / "a" / "build"
-    monkeypatch.setenv("KAJI_SCRATCH", str(tmp_path / "b"))
+    monkeypatch.setenv("SHIDASHI_SCRATCH", str(tmp_path / "b"))
     assert config.build_root() == tmp_path / "b" / "build"
 
 
@@ -86,12 +86,12 @@ def test_build_root_honors_scratch_env_per_call(
 def test_pkgdir_under_cache_binpkgs_arch(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setenv("KAJI_CACHE", str(tmp_path / "cache"))
+    monkeypatch.setenv("SHIDASHI_CACHE", str(tmp_path / "cache"))
     assert config.pkgdir("v3") == tmp_path / "cache" / "binpkgs" / "v3"
 
 
 def test_pkgdir_partitions_per_arch(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    monkeypatch.setenv("KAJI_CACHE", str(tmp_path / "cache"))
+    monkeypatch.setenv("SHIDASHI_CACHE", str(tmp_path / "cache"))
     assert config.pkgdir("v3") != config.pkgdir("znver5")
     assert config.pkgdir("v3").name == "v3"
     assert config.pkgdir("znver5").name == "znver5"
@@ -103,7 +103,7 @@ def test_pkgdir_partitions_per_arch(monkeypatch: pytest.MonkeyPatch, tmp_path: P
 def test_ccache_sccache_distdir_under_cache(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setenv("KAJI_CACHE", str(tmp_path / "cache"))
+    monkeypatch.setenv("SHIDASHI_CACHE", str(tmp_path / "cache"))
     base = tmp_path / "cache"
     assert config.ccache_dir() == base / "ccache"
     assert config.sccache_dir() == base / "sccache"
@@ -111,14 +111,14 @@ def test_ccache_sccache_distdir_under_cache(
 
 
 def test_fork_points_dir_under_cache(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    monkeypatch.setenv("KAJI_CACHE", str(tmp_path / "cache"))
+    monkeypatch.setenv("SHIDASHI_CACHE", str(tmp_path / "cache"))
     assert config.fork_points_dir() == tmp_path / "cache" / "fork-points"
 
 
 def test_cache_helpers_read_env_per_call(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setenv("KAJI_CACHE", str(tmp_path / "a"))
+    monkeypatch.setenv("SHIDASHI_CACHE", str(tmp_path / "a"))
     assert config.fork_points_dir() == tmp_path / "a" / "fork-points"
-    monkeypatch.setenv("KAJI_CACHE", str(tmp_path / "b"))
+    monkeypatch.setenv("SHIDASHI_CACHE", str(tmp_path / "b"))
     assert config.fork_points_dir() == tmp_path / "b" / "fork-points"

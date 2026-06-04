@@ -1,9 +1,9 @@
-"""Resolução de caminhos da árvore ``variants/`` do Kaji.
+"""Resolução de caminhos da árvore ``variants/`` do Shidashi.
 
 Este módulo descobre o diretório ``variants/`` (com override por variável de
-ambiente ``KAJI_VARIANTS_DIR``) e resolve os caminhos de cada eixo
+ambiente ``SHIDASHI_VARIANTS_DIR``) e resolve os caminhos de cada eixo
 (``arch``/``flavor``/``init``) e do fragmento ``base``. Não parseia YAML — isso
-é responsabilidade de :mod:`kaji.recipe`, cujos loaders recebem um ``Path``
+é responsabilidade de :mod:`shidashi.recipe`, cujos loaders recebem um ``Path``
 explícito. Mantém-se puro: sem estado mutável global; a variável de ambiente é
 lida a cada chamada para que testes possam fazer ``monkeypatch``.
 """
@@ -11,12 +11,12 @@ lida a cada chamada para que testes possam fazer ``monkeypatch``.
 import os
 from pathlib import Path
 
-from kaji.recipe import ResolvedRecipe
+from shidashi.recipe import ResolvedRecipe
 
-_ENV_VAR = "KAJI_VARIANTS_DIR"
-_SCRATCH_ENV = "KAJI_SCRATCH"
-_CACHE_ENV = "KAJI_CACHE"
-_SEEDS_ENV = "KAJI_SEEDS_DIR"
+_ENV_VAR = "SHIDASHI_VARIANTS_DIR"
+_SCRATCH_ENV = "SHIDASHI_SCRATCH"
+_CACHE_ENV = "SHIDASHI_CACHE"
+_SEEDS_ENV = "SHIDASHI_SEEDS_DIR"
 
 
 class UnknownAxisError(Exception):
@@ -40,9 +40,9 @@ class UnknownAxisError(Exception):
 def variants_dir() -> Path:
     """Devolve o diretório ``variants/`` (R6.1).
 
-    Se ``KAJI_VARIANTS_DIR`` estiver definida, usa-a; caso contrário localiza
+    Se ``SHIDASHI_VARIANTS_DIR`` estiver definida, usa-a; caso contrário localiza
     ``variants/`` relativo ao pacote: a raiz do projeto é o diretório-pai do
-    pacote ``kaji`` e ``variants/`` vive em ``<raiz>/variants``.
+    pacote ``shidashi`` e ``variants/`` vive em ``<raiz>/variants``.
     """
     override = os.environ.get(_ENV_VAR)
     if override:
@@ -91,34 +91,34 @@ def base_path() -> Path:
 def scratch_dir() -> Path:
     """Devolve o diretório de scratch do fluxo *pretend* (R6.2).
 
-    Honra ``KAJI_SCRATCH`` (lida a cada chamada, como :func:`variants_dir`);
-    na ausência usa o default ``/var/tmp/kaji-pretend``. Todo estado efêmero
+    Honra ``SHIDASHI_SCRATCH`` (lida a cada chamada, como :func:`variants_dir`);
+    na ausência usa o default ``/var/tmp/shidashi-pretend``. Todo estado efêmero
     da resolução (rootfs seedado) é confinado aqui.
     """
     override = os.environ.get(_SCRATCH_ENV)
     if override:
         return Path(override)
-    return Path("/var/tmp/kaji-pretend")
+    return Path("/var/tmp/shidashi-pretend")
 
 
 def cache_dir() -> Path:
     """Devolve o diretório de cache de stage3 baixados (R2.5).
 
-    Honra ``KAJI_CACHE`` (lida a cada chamada); default ``/var/cache/kaji``.
+    Honra ``SHIDASHI_CACHE`` (lida a cada chamada); default ``/var/cache/shidashi``.
     O tarball verificado é guardado aqui para reuso entre execuções.
     """
     override = os.environ.get(_CACHE_ENV)
     if override:
         return Path(override)
-    return Path("/var/cache/kaji")
+    return Path("/var/cache/shidashi")
 
 
 def seeds_dir() -> Path:
     """Devolve o diretório ``seeds/`` do repo (pointer pinado) (R2.1).
 
-    Honra ``KAJI_SEEDS_DIR`` (lida a cada chamada); na ausência resolve
+    Honra ``SHIDASHI_SEEDS_DIR`` (lida a cada chamada); na ausência resolve
     ``seeds/`` relativo à raiz do projeto (mesma resolução de
-    :func:`variants_dir`: o diretório-pai do pacote ``kaji``).
+    :func:`variants_dir`: o diretório-pai do pacote ``shidashi``).
     """
     override = os.environ.get(_SEEDS_ENV)
     if override:
@@ -131,7 +131,7 @@ def build_root() -> Path:
     """Devolve a raiz dos rootfs de build (R5.1/R8.2): ``scratch_dir()/build``.
 
     Cada flavor/arch monta seu rootfs efêmero sob este diretório. Herda o
-    override ``KAJI_SCRATCH`` (lido por chamada) de :func:`scratch_dir`.
+    override ``SHIDASHI_SCRATCH`` (lido por chamada) de :func:`scratch_dir`.
     """
     return scratch_dir() / "build"
 
@@ -141,7 +141,7 @@ def pkgdir(arch: str) -> Path:
 
     Particionado por ``arch`` para que variantes de microarquitetura (``v3``,
     ``znver5``, …) não compartilhem binpkgs incompatíveis. Herda o override
-    ``KAJI_CACHE`` (lido por chamada) de :func:`cache_dir`.
+    ``SHIDASHI_CACHE`` (lido por chamada) de :func:`cache_dir`.
     """
     return cache_dir() / "binpkgs" / arch
 
@@ -150,7 +150,7 @@ def ccache_dir() -> Path:
     """Devolve o diretório ``ccache`` compartilhado (R6.2): ``cache_dir()/ccache``.
 
     Compartilhado entre flavors/archs (cache de compilação C/C++). Herda o
-    override ``KAJI_CACHE`` (lido por chamada).
+    override ``SHIDASHI_CACHE`` (lido por chamada).
     """
     return cache_dir() / "ccache"
 
@@ -159,7 +159,7 @@ def sccache_dir() -> Path:
     """Devolve o diretório ``sccache`` compartilhado (R6.2): ``cache_dir()/sccache``.
 
     Compartilhado entre flavors/archs (cache de compilação Rust). Herda o
-    override ``KAJI_CACHE`` (lido por chamada).
+    override ``SHIDASHI_CACHE`` (lido por chamada).
     """
     return cache_dir() / "sccache"
 
@@ -168,7 +168,7 @@ def distdir() -> Path:
     """Devolve o ``DISTDIR`` compartilhado (R6.2): ``cache_dir()/distfiles``.
 
     Compartilhado entre flavors/archs (tarballs de fonte baixados). Herda o
-    override ``KAJI_CACHE`` (lido por chamada).
+    override ``SHIDASHI_CACHE`` (lido por chamada).
     """
     return cache_dir() / "distfiles"
 
@@ -177,7 +177,7 @@ def fork_points_dir() -> Path:
     """Devolve o diretório de *fork points* (R6.2): ``cache_dir()/fork-points``.
 
     Guarda os marcos de fork entre estágios de build. Herda o override
-    ``KAJI_CACHE`` (lido por chamada).
+    ``SHIDASHI_CACHE`` (lido por chamada).
     """
     return cache_dir() / "fork-points"
 
@@ -186,7 +186,7 @@ def state_dir() -> Path:
     """Devolve o diretório de estado de build persistido (R6.1): ``cache_dir()/state``.
 
     O estado de progresso de cada build vive aqui, sob o cache, para sobreviver ao
-    teardown do rootfs efêmero. Herda o override ``KAJI_CACHE`` (lido por chamada).
+    teardown do rootfs efêmero. Herda o override ``SHIDASHI_CACHE`` (lido por chamada).
     """
     return cache_dir() / "state"
 
@@ -195,7 +195,7 @@ def build_state_path(recipe: ResolvedRecipe) -> Path:
     """Devolve o caminho do estado de uma receita (R6.1): ``state_dir()/<chave>.json``.
 
     A chave ``<arch>-<flavor>-<init>`` espelha a convenção de rootfs/fork-point,
-    isolando o progresso por variante. Herda o override ``KAJI_CACHE`` (lido por
+    isolando o progresso por variante. Herda o override ``SHIDASHI_CACHE`` (lido por
     chamada) de :func:`state_dir`.
     """
     return state_dir() / f"{recipe.arch}-{recipe.flavor}-{recipe.init}.json"

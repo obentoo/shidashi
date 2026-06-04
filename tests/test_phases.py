@@ -1,4 +1,4 @@
-"""UNIT da camada de planejamento PURO de kaji.phases (story 003 grupo 3 + 4.1).
+"""UNIT da camada de planejamento PURO de shidashi.phases (story 003 grupo 3 + 4.1).
 
 Todas as funções testadas aqui são puras ou fazem apenas I/O contra um tmp dir
 (sem root, sem nspawn, sem portage):
@@ -14,8 +14,8 @@ Todas as funções testadas aqui são puras ou fazem apenas I/O contra um tmp di
 * 4.1 (unit) ``snapshot_fork_point`` → ``restore_fork_point`` round-trip de uma
   árvore tmp simples (conteúdo + layout preservados, escrita atômica do dest).
 
-Contrato derivado de design.md §phases. Os símbolos de ``kaji.phases`` e
-``kaji.recipe.UseBreak`` são importados de forma tolerante (``try_import``) só
+Contrato derivado de design.md §phases. Os símbolos de ``shidashi.phases`` e
+``shidashi.recipe.UseBreak`` são importados de forma tolerante (``try_import``) só
 para não abortar a coleção do pytest inteiro enquanto a impl não existe; cada
 teste fica Red no uso, nomeando o símbolo pendente (Red esperado da story 003).
 """
@@ -23,20 +23,20 @@ teste fica Red no uso, nomeando o símbolo pendente (Red esperado da story 003).
 from pathlib import Path
 from typing import Any
 
-from kaji.recipe import Phase, ResolvedRecipe, ResolvedUse
+from shidashi.recipe import Phase, ResolvedRecipe, ResolvedUse
 from tests._pending import try_import
 
-UseBreak: Any = try_import("kaji.recipe", "UseBreak")
-phase_target: Any = try_import("kaji.phases", "phase_target")
-phase_emerge_argv: Any = try_import("kaji.phases", "phase_emerge_argv")
-use_break_lines: Any = try_import("kaji.phases", "use_break_lines")
-write_use_break: Any = try_import("kaji.phases", "write_use_break")
-clear_use_break: Any = try_import("kaji.phases", "clear_use_break")
-parse_built_atoms: Any = try_import("kaji.phases", "parse_built_atoms")
-fork_point: Any = try_import("kaji.phases", "fork_point")
-trunk_phase_names: Any = try_import("kaji.phases", "trunk_phase_names")
-snapshot_fork_point: Any = try_import("kaji.phases", "snapshot_fork_point")
-restore_fork_point: Any = try_import("kaji.phases", "restore_fork_point")
+UseBreak: Any = try_import("shidashi.recipe", "UseBreak")
+phase_target: Any = try_import("shidashi.phases", "phase_target")
+phase_emerge_argv: Any = try_import("shidashi.phases", "phase_emerge_argv")
+use_break_lines: Any = try_import("shidashi.phases", "use_break_lines")
+write_use_break: Any = try_import("shidashi.phases", "write_use_break")
+clear_use_break: Any = try_import("shidashi.phases", "clear_use_break")
+parse_built_atoms: Any = try_import("shidashi.phases", "parse_built_atoms")
+fork_point: Any = try_import("shidashi.phases", "fork_point")
+trunk_phase_names: Any = try_import("shidashi.phases", "trunk_phase_names")
+snapshot_fork_point: Any = try_import("shidashi.phases", "snapshot_fork_point")
+restore_fork_point: Any = try_import("shidashi.phases", "restore_fork_point")
 
 
 def _recipe(
@@ -145,7 +145,7 @@ def test_write_use_break_creates_file(tmp_path: Path) -> None:
     phase = _phase("graphics", breaks=(_ffmpeg(),))
     written = write_use_break(tmp_path, phase)
     assert written is not None
-    assert written == tmp_path / "etc" / "portage" / "package.use" / "zz-kaji-use-break"
+    assert written == tmp_path / "etc" / "portage" / "package.use" / "zz-shidashi-use-break"
     assert written.exists()
     assert "media-video/ffmpeg -sdl" in written.read_text(encoding="utf-8")
 

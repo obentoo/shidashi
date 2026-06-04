@@ -1,4 +1,4 @@
-"""Testes do motor de merge (kaji.recipe.merge) — R2.1–R2.7, R3.1, R3.2.
+"""Testes do motor de merge (shidashi.recipe.merge) — R2.1–R2.7, R3.1, R3.2.
 
 Os fragmentos são construídos programaticamente via os modelos; não se lê o
 diretório ``variants/``.
@@ -15,7 +15,7 @@ from typing import Any
 
 import pytest
 
-from kaji.recipe import (
+from shidashi.recipe import (
     ArchFragment,
     BaseFragment,
     FlavorFragment,
@@ -27,7 +27,7 @@ from kaji.recipe import (
 )
 from tests._pending import try_import
 
-UseBreak: Any = try_import("kaji.recipe", "UseBreak")
+UseBreak: Any = try_import("shidashi.recipe", "UseBreak")
 
 # --- builders/fixtures de fragmentos -----------------------------------------
 

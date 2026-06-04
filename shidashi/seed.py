@@ -1,4 +1,4 @@
-"""Aquisição verificada do stage3 do Kaji (OVERVIEW §10/§11).
+"""Aquisição verificada do stage3 do Shidashi (OVERVIEW §10/§11).
 
 Separa a lógica **pura** (parse do pointer pinado, montagem da URL do mirror,
 verificação de digest) da execução **privilegiada** (download, verificação GPG
@@ -7,8 +7,10 @@ unit-testada em CI não-Gentoo; o download/extração são exercidos pelos teste
 de integração host-gated.
 
 Reprodutibilidade: o stage3 é pinado por ``seeds/stage3.toml`` (filename +
-sha256 por init) e verificado por SHA-256 **e** assinatura GPG do ``.DIGESTS.asc``
-antes de qualquer extração. Usa apenas stdlib (``tomllib``/``urllib``/``hashlib``/
+sha512 por init) e verificado por SHA-512 **e** assinatura GPG do ``.DIGESTS``
+(cleartext-signed, assinatura PGP inline — o layout atual dos autobuilds da
+Gentoo, que não publica mais SHA-256 nem um ``.DIGESTS.asc`` separado) antes de
+qualquer extração. Usa apenas stdlib (``tomllib``/``urllib``/``hashlib``/
 ``tarfile``) mais o ``gpg`` do host.
 """
 
@@ -43,7 +45,7 @@ class Stage3Pointer(BaseModel):
 
     Frozen pydantic v2 (``extra="forbid"``, idioma de ``recipe.py``). Carrega o
     ``init`` resolvido, a ``base_url`` do mirror, o ``snapshot`` (diretório de
-    autobuild), o ``filename`` do tarball e seu ``sha256`` pinado.
+    autobuild), o ``filename`` do tarball e seu ``sha512`` pinado.
     """
 
     model_config = _STRICT
@@ -51,14 +53,14 @@ class Stage3Pointer(BaseModel):
     base_url: str
     snapshot: str
     filename: str
-    sha256: str
+    sha512: str
 
 
 def load_pointer(init: str, *, seeds_dir: Path) -> Stage3Pointer:
     """Lê a entrada pinada de ``init`` em ``seeds/stage3.toml`` (R2.1/R2.2).
 
     ``snapshot`` e ``base_url`` são chaves de topo compartilhadas; cada init é
-    uma tabela com ``filename`` + ``sha256``. Se ``init`` não tiver tabela,
+    uma tabela com ``filename`` + ``sha512``. Se ``init`` não tiver tabela,
     levanta :class:`SeedError` nomeando o init e as entradas disponíveis.
     """
     toml_path = seeds_dir / "stage3.toml"
@@ -83,16 +85,16 @@ def load_pointer(init: str, *, seeds_dir: Path) -> Stage3Pointer:
         raise SeedError(f"init {init!r} sem entrada em {toml_path}; disponíveis: {disponiveis}")
 
     filename = entry.get("filename")
-    sha256 = entry.get("sha256")
-    if not isinstance(filename, str) or not isinstance(sha256, str):
-        raise SeedError(f"entrada {init!r} em {toml_path} sem 'filename'/'sha256'")
+    sha512 = entry.get("sha512")
+    if not isinstance(filename, str) or not isinstance(sha512, str):
+        raise SeedError(f"entrada {init!r} em {toml_path} sem 'filename'/'sha512'")
 
     return Stage3Pointer(
         init=init,
         base_url=base_url,
         snapshot=snapshot,
         filename=filename,
-        sha256=sha256,
+        sha512=sha512,
     )
 
 
@@ -105,39 +107,43 @@ def stage3_url(pointer: Stage3Pointer) -> str:
     return f"{base}/{pointer.snapshot}/{pointer.filename}"
 
 
-def verify_digest(tarball: Path, sha256: str) -> None:
-    """Compara o SHA-256 de ``tarball`` ao digest pinado (R2.3/R2.4). Pura.
+def verify_digest(tarball: Path, sha512: str) -> None:
+    """Compara o SHA-512 de ``tarball`` ao digest pinado (R2.3/R2.4). Pura.
 
     Lê em blocos para não carregar o tarball inteiro em memória. Em divergência
-    levanta :class:`SeedError` nomeando o esperado e o obtido.
+    levanta :class:`SeedError` nomeando o esperado e o obtido. SHA-512 é o digest
+    publicado (e assinado) pelos autobuilds atuais da Gentoo no ``.DIGESTS``.
     """
-    h = hashlib.sha256()
+    h = hashlib.sha512()
     with tarball.open("rb") as fh:
         for chunk in iter(lambda: fh.read(1024 * 1024), b""):
             h.update(chunk)
     actual = h.hexdigest()
-    if actual != sha256:
+    if actual != sha512:
         raise SeedError(
-            f"sha256 divergente para {tarball.name}: esperado {sha256}, obtido {actual}"
+            f"sha512 divergente para {tarball.name}: esperado {sha512}, obtido {actual}"
         )
 
 
-def verify_signature(tarball: Path, *, digests: Path) -> None:
-    """Verifica a assinatura GPG do ``.DIGESTS.asc`` do tarball (R2.3/R2.4).
+def verify_signature(digests: Path) -> None:
+    """Verifica a assinatura GPG inline do ``.DIGESTS`` do stage3 (R2.3/R2.4).
 
-    Shell-out a ``gpg --verify`` sobre o ``.DIGESTS.asc`` (que carrega os
-    hashes do tarball assinados pela chave de release da Gentoo, confiada no
-    keyring do host). Levanta :class:`SeedError` se o arquivo de assinatura
-    estiver ausente, se o ``gpg`` não estiver disponível, ou se a verificação
-    retornar não-zero. Nunca ignora o código de retorno.
+    Os autobuilds atuais da Gentoo assinam o ``.DIGESTS`` em *cleartext* (PGP
+    SIGNED MESSAGE inline) — não há mais um ``.DIGESTS.asc`` separado. Logo a
+    verificação é ``gpg --verify <.DIGESTS>`` com **um único** argumento (o
+    arquivo cleartext-signed valida a si próprio; passar um segundo arquivo de
+    dados seria errado para esse formato). A confiança vem da chave de release da
+    Gentoo no keyring do host. Levanta :class:`SeedError` se o arquivo estiver
+    ausente, se o ``gpg`` não estiver disponível, ou se a verificação retornar
+    não-zero. Nunca ignora o código de retorno.
     """
     if not digests.is_file():
-        raise SeedError(f".DIGESTS.asc ausente: {digests}")
+        raise SeedError(f".DIGESTS ausente: {digests}")
     if shutil.which("gpg") is None:
         raise SeedError("gpg indisponível no host; impossível verificar a assinatura")
     try:
         result = subprocess.run(
-            ["gpg", "--verify", str(digests), str(tarball)],
+            ["gpg", "--verify", str(digests)],
             capture_output=True,
             text=True,
             check=False,
@@ -145,7 +151,7 @@ def verify_signature(tarball: Path, *, digests: Path) -> None:
     except OSError as err:
         raise SeedError(f"falha ao executar gpg --verify: {err}") from err
     if result.returncode != 0:
-        raise SeedError(f"verificação GPG falhou para {tarball.name}:\n{result.stderr.strip()}")
+        raise SeedError(f"verificação GPG falhou para {digests.name}:\n{result.stderr.strip()}")
 
 
 def _download(url: str, dest: Path) -> None:
@@ -168,14 +174,15 @@ def fetch_stage3(pointer: Stage3Pointer, *, cache_dir: Path, download: bool = Tr
       tocar a rede (R2.5).
     - Caso contrário, se ``download`` for ``False``, levanta :class:`SeedError`
       acionável sem rede (R2.6).
-    - Senão baixa tarball **e** sibling ``<filename>.DIGESTS.asc`` para arquivos
-      temporários, verifica digest + assinatura (apagando os parciais em falha),
-      e só então move atomicamente o tarball para o cache.
+    - Senão baixa tarball **e** sibling ``<filename>.DIGESTS`` (cleartext-signed)
+      para arquivos temporários, verifica digest (SHA-512) + assinatura GPG inline
+      (apagando os parciais em falha), e só então move atomicamente o tarball para
+      o cache.
     """
     cached = cache_dir / pointer.filename
     if cached.is_file():
         try:
-            verify_digest(cached, pointer.sha256)
+            verify_digest(cached, pointer.sha512)
         except SeedError:
             pass  # cache corrompido/desatualizado → rebaixa abaixo
         else:
@@ -189,15 +196,15 @@ def fetch_stage3(pointer: Stage3Pointer, *, cache_dir: Path, download: bool = Tr
 
     cache_dir.mkdir(parents=True, exist_ok=True)
     url = stage3_url(pointer)
-    asc_url = f"{url}.DIGESTS.asc"
-    tmp_dir = Path(tempfile.mkdtemp(prefix="kaji-seed-", dir=cache_dir))
+    digests_url = f"{url}.DIGESTS"
+    tmp_dir = Path(tempfile.mkdtemp(prefix="shidashi-seed-", dir=cache_dir))
     tmp_tarball = tmp_dir / pointer.filename
-    tmp_asc = tmp_dir / f"{pointer.filename}.DIGESTS.asc"
+    tmp_digests = tmp_dir / f"{pointer.filename}.DIGESTS"
     try:
         _download(url, tmp_tarball)
-        _download(asc_url, tmp_asc)
-        verify_digest(tmp_tarball, pointer.sha256)
-        verify_signature(tmp_tarball, digests=tmp_asc)
+        _download(digests_url, tmp_digests)
+        verify_digest(tmp_tarball, pointer.sha512)
+        verify_signature(tmp_digests)
         tmp_tarball.replace(cached)
     except SeedError:
         shutil.rmtree(tmp_dir, ignore_errors=True)

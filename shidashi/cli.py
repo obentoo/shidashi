@@ -1,10 +1,10 @@
-"""CLI do Kaji (Typer) — caminho ``recipe`` livre de Portage (R7.3).
+"""CLI do Shidashi (Typer) — caminho ``recipe`` livre de Portage (R7.3).
 
-Expõe o app raiz ``kaji`` com o subgrupo ``recipe`` (``show``/``validate``/
+Expõe o app raiz ``shidashi`` com o subgrupo ``recipe`` (``show``/``validate``/
 ``list``) e os stubs de Fase 0 (``factory``/``assemble``/``release``). Os
-comandos ``recipe`` apenas resolvem caminhos (``kaji.config``), carregam e
-fundem fragmentos (``kaji.recipe``) e renderizam — sem jamais importar ou
-acionar ``kaji.portage_api``.
+comandos ``recipe`` apenas resolvem caminhos (``shidashi.config``), carregam e
+fundem fragmentos (``shidashi.recipe``) e renderizam — sem jamais importar ou
+acionar ``shidashi.portage_api``.
 
 Mapeamento de erros (R5.2/R6.3): ``UnknownAxisError`` (de ``config``) e
 ``RecipeConflictError`` (de ``merge``) são capturados, exibidos como mensagem
@@ -12,6 +12,7 @@ amigável e convertidos em ``typer.Exit(1)`` — nenhum traceback escapa ao
 usuário.
 """
 
+import os
 import sys
 from enum import StrEnum
 from pathlib import Path
@@ -23,8 +24,8 @@ from rich.console import Console
 from rich.prompt import Prompt
 from rich.table import Table
 
-from kaji import config
-from kaji.factory import (
+from shidashi import config
+from shidashi.factory import (
     CheckpointDecision,
     Factory,
     FactoryError,
@@ -32,7 +33,7 @@ from kaji.factory import (
     FailureDecision,
     StaleStateError,
 )
-from kaji.recipe import (
+from shidashi.recipe import (
     RecipeConflictError,
     ResolvedRecipe,
     load_arch,
@@ -41,11 +42,11 @@ from kaji.recipe import (
     load_init,
     merge,
 )
-from kaji.resolve import PretendReport, ResolveError, pretend_resolve
-from kaji.seed import SeedError
-from kaji.state import PhaseDiff
+from shidashi.resolve import PretendReport, ResolveError, pretend_resolve
+from shidashi.seed import SeedError
+from shidashi.state import PhaseDiff
 
-app = typer.Typer(no_args_is_help=True, help="Kaji — forja de builds e ISOs do bentoo.")
+app = typer.Typer(no_args_is_help=True, help="Shidashi — catering de builds e ISOs do bentoo.")
 recipe_app = typer.Typer(no_args_is_help=True, help="Inspeciona e valida receitas resolvidas.")
 app.add_typer(recipe_app, name="recipe")
 
@@ -83,13 +84,30 @@ class OutputFormat(StrEnum):
     pretty = "pretty"
 
 
+def _apply_work_dir(work_dir: Path | None) -> None:
+    """Aponta cache e scratch sob um único ``--work-dir`` (precedência sobre env).
+
+    Quando ``work_dir`` é dado, deriva ``cache → <work_dir>/cache`` e
+    ``scratch → <work_dir>/scratch`` setando ``SHIDASHI_CACHE``/``SHIDASHI_SCRATCH`` no
+    ambiente do processo. :mod:`shidashi.config` lê essas variáveis a cada chamada,
+    então toda a árvore de caminhos (binpkgs, stage3, state, fork-points, rootfs
+    de build) passa a viver sob ``work_dir`` — sem alterar a lógica de paths. A
+    flag vence a env var do usuário (sobrescreve-a); ``None`` é um no-op (mantém
+    env/default). ``--pkgdir`` continua tendo precedência sobre o ``cache`` daqui.
+    """
+    if work_dir is None:
+        return
+    os.environ["SHIDASHI_CACHE"] = str(work_dir / "cache")
+    os.environ["SHIDASHI_SCRATCH"] = str(work_dir / "scratch")
+
+
 def _resolve(arch: str, flavor: str, init: str) -> ResolvedRecipe:
     """Carrega os quatro fragmentos e funde-os numa :class:`ResolvedRecipe`.
 
-    Resolve caminhos via :mod:`kaji.config` (que levanta
-    :class:`~kaji.config.UnknownAxisError` para nomes desconhecidos) e funde via
-    :func:`kaji.recipe.merge` (que pode levantar
-    :class:`~kaji.recipe.RecipeConflictError`). Não captura nada: deixa as duas
+    Resolve caminhos via :mod:`shidashi.config` (que levanta
+    :class:`~shidashi.config.UnknownAxisError` para nomes desconhecidos) e funde via
+    :func:`shidashi.recipe.merge` (que pode levantar
+    :class:`~shidashi.recipe.RecipeConflictError`). Não captura nada: deixa as duas
     exceções conhecidas propagarem para os chamadores mapearem.
     """
     base = load_base(config.base_path())
@@ -220,6 +238,10 @@ def pretend(
     keep: Annotated[
         bool, typer.Option("--keep", help="Preservar o rootfs de scratch após o run.")
     ] = False,
+    work_dir: Annotated[
+        Path | None,
+        typer.Option("--work-dir", help="Raiz de trabalho (cache+scratch sob <DIR>)."),
+    ] = None,
 ) -> None:
     """Resolve a receita contra a árvore real via ``emerge --pretend`` (R1.1–R1.4).
 
@@ -227,6 +249,7 @@ def pretend(
     Erros conhecidos → mensagem amigável + exit 1, sem traceback. Num hard-conflict
     (``ResolveError`` com ``raw_output``) a saída crua do emerge vai para stderr.
     """
+    _apply_work_dir(work_dir)
     try:
         report = pretend_resolve(arch, flavor, init, download=not no_download, keep=keep)
     except (SeedError, ResolveError, config.UnknownAxisError, RecipeConflictError) as err:
@@ -272,7 +295,7 @@ def _render_factory_pretty(result: FactoryResult, arch: str, flavor: str, init: 
 
 
 def _render_phase_diff(diff: PhaseDiff, console: Console) -> None:
-    """Renderiza um :class:`~kaji.state.PhaseDiff` como tabela ``rich`` (R2.2/R4.1).
+    """Renderiza um :class:`~shidashi.state.PhaseDiff` como tabela ``rich`` (R2.2/R4.1).
 
     Mostra o nome da fase, a contagem de átomos construídos e — quando não vazios
     — os ``unexpected_rebuilds``, as ``use_changes`` e os ``blockers``. Usada tanto
@@ -324,8 +347,8 @@ def _prompt_choice(prompt: str, choices: list[str], default: str) -> str:
 def _on_checkpoint(phase: str, diff: PhaseDiff) -> CheckpointDecision:
     """Checkpoint pós-fase: renderiza o diff e pergunta continuar/parar/shell (R2.2/R2.3).
 
-    Mostra o :class:`~kaji.state.PhaseDiff` da fase e mapeia a escolha do usuário
-    em :class:`~kaji.factory.CheckpointDecision`: ``c`` → ``CONTINUE`` (segue),
+    Mostra o :class:`~shidashi.state.PhaseDiff` da fase e mapeia a escolha do usuário
+    em :class:`~shidashi.factory.CheckpointDecision`: ``c`` → ``CONTINUE`` (segue),
     ``s`` → ``STOP`` (interrompe sem settle), ``sh`` → ``SHELL`` (a camada de build
     abre o shell e re-apresenta o MESMO checkpoint).
     """
@@ -343,9 +366,9 @@ def _on_checkpoint(phase: str, diff: PhaseDiff) -> CheckpointDecision:
 def _on_failure(phase: str, err: Exception) -> FailureDecision:
     """Callback de falha de fase: imprime a saída do emerge e pergunta retry/abort (R3.1–R3.3).
 
-    ``err`` é a :class:`~kaji.factory.FactoryError` da fase; imprime ``err.phase`` e
+    ``err`` é a :class:`~shidashi.factory.FactoryError` da fase; imprime ``err.phase`` e
     ``err.output`` (a saída crua do ``emerge``) em stderr e mapeia a escolha em
-    :class:`~kaji.factory.FailureDecision`: ``r`` → ``RETRY`` (re-roda a mesma fase),
+    :class:`~shidashi.factory.FailureDecision`: ``r`` → ``RETRY`` (re-roda a mesma fase),
     qualquer outra → ``ABORT``. A abertura do shell de falha é da camada de
     build/driver — o callback apenas imprime e pergunta (R3.4: nunca pula a fase).
     """
@@ -402,6 +425,13 @@ def factory(
         bool,
         typer.Option("--force-resume", help="Retoma um estado obsoleto sem recomeçar."),
     ] = False,
+    work_dir: Annotated[
+        Path | None,
+        typer.Option(
+            "--work-dir",
+            help="Raiz de trabalho: cache+scratch sob <DIR> (vence SHIDASHI_CACHE/SHIDASHI_SCRATCH).",
+        ),
+    ] = None,
 ) -> None:
     """Constrói os binpkgs (stage4) da receita num container nspawn (R1.1–R1.5/R8.x).
 
@@ -414,6 +444,7 @@ def factory(
     de root, viram mensagem amigável + exit 1, sem traceback; uma ``FactoryError``
     imprime a fase que falhou e a ``output`` do emerge.
     """
+    _apply_work_dir(work_dir)
     try:
         resolved = _resolve(arch, flavor, init)
     except (config.UnknownAxisError, RecipeConflictError) as err:

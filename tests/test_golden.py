@@ -13,8 +13,8 @@ from pathlib import Path
 
 import pytest
 
-from kaji import config
-from kaji.recipe import (
+from shidashi import config
+from shidashi.recipe import (
     ResolvedRecipe,
     load_arch,
     load_base,
@@ -28,7 +28,7 @@ _VARIANTS_DIR = Path(__file__).resolve().parent.parent / "variants"
 
 @pytest.fixture(autouse=True)
 def _point_at_shipped_variants(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("KAJI_VARIANTS_DIR", str(_VARIANTS_DIR))
+    monkeypatch.setenv("SHIDASHI_VARIANTS_DIR", str(_VARIANTS_DIR))
 
 
 def _resolve(arch: str, flavor: str, init: str) -> ResolvedRecipe:

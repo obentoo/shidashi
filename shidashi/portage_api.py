@@ -1,12 +1,12 @@
 """Integração protegida (*guarded*) com o Portage do host Gentoo.
 
-Este módulo é a *única* porta de entrada do Kaji para o módulo ``portage``
+Este módulo é a *única* porta de entrada do Shidashi para o módulo ``portage``
 (fornecido pelo sistema via ``sys-apps/portage``, não por ``pip``). O import é
 protegido: num host não-Gentoo (CI, laptop de desenvolvimento) o módulo carrega
 sem levantar exceção e expõe ``PORTAGE_AVAILABLE = False`` (R7.1).
 
 A exceção :class:`PortageUnavailableError` é definida **aqui** — nunca em
-:mod:`kaji.recipe` — para que a camada de receitas permaneça livre de qualquer
+:mod:`shidashi.recipe` — para que a camada de receitas permaneça livre de qualquer
 acoplamento com Portage (design §2, §9). O motor de receitas e os subcomandos
 ``recipe`` da CLI não importam este módulo nem chamam :func:`require_portage`.
 
@@ -43,7 +43,7 @@ class PortageUnavailableError(Exception):
 def require_portage() -> ModuleType:
     """Devolve o módulo ``portage`` ou levanta :class:`PortageUnavailableError`.
 
-    É o *portão* (gate) único pelo qual o restante do Kaji acessa o Portage. Em
+    É o *portão* (gate) único pelo qual o restante do Shidashi acessa o Portage. Em
     host não-Gentoo (``PORTAGE_AVAILABLE is False``) levanta
     :class:`PortageUnavailableError` com mensagem acionável (R7.2); caso
     contrário devolve o módulo ``portage`` já carregado.

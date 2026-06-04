@@ -1,4 +1,4 @@
-"""UNIT + INTEGRAÇÃO de kaji.phases (story 004 — planejamento stepwise PURO +
+"""UNIT + INTEGRAÇÃO de shidashi.phases (story 004 — planejamento stepwise PURO +
 orquestração privilegiada).
 
 UNIT (determinista, CI não-Gentoo):
@@ -31,20 +31,20 @@ from typing import Any
 
 import pytest
 
-from kaji import phases
-from kaji.recipe import Phase, ResolvedRecipe, ResolvedUse
+from shidashi import phases
+from shidashi.recipe import Phase, ResolvedRecipe, ResolvedUse
 from tests._pending import try_import
 
-checkpoint_sequence: Any = try_import("kaji.phases", "checkpoint_sequence")
-plan_phase_run: Any = try_import("kaji.phases", "plan_phase_run")
-parse_emerge_plan: Any = try_import("kaji.phases", "parse_emerge_plan")
-compute_phase_diff: Any = try_import("kaji.phases", "compute_phase_diff")
-phase_snapshot_path: Any = try_import("kaji.phases", "phase_snapshot_path")
-latest_resumable: Any = try_import("kaji.phases", "latest_resumable")
-run_phases_stepwise: Any = try_import("kaji.phases", "run_phases_stepwise")
-CheckpointDecision: Any = try_import("kaji.phases", "CheckpointDecision")
-FailureDecision: Any = try_import("kaji.phases", "FailureDecision")
-EmergePlanEntry: Any = try_import("kaji.state", "EmergePlanEntry")
+checkpoint_sequence: Any = try_import("shidashi.phases", "checkpoint_sequence")
+plan_phase_run: Any = try_import("shidashi.phases", "plan_phase_run")
+parse_emerge_plan: Any = try_import("shidashi.phases", "parse_emerge_plan")
+compute_phase_diff: Any = try_import("shidashi.phases", "compute_phase_diff")
+phase_snapshot_path: Any = try_import("shidashi.phases", "phase_snapshot_path")
+latest_resumable: Any = try_import("shidashi.phases", "latest_resumable")
+run_phases_stepwise: Any = try_import("shidashi.phases", "run_phases_stepwise")
+CheckpointDecision: Any = try_import("shidashi.phases", "CheckpointDecision")
+FailureDecision: Any = try_import("shidashi.phases", "FailureDecision")
+EmergePlanEntry: Any = try_import("shidashi.state", "EmergePlanEntry")
 
 _NEEDS_HOST = os.geteuid() != 0 or shutil.which("systemd-nspawn") is None
 _skip_privileged = pytest.mark.skipif(
@@ -289,7 +289,7 @@ class _FakeContainer:
         self._fail_first = fail_first
 
     def run(self, argv: Any, **_k: Any) -> Any:
-        from kaji.container import CommandResult
+        from shidashi.container import CommandResult
 
         self.emerge_calls.append(list(argv))
         if len(self.emerge_calls) <= self._fail_first:
@@ -305,7 +305,7 @@ class _FakeContainer:
 def _stepwise(container: Any, recipe: Any, monkeypatch: pytest.MonkeyPatch, **kw: Any) -> Any:
     # evita snapshot real + state I/O: monkeypatcha snapshot_fork_point e save_state.
     monkeypatch.setattr(phases, "snapshot_fork_point", lambda *_a, **_k: Path("/snap.tar"))
-    import kaji.state as state_mod
+    import shidashi.state as state_mod
 
     monkeypatch.setattr(state_mod, "save_state", lambda *_a, **_k: None, raising=False)
     return run_phases_stepwise(
@@ -364,7 +364,7 @@ def test_stepwise_failure_retry_then_continue(monkeypatch: pytest.MonkeyPatch) -
 def test_stepwise_failure_abort_raises_factory_error(monkeypatch: pytest.MonkeyPatch) -> None:
     container = _FakeContainer(fail_first=99)  # sempre falha
     monkeypatch.setattr(phases, "snapshot_fork_point", lambda *_a, **_k: Path("/snap.tar"))
-    import kaji.state as state_mod
+    import shidashi.state as state_mod
 
     monkeypatch.setattr(state_mod, "save_state", lambda *_a, **_k: None, raising=False)
 

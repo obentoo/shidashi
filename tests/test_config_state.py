@@ -1,7 +1,7 @@
-"""UNIT (story 004 1.3) — helpers de caminho de estado de build em kaji.config.
+"""UNIT (story 004 1.3) — helpers de caminho de estado de build em shidashi.config.
 
 Contrato (design.md §config): ``state_dir()`` = ``cache_dir()/state`` (sobrevive
-ao teardown do rootfs; env-overridable POR CHAMADA via ``KAJI_CACHE``, mesmo
+ao teardown do rootfs; env-overridable POR CHAMADA via ``SHIDASHI_CACHE``, mesmo
 padrão dos helpers existentes); ``build_state_path(recipe)`` =
 ``state_dir()/<arch>-<flavor>-<init>.json`` (espelha a chave de rootfs/fork-point).
 Comportamento observável apenas; nunca dependemos do host.
@@ -14,8 +14,8 @@ from pathlib import Path
 
 import pytest
 
-from kaji import config
-from kaji.recipe import Phase, ResolvedRecipe, ResolvedUse
+from shidashi import config
+from shidashi.recipe import Phase, ResolvedRecipe, ResolvedUse
 
 
 def _recipe(*, flavor: str = "minimal") -> ResolvedRecipe:
@@ -41,16 +41,16 @@ def _recipe(*, flavor: str = "minimal") -> ResolvedRecipe:
 
 
 def test_state_dir_under_cache(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    monkeypatch.setenv("KAJI_CACHE", str(tmp_path / "cache"))
+    monkeypatch.setenv("SHIDASHI_CACHE", str(tmp_path / "cache"))
     assert config.state_dir() == tmp_path / "cache" / "state"
 
 
 def test_state_dir_reads_cache_env_per_call(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setenv("KAJI_CACHE", str(tmp_path / "a"))
+    monkeypatch.setenv("SHIDASHI_CACHE", str(tmp_path / "a"))
     assert config.state_dir() == tmp_path / "a" / "state"
-    monkeypatch.setenv("KAJI_CACHE", str(tmp_path / "b"))
+    monkeypatch.setenv("SHIDASHI_CACHE", str(tmp_path / "b"))
     assert config.state_dir() == tmp_path / "b" / "state"
 
 
@@ -60,7 +60,7 @@ def test_state_dir_reads_cache_env_per_call(
 def test_build_state_path_key_is_arch_flavor_init_json(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setenv("KAJI_CACHE", str(tmp_path / "cache"))
+    monkeypatch.setenv("SHIDASHI_CACHE", str(tmp_path / "cache"))
     path = config.build_state_path(_recipe(flavor="minimal"))
     assert path == tmp_path / "cache" / "state" / "v3-minimal-systemd.json"
 
@@ -68,7 +68,7 @@ def test_build_state_path_key_is_arch_flavor_init_json(
 def test_build_state_path_differs_per_flavor(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setenv("KAJI_CACHE", str(tmp_path / "cache"))
+    monkeypatch.setenv("SHIDASHI_CACHE", str(tmp_path / "cache"))
     assert config.build_state_path(_recipe(flavor="minimal")) != config.build_state_path(
         _recipe(flavor="kde")
     )

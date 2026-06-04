@@ -1,4 +1,4 @@
-# Kaji CI — qualidade (real) + release semanal (scaffold, gated).
+# Shidashi CI — qualidade (real) + release semanal (scaffold, gated).
 #
 # Dois gatilhos:
 #   * push / pull_request -> job `quality` (real): roda em runner padrao, sem
@@ -59,7 +59,7 @@ jobs:
         desktop: [minimal, kde, gnome, xfce, wm]
     steps:
       - uses: actions/checkout@v4
-      # TODO(phase-4): seed stage3 -> kaji factory -> kaji assemble -> publicar
+      # TODO(phase-4): seed stage3 -> shidashi factory -> shidashi assemble -> publicar
       #   o artefato da combinacao arch x desktop x init da matriz.
       - name: Placeholder
         run: echo "scaffold — habilitar na fase 4 num runner Gentoo"

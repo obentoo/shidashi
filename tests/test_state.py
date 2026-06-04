@@ -1,4 +1,4 @@
-"""UNIT de kaji.state (story 004 grupo 1) — modelos + persistência PUROS.
+"""UNIT de shidashi.state (story 004 grupo 1) — modelos + persistência PUROS.
 
 Tudo aqui é puro ou faz apenas I/O contra um tmp dir (sem root, sem nspawn):
 
@@ -9,7 +9,7 @@ Tudo aqui é puro ou faz apenas I/O contra um tmp dir (sem root, sem nspawn):
   ``clear_state`` idempotente, ``is_stale`` (mismatch de snapshot ou hash)
   (R6.1/R6.2/R6.4).
 
-Contrato derivado de design.md §state. Os símbolos de ``kaji.state`` são
+Contrato derivado de design.md §state. Os símbolos de ``shidashi.state`` são
 importados de forma tolerante (``try_import``) para não abortar a coleção do
 pytest enquanto a impl não existe; cada teste fica Red no uso nomeando o símbolo
 pendente (Red esperado da story 004).
@@ -20,17 +20,17 @@ from typing import Any
 
 import pytest
 
-from kaji.recipe import Phase, ResolvedRecipe, ResolvedUse, UseBreak
+from shidashi.recipe import Phase, ResolvedRecipe, ResolvedUse, UseBreak
 from tests._pending import try_import
 
-EmergePlanEntry: Any = try_import("kaji.state", "EmergePlanEntry")
-PhaseDiff: Any = try_import("kaji.state", "PhaseDiff")
-BuildState: Any = try_import("kaji.state", "BuildState")
-recipe_hash: Any = try_import("kaji.state", "recipe_hash")
-load_state: Any = try_import("kaji.state", "load_state")
-save_state: Any = try_import("kaji.state", "save_state")
-clear_state: Any = try_import("kaji.state", "clear_state")
-is_stale: Any = try_import("kaji.state", "is_stale")
+EmergePlanEntry: Any = try_import("shidashi.state", "EmergePlanEntry")
+PhaseDiff: Any = try_import("shidashi.state", "PhaseDiff")
+BuildState: Any = try_import("shidashi.state", "BuildState")
+recipe_hash: Any = try_import("shidashi.state", "recipe_hash")
+load_state: Any = try_import("shidashi.state", "load_state")
+save_state: Any = try_import("shidashi.state", "save_state")
+clear_state: Any = try_import("shidashi.state", "clear_state")
+is_stale: Any = try_import("shidashi.state", "is_stale")
 
 
 def _recipe(*, flavor: str = "minimal", sets: tuple[str, ...] = ()) -> ResolvedRecipe:

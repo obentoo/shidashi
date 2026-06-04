@@ -1,7 +1,7 @@
 """Helper de import tolerante para testes Red da story 003.
 
 Permite que módulos de teste cujo contrato ainda não existe em produção
-(símbolos ausentes em ``kaji.*``) sejam *coletáveis*: a importação não aborta a
+(símbolos ausentes em ``shidashi.*``) sejam *coletáveis*: a importação não aborta a
 coleção do pytest inteiro; em vez disso cada teste falha (Red) no ponto de uso
 com uma mensagem clara apontando o símbolo pendente. Quando a implementação
 chega, ``try_import`` devolve o objeto real e os testes passam (Green).

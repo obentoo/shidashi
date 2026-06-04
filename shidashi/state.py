@@ -1,7 +1,7 @@
-"""Estado de build do Kaji: modelos de progresso/diff + persistência (story 004).
+"""Estado de build do Shidashi: modelos de progresso/diff + persistência (story 004).
 
 Define os modelos *frozen* pydantic v2 (``extra="forbid"``, coleções ``tuple``,
-idioma ``_STRICT`` de :mod:`kaji.recipe`) que registram o progresso de um build
+idioma ``_STRICT`` de :mod:`shidashi.recipe`) que registram o progresso de um build
 em fases — entradas do plano de emerge, o diff por fase (atoms construídos, USE
 changes, rebuilds inesperados, blockers) e o ``BuildState`` agregado (R4.1/R4.4).
 
@@ -21,7 +21,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
-from kaji.recipe import ResolvedRecipe, UseBreak
+from shidashi.recipe import ResolvedRecipe, UseBreak
 
 _STRICT = ConfigDict(frozen=True, extra="forbid")
 
@@ -73,7 +73,7 @@ class BuildState(BaseModel):
     ``arch``/``flavor``/``init`` mais o ``snapshot`` do stage3 e o ``recipe_hash``
     da receita resolvida (ambos comparados em :func:`is_stale`). ``seed_done``
     marca a extração concluída; ``completed_phases`` as fases já encerradas;
-    ``accumulated_breaks`` os :class:`~kaji.recipe.UseBreak` acumulados; e
+    ``accumulated_breaks`` os :class:`~shidashi.recipe.UseBreak` acumulados; e
     ``phase_diffs`` o histórico de :class:`PhaseDiff` por fase.
     """
 

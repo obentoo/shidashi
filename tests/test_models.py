@@ -1,4 +1,4 @@
-"""Testes dos modelos de receita e loaders YAML (kaji.recipe).
+"""Testes dos modelos de receita e loaders YAML (shidashi.recipe).
 
 Story 003 (1.1): novo modelo ``UseBreak`` (frozen, ``extra="forbid"``),
 ``Phase.use_break`` passa de ``tuple[UseToken]`` para ``tuple[UseBreak]`` e
@@ -17,7 +17,7 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
-from kaji.recipe import (
+from shidashi.recipe import (
     ArchFragment,
     BaseFragment,
     FlavorFragment,
@@ -34,7 +34,7 @@ from kaji.recipe import (
 )
 from tests._pending import try_import
 
-UseBreak: Any = try_import("kaji.recipe", "UseBreak")
+UseBreak: Any = try_import("shidashi.recipe", "UseBreak")
 
 # --- dicts válidos representativos por modelo ---------------------------------
 

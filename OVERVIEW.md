@@ -1,6 +1,6 @@
-# Kaji 鍛冶 — Proposta de Desenvolvimento
+# Shidashi 仕出し — Proposta de Desenvolvimento
 
-> Documento de visão e arquitetura do **Kaji**, a ferramenta de automação de builds e ISOs do **bentoo**.
+> Documento de visão e arquitetura do **Shidashi**, a ferramenta de automação de builds e ISOs do **bentoo**.
 > Status: **Fase 0 — scaffold + validação empírica (teste de resolução)** · Linguagem: **Python ≥ 3.14** · Última atualização: 2026-05-23
 
 ---
@@ -9,7 +9,7 @@
 
 **bentoo** é uma distribuição derivada do Gentoo — formalmente um *stage4*, apelidada de *"stage5"* — construída **por cima de um stage3 oficial**, com configurações curadas e um conjunto adicional de pacotes.
 
-O **Kaji** (`鍛冶`, "ferraria/forja") é a ferramenta que automatiza todo o ciclo: detecta o stage3 mais recente, aplica a camada bentoo em ambientes isolados, compila pacotes em variações de USE, serve esses pacotes via binhost, monta as ISOs live e publica **lançamentos semanais** (cadência fixa: **todo domingo às 00:00**) — em múltiplas **arquiteturas otimizadas** e múltiplos **flavors** (desktop + init system).
+O **Shidashi** (`仕出し`, "catering — produz lotes sob encomenda e entrega") é a ferramenta que automatiza todo o ciclo: detecta o stage3 mais recente, aplica a camada bentoo em ambientes isolados, compila pacotes em variações de USE, serve esses pacotes via binhost, monta as ISOs live e publica **lançamentos semanais** (cadência fixa: **todo domingo às 00:00**) — em múltiplas **arquiteturas otimizadas** e múltiplos **flavors** (desktop + init system).
 
 ### Pilares
 
@@ -59,8 +59,8 @@ O **Kaji** (`鍛冶`, "ferraria/forja") é a ferramenta que automatiza todo o ci
 - **Não** é um instalador gráfico (Calamares/etc. é um componente *do live medium*, não do builder).
 - **Não** persegue **reprodutibilidade bit-a-bit** (ISO byte-idêntica) — apenas reprodutibilidade *de entrada*.
   Bit-a-bit em Gentoo (timestamps, build paths) custaria desproporcionalmente; fora de escopo por ora.
-- **Não** é um binário standalone para host arbitrário. O Kaji **exige um host Gentoo com Portage**
-  (`import portage`) e é **distribuído como ebuild** (`app-misc/kaji` no overlay) ou `pip install` — nunca
+- **Não** é um binário standalone para host arbitrário. O Shidashi **exige um host Gentoo com Portage**
+  (`import portage`) e é **distribuído como ebuild** (`app-misc/shidashi` no overlay) ou `pip install` — nunca
   como single-binary. *(É isto, e não "produto a terceiros", que fixa a linguagem em Python — ver §12.)*
 - **Não** é multilib por padrão. O bentoo é **no-multilib** (puro 64-bit); 32-bit (Steam, wine, alguns
   drivers) fica para uma fase futura de **suporte avançado a jogos**, habilitado **por-pacote via
@@ -124,7 +124,7 @@ O **desktop ≈ flavor** (KDE→Qt, GNOME/XFCE→GTK, WM→Wayland/Hyprland·Swa
 
 > **Por que NÃO modelar pelos passos do Handbook do Gentoo:** o Handbook descreve uma instalação
 > interativa bare-metal humana (disks, network, bootloader…), misturando *build de pacotes* e
-> *montagem de imagem* numa sequência linear. O Kaji separa esses dois mundos (Factory/Assembler) de
+> *montagem de imagem* numa sequência linear. O Shidashi separa esses dois mundos (Factory/Assembler) de
 > propósito. O Handbook serve como **checklist de cobertura** (nenhum passo essencial esquecido),
 > **não** como estrutura de execução — porque os ciclos são fenômeno de *ordem de build de pacotes*,
 > não de *etapa de instalação* (ver §6.4 e §18).
@@ -324,7 +324,7 @@ Host: **AMD Ryzen 9 9950X (Zen 5, classe v4, com AVX-512).** Consequências:
 
 Cadência fixa: **todo domingo às 00:00.**
 
-**Seed por init (no-multilib).** O Kaji semeia cada variante a partir do stage3
+**Seed por init (no-multilib).** O Shidashi semeia cada variante a partir do stage3
 **no-multilib** do init correspondente — **não** do tarball `desktop` (que é multilib).
 Trocar de init não se faz por conversão de profile (operação "difícil" segundo o Handbook):
 cada init parte do seu próprio stage3.
@@ -379,7 +379,7 @@ strategy:
 | Argumento | Detalhe |
 |---|---|
 | **Portage é uma biblioteca Python** | `import portage`: consulta a árvore, resolve átomos, lê profiles, parseia o índice `Packages`, manipula metadados de binpkg multi-instance — **sem shell out + parse de texto** que Go/Rust exigiriam. Catalyst e Metro usam essa API. |
-| **O alvo SEMPRE tem Portage** | O Kaji roda num host Gentoo. Não existe "Kaji single-binary em host arbitrário" — Go não removeria a dependência do Portage. Distribuir = **ebuild `app-misc/kaji`** ou `pip`. |
+| **O alvo SEMPRE tem Portage** | O Shidashi roda num host Gentoo. Não existe "Shidashi single-binary em host arbitrário" — Go não removeria a dependência do Portage. Distribuir = **ebuild `app-misc/shidashi`** ou `pip`. |
 | **Glue subprocess-bound** | O trabalho pesado é do `emerge`; performance da linguagem é irrelevante. Domina a **velocidade de iteração** (receitas mudam toda semana). |
 | **Rigor recuperável** | `pydantic` (schema das receitas) + `mypy --strict` + `ruff` cobrem a segurança de tipo onde o erro dói. |
 | **Cresce sem reescrever** | Dashboard/servidor de binhost cabem em FastAPI + asyncio; o núcleo permanece. |
@@ -407,7 +407,7 @@ strategy:
 | Live boot | dracut `dmsquash-live` |
 | ISO | `grub-mkrescue` / `xorriso` |
 | Binpkg | gpkg + multi-instance + assinatura GPG |
-| Distribuição do Kaji | ebuild `app-misc/kaji` (overlay) |
+| Distribuição do Shidashi | ebuild `app-misc/shidashi` (overlay) |
 | CI | GitHub Actions (runner grande) ou self-hosted |
 
 ### Ambiente verificado (host atual)
@@ -423,7 +423,7 @@ Co-localizado **por eixo** (`variants/<eixo>/<nome>/`): tudo de uma variante num
 stages/                          # raiz do projeto (este repo)
 ├── OVERVIEW.md                  # este documento
 ├── README.md · pyproject.toml · .gitignore
-├── kaji/                        # pacote Python (orquestrador)
+├── shidashi/                        # pacote Python (orquestrador)
 │   ├── cli.py                   # CLI Typer (subcomandos)
 │   ├── config.py                # caminhos/paths
 │   ├── recipe.py                # modelos pydantic + merge dos eixos
@@ -468,7 +468,7 @@ stages/                          # raiz do projeto (este repo)
 | `kde`, `gnome`, `xfce`, `wm` | `variants/flavor/<f>/sets/` | **específicos** do desktop (fase 3) |
 
 O `minimal` não tem set de desktop — consome apenas os sets de `base`. Cada fragmento (`recipe.yaml`,
-`portage/`, `sets/`) é resolvido pelo `kaji recipe` via deep-merge na ordem `base → arch → flavor → init`.
+`portage/`, `sets/`) é resolvido pelo `shidashi recipe` via deep-merge na ordem `base → arch → flavor → init`.
 
 ---
 
@@ -583,7 +583,7 @@ O `make.conf` de referência (já organizado em grupos nomeados) mapeia diretame
 ### Fase 0 — Fundação (MVP)
 - [ ] Esqueleto Python (≥3.14) + pydantic + estrutura de receitas por eixo.
 - [ ] `recipe.py` + `cli.py`: `recipe show/validate` (deep-merge dos eixos) — primeiro entregável real.
-- [ ] `kaji pretend <arch> <flavor> <init>` (descoberta de ciclos, custo segundos).
+- [ ] `shidashi pretend <arch> <flavor> <init>` (descoberta de ciclos, custo segundos).
 - [ ] Wrapper `systemd-nspawn`.
 - [ ] Detector de stage3 (pointer file).
 - [ ] Pipeline mínimo: **`v3 × minimal × systemd`** → stage4 tarball, depois `v3 × kde × systemd`.
@@ -610,7 +610,7 @@ O `make.conf` de referência (já organizado em grupos nomeados) mapeia diretame
 ### Fase 5 — Operação (opcional)
 - [ ] Dashboard de releases (FastAPI).
 - [ ] Binhost público para usuários finais (Cloudflare R2).
-- [ ] ebuild `app-misc/kaji` no overlay.
+- [ ] ebuild `app-misc/shidashi` no overlay.
 
 ---
 
@@ -618,7 +618,7 @@ O `make.conf` de referência (já organizado em grupos nomeados) mapeia diretame
 
 > Registra o que um **teste de resolução** (`emerge --pretend`, **sem compilar**) revelou
 > sobre o pipeline real, e os refinamentos de arquitetura que decorreram dele.
-> Ferramenta: `kaji pretend <arch> <flavor> <init>` — pipeline `seed → apply_portage → run`.
+> Ferramenta: `shidashi pretend <arch> <flavor> <init>` — pipeline `seed → apply_portage → run`.
 
 ### 18.1 Metodologia
 
@@ -699,9 +699,9 @@ Requisito: a USE final do *settle-pass* da Factory **==** a USE que o Assembler 
 (senão `--usepkgonly` falha sem match). Vale um teste automatizado que compare a USE
 prometida pelo fragmento com a gravada no `BUILD_ID`.
 
-### 18.7 `kaji pretend` como descobridor de ciclos
+### 18.7 `shidashi pretend` como descobridor de ciclos
 
-O comando `kaji pretend <arch> <flavor> <init>` é promovido a **instrumento de curadoria**:
+O comando `shidashi pretend <arch> <flavor> <init>` é promovido a **instrumento de curadoria**:
 roda o `emerge --pretend` dentro do container, colhe as quebras sugeridas ("break this cycle
 by changing USE X") e **alimenta manualmente** o `use_break` dos steps da recipe. Deixa de ser
 só teste e vira parte do pipeline de curadoria.
@@ -718,7 +718,7 @@ só teste e vira parte do pipeline de curadoria.
 | **Re-seed vs. tronco** | **Híbrido:** tronco persistente para delta semanal; **wipe total `--emptytree`** em toolchain-bump (§6.6). |
 | **`use_break`** | Curadoria **manual** por flavor, alimentada pelo `pretend-resolve` (§18.7). |
 | **Determinismo** | De **entrada/configuração** (replicar sem erro), **não** bit-a-bit (§10). |
-| **Distribuição do Kaji** | **ebuild** `app-misc/kaji` em host Gentoo; nunca single-binary (§3, §12). |
+| **Distribuição do Shidashi** | **ebuild** `app-misc/shidashi` em host Gentoo; nunca single-binary (§3, §12). |
 | **`minimal`** | Flavor **console-only, apenas TTY** — sem compositor, nem para smoke-test (§8). |
 | **`wm`** | **Wayland-only:** Hyprland (default) + Sway + niri — sem dependências X11 (§8). |
 | **Layout** | Co-localizado **por eixo** (`variants/<eixo>/<nome>/`); overlay externo (§13). |

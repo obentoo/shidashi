@@ -8,9 +8,9 @@ de host coberto pela integração; aqui exercitamos apenas o contrato puro
 verificável: ``load_pointer``, ``stage3_url``, ``verify_digest``.
 
 Contrato (design.md §seed): ``Stage3Pointer(init, base_url, snapshot, filename,
-sha256)`` frozen pydantic; ``SeedError(Exception)``; ``load_pointer(init, *,
+sha512)`` frozen pydantic; ``SeedError(Exception)``; ``load_pointer(init, *,
 seeds_dir)`` (SeedError listando entradas se init ausente); ``stage3_url`` puro;
-``verify_digest(tarball, sha256)`` levanta SeedError em divergência;
+``verify_digest(tarball, sha512)`` levanta SeedError em divergência;
 ``fetch_stage3(pointer, *, cache_dir, download=True)`` reusa cache, e
 ``download=False`` sem cache levanta SeedError.
 """
@@ -20,8 +20,8 @@ from pathlib import Path
 
 import pytest
 
-from kaji import seed
-from kaji.seed import (
+from shidashi import seed
+from shidashi.seed import (
     SeedError,
     Stage3Pointer,
     fetch_stage3,
@@ -32,17 +32,19 @@ from kaji.seed import (
 
 _SNAPSHOT = "20260518T170330Z"
 _BASE_URL = "https://distfiles.gentoo.org/releases/amd64/autobuilds"
+_SHA512_SYSTEMD = "1" * 128
+_SHA512_OPENRC = "2" * 128
 _TOML = f"""\
 snapshot = "{_SNAPSHOT}"
 base_url = "{_BASE_URL}"
 
 [systemd]
 filename = "stage3-amd64-nomultilib-systemd-{_SNAPSHOT}.tar.xz"
-sha256   = "1111111111111111111111111111111111111111111111111111111111111111"
+sha512   = "{_SHA512_SYSTEMD}"
 
 [openrc]
 filename = "stage3-amd64-nomultilib-openrc-{_SNAPSHOT}.tar.xz"
-sha256   = "2222222222222222222222222222222222222222222222222222222222222222"
+sha512   = "{_SHA512_OPENRC}"
 """
 
 
@@ -70,7 +72,7 @@ def test_load_pointer_reads_pinned_entry(seeds_dir: Path) -> None:
     assert p.snapshot == _SNAPSHOT
     assert p.base_url == _BASE_URL
     assert p.filename == f"stage3-amd64-nomultilib-systemd-{_SNAPSHOT}.tar.xz"
-    assert p.sha256 == "1" * 64
+    assert p.sha512 == _SHA512_SYSTEMD
 
 
 def test_load_pointer_unknown_init_lists_available(seeds_dir: Path) -> None:
@@ -89,7 +91,7 @@ def test_stage3_pointer_is_frozen() -> None:
         base_url=_BASE_URL,
         snapshot=_SNAPSHOT,
         filename="x.tar.xz",
-        sha256="0" * 64,
+        sha512="0" * 128,
     )
     with pytest.raises(Exception):  # noqa: B017 (frozen → ValidationError/Error)
         p.init = "openrc"
@@ -104,7 +106,7 @@ def test_stage3_url_builds_mirror_path() -> None:
         base_url=_BASE_URL,
         snapshot=_SNAPSHOT,
         filename=f"stage3-amd64-nomultilib-systemd-{_SNAPSHOT}.tar.xz",
-        sha256="0" * 64,
+        sha512="0" * 128,
     )
     url = stage3_url(p)
     assert url.startswith(_BASE_URL)
@@ -121,7 +123,7 @@ def test_verify_digest_passes_on_match(tmp_path: Path) -> None:
     blob = b"stage3 contents"
     tarball = tmp_path / "s.tar.xz"
     tarball.write_bytes(blob)
-    good = hashlib.sha256(blob).hexdigest()
+    good = hashlib.sha512(blob).hexdigest()
     # match → não levanta, retorna None
     assert verify_digest(tarball, good) is None  # type: ignore[func-returns-value]
 
@@ -144,7 +146,7 @@ def test_fetch_stage3_no_download_no_cache_raises(tmp_path: Path) -> None:
         base_url=_BASE_URL,
         snapshot=_SNAPSHOT,
         filename="absent.tar.xz",
-        sha256="0" * 64,
+        sha512="0" * 128,
     )
     # --no-download + sem cache → SeedError acionável, sem tocar a rede
     with pytest.raises(SeedError):
@@ -164,7 +166,7 @@ def test_fetch_stage3_reuses_verified_cache(
     cache = tmp_path / "cache"
     cache.mkdir()
     blob = b"cached stage3"
-    digest = hashlib.sha256(blob).hexdigest()
+    digest = hashlib.sha512(blob).hexdigest()
     filename = f"stage3-amd64-nomultilib-systemd-{_SNAPSHOT}.tar.xz"
     (cache / filename).write_bytes(blob)
 
@@ -173,7 +175,7 @@ def test_fetch_stage3_reuses_verified_cache(
         base_url=_BASE_URL,
         snapshot=_SNAPSHOT,
         filename=filename,
-        sha256=digest,
+        sha512=digest,
     )
     got = fetch_stage3(p, cache_dir=cache, download=True)
     assert got == cache / filename

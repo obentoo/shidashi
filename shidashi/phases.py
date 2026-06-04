@@ -8,7 +8,7 @@ Camada de planejamento PURA da story 003 (grupos 3 + 4.1):
   — ``package.use`` transitório do break-pass (I/O só contra um rootfs em disco,
   sem root).
 * **3.3** :func:`parse_built_atoms` — átomos construídos a partir da saída
-  ``emerge --verbose`` (reusa o matcher de :mod:`kaji.resolve`).
+  ``emerge --verbose`` (reusa o matcher de :mod:`shidashi.resolve`).
 * **3.4** :func:`fork_point` / :func:`trunk_phase_names` — decisão de reuso do
   tronco (só sonda o filesystem) e nomes das fases do tronco.
 * **4.1** :func:`snapshot_fork_point` / :func:`restore_fork_point` — captura e
@@ -32,13 +32,13 @@ from pathlib import Path
 
 import pydantic
 
-from kaji import state
-from kaji.container import Container
-from kaji.recipe import Phase, ResolvedRecipe, UseBreak
-from kaji.resolve import _atom_from_ebuild_line, _iter_atom_lines
-from kaji.state import EmergePlanEntry, PhaseDiff
+from shidashi import state
+from shidashi.container import Container
+from shidashi.recipe import Phase, ResolvedRecipe, UseBreak
+from shidashi.resolve import _atom_from_ebuild_line, _iter_atom_lines
+from shidashi.state import EmergePlanEntry, PhaseDiff
 
-_USE_BREAK_FILE = ("etc", "portage", "package.use", "zz-kaji-use-break")
+_USE_BREAK_FILE = ("etc", "portage", "package.use", "zz-shidashi-use-break")
 
 
 class FactoryError(Exception):
@@ -47,9 +47,9 @@ class FactoryError(Exception):
     Carrega a ``phase`` em que ocorreu (``None`` quando não atrelada a uma fase)
     e a ``output`` capturada do ``emerge`` (stdout+stderr) para diagnóstico.
 
-    Definida aqui (e não em :mod:`kaji.factory`) para evitar import circular:
+    Definida aqui (e não em :mod:`shidashi.factory`) para evitar import circular:
     ``factory`` importa de ``phases`` (orquestra fases), e ``phases`` precisa
-    levantar este erro; ``kaji.factory`` re-exporta o símbolo.
+    levantar este erro; ``shidashi.factory`` re-exporta o símbolo.
     """
 
     def __init__(self, message: str, *, phase: str | None = None, output: str = "") -> None:
@@ -64,8 +64,8 @@ class CheckpointDecision(StrEnum):
     ``StrEnum`` (não ``(str, Enum)`` — UP042) cujos membros valem o próprio nome:
     ``CONTINUE`` segue para a próxima fase, ``STOP`` interrompe o laço sem rodar o
     settle (R1.3), ``SHELL`` abre um shell no container e re-apresenta o MESMO
-    checkpoint. Definida aqui (e não em :mod:`kaji.factory`) para evitar import
-    circular ``factory → phases``; ``kaji.factory`` re-exporta o símbolo (Task 6).
+    checkpoint. Definida aqui (e não em :mod:`shidashi.factory`) para evitar import
+    circular ``factory → phases``; ``shidashi.factory`` re-exporta o símbolo (Task 6).
     """
 
     CONTINUE = "CONTINUE"
@@ -79,7 +79,7 @@ class FailureDecision(StrEnum):
     ``StrEnum`` (UP042): ``RETRY`` re-roda a MESMA fase (mesmo argv) e ``ABORT``
     persiste o estado e levanta :class:`FactoryError`. NÃO há opção de pular uma
     fase falha (R3.4). Definida aqui pelo mesmo motivo de import circular que
-    :class:`CheckpointDecision`; re-exportada por :mod:`kaji.factory` (Task 6).
+    :class:`CheckpointDecision`; re-exportada por :mod:`shidashi.factory` (Task 6).
     """
 
     RETRY = "RETRY"
@@ -151,7 +151,7 @@ def phase_emerge_argv(phase: Phase, recipe: ResolvedRecipe, *, emptytree: bool) 
 def use_break_lines(phase: Phase) -> tuple[str, ...]:
     """Renderiza as linhas ``package.use`` das quebras de ciclo da fase (R4.1). Puro.
 
-    Uma linha por :class:`~kaji.recipe.UseBreak`: ``"<atom> <±flag>"`` onde o
+    Uma linha por :class:`~shidashi.recipe.UseBreak`: ``"<atom> <±flag>"`` onde o
     sinal é ``""`` (habilita) quando ``enable`` é verdadeiro e ``"-"``
     (desabilita) caso contrário. Fase sem quebras → tupla vazia.
     """
@@ -164,7 +164,7 @@ def write_use_break(rootfs: Path, phase: Phase) -> Path | None:
     """Escreve o ``package.use`` transitório do break-pass (R4.1/R4.4).
 
     Grava as linhas de :func:`use_break_lines` em
-    ``${rootfs}/etc/portage/package.use/zz-kaji-use-break`` (criando os
+    ``${rootfs}/etc/portage/package.use/zz-shidashi-use-break`` (criando os
     diretórios-pai) e devolve o caminho escrito. Quando a fase não tem quebras,
     nada é escrito e devolve-se ``None``. Apenas I/O de filesystem — sem root.
     """
@@ -191,8 +191,8 @@ def clear_use_break(rootfs: Path) -> None:
 def parse_built_atoms(emerge_output: str) -> tuple[str, ...]:
     """Extrai os átomos ``cat/pkg-version`` de uma saída ``emerge --verbose`` (R3.4). Puro.
 
-    Reusa o matcher compartilhado :func:`kaji.resolve._iter_atom_lines` (mesmo
-    casamento de linha ``[ebuild ...]`` de :func:`kaji.resolve.parse_packages`).
+    Reusa o matcher compartilhado :func:`shidashi.resolve._iter_atom_lines` (mesmo
+    casamento de linha ``[ebuild ...]`` de :func:`shidashi.resolve.parse_packages`).
     Saída sem linhas ``[ebuild ...]`` → tupla vazia.
     """
     return tuple(_iter_atom_lines(emerge_output))
@@ -205,7 +205,7 @@ def _variant_key(recipe: ResolvedRecipe) -> str:
     """Prefixo de chave por variante: ``<arch>-<flavor>-<init>`` (R5.1/R5.2). Puro.
 
     Componente comum às chaves de fork-point (tronco e por-fase) e ao estado de
-    build (:func:`kaji.config.build_state_path`), isolando o build por variante.
+    build (:func:`shidashi.config.build_state_path`), isolando o build por variante.
     """
     return f"{recipe.arch}-{recipe.flavor}-{recipe.init}"
 
@@ -279,10 +279,10 @@ def parse_emerge_plan(
     """Parseia uma saída ``emerge --verbose`` em entradas de plano + blockers (R4.1/R4.3). Pura.
 
     Caminha as linhas ``[ebuild ...]`` reusando o núcleo de casamento compartilhado
-    :func:`kaji.resolve._atom_from_ebuild_line` (mesmo átomo de
+    :func:`shidashi.resolve._atom_from_ebuild_line` (mesmo átomo de
     :func:`parse_built_atoms`), lendo de cada uma: a coluna de operação (o token
     logo após ``[ebuild`` — ``N``/``R``/``rR``/``U``/``D``/``r``/``NS``/``UD``) em
-    :attr:`~kaji.state.EmergePlanEntry.op` e as USE-deltas do segmento
+    :attr:`~shidashi.state.EmergePlanEntry.op` e as USE-deltas do segmento
     ``USE="..."`` (:func:`_use_changes_from_segment`) em ``use_changes``. Linhas
     ``[blocks B ...]`` são coletadas (cruas, stripadas) na segunda tupla. Saída sem
     merge (ex.: ``"Nothing to merge"``) → ``((), ())``. NÃO faz I/O nem dispara
@@ -336,7 +336,7 @@ def compute_phase_diff(
     *,
     prior_atoms: tuple[str, ...],
 ) -> PhaseDiff:
-    """Classifica o plano de uma fase num :class:`~kaji.state.PhaseDiff` (R4.1/R4.2). Pura.
+    """Classifica o plano de uma fase num :class:`~shidashi.state.PhaseDiff` (R4.1/R4.2). Pura.
 
     A partir das entradas de :func:`parse_emerge_plan` compõe o diff da fase
     ``phase``:
@@ -651,7 +651,7 @@ class _RunState:
         self.prior_atoms += built_atoms
 
     def persist(self) -> None:
-        """Persiste o :class:`~kaji.state.BuildState` corrente (R6.1; ``OSError`` propaga)."""
+        """Persiste o :class:`~shidashi.state.BuildState` corrente (R6.1; ``OSError`` propaga)."""
         state.save_state(
             self.state_path,
             state.BuildState(
@@ -731,7 +731,7 @@ def run_phases_stepwise(
     * captura o fork-point por-fase em :func:`phase_snapshot_path` via
       :func:`snapshot_fork_point` (R5.1/R5.2);
     * acumula ``completed``/``phase_diffs``/quebras e persiste o
-      :class:`~kaji.state.BuildState` via ``state.save_state`` (módulo-qualificado
+      :class:`~shidashi.state.BuildState` via ``state.save_state`` (módulo-qualificado
       para ser monkeypatchável; ``OSError`` propaga — um build que não consegue
       gravar progresso falha alto);
     * consulta ``on_checkpoint(phase.name, diff)`` (``None`` ⇒ auto-CONTINUE) e

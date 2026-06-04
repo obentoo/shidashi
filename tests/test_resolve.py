@@ -1,4 +1,4 @@
-"""UNIT + INTEGRAÇÃO de kaji.resolve — o coração do fluxo pretend.
+"""UNIT + INTEGRAÇÃO de shidashi.resolve — o coração do fluxo pretend.
 
 UNIT (determinista, CI não-Gentoo):
 * ``_layer_dirs`` mapeia ``portage_layers`` → ``variants/<layer>/portage/`` (R3.1);
@@ -36,9 +36,9 @@ from pathlib import Path
 
 import pytest
 
-from kaji import resolve
-from kaji.recipe import ResolvedRecipe
-from kaji.resolve import (
+from shidashi import resolve
+from shidashi.recipe import ResolvedRecipe
+from shidashi.resolve import (
     CycleBreak,
     PretendReport,
     ResolveError,
@@ -61,7 +61,7 @@ _LAYERS = ("base", "arch/v3", "flavor/minimal", "init/systemd")
 def _recipe() -> ResolvedRecipe:
     # constrói um ResolvedRecipe mínimo com portage_layers conhecido; só esse
     # campo importa para _layer_dirs/apply_portage.
-    from kaji.recipe import ResolvedUse
+    from shidashi.recipe import ResolvedUse
 
     return ResolvedRecipe(
         arch="v3",

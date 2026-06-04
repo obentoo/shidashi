@@ -1,7 +1,7 @@
-"""Testes de resolução de caminhos da árvore variants/ (kaji.config).
+"""Testes de resolução de caminhos da árvore variants/ (shidashi.config).
 
 INTEGRAÇÃO: constrói uma árvore variants/ temporária em ``tmp_path`` e aponta o
-código para ela via override ``KAJI_VARIANTS_DIR``. Estes testes verificam
+código para ela via override ``SHIDASHI_VARIANTS_DIR``. Estes testes verificam
 RESOLUÇÃO DE CAMINHOS, não parsing de YAML — daí os arquivos serem mínimos.
 """
 
@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from kaji.config import (
+from shidashi.config import (
     UnknownAxisError,
     available_names,
     axis_dir,
@@ -28,7 +28,7 @@ _FIXTURE = {
 
 @pytest.fixture
 def variants_tree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Monta variants/ em tmp_path e exporta KAJI_VARIANTS_DIR para ela."""
+    """Monta variants/ em tmp_path e exporta SHIDASHI_VARIANTS_DIR para ela."""
     root = tmp_path / "variants"
     for axis, names in _FIXTURE.items():
         for name in names:
@@ -38,7 +38,7 @@ def variants_tree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     base = root / "base" / "base.yaml"
     base.parent.mkdir(parents=True, exist_ok=True)
     base.write_text("", encoding="utf-8")
-    monkeypatch.setenv("KAJI_VARIANTS_DIR", str(root))
+    monkeypatch.setenv("SHIDASHI_VARIANTS_DIR", str(root))
     return root
 
 
@@ -54,9 +54,9 @@ def test_variants_dir_reads_env_fresh_each_call(
 ) -> None:
     a = tmp_path / "a"
     b = tmp_path / "b"
-    monkeypatch.setenv("KAJI_VARIANTS_DIR", str(a))
+    monkeypatch.setenv("SHIDASHI_VARIANTS_DIR", str(a))
     assert variants_dir() == a
-    monkeypatch.setenv("KAJI_VARIANTS_DIR", str(b))
+    monkeypatch.setenv("SHIDASHI_VARIANTS_DIR", str(b))
     assert variants_dir() == b
 
 

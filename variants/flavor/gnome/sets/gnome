@@ -1,4 +1,4 @@
 # CURATION: fed by pretend-resolve (§18.7) — GNOME desktop atoms.
 # No real source edition exists for GNOME yet (only editions/plasma is shipped),
 # so NO package atoms are fabricated here. Populate by curating a GNOME world set
-# and validating with `kaji pretend-resolve` before trusting.
+# and validating with `shidashi pretend-resolve` before trusting.

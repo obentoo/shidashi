@@ -1,17 +1,17 @@
 """Factory — Package Factory: constrói binpkgs a partir de uma receita (OVERVIEW §6).
 
-Orquestra, para uma :class:`~kaji.recipe.ResolvedRecipe`, o build multi-instance
+Orquestra, para uma :class:`~shidashi.recipe.ResolvedRecipe`, o build multi-instance
 de binpkgs num container limpo por flavor (OVERVIEW §6.1–§6.3): seed/extração do
 stage3 (ou reuso de um fork-point do tronco), sobreposição dos layers de portage
 + instalação dos sets, montagem dos binds (repos RO; PKGDIR/ccache/sccache/DISTDIR
 RW sobre os caminhos fixos do ``make.conf``) e execução das fases (OVERVIEW §6.4)
 seguida do settle-pass. A guarda de privilégio (root) é a **primeira** coisa que
-:meth:`Factory.build` faz — o Kaji nunca escala privilégios sozinho (R8.1).
+:meth:`Factory.build` faz — o Shidashi nunca escala privilégios sozinho (R8.1).
 
 Os símbolos privilegiados de execução são importados a **nível de módulo**
 (``fetch_stage3``/``extract_stage3``/``bind_repos``/``apply_portage``) para que os
-testes possam monkeypatchá-los em ``kaji.factory`` e :meth:`build` os observe.
-:class:`FactoryError` é definida em :mod:`kaji.phases` (evita o ciclo de import
+testes possam monkeypatchá-los em ``shidashi.factory`` e :meth:`build` os observe.
+:class:`FactoryError` é definida em :mod:`shidashi.phases` (evita o ciclo de import
 ``factory`` → ``phases``) e **re-exportada** aqui.
 """
 
@@ -21,9 +21,9 @@ from pathlib import Path
 
 import pydantic
 
-from kaji import config, state
-from kaji.container import Container
-from kaji.phases import (
+from shidashi import config, state
+from shidashi.container import Container
+from shidashi.phases import (
     CheckpointDecision,
     CheckpointHook,
     FactoryError,
@@ -37,10 +37,10 @@ from kaji.phases import (
     run_phases_stepwise,
     trunk_phase_names,
 )
-from kaji.recipe import ResolvedRecipe
-from kaji.resolve import apply_portage, bind_repos
-from kaji.seed import Stage3Pointer, extract_stage3, fetch_stage3, load_pointer
-from kaji.state import PhaseDiff
+from shidashi.recipe import ResolvedRecipe
+from shidashi.resolve import apply_portage, bind_repos
+from shidashi.seed import Stage3Pointer, extract_stage3, fetch_stage3, load_pointer
+from shidashi.state import PhaseDiff
 
 __all__ = [
     "CheckpointDecision",
@@ -73,7 +73,7 @@ class FactoryResult(pydantic.BaseModel):
     construção da story 003 (sem eles) válida apesar do ``extra="forbid"`` (R8.2):
     ``stopped_at`` é o rótulo onde um stepwise parou cedo (``--until``/STOP) ou
     ``None`` quando rodou até o fim; ``phase_diffs`` o histórico de
-    :class:`~kaji.state.PhaseDiff` por fase e ``completed_phases`` os nomes das
+    :class:`~shidashi.state.PhaseDiff` por fase e ``completed_phases`` os nomes das
     fases já encerradas — ambos lidos do estado persistido pelo stepwise.
     """
 
@@ -92,7 +92,7 @@ class FactoryResult(pydantic.BaseModel):
 class StaleStateError(FactoryError):
     """Estado de build persistido obsoleto frente ao snapshot/receita atuais (R6.3).
 
-    Levantada por :meth:`Factory.build_stepwise` quando :func:`kaji.state.is_stale`
+    Levantada por :meth:`Factory.build_stepwise` quando :func:`shidashi.state.is_stale`
     acusa divergência (snapshot do stage3 ou hash da receita mudou) e nem
     ``--reset`` nem ``--force-resume`` foram passados — o stepwise NUNCA prossegue
     silenciosamente sobre progresso obsoleto. Subclasse de :class:`FactoryError`
@@ -105,21 +105,21 @@ def _require_root() -> None:
     """Guarda de privilégio (R8.1): levanta :class:`FactoryError` se não-root.
 
     Primeira coisa que :meth:`Factory.build` e :meth:`Factory.build_stepwise`
-    chamam — **antes** de qualquer fetch/extração/I/O de estado. O Kaji nunca
+    chamam — **antes** de qualquer fetch/extração/I/O de estado. O Shidashi nunca
     escala privilégios sozinho; a mensagem é acionável e menciona ``root``.
     """
     if os.geteuid() != 0:
         raise FactoryError(
-            "kaji factory requer root (systemd-nspawn + extração de stage3); "
-            "rode como root — o Kaji não escala privilégios sozinho"
+            "shidashi factory requer root (systemd-nspawn + extração de stage3); "
+            "rode como root — o Shidashi não escala privilégios sozinho"
         )
 
 
 def _fresh_seed(rootfs: Path, pointer: Stage3Pointer, *, download: bool) -> None:
     """Seeda um rootfs **fresco** a partir do stage3 do ``pointer`` (R1.4/R8.2).
 
-    :func:`kaji.seed.fetch_stage3` (cache de :func:`kaji.config.cache_dir`) seguido
-    de :func:`kaji.seed.extract_stage3` (que já cria ``rootfs``). É o corpo EXATO
+    :func:`shidashi.seed.fetch_stage3` (cache de :func:`shidashi.config.cache_dir`) seguido
+    de :func:`shidashi.seed.extract_stage3` (que já cria ``rootfs``). É o corpo EXATO
     do ramo fresh original de :meth:`Factory.build` — sem ``rmtree``/``mkdir`` extra,
     para que o comportamento one-shot não mude (R8.2). Sub-passo PRIVILEGIADO
     compartilhado pelo caminho fresh de :func:`_seed_or_restore` e pelo caso "sem
@@ -142,7 +142,7 @@ def _seed_or_restore(
     """Decide entre reusar o fork-point do tronco e um seed fresco (R5.1/R5.2/R8.2).
 
     Bloco *seed-or-restore* extraído de :meth:`Factory.build` SEM mudança de
-    comportamento (R8.2): se :func:`kaji.phases.fork_point` acha o tronco pinado
+    comportamento (R8.2): se :func:`shidashi.phases.fork_point` acha o tronco pinado
     para ``snapshot``, restaura-o num rootfs limpo e devolve
     ``(resume_at, fork_point_path, True)`` onde ``resume_at`` é a última fase do
     tronco; senão faz :func:`_fresh_seed` e devolve ``(None, <chave do tronco>,
@@ -167,8 +167,8 @@ def _prepare_portage(rootfs: Path, recipe: ResolvedRecipe) -> None:
     """Sobrepõe os layers de portage e instala os sets da receita (R6.4/R8.2).
 
     Bloco *portage-apply* extraído de :meth:`Factory.build` SEM mudança de
-    comportamento (R8.2): :func:`kaji.resolve.apply_portage` (layers sob
-    :func:`kaji.config.variants_dir`) seguido de :meth:`Factory._install_sets`.
+    comportamento (R8.2): :func:`shidashi.resolve.apply_portage` (layers sob
+    :func:`shidashi.config.variants_dir`) seguido de :meth:`Factory._install_sets`.
     Compartilhado por :meth:`Factory.build` e :meth:`Factory.build_stepwise`.
     """
     apply_portage(rootfs, recipe, variants_dir=config.variants_dir())
@@ -180,7 +180,7 @@ def _build_binds(
 ) -> tuple[list[tuple[Path, Path]], list[tuple[Path, Path]]]:
     """Monta os binds RO (repos) e RW (PKGDIR/caches) do container (R6.2/R6.3/R7.2). Pura.
 
-    - ``binds_ro`` = :func:`kaji.resolve.bind_repos` sobre ``repos_conf_dir`` (o
+    - ``binds_ro`` = :func:`shidashi.resolve.bind_repos` sobre ``repos_conf_dir`` (o
       ``repos.conf`` do rootfs resolvido; os repos sincronizados do host ficam RO,
       a árvore do host nunca é mutada).
     - ``binds_rw`` mapeia os diretórios *host-side* (sob ``cache_dir()``) sobre os
@@ -222,9 +222,9 @@ class Factory:
         Ordem (ver Sequence do design):
 
         1. **Guarda de root** (R8.1): se não-root, levanta :class:`FactoryError`
-           acionável **antes de qualquer trabalho** — o Kaji não escala privilégios.
+           acionável **antes de qualquer trabalho** — o Shidashi não escala privilégios.
         2. Resolve o ``snapshot`` do pointer do stage3 (``seed.load_pointer``).
-           Se :func:`kaji.phases.fork_point` acha o tronco pinado, restaura-o no
+           Se :func:`shidashi.phases.fork_point` acha o tronco pinado, restaura-o no
            rootfs e retoma após a última fase do tronco (``resume_at``,
            ``fork_point_reused=True``); senão ``fetch_stage3`` + ``extract_stage3``
            num rootfs fresco (``fork_point_reused=False``).
@@ -232,7 +232,7 @@ class Factory:
            ``/etc/portage/sets/``.
         4. Monta os binds (:func:`_build_binds`) e abre um :class:`Container`
            **não-efêmero** (``binds`` RO, ``binds_rw`` RW).
-        5. :func:`kaji.phases.run_phases` (fases + settle-pass).
+        5. :func:`shidashi.phases.run_phases` (fases + settle-pass).
         6. Monta o :class:`FactoryResult`. Em sucesso e sem ``keep``, remove o
            rootfs de build; em falha ou ``keep``, preserva-o (R8.4). Uma falha de
            ``emerge`` já sobe como :class:`FactoryError` de ``run_phase``/
@@ -320,13 +320,13 @@ class Factory:
         1. **Guarda de root** (R8.1, :func:`_require_root`) — PRIMEIRA coisa, antes
            de qualquer fetch/extração/I/O de estado.
         2. Resolve ``snapshot`` (pointer do stage3) e ``recipe_hash``; o caminho do
-           estado persistido é :func:`kaji.config.build_state_path`.
+           estado persistido é :func:`shidashi.config.build_state_path`.
         3. ``reset`` (R6.4): limpa o estado persistido e remove o rootfs, recomeçando
            do zero. Senão carrega o estado: se existe e está obsoleto
-           (:func:`kaji.state.is_stale`) e nem ``force_resume`` → levanta
+           (:func:`shidashi.state.is_stale`) e nem ``force_resume`` → levanta
            :class:`StaleStateError` (R6.3) — NUNCA prossegue sobre progresso stale.
         4. **Seed-or-restore** em três casos: (a) há fases completadas →
-           :func:`kaji.phases.latest_resumable` + :func:`restore_fork_point` (se o
+           :func:`shidashi.phases.latest_resumable` + :func:`restore_fork_point` (se o
            tarball some/corrompe, levanta :class:`FactoryError` e MANTÉM o rootfs);
            (b) ``seed_done`` mas sem fases (ex.: ``--until seed`` anterior) → reusa o
            rootfs persistente AS-IS (R1.4); (c) sem estado/``reset`` → seed fresco
@@ -334,7 +334,7 @@ class Factory:
            checkpoint ``"seed"`` honrando CONTINUE/STOP/SHELL (R2.5).
         5. :func:`_prepare_portage` (layers + sets).
         6. Abre um :class:`Container` **não-efêmero** persistente (binds RO/RW).
-        7. :func:`kaji.phases.run_phases_stepwise` (resume, checkpoints, retry,
+        7. :func:`shidashi.phases.run_phases_stepwise` (resume, checkpoints, retry,
            snapshot por fase, persistência por fase).
         8. Monta o :class:`FactoryResult` estendido (``stopped_at``/``phase_diffs``/
            ``completed_phases`` lidos do estado persistido).
@@ -439,7 +439,7 @@ class Factory:
         Devolve ``True`` se um checkpoint ``"seed"`` interativo pediu STOP (o
         chamador retorna cedo, rootfs mantido); ``False`` caso o build deva seguir.
 
-        * (a) ``completed`` não-vazio → :func:`kaji.phases.latest_resumable` e, se há
+        * (a) ``completed`` não-vazio → :func:`shidashi.phases.latest_resumable` e, se há
           snapshot por-fase, :func:`restore_fork_point` num rootfs limpo. Se o
           restore levanta (tarball sumiu/corrompido — ``latest_resumable`` só sondou
           ``.exists()``), embrulha em :class:`FactoryError` e MANTÉM o rootfs
@@ -496,7 +496,7 @@ class Factory:
         """Apresenta o checkpoint ``"seed"`` e devolve ``True`` se o usuário pediu STOP (R2.5).
 
         Sem ``on_checkpoint`` ⇒ auto-CONTINUE (devolve ``False``). Caso contrário
-        consulta o hook com um :class:`~kaji.state.PhaseDiff` base (fase ``"seed"``,
+        consulta o hook com um :class:`~shidashi.state.PhaseDiff` base (fase ``"seed"``,
         sem átomos): CONTINUE segue (``False``); STOP interrompe (``True``); SHELL
         abre um shell transitório sobre o rootfs persistente (o Container do build
         ainda não está aberto no seed) e re-apresenta o MESMO checkpoint.
@@ -517,7 +517,7 @@ class Factory:
     ) -> FactoryResult:
         """Monta o :class:`FactoryResult` estendido lendo o estado persistido (R6.1).
 
-        ``phase_diffs``/``completed_phases`` vêm do :class:`~kaji.state.BuildState`
+        ``phase_diffs``/``completed_phases`` vêm do :class:`~shidashi.state.BuildState`
         relido (a fonte de verdade do progresso, persistido por fase); na ausência
         de estado caem para ``()``. ``built_atoms``/``settle_atoms``/``phases`` são
         derivados das fases efetivamente executadas em ``results`` (o settle só

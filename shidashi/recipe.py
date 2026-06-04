@@ -1,4 +1,4 @@
-"""Modelos de receita do Kaji e loaders YAML→modelo.
+"""Modelos de receita do Shidashi e loaders YAML→modelo.
 
 Este módulo define os fragmentos de receita (base, arch, flavor, init) e os
 tipos resolvidos, todos como modelos pydantic *frozen* com ``extra="forbid"``.

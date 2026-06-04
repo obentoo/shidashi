@@ -1,7 +1,7 @@
-"""Testes da integração protegida com o Portage (kaji.portage_api).
+"""Testes da integração protegida com o Portage (shidashi.portage_api).
 
 UNIT: deterministas independentemente do host. O estado do Portage é forçado
-via ``monkeypatch`` sobre ``kaji.portage_api`` — nunca dependemos de o host ter
+via ``monkeypatch`` sobre ``shidashi.portage_api`` — nunca dependemos de o host ter
 (ou não) ``sys-apps/portage`` instalado. Verifica-se:
 
 * import do módulo nunca levanta e ``PORTAGE_AVAILABLE`` é ``bool`` (R7.1);
@@ -11,7 +11,7 @@ via ``monkeypatch`` sobre ``kaji.portage_api`` — nunca dependemos de o host te
   módulo.
 
 NB: a tarefa T7.2 ADICIONARÁ a este arquivo um teste de integração (importar
-``kaji.recipe``/``kaji.cli`` com Portage ausente). O arquivo é mantido
+``shidashi.recipe``/``shidashi.cli`` com Portage ausente). O arquivo é mantido
 extensível; T7.2 não é implementada aqui.
 """
 
@@ -22,8 +22,8 @@ from types import ModuleType, SimpleNamespace
 import pytest
 from typer.testing import CliRunner
 
-import kaji.portage_api as portage_api
-from kaji.portage_api import (
+import shidashi.portage_api as portage_api
+from shidashi.portage_api import (
     PortageUnavailableError,
     configured_repos,
     portage_version,
@@ -33,7 +33,7 @@ from kaji.portage_api import (
 
 @pytest.fixture
 def portage_absent(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Força o estado 'host não-Gentoo' em kaji.portage_api."""
+    """Força o estado 'host não-Gentoo' em shidashi.portage_api."""
     monkeypatch.setattr(portage_api, "PORTAGE_AVAILABLE", False)
     monkeypatch.setattr(portage_api, "_portage", None)
 
@@ -45,7 +45,7 @@ def test_import_never_raises_and_flag_is_bool() -> None:
     # o módulo já foi importado no topo sem exceção; reforça-se o contrato
     import importlib
 
-    reloaded = importlib.import_module("kaji.portage_api")
+    reloaded = importlib.import_module("shidashi.portage_api")
     assert isinstance(reloaded.PORTAGE_AVAILABLE, bool)
 
 
@@ -139,12 +139,12 @@ def test_module_object_satisfies_require_portage_return(
 # --- T7.2: o caminho recipe/CLI nunca import-aciona portage_api (R7.3) -------
 #
 # INTEGRAÇÃO: exercita o caminho livre de Portage de ponta a ponta (importar
-# ``kaji.recipe`` e ``kaji.cli``, rodar ``recipe show``/``validate`` via Typer
+# ``shidashi.recipe`` e ``shidashi.cli``, rodar ``recipe show``/``validate`` via Typer
 # CliRunner sobre uma árvore variants/ em tmp_path) e prova que NADA nesse
-# caminho importa ``kaji.portage_api``. Como esse módulo já está carregado pelo
+# caminho importa ``shidashi.portage_api``. Como esse módulo já está carregado pelo
 # topo deste arquivo de teste, removemo-lo de ``sys.modules`` ANTES de exercitar
 # o caminho e asseguramos que ele NÃO reaparece depois — isto é, o
-# recipe/CLI path não dispara ``import kaji.portage_api`` (o Portage está
+# recipe/CLI path não dispara ``import shidashi.portage_api`` (o Portage está
 # ausente: o portão jamais é acionado).
 
 _runner = CliRunner()
@@ -194,7 +194,7 @@ _RECIPES = {
 
 @pytest.fixture
 def variants_tree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Monta uma árvore variants/ mínima e aponta KAJI_VARIANTS_DIR para ela.
+    """Monta uma árvore variants/ mínima e aponta SHIDASHI_VARIANTS_DIR para ela.
 
     Espelha o padrão de fixture de tests/test_cli.py (subconjunto suficiente
     para um merge limpo de ``v3 × minimal × systemd``).
@@ -207,29 +207,29 @@ def variants_tree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         recipe = root / axis / name / "recipe.yaml"
         recipe.parent.mkdir(parents=True, exist_ok=True)
         recipe.write_text(text, encoding="utf-8")
-    monkeypatch.setenv("KAJI_VARIANTS_DIR", str(root))
+    monkeypatch.setenv("SHIDASHI_VARIANTS_DIR", str(root))
     return root
 
 
 def test_recipe_cli_path_never_imports_portage_api(variants_tree: Path) -> None:
     # parte de um estado em que portage_api NÃO está carregado: removemos o
-    # módulo (e o pacote-pai, para garantir que um re-import de kaji não o puxe).
-    # Reimportar kaji.recipe cria NOVAS classes pydantic; se não restaurarmos
+    # módulo (e o pacote-pai, para garantir que um re-import de shidashi não o puxe).
+    # Reimportar shidashi.recipe cria NOVAS classes pydantic; se não restaurarmos
     # sys.modules ao final, testes posteriores (ex.: test_resolve) que importam
     # essas classes em momentos distintos veem cópias divergentes (model_type).
     # Por isso salvamos e restauramos os módulos afetados num try/finally.
-    _names = ("kaji.portage_api", "kaji.recipe", "kaji.cli", "kaji")
+    _names = ("shidashi.portage_api", "shidashi.recipe", "shidashi.cli", "shidashi")
     _saved = {name: sys.modules.get(name) for name in _names}
     try:
         for name in _names:
             sys.modules.pop(name, None)
-        assert "kaji.portage_api" not in sys.modules
+        assert "shidashi.portage_api" not in sys.modules
 
         # importar a camada de receitas e a CLI NÃO deve acionar portage_api
-        import kaji.cli as cli
-        import kaji.recipe as recipe
+        import shidashi.cli as cli
+        import shidashi.recipe as recipe
 
-        assert "kaji.portage_api" not in sys.modules
+        assert "shidashi.portage_api" not in sys.modules
 
         # exercita o merge diretamente pela camada de receitas (Portage ausente)
         resolved = recipe.merge(
@@ -239,7 +239,7 @@ def test_recipe_cli_path_never_imports_portage_api(variants_tree: Path) -> None:
             recipe.load_init(_RECIPE_PATH(variants_tree, "init", "systemd")),
         )
         assert resolved.arch == "v3"
-        assert "kaji.portage_api" not in sys.modules
+        assert "shidashi.portage_api" not in sys.modules
 
         # exercita o caminho da CLI: recipe show / validate saem com 0 sem Portage
         show = _runner.invoke(cli.app, ["recipe", "show", "v3", "minimal", "systemd"])
@@ -249,7 +249,7 @@ def test_recipe_cli_path_never_imports_portage_api(variants_tree: Path) -> None:
 
         # prova central de R7.3: nenhum passo do caminho recipe/CLI importou
         # portage_api (o módulo continua fora de sys.modules)
-        assert "kaji.portage_api" not in sys.modules
+        assert "shidashi.portage_api" not in sys.modules
     finally:
         # restaura os módulos originais para não poluir o resto da suíte
         for name, module in _saved.items():

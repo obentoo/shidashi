@@ -1,7 +1,7 @@
-"""UNIT/INTEGRAÇÃO leve da CLI ``kaji pretend`` via Typer ``CliRunner``.
+"""UNIT/INTEGRAÇÃO leve da CLI ``shidashi pretend`` via Typer ``CliRunner``.
 
 Determinista no host CI: o orquestrador ``pretend_resolve`` (privilegiado) é
-monkeypatched no namespace de ``kaji.cli`` para devolver um ``PretendReport``
+monkeypatched no namespace de ``shidashi.cli`` para devolver um ``PretendReport``
 sintético ou levantar ``SeedError``/``ResolveError`` — exercitamos só a CAMADA
 CLI: renderização pretty/json, mapeamento de exit codes, propagação de flags e
 a presença de ``pretend`` no ``--help``. Nenhum stage3/nspawn é tocado (espelha
@@ -11,7 +11,7 @@ Strategy).
 Contrato (design.md §cli, refinado): ``pretend(arch, flavor, init,
 --format=[pretty|json], --no-download, --keep)``; captura SeedError/ResolveError/
 UnknownAxisError/RecipeConflictError → mensagem amigável + Exit(1); sucesso exit
-0; ``pretend`` listado em ``kaji --help``. Quando ``ResolveError`` carrega
+0; ``pretend`` listado em ``shidashi --help``. Quando ``ResolveError`` carrega
 ``raw_output`` (hard-conflict), a CLI imprime esse raw_output no stderr e sai 1.
 ``--keep`` propaga ``keep=True`` ao orquestrador.
 """
@@ -21,10 +21,10 @@ import json
 import pytest
 from typer.testing import CliRunner
 
-from kaji import cli
-from kaji.cli import app
-from kaji.resolve import CycleBreak, PretendReport, ResolveError
-from kaji.seed import SeedError
+from shidashi import cli
+from shidashi.cli import app
+from shidashi.resolve import CycleBreak, PretendReport, ResolveError
+from shidashi.seed import SeedError
 
 runner = CliRunner()
 
@@ -54,6 +54,12 @@ def test_help_lists_pretend() -> None:
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0
     assert "pretend" in result.stdout
+
+
+def test_pretend_help_shows_work_dir() -> None:
+    result = runner.invoke(app, ["pretend", "--help"])
+    assert result.exit_code == 0
+    assert "--work-dir" in result.stdout
 
 
 # --- sucesso exit 0 + pretty (R1.1) ------------------------------------------

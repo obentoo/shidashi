@@ -9,7 +9,7 @@ imune a ciclo: navega o grafo multi-instance pela USE final (OVERVIEW §7,
 
 from pathlib import Path
 
-from kaji.recipe import ResolvedRecipe
+from shidashi.recipe import ResolvedRecipe
 
 
 class Assembler:

@@ -4,7 +4,7 @@
 # system tooling shared by every bentoo release: shells, dev tooling, portage
 # helpers, containers, networking, filesystem/firmware utilities, browsers.
 # DE-specific atoms (kde-*/plasma/Qt) belong in the flavor set, not here.
-# Conservative seed — verify/trim against `kaji pretend-resolve` before trusting.
+# Conservative seed — verify/trim against `shidashi pretend-resolve` before trusting.
 
 # System administration
 app-admin/metalog

@@ -5,7 +5,7 @@ Os seis módulos ``container``/``factory``/``assembler``/``phases``/``binhost``/
 ``NotImplementedError`` na Fase 0. Aqui prova-se que:
 
 * cada módulo importa sem exceção (e o pacote permanece import-safe — nenhum
-  deles aciona ``kaji.portage_api`` no import);
+  deles aciona ``shidashi.portage_api`` no import);
 * cada ponto de entrada público (construtores de classe e funções de módulo),
   quando invocado, levanta ``NotImplementedError`` — não ``pass``/``None``.
 
@@ -22,12 +22,12 @@ from typing import Any
 import pytest
 
 _SKELETON_MODULES = (
-    "kaji.container",
-    "kaji.factory",
-    "kaji.assembler",
-    "kaji.phases",
-    "kaji.binhost",
-    "kaji.image",
+    "shidashi.container",
+    "shidashi.factory",
+    "shidashi.assembler",
+    "shidashi.phases",
+    "shidashi.binhost",
+    "shidashi.image",
 )
 
 
@@ -42,10 +42,10 @@ def test_skeleton_module_imports(module_name: str) -> None:
 
 def test_importing_skeletons_does_not_trigger_portage_api() -> None:
     # remove portage_api e re-importa cada esqueleto: nenhum pode puxá-lo (R9.1)
-    sys.modules.pop("kaji.portage_api", None)
+    sys.modules.pop("shidashi.portage_api", None)
     for name in _SKELETON_MODULES:
         importlib.import_module(name)
-    assert "kaji.portage_api" not in sys.modules
+    assert "shidashi.portage_api" not in sys.modules
 
 
 # --- cada ponto de entrada público levanta NotImplementedError (R9.2/R9.3) ---
@@ -65,9 +65,9 @@ def _resolved_recipe_stub() -> Any:
 
 
 def _entry_points() -> Iterator[tuple[str, Callable[[], Any]]]:
-    assembler = importlib.import_module("kaji.assembler")
-    binhost = importlib.import_module("kaji.binhost")
-    image = importlib.import_module("kaji.image")
+    assembler = importlib.import_module("shidashi.assembler")
+    binhost = importlib.import_module("shidashi.binhost")
+    image = importlib.import_module("shidashi.image")
 
     rr = _resolved_recipe_stub()
 

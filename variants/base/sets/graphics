@@ -3,7 +3,7 @@
 # `graphics` = the generic graphics/video/audio stack + drivers + fonts that any
 # graphical flavor consumes (NON-kde, NON-plasma, NON-Qt). Desktop-environment
 # atoms live in the flavor set; pure-system/apps atoms live in bentoo-apps.
-# Conservative seed — verify/trim against `kaji pretend-resolve` before trusting.
+# Conservative seed — verify/trim against `shidashi pretend-resolve` before trusting.
 
 # Audio / video stack
 media-video/pipewire

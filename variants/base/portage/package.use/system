@@ -4,7 +4,7 @@ app-admin/sudo-rs system-names
 
 # Boot
 # NOTE: `sys-apps/systemd boot ukify` factored out to
-# variants/init/systemd/portage/package.use (init-specific, Kaji R8.4/R8.5).
+# variants/init/systemd/portage/package.use (init-specific, Shidashi R8.4/R8.5).
 sys-boot/grub mount
 
 # Firmware

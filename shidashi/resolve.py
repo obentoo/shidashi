@@ -1,4 +1,4 @@
-"""Pipeline *pretend-resolve* do Kaji (OVERVIEW §18) — coração da story 002.
+"""Pipeline *pretend-resolve* do Shidashi (OVERVIEW §18) — coração da story 002.
 
 Sobrepõe os layers de portage da receita + os repos do host num rootfs seedado,
 roda ``emerge --pretend --emptytree @world`` dentro de um ``systemd-nspawn`` e
@@ -18,9 +18,9 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
 
-from kaji import config, seed
-from kaji.container import CommandResult, Container
-from kaji.recipe import ResolvedRecipe
+from shidashi import config, seed
+from shidashi.container import CommandResult, Container
+from shidashi.recipe import ResolvedRecipe
 
 _STRICT = ConfigDict(frozen=True, extra="forbid")
 
@@ -58,7 +58,7 @@ class CycleBreak(BaseModel):
 
 
 class PretendReport(BaseModel):
-    """Resultado tipado de um ``kaji pretend`` (R1.1/R1.3/R5.2). Frozen pydantic."""
+    """Resultado tipado de um ``shidashi pretend`` (R1.1/R1.3/R5.2). Frozen pydantic."""
 
     model_config = _STRICT
     arch: str
@@ -151,7 +151,7 @@ def _atom_from_ebuild_line(stripped: str) -> str | None:
     que ``stripped`` comece com ``[ebuild``, toma o primeiro token após o ``]`` e
     descarta o sufixo de slot/repo (``:slot::repo``). Devolve ``None`` quando a
     linha não casa (não começa com ``[ebuild``, sem ``]`` ou sem token). Reusado
-    por :func:`_iter_atom_lines` e por :func:`kaji.phases.parse_emerge_plan`.
+    por :func:`_iter_atom_lines` e por :func:`shidashi.phases.parse_emerge_plan`.
     """
     if not stripped.startswith("[ebuild"):
         return None
@@ -171,7 +171,7 @@ def _iter_atom_lines(emerge_output: str) -> Iterator[str]:
     ``[ebuild`` toma o primeiro token após o ``]`` e descarta o sufixo de
     slot/repo (``:slot::repo``), devolvendo ``cat/pkg-version``. Consumido tanto
     por :func:`parse_packages` (resolve) quanto por
-    :func:`kaji.phases.parse_built_atoms`. Delega o casamento de linha a
+    :func:`shidashi.phases.parse_built_atoms`. Delega o casamento de linha a
     :func:`_atom_from_ebuild_line`.
     """
     for line in emerge_output.splitlines():
@@ -248,12 +248,12 @@ def pretend_resolve(
     """
     if os.geteuid() != 0:
         raise ResolveError(
-            "kaji pretend requer root (systemd-nspawn + extração de stage3); "
-            "rode como root — o Kaji não escala privilégios sozinho"
+            "shidashi pretend requer root (systemd-nspawn + extração de stage3); "
+            "rode como root — o Shidashi não escala privilégios sozinho"
         )
 
     # import local evita ciclo de import (cli importa resolve no grupo 6).
-    from kaji.cli import _resolve
+    from shidashi.cli import _resolve
 
     recipe = _resolve(arch, flavor, init)
 

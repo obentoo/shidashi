@@ -1,7 +1,7 @@
-"""Testes de INTEGRAÇÃO da CLI do Kaji (kaji.cli) via Typer ``CliRunner``.
+"""Testes de INTEGRAÇÃO da CLI do Shidashi (shidashi.cli) via Typer ``CliRunner``.
 
 Constrói uma árvore ``variants/`` mínima e VÁLIDA em ``tmp_path`` e aponta a CLI
-para ela com ``KAJI_VARIANTS_DIR``. A fixture permite que ``v3 × minimal ×
+para ela com ``SHIDASHI_VARIANTS_DIR``. A fixture permite que ``v3 × minimal ×
 systemd`` e ``v3 × kde × systemd`` fundam-se sem conflito; ``init/badinit`` (que
 derruba ``qt6``) força um :class:`RecipeConflictError` sintético contra a flavor
 ``kde`` (``override_ok: false``).
@@ -16,7 +16,7 @@ import pytest
 import yaml
 from typer.testing import CliRunner
 
-from kaji.cli import app
+from shidashi.cli import app
 
 runner = CliRunner()
 
@@ -98,7 +98,7 @@ _RECIPES = {
 
 @pytest.fixture
 def variants_tree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Monta a árvore variants/ mínima e aponta KAJI_VARIANTS_DIR para ela."""
+    """Monta a árvore variants/ mínima e aponta SHIDASHI_VARIANTS_DIR para ela."""
     root = tmp_path / "variants"
     base = root / "base" / "base.yaml"
     base.parent.mkdir(parents=True, exist_ok=True)
@@ -107,7 +107,7 @@ def variants_tree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         recipe = root / axis / name / "recipe.yaml"
         recipe.parent.mkdir(parents=True, exist_ok=True)
         recipe.write_text(text, encoding="utf-8")
-    monkeypatch.setenv("KAJI_VARIANTS_DIR", str(root))
+    monkeypatch.setenv("SHIDASHI_VARIANTS_DIR", str(root))
     return root
 
 
@@ -191,7 +191,7 @@ def test_list_shows_axis_names(variants_tree: Path) -> None:
 
 
 # NB: factory deixou de ser stub — a story 003 (grupo 7) implementou o comando
-# real `kaji factory`; sua cobertura vive agora em tests/test_cli_factory.py
+# real `shidashi factory`; sua cobertura vive agora em tests/test_cli_factory.py
 # (incl. test_help_lists_factory_as_real_command). Por isso não há mais um
 # test_stub_factory_exit2 aqui (assemble/release seguem stubs — stories 004/005).
 

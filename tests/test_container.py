@@ -1,4 +1,4 @@
-"""UNIT + INTEGRAÇÃO de kaji.container.
+"""UNIT + INTEGRAÇÃO de shidashi.container.
 
 UNIT (R4.4): ``_nspawn_argv`` é puro e inspecionável — testado sem root.
 Contrato (design.md §container): ``_nspawn_argv(rootfs, argv, *, binds, binds_rw,
@@ -22,7 +22,7 @@ from pathlib import Path
 
 import pytest
 
-from kaji.container import CommandResult, Container, _nspawn_argv
+from shidashi.container import CommandResult, Container, _nspawn_argv
 
 _NEEDS_ROOT = os.geteuid() != 0 or shutil.which("systemd-nspawn") is None
 _skip_privileged = pytest.mark.skipif(
@@ -89,10 +89,10 @@ def test_nspawn_argv_no_rw_binds_is_story002_backcompat() -> None:
 
 def test_nspawn_argv_emits_rw_binds_after_ro() -> None:
     ro = [(Path("/var/db/repos/gentoo"), Path("/var/db/repos/gentoo"))]
-    rw = [(Path("/var/cache/kaji/binpkgs/v3"), Path("/var/cache/binpkgs"))]
+    rw = [(Path("/var/cache/shidashi/binpkgs/v3"), Path("/var/cache/binpkgs"))]
     argv = _nspawn_argv(Path("/r"), ["sh"], binds=ro, binds_rw=rw, ephemeral=False)
     ro_flag = "--bind-ro=/var/db/repos/gentoo:/var/db/repos/gentoo"
-    rw_flag = "--bind=/var/cache/kaji/binpkgs/v3:/var/cache/binpkgs"
+    rw_flag = "--bind=/var/cache/shidashi/binpkgs/v3:/var/cache/binpkgs"
     assert ro_flag in argv
     assert rw_flag in argv
     # RW vem DEPOIS do RO e ANTES do separador de comando

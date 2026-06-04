@@ -1,4 +1,4 @@
-"""UNIT + INTEGRAÇÃO de kaji.factory stepwise (story 004 grupo 6).
+"""UNIT + INTEGRAÇÃO de shidashi.factory stepwise (story 004 grupo 6).
 
 UNIT (determinista, CI não-Gentoo):
 * 6.1 ``FactoryResult`` ganha campos defaultados ``stopped_at``/``phase_diffs``/
@@ -23,16 +23,16 @@ from typing import Any
 
 import pytest
 
-from kaji import factory
-from kaji.recipe import Phase, ResolvedRecipe, ResolvedUse
+from shidashi import factory
+from shidashi.recipe import Phase, ResolvedRecipe, ResolvedUse
 from tests._pending import try_import
 
-Factory: Any = try_import("kaji.factory", "Factory")
-FactoryResult: Any = try_import("kaji.factory", "FactoryResult")
-FactoryError: Any = try_import("kaji.factory", "FactoryError")
-CheckpointDecision: Any = try_import("kaji.factory", "CheckpointDecision")
-FailureDecision: Any = try_import("kaji.factory", "FailureDecision")
-PhaseDiff: Any = try_import("kaji.state", "PhaseDiff")
+Factory: Any = try_import("shidashi.factory", "Factory")
+FactoryResult: Any = try_import("shidashi.factory", "FactoryResult")
+FactoryError: Any = try_import("shidashi.factory", "FactoryError")
+CheckpointDecision: Any = try_import("shidashi.factory", "CheckpointDecision")
+FailureDecision: Any = try_import("shidashi.factory", "FailureDecision")
+PhaseDiff: Any = try_import("shidashi.state", "PhaseDiff")
 
 _NEEDS_HOST = os.geteuid() != 0 or shutil.which("systemd-nspawn") is None
 _skip_privileged = pytest.mark.skipif(
@@ -66,7 +66,7 @@ def test_factory_result_story003_construction_still_valid() -> None:
     # back-compat: sem os campos novos a construção da story 003 funciona e os
     # novos campos assumem defaults (R8.2).
     result = FactoryResult(
-        pkgdir=Path("/var/cache/kaji/binpkgs/v3"),
+        pkgdir=Path("/var/cache/shidashi/binpkgs/v3"),
         built_atoms=("media-libs/libsdl2-2.30.5",),
         phases=("rebuild",),
         fork_point=None,
@@ -121,7 +121,7 @@ def test_build_stepwise_non_root_raises_factory_error_before_work(
     monkeypatch.setattr(factory, "fetch_stage3", _boom, raising=False)
     monkeypatch.setattr(factory, "extract_stage3", _boom, raising=False)
 
-    f = Factory(_recipe(), Path("/var/cache/kaji/binpkgs/v3"))
+    f = Factory(_recipe(), Path("/var/cache/shidashi/binpkgs/v3"))
     # a guarda DEVE levantar FactoryError mencionando root — NÃO um AttributeError
     # de método ausente (que passaria por engano antes da impl existir).
     with pytest.raises(FactoryError) as exc:

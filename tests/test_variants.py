@@ -1,7 +1,7 @@
 """Testes de INTEGRAÇÃO da árvore ``variants/`` realmente entregue (R8.1–R8.4).
 
 Diferente de ``test_config.py``/``test_merge.py`` (que montam fixtures), aqui
-NÃO se constrói árvore alguma: aponta-se ``KAJI_VARIANTS_DIR`` para o
+NÃO se constrói árvore alguma: aponta-se ``SHIDASHI_VARIANTS_DIR`` para o
 ``variants/`` real do repositório (resolvido a partir da localização deste
 arquivo de teste) e prova-se que os fragmentos shipados parseiam nos modelos
 frozen (``extra="forbid"``) e fundem-se coerentemente.
@@ -25,8 +25,8 @@ from pathlib import Path
 
 import pytest
 
-from kaji import config
-from kaji.recipe import (
+from shidashi import config
+from shidashi.recipe import (
     ArchFragment,
     BaseFragment,
     FlavorFragment,
@@ -45,10 +45,10 @@ _VARIANTS_DIR = Path(__file__).resolve().parent.parent / "variants"
 @pytest.fixture(autouse=True)
 def _point_at_real_variants(monkeypatch: pytest.MonkeyPatch) -> None:
     """Aponta o resolvedor de caminhos para o variants/ shipado (não fixture)."""
-    monkeypatch.setenv("KAJI_VARIANTS_DIR", str(_VARIANTS_DIR))
+    monkeypatch.setenv("SHIDASHI_VARIANTS_DIR", str(_VARIANTS_DIR))
 
 
-# --- loaders por eixo (consomem o caminho resolvido por kaji.config) ---------
+# --- loaders por eixo (consomem o caminho resolvido por shidashi.config) ---------
 
 
 def _load_base() -> BaseFragment:

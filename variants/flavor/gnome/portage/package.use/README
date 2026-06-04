@@ -1,4 +1,4 @@
 # CURATION: fed by pretend-resolve (§18.7).
 # GNOME has no factored source edition yet (only editions/plasma is shipped).
 # Per-package USE for the GNOME layer goes here once curated and validated via
-# `kaji pretend-resolve`. No package lists are fabricated.
+# `shidashi pretend-resolve`. No package lists are fabricated.

@@ -1,4 +1,4 @@
-"""UNIT + INTEGRAÇÃO do shell interativo de kaji.container (story 004 grupo 4).
+"""UNIT + INTEGRAÇÃO do shell interativo de shidashi.container (story 004 grupo 4).
 
 UNIT (R7.2/R8.4): ``_nspawn_shell_argv(rootfs, *, binds, binds_rw)`` é puro e
 inspecionável — ``systemd-nspawn --directory <rootfs>`` + o MESMO bloco de
@@ -22,10 +22,10 @@ from typing import Any
 
 import pytest
 
-from kaji.container import Container, _nspawn_argv
+from shidashi.container import Container, _nspawn_argv
 from tests._pending import try_import
 
-_nspawn_shell_argv: Any = try_import("kaji.container", "_nspawn_shell_argv")
+_nspawn_shell_argv: Any = try_import("shidashi.container", "_nspawn_shell_argv")
 
 _NEEDS_ROOT = os.geteuid() != 0 or shutil.which("systemd-nspawn") is None
 _skip_privileged = pytest.mark.skipif(
