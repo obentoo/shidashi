@@ -1,0 +1,11 @@
+# VIDEO_CARDS, with the profile defaults cleared first.
+#
+# The leading "-*" is load-bearing: without it the profile's own defaults
+# (video_cards_nouveau, _vesa, _dummy, _radeon) survive and those drivers get
+# built on every image, silently. Portage reports nothing about it.
+#
+# This is why the list lives here and not in make.conf: a make.conf assignment
+# cannot clear profile defaults, only add to them.
+# vc4 removed: it is the Raspberry Pi GPU driver and is masked in
+# profiles/arch/base/use.mask, so it can never activate on amd64.
+*/* VIDEO_CARDS: -* amdgpu d3d12 fbdev intel nvidia qxl radeonsi virgl virtualbox

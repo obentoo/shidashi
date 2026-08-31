@@ -1,2 +1,2 @@
-># Pin nvidia-drivers to stable release
+# Pin nvidia-drivers to stable release
 >x11-drivers/nvidia-drivers-580.126.18

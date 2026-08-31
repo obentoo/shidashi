@@ -1,0 +1,117 @@
+# Bentoo — locale set for the built image. FIXED and versioned here.
+#
+# This file is the single source of truth for which locales glibc compiles.
+# It is NEVER read from the build host: image content must not depend on the
+# operator's machine (LAB-NOTES D2/F4). Changing the language set is a
+# deliberate edit to this file, not a side effect of where the build ran.
+#
+# Note: this is distinct from L10N in make.conf. L10N picks which package
+# translations get installed; this picks which glibc locales exist at all.
+#
+# Cost: 102 locales -> ~78 MB of /usr/lib/locale/locale-archive.
+
+# This file defines which locales to incorporate into the glibc locale archive.
+# See the locale.gen(5) and locale-gen(8) man pages for more details.
+
+af_ZA.UTF-8 UTF-8
+ar_AE.UTF-8 UTF-8
+ar_DZ.UTF-8 UTF-8
+ar_EG.UTF-8 UTF-8
+ar_JO.UTF-8 UTF-8
+ar_KW.UTF-8 UTF-8
+ar_MA.UTF-8 UTF-8
+ar_SA.UTF-8 UTF-8
+ar_TN.UTF-8 UTF-8
+be_BY.UTF-8 UTF-8
+bg_BG.UTF-8 UTF-8
+bs_BA.UTF-8 UTF-8
+cs_CZ.UTF-8 UTF-8
+da_DK.UTF-8 UTF-8
+de_AT.UTF-8 UTF-8
+de_BE.UTF-8 UTF-8
+de_CH.UTF-8 UTF-8
+de_DE.UTF-8 UTF-8
+de_IT.UTF-8 UTF-8
+de_LU.UTF-8 UTF-8
+el_GR.UTF-8 UTF-8
+en_AU.UTF-8 UTF-8
+en_CA.UTF-8 UTF-8
+en_GB.UTF-8 UTF-8
+en_IE.UTF-8 UTF-8
+en_NZ.UTF-8 UTF-8
+en_PH.UTF-8 UTF-8
+en_SG.UTF-8 UTF-8
+en_US.UTF-8 UTF-8
+en_ZA.UTF-8 UTF-8
+es_AR.UTF-8 UTF-8
+es_CL.UTF-8 UTF-8
+es_CO.UTF-8 UTF-8
+es_CR.UTF-8 UTF-8
+es_DO.UTF-8 UTF-8
+es_EC.UTF-8 UTF-8
+es_ES.UTF-8 UTF-8
+es_GT.UTF-8 UTF-8
+es_HN.UTF-8 UTF-8
+es_MX.UTF-8 UTF-8
+es_NI.UTF-8 UTF-8
+es_PA.UTF-8 UTF-8
+es_PE.UTF-8 UTF-8
+es_PR.UTF-8 UTF-8
+es_PY.UTF-8 UTF-8
+es_SV.UTF-8 UTF-8
+es_UY.UTF-8 UTF-8
+es_VE.UTF-8 UTF-8
+et_EE.UTF-8 UTF-8
+fi_FI.UTF-8 UTF-8
+fr_BE.UTF-8 UTF-8
+fr_CA.UTF-8 UTF-8
+fr_CH.UTF-8 UTF-8
+fr_FR.UTF-8 UTF-8
+fr_LU.UTF-8 UTF-8
+ga_IE.UTF-8 UTF-8
+he_IL.UTF-8 UTF-8
+hi_IN UTF-8
+hu_HU.UTF-8 UTF-8
+id_ID.UTF-8 UTF-8
+it_CH.UTF-8 UTF-8
+ja_JP.UTF-8 UTF-8
+kk_KZ.UTF-8 UTF-8
+ko_KR.UTF-8 UTF-8
+lb_LU UTF-8
+lt_LT.UTF-8 UTF-8
+lv_LV.UTF-8 UTF-8
+mk_MK.UTF-8 UTF-8
+mg_MG.UTF-8 UTF-8
+mi_NZ.UTF-8 UTF-8
+mn_MN UTF-8
+ms_MY.UTF-8 UTF-8
+mt_MT.UTF-8 UTF-8
+nb_NO.UTF-8 UTF-8
+pl_PL.UTF-8 UTF-8
+pt_BR.UTF-8 UTF-8
+pt_PT.UTF-8 UTF-8
+ro_RO.UTF-8 UTF-8
+ru_RU.UTF-8 UTF-8
+ru_UA.UTF-8 UTF-8
+se_NO UTF-8
+si_LK UTF-8
+sk_SK.UTF-8 UTF-8
+sl_SI.UTF-8 UTF-8
+sr_ME UTF-8
+sr_RS UTF-8
+sv_SE.UTF-8 UTF-8
+sw_KE UTF-8
+ta_IN UTF-8
+ta_LK UTF-8
+th_TH.UTF-8 UTF-8
+tr_TR.UTF-8 UTF-8
+uk_UA.UTF-8 UTF-8
+ur_PK UTF-8
+vi_VN UTF-8
+xh_ZA.UTF-8 UTF-8
+zu_ZA.UTF-8 UTF-8
+zh_CN.UTF-8 UTF-8
+zh_HK.UTF-8 UTF-8
+zh_SG.UTF-8 UTF-8
+zh_TW.UTF-8 UTF-8
+C.UTF-8 UTF-8

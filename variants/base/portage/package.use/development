@@ -30,4 +30,3 @@ sys-devel/gcc graphite
 www-servers/nginx lua_single_target_luajit pcre-jit rtmp nginx_modules_http_headers_more nginx_modules_http_image_filter
 
 # Editors
-app-editors/zed llvm_slot_21

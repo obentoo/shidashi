@@ -136,8 +136,22 @@ def test_base_make_conf_keeps_desktops_empty() -> None:
 def test_base_make_conf_keeps_unrelated_groups_verbatim() -> None:
     text = _base_make_conf_text()
     # amostras de grupos que NÃO migraram (R8.2: manter verbatim)
-    for token in ('FEATURES="', 'VIDEO_CARDS="', 'DISTDIR="', 'GRAPHICS="', 'L10N="'):
+    for token in ('FEATURES="', 'DISTDIR="', 'GRAPHICS="', 'L10N="'):
         assert token in text
+
+
+def test_base_video_cards_lives_in_package_use_with_wildcard_reset() -> None:
+    # VIDEO_CARDS saiu do make.conf: uma atribuição lá NÃO consegue limpar os
+    # defaults do profile (nouveau, vesa, dummy, radeon), só somar a eles. Em
+    # package.use o prefixo "-*" zera antes de listar — sem isso esses drivers
+    # seriam compilados em toda imagem, e o Portage não reporta nada.
+    assert 'VIDEO_CARDS="' not in _base_make_conf_text()
+    entry = (_VARIANTS_DIR / "base" / "portage" / "package.use" / "00video_cards").read_text(
+        encoding="utf-8"
+    )
+    line = next(ln for ln in _live_text(entry).splitlines() if "VIDEO_CARDS:" in ln)
+    assert line.startswith("*/* VIDEO_CARDS: -*")
+    assert "amdgpu" in line and "nvidia" in line
 
 
 def test_base_package_use_system_drops_init_specific_systemd_line() -> None:

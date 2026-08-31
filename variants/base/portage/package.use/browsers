@@ -1,3 +1,3 @@
-www-client/chromium -llvm_slot_20 gtk4 official
-www-client/firefox -llvm_slot_20 hwaccel libproxy system-pipewire
+www-client/chromium gtk4 official
+www-client/firefox hwaccel libproxy system-pipewire
 www-client/librewolf -llvm_slot_20

@@ -1,0 +1,10 @@
+# Rust packages that should use sccache.
+#
+# DELIBERATELY EMPTY for now. Every atom listed here REQUIRES dev-util/sccache to
+# be installed first, or the build fails with a missing RUSTC_WRAPPER. Uncomment
+# once sccache is part of the package set, and make sure it is built BEFORE these.
+#
+#dev-lang/rust            sccache.conf
+#app-editors/zed          sccache.conf
+#www-client/firefox       sccache.conf
+#mail-client/thunderbird  sccache.conf

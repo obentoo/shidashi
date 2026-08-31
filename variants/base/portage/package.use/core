@@ -2,7 +2,6 @@ media-libs/mlt fftw libsamplerate opencv xml frei0r
 sys-apps/fwupd agent bluetooth dell fastboot flashrom gnutls gusb modemmanager nvme policykit spi synaptics thunderbolt tpm uefi
 app-text/xmlto text
 sys-libs/libseccomp static-libs
-x11-libs/libdrm libkms
 dev-libs/libxml2 icu
 sys-libs/zlib minizip
 www-client/w3m imlib
@@ -23,7 +22,6 @@ app-i18n/ibus gtk
 app-containers/docker overlay
 net-dns/dnscrypt-proxy pie
 app-editors/vim lua_single_target_luajit
-dev-vcs/git python_single_target_python3_8
 media-libs/libvpx postproc svc
 media-libs/libsdl2 haptic
 sys-apps/file -python
@@ -55,7 +53,7 @@ sys-process/htop lm-sensors
 app-i18n/man-pages-l10n -l10n_fa
 sys-apps/systemd-utils boot kernel-install
 sys-libs/libcap static-libs
-net-misc/curl -adns
+net-misc/curl adns
 media-libs/libcanberra gtk2
 dev-libs/cyrus-sasl kerberos
 app-misc/mime-types nginx

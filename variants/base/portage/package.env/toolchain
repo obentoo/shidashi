@@ -1,0 +1,10 @@
+# Packages that must never see ccache. See env/toolchain.conf.
+#
+# llvm/clang are included because they are compilers too and are rebuilt by the
+# world step. Note the category: sys-devel/clang and sys-devel/llvm NO LONGER
+# EXIST — LLVM moved to llvm-core/.
+sys-devel/gcc       toolchain.conf
+sys-devel/binutils  toolchain.conf
+sys-libs/glibc      toolchain.conf
+llvm-core/llvm      toolchain.conf
+llvm-core/clang     toolchain.conf
