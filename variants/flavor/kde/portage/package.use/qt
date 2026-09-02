@@ -1,9 +1,22 @@
-dev-qt/qtquickcontrols2 widgets
-dev-qt/qtgui evdev jpeg eglfs
-dev-qt/qtprintsupport cups
+# Qt6 only. Five Qt5 package names used to live here and NONE of them exists in
+# ::gentoo or ::bentoo any more, so every one of those lines was inert:
+#
+#   dev-qt/qtcore icu           -> absorbed by dev-qt/qtbase; `icu` is already set
+#                                  on qtbase, both here and in base/package.use/core
+#   dev-qt/qtprintsupport cups  -> absorbed by qtbase; `cups` already set on it below
+#   dev-qt/qtquickcontrols2 widgets -> absorbed by dev-qt/qtdeclarative, where
+#                                  `widgets` is on by default anyway
+#   dev-qt/qtgui evdev jpeg eglfs   -> `evdev` and `eglfs` exist on qtbase but are
+#                                  OFF; `jpeg` is not an IUSE of qtbase at all
+#   dev-qt/qtsql mysql          -> `mysql` exists on qtbase and is OFF
+#
+# The last two are deliberately NOT migrated. Those flags have never actually been
+# applied — the packages carrying them do not exist — so switching them on now
+# would be a new product decision dressed as a cleanup, not a fix. If Qt needs
+# MySQL, evdev or EGLFS, add them to the dev-qt/qtbase line in package.use/kde
+# on purpose (lab, 2026-09-01, F18).
+
 dev-qt/qtmultimedia qml
-dev-qt/qtcore icu
 dev-qt/qtwebchannel qml
 dev-qt/qtwebengine widgets
-dev-qt/qtsql mysql
 dev-qt/qtwayland compositor

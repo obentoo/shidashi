@@ -1,8 +1,8 @@
 # Remmina with KDE wallet support
 net-misc/remmina kwallet
 
-# Megasync Dolphin plugin
-net-misc/megasync dolphin
+# net-misc/megasync removed: the package does not exist in ::gentoo or ::bentoo,
+# and nothing in any set requests it, so the line configured nothing (F18).
 
 # Flatpak KDE integration
 sys-apps/flatpak kde

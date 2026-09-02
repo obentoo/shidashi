@@ -1,5 +1,8 @@
-=net-libs/nodejs-25.2.1
-=media-libs/opencv-4.13.0
+# Empty of active masks by design. Two version pins lived here with no comment
+# at all — `=net-libs/nodejs-25.2.1` and `=media-libs/opencv-4.13.0` — and were
+# removed for that reason: a mask whose rationale is unrecorded cannot be
+# re-evaluated, only inherited. If either version is genuinely broken, re-add it
+# WITH the bug reference (lab, 2026-09-01).
 # NO tree-sitter mask here. This file used to carry `>=dev-libs/tree-sitter-0.26`
 # with no comment, so whatever reason it had is not recorded — and it
 # contradicted the project's OWN overlay: dev-python/tree-sitter-0.26.0-r1::bentoo
