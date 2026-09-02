@@ -11,11 +11,13 @@ semanais (**todo domingo às 00:00**).
 
 ## Estado
 
-**Pré-implementação — Fase 0.** Este repositório contém **apenas a documentação de
-arquitetura** (`OVERVIEW.md`). O pacote Python `shidashi/`, as receitas (`variants/`) e os
-subsistemas (Factory/Assembler) **ainda não existem** — ver roadmap no OVERVIEW.md §17.
+**Fases 0 e 1 concluídas (código).** O pacote Python `shidashi/` (14 módulos), as receitas
+(`variants/`) e ambos os subsistemas (Package Factory + ISO Assembler) **estão implementados e
+cobertos por testes** (381 passando). O boot da ISO live foi validado em QEMU/KVM; a validação de
+**build em host Gentoo root** é *host-gated* e segue diferida por design (pilots em andamento).
+Fases 2–5 em aberto — ver roadmap no OVERVIEW.md §17 e o cronograma em `.epic/docs/ROADMAP.md`.
 
-Os comandos abaixo descrevem o **alvo** da Fase 0, não o que já roda.
+Os comandos abaixo já rodam off-host (`recipe`, `pretend`); `factory`/`assemble` exigem host root.
 
 ## Requisitos
 
@@ -30,7 +32,7 @@ python -m venv .venv && . .venv/bin/activate
 pip install -e '.[dev]'
 ```
 
-## Uso (alvo da Fase 0)
+## Uso
 
 ```sh
 shidashi recipe show v3 minimal systemd   # mostra a receita resolvida (deep-merge dos eixos)

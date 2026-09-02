@@ -1,7 +1,7 @@
 # Shidashi 仕出し — Proposta de Desenvolvimento
 
 > Documento de visão e arquitetura do **Shidashi**, a ferramenta de automação de builds e ISOs do **bentoo**.
-> Status: **Fase 0 concluída** (scaffold + recipe + `pretend` + `factory`, validados off-host; pilots em host root diferidos) · **Fase 1 (ISO) em andamento** · Linguagem: **Python ≥ 3.14** · Última atualização: 2026-06-04
+> Status: **Fases 0 e 1 concluídas** (scaffold + recipe + `pretend` + `factory` + Assembler/ISO, validados off-host; boot da ISO validado em QEMU/KVM; pilots de build em host root diferidos) · **Fase 2 (Factory faseada + binhost) em andamento** · Linguagem: **Python ≥ 3.14** · Última atualização: 2026-07-05
 
 ---
 
@@ -600,7 +600,8 @@ O `make.conf` de referência (já organizado em grupos nomeados) mapeia diretame
 
 ### Fase 2 — Binhost & Factory
 - [x] Factory com fases + cache de fork-point. *(impl. + testes; pilot host root diferido.)*
-- [ ] Estratégia tronco-persistente / wipe-na-toolchain (§6.6) + fase toolchain-bump.
+- [x] Estratégia tronco-persistente (fork-point reuse) — delta semanal sobre o binhost. *(impl. em `factory.py`; pilot host diferido.)*
+- [ ] Wipe-na-toolchain + fase toolchain-bump (§6.6): detecção de bump GCC/glibc/binutils → `--emptytree` + `@preserved-rebuild` + subslot-rebuilds. *(story 006; zero ocorrências no código hoje.)*
 - [ ] Binhost multi-instance + assinatura.
 - [ ] LibreOffice Qt vs GTK como prova de conceito. *(variante Qt presente em `flavor/kde`; contraparte GTK pendente.)*
 
