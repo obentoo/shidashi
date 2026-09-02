@@ -66,5 +66,17 @@ sys-apps/xdg-desktop-portal flatpak
 sci-physics/bullet double-precision
 media-libs/opensubdiv tbb
 dev-qt/qtmultimedia widgets
+dev-qt/qtbase icu             # (F37) required by kde-frameworks/kcoreaddons <- net-im/telegram-desktop
+dev-python/pillow tiff        # (F37) required by media-gfx/inkscape
+# qml on both, required by the @graphics set (a BASE set, so these belong in
+# base and not in flavor/kde, or `minimal` breaks):
+#   @graphics -> media-video/vlc[gui] -> dev-qt/qt5compat[qml]
+#   @graphics -> media-video/vlc[gui] -> kde-frameworks/qqc2-desktop-style
+#                                     -> kde-frameworks/sonnet[qml]
+# (lab, 2026-08-30, F33)
+dev-qt/qt5compat icu qml      # (F37) icu must MATCH dev-qt/qtbase: qt5compat
+                              # declares qtbase[icu=], and '=' means equality, so
+                              # enabling it on the base forces it on the consumer
+kde-frameworks/sonnet qml
 virtual/zlib minizip
 app-emulation/qemu -pin-upstream-blobs

@@ -16,6 +16,13 @@ media-plugins/gst-plugins-meta flac libass libde265 nvcodec x264
 
 # Graphics
 media-gfx/blender llvm_slot_20
+# The five entries marked (F37) below are REQUIRED by @bentoo-apps, not optional
+# polish; Portage names the consumer for each. They only surface once the apps
+# phase is resolved, which is why they were invisible while the lab measured the
+# trunk alone (lab, 2026-08-30).
+media-libs/gd fontconfig      # (F37) required by media-gfx/graphviz
+media-libs/babl lcms          # (F37) required by media-gfx/gimp
+media-libs/gegl lcms          # (F37) required by media-gfx/gimp
 media-gfx/inkscape cdr exif imagemagick jpeg lcms spell svg2
 media-gfx/gimp -X
 media-gfx/imagemagick -openmp fftw fontconfig jbig jpeg jpeg2k lcms opencl openexr pango svg tiff webp truetype xml
@@ -23,6 +30,9 @@ media-gfx/graphviz fontconfig
 media-gfx/qrencode png
 
 # Image
+media-libs/tiff jpeg          # (F37) required by dev-python/pillow[tiff], which
+                              # arrives through systemd[policykit] -> polkit ->
+                              # glib-utils -> docutils -> pillow
 media-libs/libwebp gif
 media-libs/freeimage jpeg jpeg2k png webp
 media-libs/libpng -apng

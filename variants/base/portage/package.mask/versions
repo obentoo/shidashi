@@ -1,3 +1,8 @@
 =net-libs/nodejs-25.2.1
 =media-libs/opencv-4.13.0
->=dev-libs/tree-sitter-0.26
+# NO tree-sitter mask here. This file used to carry `>=dev-libs/tree-sitter-0.26`
+# with no comment, so whatever reason it had is not recorded — and it
+# contradicted the project's OWN overlay: dev-python/tree-sitter-0.26.0-r1::bentoo
+# requires >=dev-libs/tree-sitter-0.26, and it is reached from
+#     @bentoo-apps -> dev-util/pkgdev -> dev-util/pkgcheck -> dev-python/tree-sitter
+# so the mask made pkgdev and pkgcheck uninstallable (lab, 2026-08-30, F36).

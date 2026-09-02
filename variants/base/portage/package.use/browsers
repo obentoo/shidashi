@@ -1,3 +1,7 @@
-www-client/chromium gtk4 official
+# llvm_slot_22 is mandatory, not a preference: www-client/chromium::bentoo
+# declares LLVM_COMPAT=( 22 ) and so REQUIRED_USE="exactly-one-of
+# ( llvm_slot_22 )", while the global LLVM_SLOT is 21 and must stay there
+# (see make.conf, F22). Same reason as dev-lang/rust (lab, 2026-08-30, F35).
+www-client/chromium gtk4 llvm_slot_22 official
 www-client/firefox hwaccel libproxy system-pipewire
 www-client/librewolf -llvm_slot_20

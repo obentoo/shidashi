@@ -1,5 +1,13 @@
-# Needed version 2 by Appimage and Flatpak
->sys-fs/fuse-3.17.4
+# NO fuse mask here, deliberately. This file used to carry
+#     # Needed version 2 by Appimage and Flatpak
+#     >sys-fs/fuse-3.17.4
+# and it did not do what the comment claims. fuse 2 is sys-fs/fuse:0, a separate
+# SLOT that a cap on fuse:3 never touches, and sets/bentoo-apps already requests
+# `sys-fs/fuse:0` explicitly alongside `sys-fs/fuse`. Meanwhile ::gentoo now ships
+# only 2.9.9-r2 (SLOT 0) and 3.18.2 (SLOT 3) — 3.17.4 is gone — so the mask
+# excluded the ONLY fuse:3 in the tree and left
+# sys-apps/xdg-desktop-portal[>=sys-fs/fuse-3.10.0:3=[suid]] unsatisfiable.
+# The @graphics phase could not resolve at all (lab, 2026-08-30, F31).
 
 # Need by PySide
 >media-libs/pulseaudio-qt-1.7.0

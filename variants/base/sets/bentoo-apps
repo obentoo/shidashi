@@ -14,7 +14,10 @@ app-admin/sudo-rs
 app-admin/sysstat
 
 # Archivers
-app-arch/p7zip
+# 7zip, not p7zip: ::gentoo masked app-arch/p7zip with "many unfixed bugs
+# including severe vulnerabilities", removal scheduled 2026-08-15 (bug
+# #942397). app-arch/7zip is the upstream replacement (lab, 2026-08-30, F32).
+app-arch/7zip
 app-arch/rar
 app-arch/unrar
 
@@ -96,7 +99,16 @@ media-plugins/obs-pipewire-audio-capture
 
 # Networking
 net-analyzer/netdata
-net-dns/bind-tools
+# net-dns/bind, not bind-tools. ::gentoo masked net-dns/bind-tools (removal
+# 2026-08-15, bug #977172) and its own stub ebuild says why: "bind-tools is now
+# merged into net-dns/bind and serves as a dummy package... Please run
+# `emerge --noreplace net-dns/bind` instead". The stub also RDEPENDs on
+# =net-dns/bind-9.18*, a version no longer in the tree, so it could not resolve
+# either way. This DOES bring the named daemon along — bind has no USE flag to
+# omit it — but it keeps dig, host, nslookup, nsupdate and dnssec-keygen under
+# the names scripts and muscle memory expect; doggo, ldns's drill and
+# cares-tools all rename the command (lab, 2026-08-31, F38).
+net-dns/bind
 net-dns/dnscrypt-proxy
 net-ftp/filezilla
 net-im/dino
