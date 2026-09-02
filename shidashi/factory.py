@@ -229,6 +229,17 @@ def _build_binds(
     return binds_ro, binds_rw
 
 
+def _ensure_bind_dirs(binds_rw: list[tuple[Path, Path]]) -> None:
+    """Cria os diretórios host-side dos binds RW antes do nspawn.
+
+    ``systemd-nspawn`` exige que o *source* de cada ``--bind=`` exista no host;
+    sem isto o spawn aborta com ``Failed to clone …``. Fica fora de
+    :func:`_build_binds` para preservar a pureza (e o unit test) daquela montagem.
+    """
+    for src, _dst in binds_rw:
+        src.mkdir(parents=True, exist_ok=True)
+
+
 class Factory:
     """Constrói o stage4 (binpkgs) de uma receita resolvida (OVERVIEW §6).
 
@@ -288,6 +299,7 @@ class Factory:
         binds_ro, binds_rw = _build_binds(
             recipe, pkgdir=self.pkgdir, repos_conf_dir=rootfs / "etc" / "portage" / "repos.conf"
         )
+        _ensure_bind_dirs(binds_rw)
 
         keep_rootfs = keep
         try:
@@ -420,6 +432,7 @@ class Factory:
         binds_ro, binds_rw = _build_binds(
             recipe, pkgdir=self.pkgdir, repos_conf_dir=rootfs / "etc" / "portage" / "repos.conf"
         )
+        _ensure_bind_dirs(binds_rw)
 
         # Teardown rule (R1.6): o stepwise NUNCA auto-deleta o rootfs — stop,
         # conclusão e falha TODOS o mantêm; só ``reset`` (acima) o remove. Por isso

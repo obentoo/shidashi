@@ -138,6 +138,21 @@ def test_build_binds_maps_caches_rw_and_repos_ro(
     assert tmp_path / "cache" / "distfiles" in rw_srcs
 
 
+def test_ensure_bind_dirs_creates_host_side_sources(tmp_path: Path) -> None:
+    # Regressão (pilot Gate 8): systemd-nspawn exige que o source de cada
+    # --bind= exista; sem isto o spawn aborta com "Failed to clone …".
+    ensure: Any = try_import("shidashi.factory", "_ensure_bind_dirs")
+    binds_rw = [
+        (tmp_path / "binpkgs" / "v3", Path("/var/cache/binpkgs")),
+        (tmp_path / "ccache", Path("/var/cache/ccache")),
+    ]
+    ensure(binds_rw)
+    assert (tmp_path / "binpkgs" / "v3").is_dir()
+    assert (tmp_path / "ccache").is_dir()
+    # idempotente: rodar de novo não levanta
+    ensure(binds_rw)
+
+
 # --- 6.2 (unit) non-root guard -----------------------------------------------
 
 
