@@ -1,4 +1,10 @@
 # Boot — moved from variants/base (common/etc/portage/package.use/system).
 # This line is init-specific (systemd's boot/ukify integration), so it lives on
 # the systemd init axis, not in base (Shidashi R8.4/R8.5).
-sys-apps/systemd boot ukify
+sys-apps/systemd boot ukify policykit
+
+# policykit is required, not optional, once anything graphical is in the set:
+#   @graphics -> sys-auth/rtkit -> sys-auth/polkit[systemd]
+#              -> sys-apps/systemd[policykit]
+# It stays invisible while only the trunk (@system) is resolved, because
+# nothing in @system pulls polkit (lab, 2026-08-30, F30).

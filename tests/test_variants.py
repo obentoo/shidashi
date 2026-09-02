@@ -21,6 +21,7 @@ Cobertura:
   o de openrc não; o merge openrc prepende a phase ``seat``.
 """
 
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -37,6 +38,7 @@ from shidashi.recipe import (
     load_init,
     merge,
 )
+from shidashi.resolve import apply_portage
 
 # Raiz do repo = pai de tests/; o variants/ real vive em <raiz>/variants.
 _VARIANTS_DIR = Path(__file__).resolve().parent.parent / "variants"
@@ -126,11 +128,34 @@ def test_base_make_conf_has_no_systemd_group_or_use_reference() -> None:
     assert "${SYSTEMD}" not in text
 
 
-def test_base_make_conf_keeps_desktops_empty() -> None:
-    text = _base_make_conf_text()
-    # mantém a variável vazia (o flavor a popula); nunca com valor em base
-    assert 'DESKTOPS=""' in text
-    assert 'DESKTOPS="kde' not in _live_text(text)
+def test_base_make_conf_has_no_desktops_slot() -> None:
+    # A base NÃO reserva um slot ${DESKTOPS} no bloco USE, e isso não é
+    # esquecimento: apply_portage CONCATENA os make.conf dos layers, então o bloco
+    # USE da base já foi expandido pelo shell quando o fragmento do flavor é lido.
+    # Um slot aqui seria expandido vazio e o flavor não teria como preenchê-lo — o
+    # flavor SOMA (USE="${USE} ${DESKTOPS}") no seu próprio fragmento (F28).
+    text = _live_text(_base_make_conf_text())
+    assert "${DESKTOPS}" not in text
+    assert "DESKTOPS=" not in text
+
+
+def test_kde_flavor_appends_desktops_to_use() -> None:
+    # O contrapeso do teste acima: o flavor define o grupo E o soma ao USE. Sem a
+    # segunda linha o grupo seria decorativo e a camada gráfica sumiria da imagem.
+    text = _live_text(
+        (_VARIANTS_DIR / "flavor" / "kde" / "portage" / "make.conf").read_text(encoding="utf-8")
+    )
+    assert 'DESKTOPS="kde' in text
+    assert 'USE="${USE} ${DESKTOPS}"' in text
+
+
+def test_systemd_init_appends_to_use_instead_of_replacing_it() -> None:
+    # Mesma regra no eixo init. `USE="${SYSTEMD}"` (sem ${USE}) trocaria a
+    # curadoria inteira da base por três flags — foi o que F28 mediu.
+    text = _live_text(
+        (_VARIANTS_DIR / "init" / "systemd" / "portage" / "make.conf").read_text(encoding="utf-8")
+    )
+    assert 'USE="${USE} ${SYSTEMD}"' in text
 
 
 def test_base_make_conf_keeps_unrelated_groups_verbatim() -> None:
@@ -287,3 +312,77 @@ def test_openrc_merge_profile_has_no_systemd_suffix() -> None:
 def test_openrc_merge_prepends_seat_phase() -> None:
     resolved = merge(_load_base(), _load_arch("v3"), _load_flavor("minimal"), _load_init("openrc"))
     assert resolved.phases[0].name == "seat"
+
+
+# --- apply_portage sobre o variants/ REAL (regressão F28) ---------------------
+
+
+def _assemble(tmp_path: Path, arch: str, flavor: str, init: str) -> Path:
+    resolved = merge(_load_base(), _load_arch(arch), _load_flavor(flavor), _load_init(init))
+    rootfs = tmp_path / f"{arch}-{flavor}-{init}"
+    (rootfs / "etc").mkdir(parents=True)
+    apply_portage(rootfs, resolved, variants_dir=_VARIANTS_DIR)
+    return rootfs / "etc" / "portage"
+
+
+@pytest.mark.parametrize("flavor", ["minimal", "kde"])
+def test_apply_portage_preserves_the_whole_base_make_conf(tmp_path: Path, flavor: str) -> None:
+    # REGRESSÃO F28. apply_portage sobrescrevia arquivos de mesmo caminho, e o
+    # make.conf de 133 linhas da base virava o fragmento de 6 linhas do
+    # init/systemd — levando junto tudo o que se afere abaixo. O sintoma
+    # observável era um make.conf com 6 linhas.
+    portage = _assemble(tmp_path, "v3", flavor, "systemd")
+    text = (portage / "make.conf").read_text(encoding="utf-8")
+    assert len(text.splitlines()) > 100
+    for var in ("FEATURES=", "PKGDIR=", "DISTDIR=", "LLVM_SLOT=", "PYTHON_TARGETS=",
+                "MAKEOPTS=", "L10N=", "ACCEPT_KEYWORDS="):
+        assert var in text, f"{var} perdida na composição"
+    # e os fragmentos posteriores continuam presentes
+    assert "CPU_FLAGS_X86=" in text          # arch/v3
+    assert 'SYSTEMD="boot uki ukify"' in text  # init/systemd
+
+
+def test_apply_portage_keeps_both_package_use_system_files(tmp_path: Path) -> None:
+    # REGRESSÃO F28. base e init/systemd traziam ambos `package.use/system`; o
+    # segundo apagava o primeiro, de 69 linhas para 4. O init agora entrega
+    # `50-systemd`, e o Portage lê o diretório como união.
+    portage = _assemble(tmp_path, "v3", "minimal", "systemd")
+    base_lines = (_VARIANTS_DIR / "base/portage/package.use/system").read_text(
+        encoding="utf-8"
+    ).splitlines()
+    got = (portage / "package.use" / "system").read_text(encoding="utf-8").splitlines()
+    assert len(got) == len(base_lines)
+    assert "sys-apps/systemd boot ukify policykit" in (
+        portage / "package.use" / "50-systemd"
+    ).read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    ("arch", "flavor", "init", "expect", "reject"),
+    [
+        ("v3", "minimal", "systemd", {"boot", "uki", "ukify"}, {"kde", "qt6"}),
+        ("v3", "kde", "systemd", {"boot", "kde", "qt6", "plymouth"}, set()),
+        ("znver5", "kde", "openrc", {"kde", "qt6"}, {"boot", "uki", "ukify"}),
+    ],
+)
+def test_assembled_make_conf_composes_use_across_axes(
+    tmp_path: Path, arch: str, flavor: str, init: str, expect: set[str], reject: set[str]
+) -> None:
+    # Contar linhas não prova semântica: o make.conf montado é SOURCEADO e o USE
+    # resultante conferido. Cada eixo tem de somar o seu, e só o seu.
+    portage = _assemble(tmp_path, arch, flavor, init)
+    out = subprocess.run(
+        ["bash", "-c", f'. "{portage / "make.conf"}"; printf "%s" "$USE"'],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    flags = set(out.stdout.split())
+    # As sentinelas TÊM de ser flags que a RECEITA declara, não que o perfil
+    # fornece: aqui o make.conf é sourceado isolado, sem perfil algum. `acl` era a
+    # sentinela original e passou a falhar no dia em que foi removida da receita
+    # por já vir do perfil — o teste acusou "a curadoria sumiu" quando nada tinha
+    # sumido. Estas quatro vivem nos grupos de base/portage/make.conf.
+    assert {"wayland", "vulkan", "btrfs", "cryptsetup"} <= flags, "a curadoria da base sumiu"
+    assert expect <= flags
+    assert not (reject & flags)

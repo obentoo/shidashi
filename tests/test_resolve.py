@@ -32,6 +32,7 @@ init, packages, cycle_breaks, raw_output)``. ``bind_repos(repos_conf_dir: Path)`
 
 import os
 import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -115,9 +116,11 @@ def _seed_layer(variants: Path, layer: str, rel: str, content: str) -> None:
     target.write_text(content, encoding="utf-8")
 
 
-def test_apply_portage_later_layer_overwrites(tmp_path: Path) -> None:
+def test_apply_portage_concatenates_make_conf_and_keeps_unique_files(tmp_path: Path) -> None:
+    # make.conf é UM arquivo lido pelo shell e os layers trazem FRAGMENTOS, logo
+    # ele é concatenado — não sobrescrito. Sobrescrever fazia o make.conf de 133
+    # linhas da base virar o fragmento de 6 linhas do init (F28).
     variants = tmp_path / "variants"
-    # base e init definem o MESMO arquivo; init (camada posterior) vence
     _seed_layer(variants, "base", "make.conf", "FROM_BASE")
     _seed_layer(variants, "arch/v3", "package.use/arch", "ARCH")
     _seed_layer(variants, "flavor/minimal", "package.use/flavor", "FLAVOR")
@@ -129,11 +132,66 @@ def test_apply_portage_later_layer_overwrites(tmp_path: Path) -> None:
     apply_portage(rootfs, _recipe(), variants_dir=variants)
 
     portage = rootfs / "etc" / "portage"
-    # arquivo em conflito: a camada init sobrescreve a base
-    assert (portage / "make.conf").read_text(encoding="utf-8") == "FROM_INIT"
-    # arquivos exclusivos de camadas intermediárias preservados
+    make_conf = (portage / "make.conf").read_text(encoding="utf-8")
+    assert "FROM_BASE" in make_conf
+    assert "FROM_INIT" in make_conf
+    # e na ORDEM dos layers, que é o que dá sentido ao "último vence" do shell
+    assert make_conf.index("FROM_BASE") < make_conf.index("FROM_INIT")
+    # o arquivo montado nomeia a origem de cada fragmento
+    assert "layer: base" in make_conf
+    assert "layer: init/systemd" in make_conf
+
+    # arquivos exclusivos de camadas intermediárias seguem preservados
     assert (portage / "package.use" / "arch").read_text(encoding="utf-8") == "ARCH"
     assert (portage / "package.use" / "flavor").read_text(encoding="utf-8") == "FLAVOR"
+
+
+def test_apply_portage_assembled_make_conf_gives_the_last_assignment(tmp_path: Path) -> None:
+    # Dentro do arquivo montado vale a regra do shell: a última atribuição vence.
+    # É esse o efeito de especialização do eixo arch sobre a base.
+    variants = tmp_path / "variants"
+    _seed_layer(variants, "base", "make.conf", 'COMMON_FLAGS="-O2"\nUSE="a b"\n')
+    _seed_layer(variants, "arch/v3", "make.conf", 'COMMON_FLAGS="-march=x86-64-v3 -O2"\n')
+    _seed_layer(variants, "flavor/minimal", "package.use/keep", "KEEP")
+    _seed_layer(variants, "init/systemd", "make.conf", 'USE="${USE} systemd"\n')
+
+    rootfs = tmp_path / "rootfs"
+    (rootfs / "etc").mkdir(parents=True)
+    apply_portage(rootfs, _recipe(), variants_dir=variants)
+
+    make_conf = rootfs / "etc" / "portage" / "make.conf"
+    out = subprocess.run(
+        ["bash", "-c", f'. "{make_conf}"; printf "%s|%s" "$COMMON_FLAGS" "$USE"'],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    flags, use = out.stdout.split("|")
+    assert flags == "-march=x86-64-v3 -O2"          # arch venceu a base
+    assert sorted(use.split()) == ["a", "b", "systemd"]  # init SOMOU, não trocou
+
+
+def test_apply_portage_raises_when_two_layers_provide_the_same_file(tmp_path: Path) -> None:
+    # Fora do make.conf, esses caminhos são DIRETÓRIOS que o Portage lê como
+    # união: dois layers no mesmo caminho não se combinam, um apaga o outro. Era
+    # perda silenciosa — package.use/system caía de 69 linhas para 4 (F28).
+    variants = tmp_path / "variants"
+    _seed_layer(variants, "base", "make.conf", "BASE")
+    _seed_layer(variants, "base", "package.use/system", "SESSENTA E NOVE LINHAS")
+    _seed_layer(variants, "arch/v3", "package.use/arch", "ARCH")
+    _seed_layer(variants, "flavor/minimal", "package.use/flavor", "FLAVOR")
+    _seed_layer(variants, "init/systemd", "package.use/system", "QUATRO LINHAS")
+
+    rootfs = tmp_path / "rootfs"
+    (rootfs / "etc").mkdir(parents=True)
+
+    with pytest.raises(ResolveError) as excinfo:
+        apply_portage(rootfs, _recipe(), variants_dir=variants)
+    msg = str(excinfo.value)
+    # o erro precisa nomear OS DOIS layers e o caminho, senão não é acionável
+    assert "package.use/system" in msg
+    assert "base" in msg
+    assert "init/systemd" in msg
 
 
 def test_apply_portage_missing_layer_raises(tmp_path: Path) -> None:
