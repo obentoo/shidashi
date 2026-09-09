@@ -27,6 +27,7 @@ from pathlib import Path
 import pytest
 
 from shidashi import config
+from shidashi.phases import phase_target
 from shidashi.recipe import (
     ArchFragment,
     BaseFragment,
@@ -97,7 +98,7 @@ def test_axes_are_non_empty(axis: str) -> None:
 def test_base_parses_with_canonical_profile_and_sets() -> None:
     base = _load_base()
     assert base.profile_base == "default/linux/amd64/23.0/no-multilib"
-    assert set(base.sets) == {"graphics", "bentoo-apps"}
+    assert set(base.sets) == {"base"}
 
 
 def test_every_base_phase_has_empty_use_break() -> None:
@@ -386,3 +387,70 @@ def test_assembled_make_conf_composes_use_across_axes(
     assert {"wayland", "vulkan", "btrfs", "cryptsetup"} <= flags, "a curadoria da base sumiu"
     assert expect <= flags
     assert not (reject & flags)
+
+
+# --- integridade dos sets EMBARCADOS (variants/), não de dados sintéticos -----
+#
+# Estes testes existem porque a suíte inteira passou verde enquanto
+# `variants/base/sets/bentoo-apps` já tinha sido apagado e a fase `apps` ainda
+# apontava para `@bentoo-apps`: todo teste de fase montava uma receita sintética
+# e nenhum olhava para o que o repositório realmente embarca.
+
+
+def _shipped_sets() -> dict[str, Path]:
+    """Todo arquivo de set embarcado, de qualquer layer, por nome."""
+    return {p.name: p for p in config.variants_dir().glob("*/*/sets/*") if p.is_file()} | {
+        p.name: p for p in config.variants_dir().glob("*/sets/*") if p.is_file()
+    }
+
+
+def _set_refs(path: Path) -> list[str]:
+    """Nomes referenciados por ``@nome`` dentro de um arquivo de set."""
+    refs = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        token = line.split("#", 1)[0].split()
+        if token and token[0].startswith("@"):
+            refs.append(token[0][1:])
+    return refs
+
+
+def test_every_set_reference_resolves_to_a_shipped_file() -> None:
+    shipped = _shipped_sets()
+    for name, path in shipped.items():
+        for ref in _set_refs(path):
+            assert ref in shipped, f"set {name!r} referencia @{ref}, que não existe"
+
+
+@pytest.mark.parametrize("flavor", ["minimal", "kde", "gnome", "xfce", "wm"])
+def test_every_declared_set_is_shipped(flavor: str) -> None:
+    recipe = merge(
+        load_base(config.base_path()),
+        load_arch(config.recipe_path("arch", "v3")),
+        load_flavor(config.recipe_path("flavor", flavor)),
+        load_init(config.recipe_path("init", "systemd")),
+    )
+    shipped = _shipped_sets()
+    for name in recipe.sets:
+        assert name in shipped, f"{flavor}: set {name!r} declarado mas não embarcado"
+
+
+@pytest.mark.parametrize("flavor", ["minimal", "kde", "gnome", "xfce", "wm"])
+def test_every_phase_target_is_reachable(flavor: str) -> None:
+    """Nenhuma fase pode apontar para um ``@set`` que não será instalado."""
+    recipe = merge(
+        load_base(config.base_path()),
+        load_arch(config.recipe_path("arch", "v3")),
+        load_flavor(config.recipe_path("flavor", flavor)),
+        load_init(config.recipe_path("init", "systemd")),
+    )
+    shipped = _shipped_sets()
+    for phase in recipe.phases:
+        for target in phase_target(phase, recipe):
+            if not target.startswith("@") or target == "@world":
+                continue
+            name = target[1:]
+            assert name in shipped, f"{flavor}/{phase.name}: alvo {target} não existe"
+            assert name in recipe.sets, (
+                f"{flavor}/{phase.name}: alvo {target} não está em recipe.sets, "
+                "logo não seria instalado no rootfs"
+            )

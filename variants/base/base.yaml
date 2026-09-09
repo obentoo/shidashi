@@ -1,19 +1,37 @@
-# variants/base/base.yaml — fragmento BASE da receita (R8.1).
+# variants/base/base.yaml — BASE fragment of the recipe (R8.1).
 #
-# Âncora de profile comum a TODOS os flavors: no-multilib é o padrão do bentoo
-# (OVERVIEW §3/§14). O eixo `init` acrescenta /systemd (ou nada p/ openrc); o
-# flavor NÃO toca o profile (toda a camada gráfica vem de use_prefer+sets).
+# Profile anchor shared by EVERY flavor: no-multilib is the bentoo default
+# (OVERVIEW §3/§14). The `init` axis appends /systemd (or nothing, for openrc);
+# the flavor NEVER touches the profile -- the whole graphical layer comes from
+# use_prefer + sets.
 #
-# `sets` aqui são os sets genéricos herdados por qualquer release; o flavor
-# acrescenta os seus (ex.: kde). As phases abaixo são a lista canônica de build
-# em fases (OVERVIEW §6.4); a phase `desktop` PRECISA chamar-se exatamente
-# "desktop" — o merge a omite quando o flavor não tem sets (ex.: minimal).
+# The `sets` here are the ones inherited by any release, split by PURPOSE so that
+# "what is base" is a question you can answer per set (2026-09-08):
+#   core   what every image needs to boot, be administered and be repaired
+#   apps   general-purpose applications -- the first set to question when trimming
+#   devel  language toolchains, build tooling, containers/orchestration
+#   virt   virtualization and Windows compatibility
+# `graphics` is NOT here: it is declared by each graphical flavor, so that
+# `minimal` stays console-only.
+#
+# The split was neutral by construction: union(core, apps, devel, virt) is exactly
+# the old `bentoo-apps` (132 atoms, verified). Pruning comes next, with numbers
+# from step12-kde-resolve.
+#
+# The phases below are the canonical build-in-phases list (OVERVIEW §6.4). The
+# `desktop` phase MUST be named exactly that: merge() drops it when the flavor
+# declares no sets (as `minimal` does) -- which is why `minimal` keeps `sets: []`
+# instead of listing the system sets itself.
 profile_base: default/linux/amd64/23.0/no-multilib
 sets:
-  - graphics
-  - bentoo-apps
+  - base
+# Cada phase DECLARA os sets que instala (antes isso era adivinhado pelo nome da
+# fase). `phase_target` intersecta com os sets da receita, então listar aqui um
+# set que só alguns flavors declaram é seguro: quem não o declara, não o instala.
+#   rebuild  -> @world, sempre (reconstrução do tronco)
+#   desktop  -> @<flavor>, o set curado do flavor
 phases:
-  - { name: rebuild, packages: [], use_break: [] }
-  - { name: graphics, packages: [], use_break: [] }
-  - { name: desktop, packages: [], use_break: [] }
-  - { name: apps, packages: [], use_break: [] }
+  - { name: rebuild, packages: [], sets: [], use_break: [] }
+  - { name: graphics, packages: [], sets: [gpu, extra-media], use_break: [] }
+  - { name: desktop, packages: [], sets: [], use_break: [] }
+  - { name: apps, packages: [], sets: [base, extra-system, extra-desktop, extra-dev, extra-virt, archive-nonfree], use_break: [] }

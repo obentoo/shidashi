@@ -1,0 +1,13 @@
+# variants/base/sets/base — THE universal set: every Bentoo image gets exactly this, no exceptions.
+# 39 atoms. Portage expands nested @refs, so this file is the whole contract.
+#
+# AGGREGATOR: references other sets with @name; Portage expands them (2026-09-09). See sets/base for the layering contract.
+
+@boot
+@fs
+@portage
+@shell
+@hardware
+@admin
+@archive
+@network

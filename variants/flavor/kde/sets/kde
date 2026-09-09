@@ -1,8 +1,9 @@
 # factored from editions/plasma/var/lib/portage/world
 #
 # KDE/Plasma/Qt desktop atoms of the plasma edition's world set. Generic atoms
-# (shells, dev tooling, browsers, fonts, audio/video stack…) were split into the
-# base sets (graphics / bentoo-apps); only the KDE-specific layer lives here.
+# (shells, dev tooling, browsers, fonts, audio/video stack…) live in the base
+# sets (core / apps / devel / virt) and in `graphics`, which every graphical
+# flavor declares; only the KDE-specific layer lives here.
 
 # KDE applications
 kde-apps/ark
@@ -35,3 +36,13 @@ app-office/onlyoffice-bin
 
 # IRC client (Qt/KDE)
 net-irc/konversation
+
+# Media player. media-video/vlc is here rather than in `graphics` because vlc-4
+# is no longer toolkit-neutral: with [gui] (default, and vlc-4 is stable on
+# amd64) it builds against dev-qt/qtbase:6, qt5compat, qtdeclarative, qtsvg plus
+# kde-frameworks/kwindowsystem and qqc2-desktop-style. vlc-3 had no Qt at all --
+# this is upstream drift. Under KDE that stack is already present, so vlc costs
+# nothing; under xfce/wm/minimal it would drag the whole Qt6+KF6 layer in for one
+# player. `graphics` keeps media-video/mpv, which every flavor can afford
+# (measured 2026-09-08).
+media-video/vlc

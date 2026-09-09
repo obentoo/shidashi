@@ -1,0 +1,13 @@
+# variants/base/sets/virt — virtualization and Windows compatibility
+#
+# LEAF set: a flat list of atoms (2026-09-09). See sets/base for the layering contract.
+
+app-emulation/dxvk
+app-emulation/libvirt
+app-emulation/qemu
+app-emulation/qemu-guest-agent
+app-emulation/virt-manager
+app-emulation/virtualbox
+app-emulation/virtualbox-additions
+app-emulation/vkd3d-proton
+app-emulation/wine-staging

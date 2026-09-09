@@ -41,9 +41,19 @@ class UseBreak(BaseModel):
 
 
 class Phase(BaseModel):
+    """Uma fase de build e o que ela instala.
+
+    ``sets`` é a fonte de verdade da relação fase→set. Antes ela era adivinhada
+    pelo NOME da fase em ``phase_target`` (``apps`` → ``@bentoo-apps`` literal),
+    o que amarrava o nome de uma fase ao nome de um set e deixava qualquer set
+    novo órfão: ele existia em ``variants/``, era copiado para o rootfs e nunca
+    era instalado, porque nenhuma fase o pedia.
+    """
+
     model_config = _STRICT
     name: str
     packages: tuple[str, ...] = ()
+    sets: tuple[str, ...] = ()
     use_break: tuple[UseBreak, ...] = ()
 
 
@@ -69,10 +79,22 @@ class ArchFragment(BaseModel):
 
 
 class FlavorFragment(BaseModel):
+    """Fragmento de flavor.
+
+    ``exclude`` são átomos REMOVIDOS dos sets herdados quando a Factory os
+    materializa no rootfs. A base é a regra e o flavor é a exceção: sem isto,
+    tirar um único átomo de um flavor obrigaria a fatiar o set inteiro.
+
+    Note o que ``exclude`` NÃO faz: ele não impede o átomo de entrar como
+    DEPENDÊNCIA de outro pacote. É "não peço explicitamente", não "proíbo" --
+    para proibir seria preciso ``emerge --exclude``, que é outra semântica.
+    """
+
     model_config = _STRICT
     flavor: str
     use_prefer: UsePrefer = UsePrefer()
     sets: tuple[str, ...] = ()
+    exclude: tuple[str, ...] = ()
     override_ok: bool = False
     use_break: dict[str, tuple[UseBreak, ...]] = {}  # phase-name → breaks curados
 
@@ -105,6 +127,7 @@ class ResolvedRecipe(BaseModel):
     runnable_on_build_host: bool
     use: ResolvedUse
     sets: tuple[str, ...]
+    exclude: tuple[str, ...] = ()
     phases: tuple[Phase, ...]
     portage_layers: tuple[str, ...]
     # default "download" mantém retrocompatível quem constrói ResolvedRecipe
@@ -242,7 +265,13 @@ def merge(
     sets = _ordered_unique(base.sets + flavor.sets)
 
     base_phases: tuple[Phase, ...] = base.phases
-    if flavor.sets == ():
+    # A phase `desktop` instala @<flavor>. Ela só faz sentido quando o flavor
+    # declara um set com o PRÓPRIO nome -- `kde` lista `- kde`, `minimal` não
+    # lista `- minimal`. O teste antigo era `flavor.sets == ()`, que passou a dar
+    # falso positivo quando um flavor sem desktop declara sets de sistema:
+    # `minimal` com `sets: [extra-system]` ganhava uma phase `desktop` apontando
+    # para @minimal, um set que não existe. Continua puro, sem I/O.
+    if flavor.flavor not in flavor.sets:
         base_phases = tuple(p for p in base_phases if p.name != "desktop")
     phases = init.phases_prepend + base_phases
     # injeta os use_break curados do flavor na phase de mesmo nome (R4.1/R4.5/
@@ -268,6 +297,7 @@ def merge(
         runnable_on_build_host=arch.runnable_on_build_host,
         use=ResolvedUse(enabled=enabled, disabled=disabled),
         sets=sets,
+        exclude=flavor.exclude,
         phases=phases,
         portage_layers=(
             "base",

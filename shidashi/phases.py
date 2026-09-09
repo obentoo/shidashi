@@ -111,22 +111,31 @@ class PhaseResult(pydantic.BaseModel):
 def phase_target(phase: Phase, recipe: ResolvedRecipe) -> tuple[str, ...]:
     """Devolve o alvo ``emerge`` de uma fase (R3.1/R3.2/R3.3). Puro.
 
-    Convenções por nome de fase: ``rebuild`` → ``@world``; ``seat`` →
-    ``phase.packages`` (átomos explícitos); ``desktop`` → ``@<flavor>`` (o set do
-    flavor); ``apps`` → ``@bentoo-apps``. Para qualquer outro nome, se ele é um
-    set declarado em ``recipe.sets`` usa-se ``@<nome>``; senão recai-se nos
-    ``phase.packages``.
+    Ordem de decisão:
+
+    1. ``rebuild`` → ``@world`` (reconstrução do tronco);
+    2. ``desktop`` → ``@<flavor>``, o set curado do flavor;
+    3. ``phase.sets`` não vazio → um ``@<nome>`` por set DECLARADO;
+    4. senão → ``phase.packages`` (átomos explícitos, como a fase ``seat``).
+
+    O passo 3 substituiu um conjunto de convenções por NOME de fase (``apps`` →
+    ``@bentoo-apps`` literal, e "se o nome da fase for também o nome de um set,
+    use-o"). Aquilo acoplava o nome da fase ao nome do set: renomear ou dividir
+    um set deixava a fase apontando para um alvo inexistente, e qualquer set
+    novo ficava órfão porque nenhuma fase o nomeava. Agora a relação é dado, não
+    convenção -- ``base.yaml`` declara qual fase instala quais sets.
     """
     if phase.name == "rebuild":
         return ("@world",)
-    if phase.name == "seat":
-        return phase.packages
     if phase.name == "desktop":
         return ("@" + recipe.flavor,)
-    if phase.name == "apps":
-        return ("@bentoo-apps",)
-    if phase.name in recipe.sets:
-        return ("@" + phase.name,)
+    if phase.sets:
+        # Só os sets que a receita realmente declara. base.yaml enumera a
+        # INTENÇÃO da fase para qualquer flavor; um flavor que não declara
+        # `gpu` simplesmente não o instala, em vez de pedir um @gpu ausente.
+        declared = tuple("@" + n for n in phase.sets if n in recipe.sets)
+        if declared:
+            return declared
     return phase.packages
 
 
@@ -532,6 +541,13 @@ def run_phase(
     Um ``emerge`` com saída não-zero (``CalledProcessError``) é embrulhado em
     :class:`FactoryError` carregando o nome da fase e a saída capturada (R8.3).
     """
+    if not phase_target(phase, recipe):
+        # Fase sem alvo é NO-OP, no mesmo espírito de settle_pass com breaks
+        # vazio: nenhum `emerge` é executado. Acontece legitimamente quando a
+        # receita não declara nenhum dos sets da fase -- `minimal` não declara
+        # `gpu` nem `extra-media`, logo a fase `graphics` não tem o que instalar.
+        # Sem isto o argv seria `emerge --verbose` sem alvo nenhum.
+        return PhaseResult(phase=phase, built_atoms=(), snapshot=None, output="")
     write_use_break(container.rootfs, phase)
     argv = phase_emerge_argv(phase, recipe, emptytree=emptytree)
     built, output = _run_emerge(container, argv, phase=phase.name)

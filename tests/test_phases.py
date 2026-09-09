@@ -42,7 +42,7 @@ restore_fork_point: Any = try_import("shidashi.phases", "restore_fork_point")
 def _recipe(
     *,
     flavor: str = "kde",
-    sets: tuple[str, ...] = ("graphics", "bentoo-apps", "kde"),
+    sets: tuple[str, ...] = ("base", "graphics", "kde"),
     phases: tuple[Phase, ...] = (),
 ) -> ResolvedRecipe:
     return ResolvedRecipe(
@@ -88,13 +88,22 @@ def test_phase_target_desktop_is_flavor_set() -> None:
     assert phase_target(Phase(name="desktop"), _recipe(flavor="kde")) == ("@kde",)
 
 
-def test_phase_target_apps_is_bentoo_apps() -> None:
-    assert phase_target(Phase(name="apps"), _recipe()) == ("@bentoo-apps",)
+def test_phase_target_uses_declared_sets() -> None:
+    # A fase DECLARA os sets que instala; o nome da fase não importa mais.
+    phase = Phase(name="qualquer-nome", sets=("base", "graphics"))
+    assert phase_target(phase, _recipe()) == ("@base", "@graphics")
 
 
-def test_phase_target_set_named_phase_is_at_name() -> None:
-    # 'graphics' é um set declarado em recipe.sets → @graphics
-    assert phase_target(Phase(name="graphics"), _recipe()) == ("@graphics",)
+def test_phase_target_filters_sets_not_in_recipe() -> None:
+    # base.yaml enumera a intenção da fase para QUALQUER flavor; um flavor que
+    # não declara o set simplesmente não o instala, em vez de pedir um @ausente.
+    phase = Phase(name="graphics", sets=("graphics", "gpu"))
+    assert phase_target(phase, _recipe(sets=("base", "graphics"))) == ("@graphics",)
+
+
+def test_phase_target_falls_back_to_packages_when_no_set_matches() -> None:
+    phase = Phase(name="graphics", sets=("gpu",), packages=("cat/pkg",))
+    assert phase_target(phase, _recipe(sets=("base",))) == ("cat/pkg",)
 
 
 def test_phase_target_unknown_phase_falls_back_to_packages() -> None:
@@ -114,7 +123,9 @@ def test_phase_emerge_argv_rebuild_has_emptytree() -> None:
 
 
 def test_phase_emerge_argv_non_rebuild_has_no_emptytree() -> None:
-    argv = phase_emerge_argv(Phase(name="graphics"), _recipe(), emptytree=True)
+    argv = phase_emerge_argv(
+        Phase(name="graphics", sets=("graphics",)), _recipe(), emptytree=True
+    )
     assert "--emptytree" not in argv
     assert "@graphics" in argv
 

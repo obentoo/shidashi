@@ -1,0 +1,6 @@
+# variants/base/sets/firmware — firmware update and memory testing
+#
+# LEAF set: a flat list of atoms (2026-09-09). See sets/base for the layering contract.
+
+sys-apps/fwupd
+sys-apps/memtest86+

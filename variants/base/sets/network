@@ -1,0 +1,10 @@
+# variants/base/sets/network — network management, UNIVERSAL.
+#
+# LEAF set: a flat list of atoms (2026-09-09). See sets/base for the layering contract.
+#
+# net-misc/networkmanager was in NO set at all: it was configured in
+# package.use/system (someone meant to install it) but nothing requested it. Under
+# KDE it arrived indirectly via plasma-nm; a `minimal` image would have shipped
+# with no network manager. It is universal now -- every image needs to reach a
+# network (found 2026-09-09).
+net-misc/networkmanager

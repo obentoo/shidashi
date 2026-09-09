@@ -1,0 +1,11 @@
+# variants/base/sets/portage — package management -- a Gentoo you cannot maintain is not a Gentoo
+#
+# LEAF set: a flat list of atoms (2026-09-09). See sets/base for the layering contract.
+
+app-eselect/eselect-repository
+app-portage/bentoolkit
+app-portage/cpuid2cpuflags
+app-portage/eix
+app-portage/genlop
+app-portage/gentoolkit
+app-portage/pycargoebuild

@@ -1,12 +1,18 @@
 # variants/flavor/gnome/recipe.yaml — GNOME (OVERVIEW §8).
-# USE característica: gtk gnome wayland -qt6 -kde.
-# sets: [gnome] — placeholder de set (curado via pretend-resolve, §18.7); um set
-# não-vazio mantém a phase `desktop` no merge.
-# override_ok: false — GNOME é curado e autoritativo (§14).
+# Characteristic USE: gtk gnome wayland -qt6 -kde.
+# sets: [gnome] -- a placeholder set, to be curated via pretend-resolve (§18.7).
+# A non-empty set is what keeps the `desktop` phase in the merge.
+# override_ok: false -- GNOME is curated and authoritative (§14).
 flavor: gnome
 use_prefer:
   add:  [gtk, gnome, wayland]
   drop: [qt6, kde]
 sets:
+  - extra-system
+  - extra-desktop
+  - extra-media
+  - extra-dev
+  - extra-virt
+  - gpu
   - gnome
 override_ok: false

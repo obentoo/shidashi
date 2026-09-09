@@ -1,0 +1,5 @@
+# variants/base/sets/archive — 7zip alone: it also EXTRACTS rar, so @archive-nonfree stays optional
+#
+# LEAF set: a flat list of atoms (2026-09-09). See sets/base for the layering contract.
+
+app-arch/7zip

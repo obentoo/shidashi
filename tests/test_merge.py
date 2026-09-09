@@ -83,7 +83,7 @@ def make_flavor(
     *,
     flavor: str = "desktop",
     use_prefer: UsePrefer = _NO_USE,
-    sets: tuple[str, ...] = ("@desktop",),
+    sets: tuple[str, ...] = ("desktop",),
     override_ok: bool = False,
     use_break: dict[str, Any] = _NO_BREAKS,
 ) -> FlavorFragment:
@@ -292,10 +292,22 @@ def test_sets_ordered_unique_union() -> None:
 def test_phases_prepend_then_base_with_desktop_kept() -> None:
     base = make_base(phases=(Phase(name="system"), Phase(name="desktop"), Phase(name="late")))
     init = make_init(phases_prepend=(Phase(name="early"),))
-    flavor = make_flavor(sets=("@desktop",))  # sets não vazio -> mantém desktop
+    flavor = make_flavor(sets=("desktop",))  # declara o set do próprio nome -> mantém desktop
     r = merge(base, make_arch(), flavor, init)
     assert tuple(p.name for p in r.phases) == ("early", "system", "desktop", "late")
     assert r.phases == init.phases_prepend + base.phases
+
+
+def test_phases_flavor_declaring_system_sets_only_still_omits_desktop() -> None:
+    # Regressão: a regra antiga era `flavor.sets == ()`, então um flavor sem
+    # desktop que declarasse QUALQUER set de sistema ganhava uma phase `desktop`
+    # apontando para um @<flavor> inexistente. O que decide é o flavor declarar
+    # um set com o próprio nome.
+    base = make_base(phases=(Phase(name="system"), Phase(name="desktop"), Phase(name="late")))
+    init = make_init(phases_prepend=(Phase(name="early"),))
+    flavor = make_flavor(flavor="minimal", sets=("extra-system",))
+    r = merge(base, make_arch(), flavor, init)
+    assert tuple(p.name for p in r.phases) == ("early", "system", "late")
 
 
 def test_phases_empty_flavor_sets_omits_desktop() -> None:
@@ -317,7 +329,7 @@ def _ffmpeg_break() -> Any:
 def test_merge_injects_flavor_use_break_onto_matching_phase() -> None:
     brk = _ffmpeg_break()
     base = make_base(phases=(Phase(name="rebuild"), Phase(name="graphics"), Phase(name="desktop")))
-    flavor = make_flavor(flavor="kde", sets=("@kde",), use_break={"graphics": (brk,)})
+    flavor = make_flavor(flavor="kde", sets=("kde",), use_break={"graphics": (brk,)})
     r = merge(base, make_arch(), flavor, make_init(phases_prepend=()))
     by_name = {p.name: p for p in r.phases}
     assert by_name["graphics"].use_break == (brk,)
@@ -346,6 +358,6 @@ def test_merge_injection_respects_desktop_omit_and_phase_order() -> None:
 def test_merge_injection_preserves_phase_order_with_break() -> None:
     brk = _ffmpeg_break()
     base = make_base(phases=(Phase(name="rebuild"), Phase(name="graphics"), Phase(name="desktop")))
-    flavor = make_flavor(flavor="kde", sets=("@kde",), use_break={"graphics": (brk,)})
+    flavor = make_flavor(flavor="kde", sets=("kde",), use_break={"graphics": (brk,)})
     r = merge(base, make_arch(), flavor, make_init(phases_prepend=(Phase(name="early"),)))
     assert tuple(p.name for p in r.phases) == ("early", "rebuild", "graphics", "desktop")

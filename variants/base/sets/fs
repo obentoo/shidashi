@@ -1,0 +1,13 @@
+# variants/base/sets/fs — filesystem tooling; the live ISO needs lvm2 for dmsetup (OVERVIEW §7)
+#
+# LEAF set: a flat list of atoms (2026-09-09). See sets/base for the layering contract.
+
+sys-fs/btrfs-progs
+sys-fs/dmraid
+sys-fs/exfatprogs
+sys-fs/fuse
+sys-fs/fuse:0
+sys-fs/lvm2
+sys-fs/mdadm
+sys-fs/ntfs3g
+sys-fs/squashfs-tools

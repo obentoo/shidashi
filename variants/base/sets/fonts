@@ -1,0 +1,15 @@
+# variants/base/sets/fonts — font coverage for the graphical flavors
+#
+# LEAF set: a flat list of atoms (2026-09-09). See sets/base for the layering contract.
+
+media-fonts/arphicfonts
+media-fonts/artwiz-aleczapka-en
+media-fonts/baekmuk-fonts
+media-fonts/freefonts
+media-fonts/jetbrains-mono
+media-fonts/kochi-substitute
+media-fonts/liberation-fonts
+media-fonts/noto
+media-fonts/noto-emoji
+media-fonts/ttf-bitstream-vera
+media-fonts/unifont

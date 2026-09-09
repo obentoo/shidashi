@@ -1,18 +1,25 @@
-# variants/flavor/kde/recipe.yaml — flavor KDE Plasma (OVERVIEW §8/§14).
-# Sem profile de DE: a âncora é só no-multilib[/systemd]; a "camada KDE" vem de
-# use_prefer + portage/package.use + sets (§14, Resolução de profile).
-# `sets: [kde]` — `graphics` já é fornecido por base (o merge faz união-única;
-# o exemplo ilustrativo §14 repetia `graphics`, redundante aqui).
-# override_ok: false — KDE é curado e autoritativo (§14).
+# variants/flavor/kde/recipe.yaml — KDE Plasma flavor (OVERVIEW §8/§14).
+# No desktop-specific profile: the anchor is just no-multilib[/systemd], and the
+# "KDE layer" is built from use_prefer + portage/package.use + sets (§14,
+# "Profile resolution").
+# `sets: [kde]` -- `graphics` already comes from base, and merge() takes the
+# ordered union, so repeating it here would be redundant.
+# override_ok: false -- KDE is curated and authoritative (§14).
 flavor: kde
 use_prefer:
   add:  [qt6, kde, wayland]
   drop: [gtk, gnome, webkit]
 sets:
+  - extra-system
+  - extra-desktop
+  - extra-media
+  - extra-dev
+  - extra-virt
+  - gpu
   - kde
 override_ok: false
-# Quebra de ciclo curada (§18.7): durante o break-pass da phase `graphics`,
-# força media-video/ffmpeg[-sdl] OFF para romper a dependência circular.
+# Curated cycle break (§18.7): during the break-pass of the `graphics` phase,
+# force media-video/ffmpeg[-sdl] OFF to break the circular dependency.
 use_break:
   graphics:
     - { atom: media-video/ffmpeg, flag: sdl, enable: false }

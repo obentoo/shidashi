@@ -45,7 +45,9 @@ def test_golden_v3_minimal_systemd() -> None:
     assert r.profile == "default/linux/amd64/23.0/no-multilib/systemd"
     assert r.use.enabled == ("systemd",)
     assert r.use.disabled == ("gnome", "gtk", "kde", "qt6")
-    assert r.sets == ("graphics", "bentoo-apps")
+    # base declara só o agregador universal; tudo mais vem do flavor.
+    assert r.sets == ("base", "extra-system")
+    assert "gpu" not in r.sets
     # minimal tem sets vazio → a phase `desktop` é omitida (R2.5)
     assert tuple(p.name for p in r.phases) == ("rebuild", "graphics", "apps")
     assert "desktop" not in {p.name for p in r.phases}
@@ -62,8 +64,11 @@ def test_golden_v3_kde_systemd() -> None:
     assert r.use.enabled == ("kde", "qt6", "systemd", "wayland")
     assert {"qt6", "kde", "wayland"} <= set(r.use.enabled)
     assert r.use.disabled == ("gnome", "gtk", "webkit")
-    # set kde entra na união ordenada após os sets de base
-    assert r.sets == ("graphics", "bentoo-apps", "kde")
+    # os sets do flavor entram na união ordenada APÓS os de base
+    assert r.sets == (
+        "base", "extra-system", "extra-desktop", "extra-media",
+        "extra-dev", "extra-virt", "gpu", "kde",
+    )
     assert "kde" in r.sets
     # kde tem desktop → a phase `desktop` permanece
     assert tuple(p.name for p in r.phases) == ("rebuild", "graphics", "desktop", "apps")

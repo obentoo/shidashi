@@ -1,0 +1,9 @@
+# variants/base/sets/gpu — GPU userspace tooling and codec shims -- drivers come from VIDEO_CARDS
+#
+# LEAF set: a flat list of atoms (2026-09-09). See sets/base for the layering contract.
+
+dev-util/vulkan-tools
+media-libs/nv-codec-headers
+media-libs/nvidia-vaapi-driver
+x11-apps/mesa-progs
+x11-misc/vdpauinfo

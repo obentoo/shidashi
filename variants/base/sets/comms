@@ -1,0 +1,10 @@
+# variants/base/sets/comms — mail and messaging
+#
+# LEAF set: a flat list of atoms (2026-09-09). See sets/base for the layering contract.
+
+mail-client/thunderbird
+mail-mta/proton-mail-bridge
+net-im/dino
+net-im/discord
+net-im/element-desktop-bin
+net-im/telegram-desktop

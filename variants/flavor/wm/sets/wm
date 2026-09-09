@@ -2,3 +2,8 @@
 # No real source edition exists for the WM flavor yet (only editions/plasma is
 # shipped), so NO package atoms are fabricated here. Populate by curating a
 # Wayland-WM world set and validating with `shidashi pretend-resolve` before trusting.
+#
+# NOTE when curating: `graphics` gives every graphical flavor media-video/mpv but
+# NOT media-video/vlc -- vlc-4 is a Qt6/KDE-Frameworks application now, so it sits
+# in flavor/kde/sets/kde. If this flavor wants a full-featured player, pick the
+# native one (a compositor-agnostic player) rather than pulling Qt6+KF6 in for vlc alone.
