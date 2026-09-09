@@ -1,4 +1,9 @@
 # KDE Plasma Desktop
+
+# Applications that are NOT KDE but gain a KDE integration under this flavor.
+# The atom lives in a base set; only the KDE-specific flag belongs here.
+net-misc/remmina kwallet
+
 kde-misc/kdeconnect bluetooth
 kde-plasma/spectacle kipi share
 kde-apps/dolphin activities semantic-desktop

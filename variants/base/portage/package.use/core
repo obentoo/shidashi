@@ -36,7 +36,14 @@ mail-mta/proton-mail-bridge gui
 media-libs/opencolorio -opengl
 media-libs/libva utils
 sys-boot/plymouth gtk
-net-misc/remmina kwallet rdp spice ssh vnc -zeroconf -appindicator
+# No `kwallet` here: it pulls kde-frameworks/kwallet:6, and remmina reaches
+# every graphical flavor through sets/remote -> @extra-desktop. Under gnome,
+# xfce or wm the KDE wallet would be compiled and never run. The flag moved to
+# variants/flavor/kde/portage/package.use/kde, where it applies to the only
+# flavor that has a wallet to talk to. `keyring` stays available as the portable
+# alternative (app-crypt/libsecret) if a GTK flavor wants stored credentials
+# (2026-09-09).
+net-misc/remmina rdp spice ssh vnc -zeroconf -appindicator
 media-gfx/graphicsmagick jbig jpeg lcms png svg tiff webp
 app-crypt/gcr gtk
 net-libs/libssh server
