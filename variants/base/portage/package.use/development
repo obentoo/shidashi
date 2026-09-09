@@ -1,13 +1,11 @@
 # Rust
-# llvm_slot_22 is not a preference: dev-lang/rust-1.98.0::bentoo declares
-# LLVM_COMPAT=( 22 ), hence REQUIRED_USE="exactly-one-of ( llvm_slot_22 )",
-# and the global LLVM_SLOT is 21 (which must stay 21 — see make.conf, F22).
-# Same idiom already used for mesa, spirv-llvm-translator and libclc: the
-# global default sets the majority, the outliers are pinned per package.
-# (lab, 2026-08-30, F34)
-dev-lang/rust clippy llvm_slot_22 llvm_targets_WebAssembly lto profiler rustfmt rust-analyzer rust-src rust_sysroots_wasm system-llvm
+# No llvm_slot pin here any more: the global LLVM_SLOT is 22 and every current
+# dev-lang/rust declares LLVM_COMPAT=( 22 ), so the default already fits.
+# The atom itself is not in sets/bentoo-apps (see the note there); this line
+# records how to build it if it comes back.
+dev-lang/rust clippy llvm_targets_WebAssembly lto profiler rustfmt rust-analyzer rust-src rust_sysroots_wasm system-llvm
 dev-lang/rust-bin clippy rustfmt
-virtual/rust profiler
+# No virtual/rust line: the atom was removed from ::gentoo (2026-09-08).
 
 # PHP
 app-eselect/eselect-php fpm
@@ -23,8 +21,6 @@ dev-db/sqlitebrowser sqlcipher
 # LLVM
 llvm-runtimes/clang-runtime libcxx
 llvm-core/llvm -debug
-dev-util/spirv-llvm-translator llvm_slot_22
-llvm-core/libclc llvm_slot_22
 
 # Java
 dev-java/openjdk gentoo-vm

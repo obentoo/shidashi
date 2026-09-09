@@ -11,10 +11,18 @@ sys-boot/grub mount
 sys-firmware/intel-microcode initramfs
 
 # Filesystem
-sys-fs/lvm2 lvm thin
+# 'thin' dropped: it is the only thing pulling sys-block/thin-provisioning-tools,
+# which is written in Rust and is the last package in the plan stuck on LLVM slot
+# 21 — with the global LLVM_SLOT=22 it forces dev-lang/rust to be built FROM
+# SOURCE just to serve it. lvm2 is in the set for dmsetup (the live ISO's
+# dmsquash-live dracut module), not for thin volumes (lab, F22).
+# TRADE-OFF: the live ISO will not activate LVM thin-provisioned volumes.
+sys-fs/lvm2 lvm
 
 # Containers
-sys-apps/flatpak kde policykit
+# No `kde` flag: sys-apps/flatpak declares IUSE="doc introspection policykit
+# seccomp systemd test X" -- there is no KDE portal flag to set (2026-09-08).
+sys-apps/flatpak policykit
 
 # Fonts
 media-libs/freetype brotli harfbuzz
@@ -33,7 +41,8 @@ app-laptop/laptop-mode-tools apm
 dev-libs/openssl quic
 
 # Emulation
-app-emulation/vkd3d spirv-tools
+# app-emulation/vkd3d removed: only app-emulation/vkd3d-proton survives in
+# ::gentoo, and that is what sets/bentoo-apps already lists (2026-09-08).
 app-emulation/wine-gecko abi_x86_32
 dev-util/mingw64-toolchain abi_x86_32
 
@@ -42,7 +51,10 @@ dev-util/nvidia-cuda-toolkit profiler
 media-libs/libde265 dec265 enc265
 
 # Messaging
-net-im/telegram-desktop qt6 qt6-imageformats
+# No net-im/telegram-desktop line: `qt6` and `qt6-imageformats` are not in its
+# IUSE ("dbus enchant +fonts screencast wayland webkit +X"). Qt6 is an
+# UNCONDITIONAL dependency there (>=dev-qt/qtbase-6.5:6), so the flags never
+# expressed a choice -- they only looked like one (2026-09-08).
 net-im/discord appindicator
 
 # P2P
@@ -64,6 +76,7 @@ x11-base/xorg-server xvfb
 x11-base/xwayland libei
 
 # Python
-dev-python/pyqt5 declarative gui network widgets printsupport svg
+# dev-python/pyqt5 removed: PyQt5 is gone from ::gentoo -- dev-python/ carries
+# pyqt6 only (2026-09-08).
 dev-python/QtPy gui printsupport svg
 dev-python/pyqt6 qml

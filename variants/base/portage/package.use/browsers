@@ -1,7 +1,8 @@
-# llvm_slot_22 is mandatory, not a preference: www-client/chromium::bentoo
-# declares LLVM_COMPAT=( 22 ) and so REQUIRED_USE="exactly-one-of
-# ( llvm_slot_22 )", while the global LLVM_SLOT is 21 and must stay there
-# (see make.conf, F22). Same reason as dev-lang/rust (lab, 2026-08-30, F35).
-www-client/chromium gtk4 llvm_slot_22 official
-www-client/firefox hwaccel libproxy system-pipewire
-www-client/librewolf -llvm_slot_20
+# EMPTY of browser entries by decision (2026-09-09). sets/web now carries only
+# www-client/brave-browser, a BINARY package from ::bentoo that takes no USE
+# configuration. The chromium and firefox lines went out with their packages.
+#
+# No llvm_slot pin is needed: the global LLVM_SLOT is 22 and mail-client/
+# thunderbird -- still in sets/comms -- declares LLVM_COMPAT=( 22 ) since its 155
+# series (2026-09-06). Re-add a pin only if a browser returns AND its
+# LLVM_COMPAT excludes 22.

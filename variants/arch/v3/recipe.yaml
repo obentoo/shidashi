@@ -1,11 +1,11 @@
-# variants/arch/v3/recipe.yaml — baseline x86-64-v3 (OVERVIEW §9.1, tier 1).
-# Roda em todo CPU v3+ (inclui o host 9950X) → runnable_on_build_host: true.
-# cpu_flags_x86: conjunto coerente com x86-64-v3 (SSE/AVX/AVX2/BMI/FMA/F16C),
-# SEM AVX-512. Setado manualmente por alvo (§9.3 — não usar cpuid2cpuflags).
+# variants/arch/v3/recipe.yaml — baseline x86-64-v3 target (OVERVIEW §9.1, tier 1).
+# Runs on every v3-or-newer CPU, including this build host (9950X), hence
+# runnable_on_build_host: true.
+#
+# The compile knobs are NOT here. COMMON_FLAGS, GOAMD64, RUSTFLAGS and
+# CPU_FLAGS_X86 live in portage/make.conf, which is the file the build reads;
+# load_arch() derives them from it. They used to be duplicated in this file and
+# the two copies drifted apart without anything noticing.
 arch: v3
-common_flags: "-march=x86-64-v3 -O2 -pipe"
-goamd64: v3
-rustflags: "-C target-cpu=x86-64-v3 -C link-arg=-fuse-ld=mold"
-cpu_flags_x86: [aes, avx, avx2, f16c, fma3, mmx, mmxext, pclmul, popcnt, sse, sse2, sse3, sse4_1, sse4_2, ssse3]
 runnable_on_build_host: true
 tier: 1

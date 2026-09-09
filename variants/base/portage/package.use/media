@@ -9,13 +9,19 @@ media-video/mkvtoolnix gui
 media-video/vlc libass live lua_single_target_lua5-1 matroska mp3 mtp opus v4l vpx x264 x265 vaapi ogg vorbis
 
 # Audio
-media-sound/pulseaudio -daemon libsamplerate realtime
+# media-sound/pulseaudio removed: the package was split and the atom no longer
+# exists -- only media-sound/pulseaudio-daemon does. NOTE what went with it: the
+# `-daemon` flag WAS the mechanism keeping the PulseAudio daemon out of the image
+# in favour of PipeWire. Whatever decides that now is not this file; confirm it in
+# the next resolve (2026-09-08).
 media-sound/pulseaudio-daemon ofono-headset
 media-plugins/alsa-plugins libsamplerate speex
 media-plugins/gst-plugins-meta flac libass libde265 nvcodec x264
 
 # Graphics
-media-gfx/blender llvm_slot_20
+# No media-gfx/blender pin: blender is in no set, and its LLVM_COMPAT tops out at
+# ( {18..20} ) -- so if it ever entered the plan this pin would drag a THIRD llvm
+# slot in, against the LLVM_SLOT=22 reasoning in make.conf (2026-09-08).
 # The five entries marked (F37) below are REQUIRED by @bentoo-apps, not optional
 # polish; Portage names the consumer for each. They only surface once the apps
 # phase is resolved, which is why they were invisible while the lab measured the
@@ -40,5 +46,6 @@ media-libs/opencv contrib contribdnn features2d
 
 # GUI toolkits
 gui-libs/gtk gstreamer
-x11-libs/wxGTK:3.0 webkit
+# No wxGTK:3.0 line: the only ebuild left is 3.2.8.1 with SLOT="${WXRELEASE}/3.2",
+# so slot 3.0 matches nothing (2026-09-08).
 x11-libs/wxGTK:3.2 -webkit

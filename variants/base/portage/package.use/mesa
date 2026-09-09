@@ -1,5 +1,8 @@
-media-libs/mesa d3d9 lm-sensors opencl -llvm_slot_21 llvm_slot_22
-dev-util/mesa_clc -llvm_slot_21 llvm_slot_22
+# No d3d9 flag: Gallium Nine is gone from mesa. media-libs/mesa-26.0.8 has no
+# `d3d9` and no `nine` anywhere in the ebuild, so the flag named a state mesa can
+# no longer be in -- and Portage ignores an unknown package.use flag in silence
+# (checked 2026-09-08).
+media-libs/mesa lm-sensors opencl
 media-libs/libvpx postproc
 x11-libs/libdrm video_cards_radeon
 media-libs/vulkan-loader layers

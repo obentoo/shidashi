@@ -1,13 +1,13 @@
 # variants/arch/arrowlake/recipe.yaml — Intel Arrow Lake (OVERVIEW §9.1/§9.2).
-# Intel client moderno: SEM AVX-512 (removido desde Alder Lake) → JAMAIS v4;
-# usa -march=arrowlake + GOAMD64 v3 (§9.2). Tier 2: o host AMD não roda ISA
-# Intel-específica (SIGILL) → runnable_on_build_host: false; valida por QEMU TCG.
-# cpu_flags_x86: AVX2-class + extensões client (vaes/gfni/sha), SEM nenhum avx512*.
+# Modern Intel client silicon: NO AVX-512 (dropped since Alder Lake), so never
+# v4 -- it uses -march=arrowlake with GOAMD64 v3 (§9.2). Tier 2 because this AMD
+# build host cannot execute Intel-specific ISA (SIGILL), hence
+# runnable_on_build_host: false; validation goes through QEMU TCG.
+#
+# The compile knobs are NOT here. COMMON_FLAGS, GOAMD64, RUSTFLAGS and
+# CPU_FLAGS_X86 live in portage/make.conf, which is the file the build reads;
+# load_arch() derives them from it. They used to be duplicated in this file and
+# the two copies drifted apart without anything noticing.
 arch: arrowlake
-common_flags: "-march=arrowlake -O2 -pipe"
-goamd64: v3
-rustflags: "-C target-cpu=arrowlake -C link-arg=-fuse-ld=mold"
-cpu_flags_x86: [aes, avx, avx2, f16c, fma3, gfni, mmx, mmxext, pclmul, popcnt,
-                sha, sse, sse2, sse3, sse4_1, sse4_2, ssse3, vaes, vpclmulqdq]
 runnable_on_build_host: false
 tier: 2

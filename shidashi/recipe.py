@@ -6,6 +6,7 @@ Mantém-se livre de qualquer acoplamento com Portage: não importa
 ``portage_api`` nem ``config`` (resolução de caminhos é de outro módulo).
 """
 
+import re
 from pathlib import Path
 from typing import Any, Literal
 
@@ -109,6 +110,18 @@ class ResolvedRecipe(BaseModel):
     # default "download" mantém retrocompatível quem constrói ResolvedRecipe
     # diretamente; merge() sempre o preenche explicitamente a partir do arch.
     seed_source: SeedSource = "download"
+
+
+class RecipeSourceError(Exception):
+    """An arch fragment declares a knob that belongs to its ``make.conf``.
+
+    ``COMMON_FLAGS``, ``GOAMD64``, ``RUSTFLAGS`` and ``CPU_FLAGS_X86`` have a
+    single source of truth: ``variants/arch/<name>/portage/make.conf``, the file
+    the build actually reads. They used to be repeated in ``recipe.yaml`` as
+    well, and the two drifted apart silently -- the YAML still advertised
+    ``-C link-arg=-fuse-ld=mold`` months after make.conf dropped it on purpose,
+    so ``recipe show`` described a build that never happened.
+    """
 
 
 class RecipeConflictError(Exception):
@@ -270,8 +283,65 @@ def load_base(path: Path) -> BaseFragment:
     return BaseFragment(**_read_yaml(path))
 
 
+#: recipe.yaml field -> make.conf variable. These four live in make.conf only.
+_ARCH_KNOBS_FROM_MAKE_CONF = {
+    "common_flags": "COMMON_FLAGS",
+    "goamd64": "GOAMD64",
+    "rustflags": "RUSTFLAGS",
+    "cpu_flags_x86": "CPU_FLAGS_X86",
+}
+
+#: A single-line ``VAR="value"`` assignment. Comment lines never match, because
+#: they cannot start with an uppercase identifier.
+_MAKE_CONF_ASSIGNMENT = re.compile(
+    r'^\s*([A-Z_][A-Z0-9_]*)\s*=\s*"([^"]*)"\s*(?:#.*)?$', re.MULTILINE
+)
+
+
+def _read_make_conf_scalars(path: Path) -> dict[str, str]:
+    """Collect the plain ``VAR="value"`` assignments from a make.conf.
+
+    Deliberately not a shell parser: it reads literal one-line assignments and
+    nothing else. Values that reference other variables (``CFLAGS="${COMMON_FLAGS}"``)
+    are returned unexpanded, which is fine because every knob read through here
+    is a literal.
+    """
+    text = path.read_text(encoding="utf-8")
+    return {m.group(1): m.group(2) for m in _MAKE_CONF_ASSIGNMENT.finditer(text)}
+
+
 def load_arch(path: Path) -> ArchFragment:
-    return ArchFragment(**_read_yaml(path))
+    """Load an arch fragment, taking the build knobs from its make.conf.
+
+    ``recipe.yaml`` carries identity and policy (``arch``, ``tier``,
+    ``runnable_on_build_host``, ``seed_source``); the flags that decide how code
+    is compiled come from ``portage/make.conf`` next to it, which is the file
+    the build itself reads. Declaring either of the four in the YAML is an error
+    rather than an override -- see :class:`RecipeSourceError`.
+    """
+    data = _read_yaml(path)
+
+    duplicated = sorted(key for key in _ARCH_KNOBS_FROM_MAKE_CONF if key in data)
+    if duplicated:
+        raise RecipeSourceError(
+            f"{path}: {', '.join(duplicated)} must not be declared here; "
+            f"they are read from {path.parent / 'portage' / 'make.conf'}"
+        )
+
+    make_conf = path.parent / "portage" / "make.conf"
+    if not make_conf.is_file():
+        raise RecipeSourceError(f"{path}: missing {make_conf}, which carries the build knobs")
+    scalars = _read_make_conf_scalars(make_conf)
+
+    missing = sorted(var for var in _ARCH_KNOBS_FROM_MAKE_CONF.values() if var not in scalars)
+    if missing:
+        raise RecipeSourceError(f"{make_conf}: missing required {', '.join(missing)}")
+
+    data["common_flags"] = scalars["COMMON_FLAGS"]
+    data["goamd64"] = scalars["GOAMD64"]
+    data["rustflags"] = scalars["RUSTFLAGS"]
+    data["cpu_flags_x86"] = tuple(scalars["CPU_FLAGS_X86"].split())
+    return ArchFragment(**data)
 
 
 def load_flavor(path: Path) -> FlavorFragment:

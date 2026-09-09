@@ -1,17 +1,31 @@
 #!/bin/bash
-# sccache integration for Rust packages
+# variants/base/portage/bashrc — Portage hooks applied to EVERY package.
+#
+# NOTHING here may export RUSTC_WRAPPER, CARGO_BUILD_RUSTC_WRAPPER or any other
+# variable that changes how a package builds. This file is global by nature: it
+# is sourced for every ebuild, including the ones that run before the package
+# providing the tool has been merged.
+#
+# That is exactly the trap this file used to fall into. It exported
+#     RUSTC_WRAPPER="/usr/bin/sccache"
+# while env/sccache.conf, in this same directory, documents the measurement that
+# forbids it: cargo reads RUSTC_WRAPPER for every Rust compilation, so pointing
+# it at a binary that is not installed fails the build. dev-util/sccache is in
+# sets/bentoo-apps -- the `apps` phase -- while the `rebuild` phase already
+# compiles Rust in librsvg, mesa, gstreamer, bindgen, cargo-c and maturin. The
+# trunk build would have died on the first of them.
+#
+# The sccache wiring belongs in package.env/sccache + env/sccache.conf, where it
+# applies per package and only to packages chosen deliberately.
 
-# Export sccache as rustc wrapper for cargo (Unix socket bypasses network-sandbox)
-export RUSTC_WRAPPER="/usr/bin/sccache"
-export CARGO_BUILD_RUSTC_WRAPPER="/usr/bin/sccache"
-export SCCACHE_SERVER_UDS="/var/cache/sccache/sccache.sock"
-export SCCACHE_DIR="/var/cache/sccache"
-export SCCACHE_CACHE_SIZE="10G"
-
-# Show sccache stats after each package install
+# Reporting only -- reads state, never sets it. Safe to run when sccache is
+# absent: pidof simply finds nothing and the hook returns.
 post_pkg_preinst() {
     if [[ -n $(pidof sccache) ]]; then
-        local stats=$(SCCACHE_SERVER_UDS=/var/cache/sccache/sccache.sock sccache --show-stats 2>/dev/null | grep -E "Compile requests |Cache hits |Cache misses ")
+        local stats
+        stats=$(SCCACHE_SERVER_UDS=/var/cache/sccache/sccache.sock \
+            sccache --show-stats 2>/dev/null \
+            | grep -E "Compile requests |Cache hits |Cache misses ")
         if [[ -n "${stats}" ]]; then
             einfo "sccache stats:"
             while IFS= read -r line; do

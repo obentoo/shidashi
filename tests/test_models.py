@@ -24,6 +24,7 @@ from shidashi.recipe import (
     InitFragment,
     Phase,
     RecipeConflictError,
+    RecipeSourceError,
     ResolvedRecipe,
     ResolvedUse,
     UsePrefer,
@@ -223,11 +224,63 @@ def test_load_base(tmp_path: Path) -> None:
     assert frag.phases[0].name == "system"
 
 
+#: What an arch recipe.yaml may declare: identity and policy only. The compile
+#: knobs come from the layer's make.conf -- see ARCH_MAKE_CONF below.
+ARCH_YAML_FIELDS = ("arch", "runnable_on_build_host", "tier")
+
+ARCH_MAKE_CONF = """\
+COMMON_FLAGS="-O2 -pipe"
+GOAMD64="v2"
+RUSTFLAGS="-C target-cpu=x86-64-v2"
+CPU_FLAGS_X86="sse2 avx"
+"""
+
+
+def _write_arch_layer(root: Path, *, make_conf: str | None = ARCH_MAKE_CONF) -> Path:
+    """Write an arch layer (recipe.yaml + portage/make.conf) and return the yaml."""
+    data = {k: v for k, v in VALID[ArchFragment].items() if k in ARCH_YAML_FIELDS}
+    yaml_path = _write_yaml(root / "arch.yaml", data)
+    if make_conf is not None:
+        target = root / "portage" / "make.conf"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(make_conf, encoding="utf-8")
+    return yaml_path
+
+
 def test_load_arch(tmp_path: Path) -> None:
-    p = _write_yaml(tmp_path / "arch.yaml", VALID[ArchFragment])
+    p = _write_arch_layer(tmp_path)
     frag = load_arch(p)
+    # The knobs came from make.conf, yet the result is identical to building the
+    # model straight from the full field set.
     assert frag == ArchFragment(**VALID[ArchFragment])
     assert frag.cpu_flags_x86 == ("sse2", "avx")
+    assert frag.common_flags == "-O2 -pipe"
+
+
+def test_load_arch_rejects_knob_declared_in_yaml(tmp_path: Path) -> None:
+    """A knob in recipe.yaml is an error, not an override.
+
+    This is the duplication that let recipe.yaml advertise
+    "-C link-arg=-fuse-ld=mold" long after make.conf dropped it.
+    """
+    _write_arch_layer(tmp_path)
+    data = {k: v for k, v in VALID[ArchFragment].items() if k in ARCH_YAML_FIELDS}
+    data["rustflags"] = "-C target-cpu=x86-64-v2 -C link-arg=-fuse-ld=mold"
+    p = _write_yaml(tmp_path / "arch.yaml", data)
+    with pytest.raises(RecipeSourceError, match="rustflags"):
+        load_arch(p)
+
+
+def test_load_arch_requires_make_conf(tmp_path: Path) -> None:
+    p = _write_arch_layer(tmp_path, make_conf=None)
+    with pytest.raises(RecipeSourceError, match="make.conf"):
+        load_arch(p)
+
+
+def test_load_arch_requires_every_knob(tmp_path: Path) -> None:
+    p = _write_arch_layer(tmp_path, make_conf='COMMON_FLAGS="-O2"\nGOAMD64="v2"\n')
+    with pytest.raises(RecipeSourceError, match="CPU_FLAGS_X86"):
+        load_arch(p)
 
 
 def test_load_flavor(tmp_path: Path) -> None:
@@ -263,9 +316,13 @@ def test_loader_rejects_non_mapping_yaml(tmp_path: Path) -> None:
 
 
 def test_loader_rejects_missing_required_field(tmp_path: Path) -> None:
-    # ArchFragment exige cpu_flags_x86; ausência -> ValidationError
-    incomplete = {k: v for k, v in VALID[ArchFragment].items() if k != "cpu_flags_x86"}
-    p = _write_yaml(tmp_path / "incomplete.yaml", incomplete)
+    # ArchFragment requires `arch`, which still comes from the yaml; dropping it
+    # must fail validation. (cpu_flags_x86 no longer works as the subject here:
+    # it is read from make.conf, so its absence raises RecipeSourceError instead.)
+    _write_arch_layer(tmp_path)
+    data = {k: v for k, v in VALID[ArchFragment].items() if k in ARCH_YAML_FIELDS}
+    del data["arch"]
+    p = _write_yaml(tmp_path / "arch.yaml", data)
     with pytest.raises(ValidationError):
         load_arch(p)
 
