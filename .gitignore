@@ -9,8 +9,9 @@ build/
 .ruff_cache/
 .pytest_cache/
 
-# epic story drafts (planning scratch, not tracked)
-.epic/stories/**/.draft/
+# epic: planeamento e notas de laboratório — local, fora do git (2026-09-09).
+# Os ficheiros continuam em disco; deixaram de ser versionados.
+.epic/
 
 # estado local do agente (Claude Code) — config/memória de sessão, não do projeto
 .claude/
