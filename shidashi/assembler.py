@@ -24,7 +24,7 @@ from pathlib import Path
 from shidashi import config, image
 from shidashi.container import Container
 from shidashi.recipe import ResolvedRecipe
-from shidashi.resolve import apply_portage, bind_repos
+from shidashi.resolve import apply_portage, bind_repos, install_sets
 from shidashi.seed import extract_stage3, fetch_stage3, load_pointer
 
 __all__ = ["Assembler", "AssemblerError"]
@@ -143,23 +143,13 @@ def _build_binds(
 
 
 def _install_sets(rootfs: Path, recipe: ResolvedRecipe) -> None:
-    """Instala os sets da receita em ``${rootfs}/etc/portage/sets/`` (OVERVIEW §13).
+    """Instala os sets da receita (OVERVIEW §13). Delega a :func:`resolve.install_sets`.
 
-    Espelha ``shidashi.factory.Factory._install_sets`` (a Factory e o Assembler
-    consomem a MESMA curadoria de sets em ``variants/<layer>/sets/<name>``, fonte
-    única de USE — OVERVIEW §4.2): varre os layers na ordem
-    base→arch→flavor→init (posterior sobrescreve) copiando cada set encontrado
-    para que ``@<set>`` resolva dentro do container. Sets sem arquivo são
-    silenciosamente ignorados (a curadoria vive em ``variants/``).
+    Mantido como nome local porque os testes e o Assembler o importam daqui; a
+    lógica vive num lugar só, compartilhada com a Factory (fonte única de USE,
+    OVERVIEW §4.2).
     """
-    dest_dir = rootfs / "etc" / "portage" / "sets"
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    variants_dir = config.variants_dir()
-    for name in recipe.sets:
-        for layer in recipe.portage_layers:
-            src = variants_dir / layer / "sets" / name
-            if src.is_file():
-                (dest_dir / name).write_bytes(src.read_bytes())
+    install_sets(rootfs, recipe)
 
 
 class Assembler:

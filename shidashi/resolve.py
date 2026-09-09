@@ -84,6 +84,69 @@ def _layer_dirs(recipe: ResolvedRecipe, variants_dir: Path) -> list[Path]:
 _MAKE_CONF = "make.conf"
 
 
+def install_sets(rootfs: Path, recipe: ResolvedRecipe) -> None:
+    """Instala os sets da receita em ``${rootfs}/etc/portage/sets/`` (R6.4).
+
+    Cada nome tem seu arquivo curado em ``variants/<layer>/sets/<name>``
+    (irmão de ``portage/``, logo *não* copiado por :func:`apply_portage`).
+    Resolve-se varrendo os layers na ordem base→arch→flavor→init; o layer
+    posterior SOBRESCREVE (um flavor pode redefinir um set da base inteiro).
+
+    Três comportamentos que não são óbvios:
+
+    **Referências transitivas.** Um set pode conter ``@outro-set`` e o
+    Portage expande isso recursivamente (verificado 2026-09-09). Portanto
+    instalar ``@base`` exige instalar também os sets que ele referencia, ou
+    ``@base`` resolve para um alvo inexistente DENTRO do container -- longe
+    da causa. A varredura segue as ``@refs`` até fechar.
+
+    **``recipe.exclude``.** Os átomos excluídos pelo flavor são removidos das
+    listas na escrita. A base é a regra; o flavor é a exceção. Note que isto
+    não impede o átomo de entrar como DEPENDÊNCIA de outro pacote -- é "não
+    peço", não "proíbo".
+
+    **Falha alta.** Um set declarado sem arquivo em layer nenhum é erro de
+    curadoria e levanta :class:`FactoryError`. Antes era ignorado em
+    silêncio, e a falha só aparecia no ``emerge``.
+    """
+    dest_dir = rootfs / "etc" / "portage" / "sets"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    variants_dir = config.variants_dir()
+    excluded = frozenset(recipe.exclude)
+
+    pending = list(recipe.sets)
+    seen: set[str] = set()
+    while pending:
+        name = pending.pop(0)
+        if name in seen:
+            continue
+        seen.add(name)
+        src = None
+        for layer in recipe.portage_layers:
+            candidate = variants_dir / layer / "sets" / name
+            if candidate.is_file():
+                src = candidate
+        if src is None:
+            raise ResolveError(
+                f"set {name!r} declarado na receita mas ausente de "
+                f"variants/<layer>/sets/ em todos os layers "
+                f"({', '.join(recipe.portage_layers)})"
+            )
+        kept, dropped = [], []
+        for line in src.read_text(encoding="utf-8").splitlines():
+            token = line.split("#", 1)[0].split()
+            if token and token[0].startswith("@"):
+                pending.append(token[0][1:])
+            if token and token[0] in excluded:
+                dropped.append(token[0])
+                continue
+            kept.append(line)
+        if dropped:
+            kept.insert(0, f"# shidashi: excluded by flavor/{recipe.flavor}: "
+                           + " ".join(sorted(dropped)))
+        (dest_dir / name).write_text("\n".join(kept) + "\n", encoding="utf-8")
+
+
 def apply_portage(rootfs: Path, recipe: ResolvedRecipe, *, variants_dir: Path) -> None:
     """Compõe os ``portage/`` dos layers em ``${rootfs}/etc/portage`` (R3.1).
 

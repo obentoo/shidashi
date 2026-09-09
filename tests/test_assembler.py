@@ -26,12 +26,16 @@ from shidashi.assembler import (
 )
 from shidashi.image import ImageError
 from shidashi.recipe import ResolvedRecipe, ResolvedUse
+from shidashi.resolve import ResolveError
 
 
 def _recipe(
     *,
     flavor: str = "kde",
-    sets: tuple[str, ...] = ("graphics", "bentoo-apps", "kde"),
+    # default VAZIO: install_sets agora FALHA ALTO num set declarado sem arquivo,
+    # então um teste que não se importa com sets não deve declarar nenhum.
+    sets: tuple[str, ...] = (),
+    exclude: tuple[str, ...] = (),
 ) -> ResolvedRecipe:
     return ResolvedRecipe(
         arch="znver5",
@@ -46,6 +50,7 @@ def _recipe(
         runnable_on_build_host=True,
         use=ResolvedUse(enabled=(), disabled=()),
         sets=sets,
+        exclude=exclude,
         phases=(),
         portage_layers=("base", "arch/znver5", "flavor/kde", "init/systemd"),
         seed_source="download",
@@ -271,7 +276,9 @@ def test_assemble_orchestrates_seed_emerge_dracut_squashfs_iso(
     monkeypatch.setattr(image, "build_iso", fake_iso)
 
     out = tmp_path / "dist" / "bentoo.iso"
-    recipe = _recipe(sets=("graphics", "kde"))
+    # sets=() de propósito: este teste exercita a ORQUESTRAÇÃO do assemble, e
+    # install_sets falharia alto num set declarado sem arquivo curado no tmp_path.
+    recipe = _recipe(sets=())
     result = Assembler(recipe, tmp_path / "binhost" / "znver5").assemble(out)
 
     assert result == out
@@ -383,3 +390,59 @@ def test_install_sets_later_layer_overrides(
 # NB: o caminho privilegiado real (nspawn + emerge --usepkgonly + dracut +
 # mksquashfs + grub-mkrescue) é host-gated (root + Gentoo + ferramentas); fica
 # para o smoke-test de boot da Fase 1 (QEMU), não para o unit off-host.
+
+
+# --- _install_sets: @refs transitivas, exclude e falha alta -------------------
+
+
+def test_install_sets_follows_nested_set_references(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Portage expande `@outro-set` dentro de um set file, então instalar o
+    # agregador exige instalar as folhas -- senão @base resolve para um alvo
+    # inexistente DENTRO do container, longe da causa.
+    variants = tmp_path / "variants"
+    (variants / "base" / "sets").mkdir(parents=True)
+    (variants / "base" / "sets" / "agg").write_text("@leaf\n")
+    (variants / "base" / "sets" / "leaf").write_text("app-editors/nano\n")
+    monkeypatch.setenv("SHIDASHI_VARIANTS_DIR", str(variants))
+    rootfs = tmp_path / "rootfs"
+
+    _install_sets(rootfs, _recipe(sets=("agg",)))
+
+    sets_dir = rootfs / "etc" / "portage" / "sets"
+    assert (sets_dir / "agg").exists()
+    assert "app-editors/nano" in (sets_dir / "leaf").read_text()
+
+
+def test_install_sets_applies_flavor_exclude(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    variants = tmp_path / "variants"
+    (variants / "base" / "sets").mkdir(parents=True)
+    (variants / "base" / "sets" / "leaf").write_text(
+        "media-video/vlc\napp-editors/nano  # com comentário\n"
+    )
+    monkeypatch.setenv("SHIDASHI_VARIANTS_DIR", str(variants))
+    rootfs = tmp_path / "rootfs"
+
+    _install_sets(rootfs, _recipe(sets=("leaf",), exclude=("media-video/vlc",)))
+
+    written = (rootfs / "etc" / "portage" / "sets" / "leaf").read_text()
+    assert "media-video/vlc" not in written.replace(
+        "# shidashi: excluded by flavor/kde: media-video/vlc", ""
+    )
+    assert "app-editors/nano" in written  # o comentário inline não atrapalha
+    assert "excluded by flavor/kde" in written  # a subtração fica registrada
+
+
+def test_install_sets_raises_when_declared_set_is_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Antes era ignorado em silêncio e só falhava no emerge, dentro do container.
+    variants = tmp_path / "variants"
+    (variants / "base" / "sets").mkdir(parents=True)
+    monkeypatch.setenv("SHIDASHI_VARIANTS_DIR", str(variants))
+
+    with pytest.raises(ResolveError, match="ausente"):
+        _install_sets(tmp_path / "rootfs", _recipe(sets=("nao-existe",)))

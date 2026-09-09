@@ -39,7 +39,7 @@ from shidashi.phases import (
     trunk_phase_names,
 )
 from shidashi.recipe import ResolvedRecipe
-from shidashi.resolve import apply_portage, bind_repos
+from shidashi.resolve import apply_portage, bind_repos, install_sets
 from shidashi.seed import Stage3Pointer, extract_stage3, fetch_stage3, load_pointer
 from shidashi.state import PhaseDiff
 
@@ -627,22 +627,13 @@ class Factory:
 
     @staticmethod
     def _install_sets(rootfs: Path, recipe: ResolvedRecipe) -> None:
-        """Instala os sets da receita em ``${rootfs}/etc/portage/sets/`` (R6.4).
+        """Instala os sets da receita (R6.4). Delega a :func:`resolve.install_sets`.
 
-        Cada nome em ``recipe.sets`` (``bentoo-apps``, ``graphics``, o set do
-        flavor …) tem seu arquivo curado em ``variants/<layer>/sets/<name>``
-        (irmão de ``portage/``, logo *não* copiado por :func:`apply_portage`).
-        Resolve-se cada set varrendo os layers na ordem base→arch→flavor→init
-        (layer posterior sobrescreve), copiando o arquivo encontrado para
-        ``${rootfs}/etc/portage/sets/<name>`` para que ``@<set>`` resolva dentro
-        do container. Sets sem arquivo em nenhum layer são silenciosamente
-        ignorados (a curadoria vive em ``variants/``).
+        A Factory e o Assembler consomem a MESMA curadoria de sets, e por muito
+        tempo cada um teve a sua CÓPIA da lógica -- "espelha o outro", dizia a
+        docstring. As duas divergiram assim que uma foi corrigida: o Assembler
+        seguia sem resolver ``@refs`` e sem aplicar ``exclude``, montando ISOs a
+        partir de sets quebrados. Agora há uma implementação só.
         """
-        dest_dir = rootfs / "etc" / "portage" / "sets"
-        dest_dir.mkdir(parents=True, exist_ok=True)
-        variants_dir = config.variants_dir()
-        for name in recipe.sets:
-            for layer in recipe.portage_layers:
-                src = variants_dir / layer / "sets" / name
-                if src.is_file():
-                    (dest_dir / name).write_bytes(src.read_bytes())
+        install_sets(rootfs, recipe)
+
