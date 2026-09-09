@@ -21,7 +21,7 @@ from pathlib import Path
 
 import pydantic
 
-from shidashi import config, state
+from shidashi import config, isacheck, state
 from shidashi.catalyst import build_stage3_catalyst
 from shidashi.container import Container
 from shidashi.phases import (
@@ -88,6 +88,11 @@ class FactoryResult(pydantic.BaseModel):
     stopped_at: str | None = None
     phase_diffs: tuple[PhaseDiff, ...] = ()
     completed_phases: tuple[str, ...] = ()
+    #: Binaries carrying instructions this build host cannot execute (R9.x).
+    #: Non-empty is a WARNING, not a failure: the binpkgs are valid FOR THE
+    #: TARGET, they simply cannot be test-run or smoke-tested here. Always empty
+    #: when target and host share an ISA, which is the common case.
+    unrunnable_here: tuple[str, ...] = ()
 
 
 class StaleStateError(FactoryError):
@@ -325,6 +330,20 @@ class Factory:
             else:
                 built_atoms += r.built_atoms
 
+        # ISA gap check (R9.x). Scans the ROOTFS, not pkgdir: binpkgs are
+        # compressed .gpkg.tar archives objdump cannot read, while the rootfs
+        # holds the same binaries already unpacked. It must therefore run before
+        # the rootfs is discarded below.
+        #
+        # Deliberately NOT fatal. The build succeeded and the binpkgs are correct
+        # for the target; the finding means only that THIS host cannot execute
+        # them, so test suites and ISO smoke tests have to happen elsewhere.
+        # Failing here would discard hours of correct work over a fact about the
+        # build machine.
+        unrunnable = tuple(
+            str(f.path.relative_to(rootfs)) for f in isacheck.check_rootfs(rootfs, recipe.arch)
+        )
+
         result = FactoryResult(
             pkgdir=self.pkgdir,
             built_atoms=built_atoms,
@@ -332,6 +351,7 @@ class Factory:
             fork_point=fork_point_path,
             fork_point_reused=fork_point_reused,
             settle_atoms=settle_atoms,
+            unrunnable_here=unrunnable,
         )
 
         if not keep_rootfs:
