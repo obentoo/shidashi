@@ -4,5 +4,13 @@
 # (checked 2026-09-08).
 media-libs/mesa lm-sensors opencl
 media-libs/libvpx postproc
-x11-libs/libdrm video_cards_radeon
+# No libdrm[video_cards_radeon]. That flag builds libdrm_radeon, which serves
+# mesa's r300/r600 gallium drivers -- and package.use/00video_cards clears
+# VIDEO_CARDS with "-*" and does not list `radeon`, so mesa builds neither.
+# radeonsi uses the amdgpu winsys, not this one. The line was building a library
+# with no consumer in the plan.
+#
+# TRADE-OFF: pre-GCN AMD cards (HD 2000-6000) fall back to llvmpipe on the live
+# ISO. Adding `radeon` to VIDEO_CARDS is the fix if that matters -- this line
+# alone would not have helped, since mesa is what needs the flag (2026-09-09).
 media-libs/vulkan-loader layers
