@@ -1,5 +1,9 @@
-media-libs/mlt fftw libsamplerate opencv xml frei0r
-sys-apps/fwupd agent bluetooth dell fastboot flashrom gnutls gusb modemmanager nvme policykit spi synaptics thunderbolt tpm uefi
+# Flags removed 2026-09-09: absent from the package's IUSE, so Portage was
+# ignoring them in silence. Verified token-by-token against the ebuilds and the
+# md5-cache of both repos. Removed here: media-libs/mlt[fftw]; sys-apps/fwupd[agent,dell,fastboot,gusb,thunderbolt]; app-crypt/pinentry[gnome-keyring]; app-i18n/ibus[gtk]; app-containers/docker[overlay]; net-dns/dnscrypt-proxy[pie]; media-libs/libvpx[svc]; media-video/pipewire[sndfile]; app-admin/pass[zsh-completion]; media-libs/libva[utils]; media-gfx/graphicsmagick[svg]; sys-fs/dmraid[intel_led]; app-i18n/man-pages-l10n[-l10n_fa]; media-libs/libcanberra[gtk2].
+
+media-libs/mlt libsamplerate opencv xml frei0r
+sys-apps/fwupd bluetooth flashrom gnutls modemmanager nvme policykit spi synaptics tpm uefi
 app-text/xmlto text
 sys-libs/libseccomp static-libs
 dev-libs/libxml2 icu
@@ -18,23 +22,17 @@ dev-lang/python sqlite
 # No dev-db/redis lua pin: redis has no `lua` in IUSE and no LUA_COMPAT at all --
 # it vendors its own Lua, so no lua_single_target_* flag exists to set (2026-09-08).
 net-dns/dnsmasq script
-app-crypt/pinentry gnome-keyring
 # app-emulation/vmware-workstation removed: the atom exists in neither ::gentoo
 # nor ::bentoo (2026-09-08).
 app-emulation/open-vm-tools gtkmm
-app-i18n/ibus gtk
-app-containers/docker overlay
-net-dns/dnscrypt-proxy pie
 app-editors/vim lua_single_target_luajit
-media-libs/libvpx postproc svc
+media-libs/libvpx postproc
 media-libs/libsdl2 haptic
 sys-apps/file -python
 net-firewall/nftables json xtables
-media-video/pipewire bluetooth extra flatpak gstreamer jack-client pipewire-alsa sndfile
-app-admin/pass zsh-completion
+media-video/pipewire bluetooth extra flatpak gstreamer jack-client pipewire-alsa
 mail-mta/proton-mail-bridge gui
 media-libs/opencolorio -opengl
-media-libs/libva utils
 sys-boot/plymouth gtk
 # No `kwallet` here: it pulls kde-frameworks/kwallet:6, and remmina reaches
 # every graphical flavor through sets/remote -> @extra-desktop. Under gnome,
@@ -44,7 +42,7 @@ sys-boot/plymouth gtk
 # alternative (app-crypt/libsecret) if a GTK flavor wants stored credentials
 # (2026-09-09).
 net-misc/remmina rdp spice ssh vnc -zeroconf -appindicator
-media-gfx/graphicsmagick jbig jpeg lcms png svg tiff webp
+media-gfx/graphicsmagick jbig jpeg lcms png tiff webp
 app-crypt/gcr gtk
 net-libs/libssh server
 net-p2p/go-ethereum devtools
@@ -60,13 +58,11 @@ dev-python/numpy lapack
 media-video/mpv lua_single_target_luajit
 media-gfx/gimp jpeg2k webp
 media-sound/jack2 ieee1394
-sys-fs/dmraid intel_led led
+sys-fs/dmraid led
 sys-process/htop lm-sensors
-app-i18n/man-pages-l10n -l10n_fa
 sys-apps/systemd-utils boot kernel-install
 sys-libs/libcap static-libs
 net-misc/curl adns
-media-libs/libcanberra gtk2
 dev-libs/cyrus-sasl kerberos
 app-misc/mime-types nginx
 media-libs/libbluray aacs bdplus java utils

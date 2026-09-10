@@ -4,5 +4,6 @@ net-misc/remmina kwallet
 # net-misc/megasync removed: the package does not exist in ::gentoo or ::bentoo,
 # and nothing in any set requests it, so the line configured nothing (F18).
 
-# Flatpak KDE integration
-sys-apps/flatpak kde
+# No sys-apps/flatpak line: `kde` is not in its IUSE ("doc introspection
+# policykit seccomp systemd test X"). The KDE portal comes from
+# kde-plasma/xdg-desktop-portal-kde, not from a flag on flatpak.

@@ -1,3 +1,7 @@
+# Flags removed 2026-09-09: absent from the package's IUSE, so Portage was
+# ignoring them in silence. Verified token-by-token against the ebuilds and the
+# md5-cache of both repos. Removed here: media-fonts/noto-emoji[buildfont]; sci-ml/ollama[nvidia]; sci-ml/ollama[cuda,-video_cards_amdgpu].
+
 # Security
 app-admin/doas persist
 app-admin/sudo-rs system-names
@@ -26,7 +30,6 @@ sys-apps/flatpak policykit
 
 # Fonts
 media-libs/freetype brotli harfbuzz
-media-fonts/noto-emoji buildfont
 
 # Firewall
 net-firewall/iptables nftables
@@ -62,9 +65,7 @@ net-p2p/syncthing tools
 net-p2p/transmission -gtk
 
 # LLM
-sci-ml/ollama nvidia
 dev-util/hip -video_cards_amdgpu
-sci-ml/ollama cuda -video_cards_amdgpu
 acct-user/ollama cuda
 
 # Cluster

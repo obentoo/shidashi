@@ -1,15 +1,19 @@
+# Flags removed 2026-09-09: absent from the package's IUSE, so Portage was
+# ignoring them in silence. Verified token-by-token against the ebuilds and the
+# md5-cache of both repos. Removed here: dev-lang/rust[profiler]; dev-lang/php[xmlrpc]; dev-java/openjdk[gentoo-vm].
+
 # Rust
 # No llvm_slot pin here any more: the global LLVM_SLOT is 22 and every current
 # dev-lang/rust declares LLVM_COMPAT=( 22 ), so the default already fits.
 # The atom itself is not in sets/bentoo-apps (see the note there); this line
 # records how to build it if it comes back.
-dev-lang/rust clippy llvm_targets_WebAssembly lto profiler rustfmt rust-analyzer rust-src rust_sysroots_wasm system-llvm
+dev-lang/rust clippy llvm_targets_WebAssembly lto rustfmt rust-analyzer rust-src rust_sysroots_wasm system-llvm
 dev-lang/rust-bin clippy rustfmt
 # No virtual/rust line: the atom was removed from ::gentoo (2026-09-08).
 
 # PHP
 app-eselect/eselect-php fpm
-dev-lang/php argon2 cgi curl exif fpm ftp gd inifile intl mysql mysqli pcntl pdo soap sockets sodium spell tidy webp xmlreader xmlrpc xmlwriter xslt zip
+dev-lang/php argon2 cgi curl exif fpm ftp gd inifile intl mysql mysqli pcntl pdo soap sockets sodium spell tidy webp xmlreader xmlwriter xslt zip
 
 # Node.js
 net-libs/nodejs corepack inspector npm system-icu
@@ -23,7 +27,6 @@ llvm-runtimes/clang-runtime libcxx
 llvm-core/llvm -debug
 
 # Java
-dev-java/openjdk gentoo-vm
 
 # GCC
 sys-devel/gcc graphite

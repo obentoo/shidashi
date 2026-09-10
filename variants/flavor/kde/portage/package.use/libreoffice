@@ -1,1 +1,3 @@
-app-office/libreoffice -bluetooth -branding -eds -gtk -mariadb accessibility clang googledrive kde
+# No `clang` flag: it is absent from app-office/libreoffice's IUSE (2026-09-09).
+# Building LibreOffice with clang is governed by the toolchain, not by a flag here.
+app-office/libreoffice -bluetooth -branding -eds -gtk -mariadb accessibility googledrive kde

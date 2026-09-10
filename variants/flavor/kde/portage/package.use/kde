@@ -1,27 +1,27 @@
 # KDE Plasma Desktop
 
-# Applications that are NOT KDE but gain a KDE integration under this flavor.
-# The atom lives in a base set; only the KDE-specific flag belongs here.
-net-misc/remmina kwallet
-
 kde-misc/kdeconnect bluetooth
-kde-plasma/spectacle kipi share
-kde-apps/dolphin activities semantic-desktop
+kde-plasma/spectacle share
+kde-apps/dolphin semantic-desktop
 kde-apps/ark zip
 kde-plasma/plasma-meta bluetooth cups
-kde-apps/kdenlive semantic-desktop share v4l
+kde-apps/kdenlive semantic-desktop
 kde-frameworks/prison qml
-kde-frameworks/kitemmodels qml
 kde-plasma/kde-cli-tools kdesu
-kde-apps/kio-extras activities mtp phonon taglib
-kde-apps/gwenview activities kipi share
+kde-apps/kio-extras activities mtp taglib
+kde-apps/gwenview activities share
 kde-apps/okular epub markdown
 kde-frameworks/kconfig qml
-kde-plasma/kwin lock plasma
+kde-plasma/kwin lock
 kde-frameworks/sonnet qml
 kde-frameworks/kfilemetadata taglib
 kde-plasma/powerdevil brightness-control
 sys-power/upower policykit
+
+# Flags dropped 2026-09-09, each absent from the package's IUSE and therefore
+# ignored by Portage in silence: spectacle[kipi], dolphin[activities],
+# kdenlive[share,v4l], gwenview[kipi], kio-extras[phonon], kwin[plasma], and the
+# whole kde-frameworks/kitemmodels line (that package declares no IUSE at all).
 
 # KDE-specific dependencies
 sys-apps/systemd policykit

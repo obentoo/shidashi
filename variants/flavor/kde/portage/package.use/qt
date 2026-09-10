@@ -19,4 +19,14 @@
 dev-qt/qtmultimedia qml
 dev-qt/qtwebchannel qml
 dev-qt/qtwebengine widgets
-dev-qt/qtwayland compositor
+# `qml`, not `compositor`. dev-qt/qtwayland declares IUSE="gnome qml" -- there is
+# no `compositor` flag, so the old line configured nothing. Meanwhile
+# net-im/telegram-desktop (sets/comms, reached by every flavor) depends on
+#     >=dev-qt/qtwayland-6.11:6[compositor(+),qml]
+# where `(+)` forgives the missing `compositor` but `qml` is a real flag, OFF by
+# default -- measured with this project's USE: qtwayland resolves as "-qml".
+#
+# NOT PROVEN to break a clean resolve: this build host already has qtwayland
+# installed, so the dependency is satisfied here and the probe cannot exercise
+# the case. Verify in step12-kde-resolve (2026-09-09).
+dev-qt/qtwayland qml

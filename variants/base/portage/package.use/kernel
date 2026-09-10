@@ -1,7 +1,11 @@
+# Flags removed 2026-09-09: absent from the package's IUSE, so Portage was
+# ignoring them in silence. Verified token-by-token against the ebuilds and the
+# md5-cache of both repos. Removed here: sys-kernel/gentoo-kernel[experimental].
+
 sys-kernel/gentoo-sources experimental symlink
 sys-kernel/linux-firmware initramfs compress-zstd
 sys-kernel/installkernel -grub dracut systemd systemd-boot
-sys-kernel/gentoo-kernel savedconfig experimental
+sys-kernel/gentoo-kernel savedconfig
 # sys-kernel/cachyos-sources and sys-kernel/bentoo-sources removed: neither atom
 # exists in ::gentoo or ::bentoo, and neither is named in any doc, recipe or set,
 # so there was no recorded intent to keep. Re-add WITH the ebuild (2026-09-08).
