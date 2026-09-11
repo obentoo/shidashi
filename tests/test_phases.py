@@ -3,9 +3,9 @@
 Todas as funções testadas aqui são puras ou fazem apenas I/O contra um tmp dir
 (sem root, sem nspawn, sem portage):
 
-* 3.1 ``phase_target`` (rebuild→@world, seat→packages, desktop→@<flavor>,
-  apps→@bentoo-apps, set-named→@<name>) e ``phase_emerge_argv`` (--emptytree só
-  em rebuild);
+* 3.1 ``phase_target`` (rebuild→@world, desktop→@<flavor>, ``phase.sets``
+  declarados→``@<nome>`` intersectados com ``recipe.sets``, senão
+  ``phase.packages``) e ``phase_emerge_argv`` (--emptytree só em rebuild);
 * 3.2 ``use_break_lines`` / ``write_use_break`` / ``clear_use_break`` contra um
   rootfs em tmp_path;
 * 3.3 ``parse_built_atoms`` sobre saída ``emerge --verbose`` capturada;

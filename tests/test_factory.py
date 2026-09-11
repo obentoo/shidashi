@@ -43,7 +43,7 @@ _skip_privileged = pytest.mark.skipif(
 def _recipe(
     *,
     flavor: str = "kde",
-    sets: tuple[str, ...] = ("graphics", "bentoo-apps", "kde"),
+    sets: tuple[str, ...] = ("base", "extra-system", "kde"),
     phases_: tuple[Phase, ...] = (),
     seed_source: SeedSource = "download",
 ) -> ResolvedRecipe:

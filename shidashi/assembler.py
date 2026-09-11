@@ -72,10 +72,10 @@ def iso_emerge_argv(recipe: ResolvedRecipe) -> list[str]:
     e o §9.3 (sem v3 vazando). É simétrico à fase ``rebuild`` da Factory
     (``--emptytree @world``), que garante o binhost completo que isto exige.
 
-    Alvos: ``@system`` + os sets do flavor (``@graphics``/``@bentoo-apps``/
-    ``@<flavor>`` …) — a base mais a fatia consumível; quando a receita não
-    declara sets (ex.: ``minimal``) recai-se em ``@world`` (= ``@system`` + o que
-    a base seedou).
+    Alvos: ``@system`` + os sets da receita (``@base``, os ``@extra-*`` que o
+    flavor declara e ``@<flavor>``) — a base mais a fatia consumível; quando a
+    receita não declara sets recai-se em ``@world`` (= ``@system`` + o que a base
+    seedou).
     """
     sets = tuple(f"@{name}" for name in recipe.sets)
     targets = ("@system", *sets) if sets else ("@world",)
@@ -97,7 +97,7 @@ def _kernel_version(rootfs: Path) -> str:
     """Descobre a versão do kernel instalada via ``${rootfs}/lib/modules/`` (OVERVIEW §7).
 
     Espera exatamente um diretório sob ``lib/modules`` (o kernel puxado do binhost
-    pelos sets ``graphics``/``bentoo-apps``); levanta :class:`AssemblerError` se
+    pelo set ``boot``, universal via ``@base``); levanta :class:`AssemblerError` se
     houver zero (nenhum kernel) ou mais de um (ambíguo — qual bootar?).
     """
     modules = rootfs / "lib" / "modules"

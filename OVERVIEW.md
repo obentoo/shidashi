@@ -184,9 +184,9 @@ Cada fase é um `emerge` próprio, ordenado, com o `/etc/portage` do flavor já 
 ```
 fase 0: stage3 base                       (já pronto)
 fase 1: rebuild      emerge --newuse @world  (reflete make.conf do flavor/arch)
-fase 2: graphics     @graphics  (wayland, mesa, pipewire, dbus, seat)
+fase 2: graphics     @gpu @extra-media   (minimal não declara nenhum → no-op)
 fase 3: desktop      @kde | @gnome | @xfce | @wm   (minimal pula esta fase)
-fase 4: apps         @bentoo-apps
+fase 4: apps         @base @extra-system @extra-desktop @extra-dev @extra-virt
 ```
 
 Isso resolve de forma **determinística** os ciclos circulares de pacotes grandes (ex.: KDE) — instala Wayland/toolchain primeiro, DE depois, reduzindo a área de conflito.
@@ -464,12 +464,22 @@ stages/                          # raiz do projeto (este repo)
 
 **Mapeamento de sets → eixo** (os sets que as fases do §6.4 consomem):
 
+Os sets são de **dois níveis**: folhas com átomos, e agregadores que referenciam
+outras folhas por `@nome` (o Portage expande recursivamente). Um flavor declara
+dois ou três agregadores em vez de vinte folhas.
+
 | Set | Local | Escopo |
 |---|---|---|
-| `graphics`, `bentoo-apps` | `variants/base/sets/` | **compartilhados** por todos os flavors (fases 2 e 4) |
+| `base` (agregador) | `variants/base/sets/` | **universal** — declarado pelo `base.yaml`, entra em toda imagem |
+| `extra-system`, `extra-desktop`, `extra-media`, `extra-dev`, `extra-virt` | `variants/base/sets/` | **opcionais** — cada flavor declara os que quer |
+| folhas (`boot`, `fs`, `audio`, `web`, `devel` …) | `variants/base/sets/` | referenciadas pelos agregadores; um flavor pode declarar uma direto (ex.: `gpu`) |
 | `kde`, `gnome`, `xfce`, `wm` | `variants/flavor/<f>/sets/` | **específicos** do desktop (fase 3) |
 
-O `minimal` não tem set de desktop — consome apenas os sets de `base`. Cada fragmento (`recipe.yaml`,
+Qual fase instala quais sets é **declarado** em `base.yaml` (campo `sets` de cada
+fase), não deduzido do nome da fase. `phase_target` intersecta com os sets da
+receita, então listar ali um set que só alguns flavors declaram é seguro.
+
+O `minimal` não tem set de desktop — consome `@base` e `@extra-system`. Cada fragmento (`recipe.yaml`,
 `portage/`, `sets/`) é resolvido pelo `shidashi recipe` via deep-merge na ordem `base → arch → flavor → init`.
 
 ---

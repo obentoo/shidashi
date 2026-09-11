@@ -152,8 +152,8 @@ _runner = CliRunner()
 _BASE_YAML = """\
 profile_base: default/linux/amd64/23.0/no-multilib
 sets:
-  - graphics
-  - bentoo-apps
+  - base
+  - extra-system
 phases:
   - name: rebuild
   - name: desktop
