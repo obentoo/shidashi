@@ -1,7 +1,12 @@
 # variants/base/sets/archive-nonfree — NON-FREE licences, isolated on purpose. @archive's 7zip already
 # EXTRACTS rar; these add creation and the reference implementation
 #
-# LEAF set: a flat list of atoms (2026-09-09). See sets/base for the layering contract.
+# LEAF set: a flat list of atoms (2026-09-09).
+#
+# DELIBERATELY UNREACHABLE: no aggregator references this set and no flavor
+# declares it, so nobody gets rar/unrar by default. That is the point -- it is
+# the one set whose orphan status is intentional. Declare it in a flavor's
+# `sets:` to opt in. See sets/base for the layering contract.
 
 app-arch/rar
 app-arch/unrar

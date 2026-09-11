@@ -454,3 +454,51 @@ def test_every_phase_target_is_reachable(flavor: str) -> None:
                 f"{flavor}/{phase.name}: alvo {target} não está em recipe.sets, "
                 "logo não seria instalado no rootfs"
             )
+
+
+#: The one set nobody reaches on purpose: rar/unrar are non-free, so no
+#: aggregator references `archive-nonfree` and no flavor declares it.
+_INTENTIONALLY_UNREACHABLE = {"archive-nonfree"}
+
+
+def test_no_orphan_sets() -> None:
+    """Every shipped set must be reachable from some flavor.
+
+    The mirror image of test_every_declared_set_is_shipped, and the gap that let
+    `p2p` sit unused after the base sets were split: proving the atoms are in the
+    FILES says nothing about the files being USED.
+    """
+    files: dict[str, Path] = {
+        p.name: p for p in (config.variants_dir() / "base" / "sets").iterdir() if p.is_file()
+    }
+    for p in config.variants_dir().glob("flavor/*/sets/*"):
+        files.setdefault(p.name, p)
+
+    def refs(name: str) -> list[str]:
+        path = files.get(name)
+        if path is None:
+            return []
+        return [
+            line.split("#")[0].strip()[1:]
+            for line in path.read_text(encoding="utf-8").splitlines()
+            if line.split("#")[0].strip().startswith("@")
+        ]
+
+    reachable: set[str] = set()
+    for flavor in ("minimal", "kde", "gnome", "xfce", "wm"):
+        recipe = merge(
+            load_base(config.base_path()),
+            load_arch(config.recipe_path("arch", "v3")),
+            load_flavor(config.recipe_path("flavor", flavor)),
+            load_init(config.recipe_path("init", "systemd")),
+        )
+        pending = list(recipe.sets)
+        while pending:
+            name = pending.pop()
+            if name in reachable:
+                continue
+            reachable.add(name)
+            pending += refs(name)
+
+    orphans = set(files) - reachable - _INTENTIONALLY_UNREACHABLE
+    assert not orphans, f"sets curados que ninguém instala: {sorted(orphans)}"
