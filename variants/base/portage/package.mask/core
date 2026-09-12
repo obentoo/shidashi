@@ -9,5 +9,19 @@
 # sys-apps/xdg-desktop-portal[>=sys-fs/fuse-3.10.0:3=[suid]] unsatisfiable.
 # The @graphics phase could not resolve at all (lab, 2026-08-30, F31).
 
-# Need by PySide
->media-libs/pulseaudio-qt-1.7.0
+# NO pulseaudio-qt mask here either, and it is the same mistake twice. This file
+# used to carry
+#     # Need by PySide
+#     >media-libs/pulseaudio-qt-1.7.0
+# which blocked THE ONLY version in the tree: ::gentoo ships pulseaudio-qt-1.8.1
+# and nothing else. kde-plasma/plasma-meta[pulseaudio] pulls kde-plasma/plasma-pa,
+# which needs >=media-libs/pulseaudio-qt-1.6.0:= -- so the mask made the whole
+# @kde set unresolvable:
+#     !!! All ebuilds that could satisfy ">=media-libs/pulseaudio-qt-1.6.0:="
+#     !!! have been masked.
+# step12-kde-resolve failed on exactly that, twice (desktop and image-kde, rc=1).
+#
+# The stated reason does not hold: PySide appears NOWHERE in this project, and no
+# package under dev-python/ depends on pulseaudio-qt at all. Like F31 above, a cap
+# whose rationale cannot be reproduced excluded the only candidate in the tree
+# (lab, 2026-09-11).
