@@ -1,2 +1,18 @@
-# Pin nvidia-drivers to stable release
->x11-drivers/nvidia-drivers-580.126.18
+# NO nvidia-drivers pin: the newest version in the tree is used (decided
+# 2026-09-12).
+#
+# The pin that was here capped at 580.126.18 -- a version that NO LONGER EXISTS
+# in ::gentoo. Its effect was therefore not "stable release" as the comment
+# claimed, but 535.309.01, the highest that survived under the cap. A cap naming
+# a version the tree has dropped silently slides backwards; this is the third
+# mask in this directory to fail that way (see package.mask/core, F31 and the
+# pulseaudio-qt cap).
+#
+# TRADE-OFF, stated so it is a choice: >=nvidia-drivers-595 REMOVED
+# USE=kernel-open and always builds the open variant, which requires
+# Turing/Ampere+ GPUs (GTX 1650 and newer). On a live ISO that leaves Pascal
+# (GTX 10xx) and Maxwell (GTX 9xx) without the proprietary driver -- and
+# VIDEO_CARDS does not list `nouveau`, so they fall back to llvmpipe.
+# The ebuild's own advice for that hardware is the 580.xx LTS branch:
+#     >x11-drivers/nvidia-drivers-580.178.04
+# Re-add that line to take it.
