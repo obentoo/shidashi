@@ -162,6 +162,21 @@ if [ "$APPLY" -eq 1 ]; then
         mv "$new" "$live"
     done
     echo "applied; previous trees kept as *.bak-$stamp"
+    cat <<'NEXT'
+
+    NEXT: re-run ALL THREE steps, in order.
+
+        labrun step8-full-use        <- the ONLY step that copies cfg/ into the
+                                        container's /etc/portage
+        labrun step9a-break-check
+        labrun step12-kde-resolve
+
+    step12 applies just the flavor layer on top of whatever /etc/portage already
+    holds. Running it alone after a sync resolves the PREVIOUS configuration and
+    reports an error that was fixed already -- which is exactly what happened on
+    2026-09-12: the uriparser fix sat in cfg/ while the rootfs still held the
+    config from three days earlier.
+NEXT
 else
     echo "not applied — compare, then re-run with --apply"
 fi
