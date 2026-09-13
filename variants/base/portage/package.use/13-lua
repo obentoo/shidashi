@@ -1,0 +1,16 @@
+# variants/base/portage/package.use/13-lua — Lua: every LUA_SINGLE_TARGET override lives here, together.
+#
+# The global LUA_SINGLE_TARGET is lua5-4, and these packages cannot use it:
+# nginx and obs-studio declare LUA_COMPAT=( luajit ) alone, mpv ( lua5-1 luajit ),
+# vlc ( lua5-1 lua5-2 ). Without the pin their `^^ ( )` has nothing to satisfy.
+# Gathered from four different files, where the pattern was invisible.
+#
+# Numeric prefix: Portage reads this directory in sorted order and the LAST
+# file wins a conflict (measured 2026-09-13), so the number is precedence, not
+# decoration. Ranges: 00-09 hardware · 10-19 languages and toolchain ·
+# 20-39 system and graphics · 40-49 applications · 50-69 axis and flavor
+# layers · 90-99 late overrides.
+
+app-editors/vim lua_single_target_luajit
+media-video/mpv lua_single_target_luajit
+media-video/vlc libass live lua_single_target_lua5-1 matroska mp3 mtp opus v4l vpx x264 x265 vaapi ogg

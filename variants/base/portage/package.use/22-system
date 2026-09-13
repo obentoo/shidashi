@@ -75,14 +75,3 @@ sys-cluster/minikube libvirt
 x11-apps/xinit twm
 x11-base/xorg-server xvfb
 x11-base/xwayland libei
-
-# Python
-# dev-python/pyqt5 removed: PyQt5 is gone from ::gentoo -- dev-python/ carries
-# pyqt6 only (2026-09-08).
-# dev-python/qtpy, lowercase. Portage atoms are case-sensitive and there is no
-# `dev-python/QtPy`, so this line configured nothing at all. Real effect of the
-# fix is small: `gui` and `printsupport` are already IUSE defaults, so only `svg`
-# actually turns on. qtpy is in no set -- it only arrives as a dependency
-# (2026-09-09).
-dev-python/qtpy gui printsupport svg
-dev-python/pyqt6 qml

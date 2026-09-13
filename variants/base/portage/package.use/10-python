@@ -1,0 +1,25 @@
+# variants/base/portage/package.use/10-python — Python: the interpreter and the packages whose USE is about Python itself.
+#
+# Numeric prefix: Portage reads this directory in sorted order and the LAST
+# file wins a conflict (measured 2026-09-13), so the number is precedence, not
+# decoration. Ranges: 00-09 hardware · 10-19 languages and toolchain ·
+# 20-39 system and graphics · 40-49 applications · 50-69 axis and flavor
+# layers · 90-99 late overrides.
+
+# No media-gfx/krita line: `tiff` is not in its IUSE, and krita is in no set at
+# all -- it is a KDE application, so it belongs to a flavor if it comes back
+# (2026-09-08).
+dev-lang/python sqlite
+dev-python/numpy lapack
+dev-python/pillow tiff        # (F37) required by media-gfx/inkscape
+
+# Python
+# dev-python/pyqt5 removed: PyQt5 is gone from ::gentoo -- dev-python/ carries
+# pyqt6 only (2026-09-08).
+# dev-python/qtpy, lowercase. Portage atoms are case-sensitive and there is no
+# `dev-python/QtPy`, so this line configured nothing at all. Real effect of the
+# fix is small: `gui` and `printsupport` are already IUSE defaults, so only `svg`
+# actually turns on. qtpy is in no set -- it only arrives as a dependency
+# (2026-09-09).
+dev-python/qtpy gui printsupport svg
+dev-python/pyqt6 qml

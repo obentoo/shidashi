@@ -1,0 +1,17 @@
+# variants/base/portage/package.use/18-toolchain — C/C++ toolchain: gcc and the llvm runtimes. NOT the LLVM_SLOT choice,
+# which is global and lives in make.conf.
+#
+# Numeric prefix: Portage reads this directory in sorted order and the LAST
+# file wins a conflict (measured 2026-09-13), so the number is precedence, not
+# decoration. Ranges: 00-09 hardware · 10-19 languages and toolchain ·
+# 20-39 system and graphics · 40-49 applications · 50-69 axis and flavor
+# layers · 90-99 late overrides.
+
+# LLVM
+llvm-runtimes/clang-runtime libcxx
+llvm-core/llvm -debug
+
+# Java
+
+# GCC
+sys-devel/gcc graphite

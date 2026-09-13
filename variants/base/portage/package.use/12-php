@@ -1,0 +1,13 @@
+# variants/base/portage/package.use/12-php — PHP: the interpreter, its extensions and the eselect helper.
+#
+# Numeric prefix: Portage reads this directory in sorted order and the LAST
+# file wins a conflict (measured 2026-09-13), so the number is precedence, not
+# decoration. Ranges: 00-09 hardware · 10-19 languages and toolchain ·
+# 20-39 system and graphics · 40-49 applications · 50-69 axis and flavor
+# layers · 90-99 late overrides.
+
+# No virtual/rust line: the atom was removed from ::gentoo (2026-09-08).
+
+# PHP
+app-eselect/eselect-php fpm
+dev-lang/php argon2 cgi curl exif fpm ftp gd inifile intl mysql mysqli pcntl pdo soap sockets sodium spell tidy webp xmlreader xmlwriter xslt zip

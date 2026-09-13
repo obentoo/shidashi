@@ -10,7 +10,6 @@ media-video/obs-studio fdk lua_single_target_luajit pipewire speex v4l
 media-video/handbrake x265
 media-video/simplescreenrecorder mp3 theora v4l vorbis vpx x264
 media-video/mkvtoolnix gui
-media-video/vlc libass live lua_single_target_lua5-1 matroska mp3 mtp opus v4l vpx x264 x265 vaapi ogg
 
 # Audio
 # media-sound/pulseaudio removed: the package was split and the atom no longer

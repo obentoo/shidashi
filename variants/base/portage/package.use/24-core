@@ -15,17 +15,12 @@ app-text/ghostscript-gpl cups
 dev-libs/nss utils
 media-plugins/gst-plugins-meta ogg v4l vorbis theora
 media-libs/gst-plugins-base theora
-# No media-gfx/krita line: `tiff` is not in its IUSE, and krita is in no set at
-# all -- it is a KDE application, so it belongs to a flavor if it comes back
-# (2026-09-08).
-dev-lang/python sqlite
 # No dev-db/redis lua pin: redis has no `lua` in IUSE and no LUA_COMPAT at all --
 # it vendors its own Lua, so no lua_single_target_* flag exists to set (2026-09-08).
 net-dns/dnsmasq script
 # app-emulation/vmware-workstation removed: the atom exists in neither ::gentoo
 # nor ::bentoo (2026-09-08).
 app-emulation/open-vm-tools gtkmm
-app-editors/vim lua_single_target_luajit
 media-libs/libvpx postproc
 media-libs/libsdl2 haptic
 sys-apps/file -python
@@ -58,8 +53,6 @@ sys-apps/busybox mdev
 media-libs/harfbuzz icu
 x11-libs/gdk-pixbuf jpeg
 net-libs/zeromq drafts
-dev-python/numpy lapack
-media-video/mpv lua_single_target_luajit
 media-gfx/gimp jpeg2k webp
 media-sound/jack2 ieee1394
 sys-fs/dmraid led
@@ -81,7 +74,6 @@ media-libs/opensubdiv tbb
 # +ffmpeg gstreamer opengl pipewire pulseaudio qml +v4l vaapi vulkan wayland"),
 # so the line set nothing (2026-09-08).
 dev-qt/qtbase icu             # (F37) required by kde-frameworks/kcoreaddons <- net-im/telegram-desktop
-dev-python/pillow tiff        # (F37) required by media-gfx/inkscape
 # qml on both, required by the @graphics set (a BASE set, so these belong in
 # base and not in flavor/kde, or `minimal` breaks):
 #   @graphics -> media-video/vlc[gui] -> dev-qt/qt5compat[qml]

@@ -190,7 +190,7 @@ def test_base_video_cards_lives_in_package_use_with_wildcard_reset() -> None:
 
 
 def test_base_package_use_system_drops_init_specific_systemd_line() -> None:
-    system = (_VARIANTS_DIR / "base" / "portage" / "package.use" / "system").read_text(
+    system = (_VARIANTS_DIR / "base" / "portage" / "package.use" / "22-system").read_text(
         encoding="utf-8"
     )
     # a linha sys-apps/systemd boot ukify migrou p/ init/systemd
@@ -354,13 +354,15 @@ def test_apply_portage_preserves_the_whole_base_make_conf(tmp_path: Path, flavor
 
 def test_apply_portage_keeps_both_package_use_system_files(tmp_path: Path) -> None:
     # REGRESSÃO F28. base e init/systemd traziam ambos `package.use/system`; o
-    # segundo apagava o primeiro, de 69 linhas para 4. O init agora entrega
-    # `50-systemd`, e o Portage lê o diretório como união.
+    # segundo apagava o primeiro, de 69 linhas para 4. O init entrega `50-systemd`
+    # e a base `22-system`, e o Portage lê o diretório como união. Desde a
+    # numeração (2026-09-13) a colisão nem é mais possível: nenhum layer usa o
+    # nome `system` cru.
     portage = _assemble(tmp_path, "v3", "minimal", "systemd")
-    base_lines = (_VARIANTS_DIR / "base/portage/package.use/system").read_text(
+    base_lines = (_VARIANTS_DIR / "base/portage/package.use/22-system").read_text(
         encoding="utf-8"
     ).splitlines()
-    got = (portage / "package.use" / "system").read_text(encoding="utf-8").splitlines()
+    got = (portage / "package.use" / "22-system").read_text(encoding="utf-8").splitlines()
     assert len(got) == len(base_lines)
     assert "sys-apps/systemd boot ukify policykit" in (
         portage / "package.use" / "50-systemd"
