@@ -31,6 +31,17 @@ llvm-core/llvm -debug
 # GCC
 sys-devel/gcc graphite
 
+# URI parsing
+# -qt6 is load-bearing under the kde flavor. uriparser declares
+#     REQUIRED_USE="qt6? ( doc )"
+# and the project disables `doc` globally (the REMOVED group in make.conf), so the
+# two cannot both hold. The flavor's `use_prefer: add: [qt6]` is GLOBAL -- it
+# turns qt6 on in any package declaring the flag, including a URI parser reached
+# through dev-lang/php. php asks for --with-external-uriparser: it wants the
+# library, not the Qt binding. Found by step12-kde-resolve, which failed with
+# "unmet requirements" until this line existed (lab, 2026-09-12).
+dev-libs/uriparser -qt6
+
 # Nginx
 www-servers/nginx lua_single_target_luajit pcre-jit rtmp nginx_modules_http_headers_more nginx_modules_http_image_filter
 
