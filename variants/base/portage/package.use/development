@@ -58,10 +58,19 @@ dev-libs/uriparser -qt6
 # Checked one by one against the kde plan: no package requires any of these with
 # [qt6]. app-text/poppler is NOT here for that reason -- kde-frameworks/
 # kfilemetadata does require poppler[qt6] (lab, 2026-09-13).
-dev-libs/appstream -qt6
+# NOT here, and each was put back after being wrongly swept up:
+#   dev-libs/appstream[qt6]  <- kde-plasma/plasma-workspace (via plasma-meta)
+#   media-libs/mlt[qt6]      <- kde-apps/kdenlive (in sets/kde)
+#   app-text/poppler[qt6]    <- app-editors/kile, app-office/calligra, ...
+#
+# METHOD NOTE, learned twice in one session. Searching for consumers of
+# `cat/pkg[flag]` must allow a VERSION between the name and the bracket:
+# kdenlive writes `>=media-libs/mlt-7.40.0[qt6]`, and a pattern of the shape
+# `cat/pkg(:slot)?\[` silently matches nothing. The first sweep missed it; so
+# did the second, which additionally searched only the TRUNCATED plan rather
+# than the whole tree, so kdenlive was not even in the corpus.
 media-gfx/graphviz -qt6
 media-libs/libv4l -qt6
-media-libs/mlt -qt6
 media-libs/opencv -qt6
 media-libs/suil -qt6
 net-dns/avahi -qt6

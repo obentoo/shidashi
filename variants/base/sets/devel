@@ -16,6 +16,13 @@ dev-java/openjdk
 #     Error: circular dependencies: openjdk-25 depends on openjdk-25 (buildtime)
 # Listing the binary makes the first branch reachable (lab, 2026-09-12).
 dev-java/openjdk-bin
+# dev-lang/go-bootstrap, for the same reason as openjdk-bin above: dev-lang/go
+# needs a Go compiler to build one, its BDEPEND is a || ( ... ) listing itself
+# among the options, and with nothing else in the plan Portage picked go to
+# satisfy go. step12-kde-resolve reported it as
+#     Error: circular dependencies: go-1.27.1 depends on go-1.27.1 (buildtime)
+# Reached through app-containers/docker-cli -> dev-go/go-md2man (lab, 2026-09-13).
+dev-lang/go-bootstrap
 dev-lang/php
 dev-python/pip
 dev-python/uv
