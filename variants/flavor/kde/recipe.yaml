@@ -18,21 +18,9 @@ sets:
   - gpu
   - kde
 override_ok: false
-# Curated cycle break (§18.7): during the break-pass of the `graphics` phase,
-# force media-video/pipewire[-ffmpeg] OFF to break
-#     ffmpeg -> libsdl2 -> pipewire -> ffmpeg
-#
-# It used to break the cycle at media-video/ffmpeg[-sdl], which is what the
-# `minimal` flavor still uses. That choice is INVALID here: kde-apps/kdenlive
-# depends on ffmpeg[sdl], so step12-kde-resolve rejected it. This is precisely
-# why use_break is curated per flavor -- the same cycle, a different valid cut.
-#
-# pipewire[ffmpeg] is also the cheapest of the three cuts Portage offers. Its own
-# ebuild says the flag "is only used for pw-cat" and passes -Dffmpeg=disabled
-# because the SPA plugin has been dead upstream since May 2020. The alternatives
-# cost more: ffmpeg[-sdl] drops the ffplay command, and libsdl2[-pipewire] takes
-# the PipeWire backend away from SDL2. Nothing in the plan requires either
-# (lab, 2026-09-13).
-use_break:
-  graphics:
-    - { atom: media-video/pipewire, flag: ffmpeg, enable: false }
+# No use_break here. All three trunk cycles are cut in base.yaml, and merge()
+# now ACCUMULATES base + flavor instead of replacing, so this flavor would only
+# declare a cut of its OWN. It once declared media-video/ffmpeg[-sdl] -- copied
+# from what works for minimal -- which is invalid here, because kde-apps/kdenlive
+# depends on ffmpeg[sdl]. The base cuts the same cycle at pipewire[-ffmpeg],
+# which is valid for every flavor (lab, 2026-09-13).

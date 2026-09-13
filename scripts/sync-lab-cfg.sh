@@ -150,8 +150,9 @@ fi
 # ffmpeg[-sdl], but kde-apps/kdenlive needs ffmpeg[sdl], so kde cuts at
 # pipewire[-ffmpeg] instead. Derived from the recipe so the lab cannot hold a
 # stale choice.
-BREAK_NEW=$XCHG/break-pass-$FLAVOR.new
-if PYTHONPATH=$REPO "$REPO/.venv/bin/python" - "$ARCH" "$INIT" "$FLAVOR" \
+for BREAK_FL in minimal "$FLAVOR"; do
+BREAK_NEW=$XCHG/break-pass-$BREAK_FL.new
+if PYTHONPATH=$REPO "$REPO/.venv/bin/python" - "$ARCH" "$INIT" "$BREAK_FL" \
         > "$BREAK_NEW" <<'PYEOF'
 import os, sys
 arch, init, flavor = sys.argv[1:4]
@@ -171,9 +172,10 @@ PYEOF
 then
     :
 else
-    echo "    !!! could not derive the break-pass" >&2
+    echo "    !!! could not derive the break-pass for $BREAK_FL" >&2
     rm -f "$BREAK_NEW"
 fi
+done
 
 count() { find "$1" -type f 2>/dev/null | wc -l; }
 echo "generated from ${REPO##*/} (arch=$ARCH init=$INIT flavor=$FLAVOR)"
@@ -184,7 +186,11 @@ printf '  %-22s %s files\n' "frag.new" "$(count "$FRAG_NEW")" \
 
 if [ "$APPLY" -eq 1 ]; then
     stamp=$(date +%Y%m%d-%H%M%S)
-    [ -f "$BREAK_NEW" ] && { [ -e "$XCHG/break-pass-$FLAVOR" ] && mv "$XCHG/break-pass-$FLAVOR" "$XCHG/break-pass-$FLAVOR.bak-$stamp"; mv "$BREAK_NEW" "$XCHG/break-pass-$FLAVOR"; }
+    for bf in minimal "$FLAVOR"; do
+        [ -f "$XCHG/break-pass-$bf.new" ] || continue
+        [ -e "$XCHG/break-pass-$bf" ] && mv "$XCHG/break-pass-$bf" "$XCHG/break-pass-$bf.bak-$stamp"
+        mv "$XCHG/break-pass-$bf.new" "$XCHG/break-pass-$bf"
+    done
     [ -f "$TARGETS_NEW" ] && { [ -e "$XCHG/targets.sh" ] && mv "$XCHG/targets.sh" "$XCHG/targets.sh.bak-$stamp"; mv "$TARGETS_NEW" "$XCHG/targets.sh"; }
     for pair in "frag:$FRAG_NEW" "cfg:$CFG_NEW" "$FLAVOR-layer:$LAYER_NEW"; do
         live=$XCHG/${pair%%:*}

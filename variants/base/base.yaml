@@ -32,6 +32,29 @@ sets:
 #   desktop  -> @<flavor>, o set curado do flavor
 phases:
   - { name: rebuild, packages: [], sets: [], use_break: [] }
-  - { name: graphics, packages: [], sets: [gpu, extra-media], use_break: [] }
+  # As duas quebras do TRONCO, medidas no laboratório. Portage revela um ciclo
+  # por vez, então elas foram descobertas em sequência:
+  #   python[bluetooth] -> bluez[obex] -> libical[introspection]
+  #                     -> gobject-introspection -> python
+  #     corte: `bluetooth` do python é suporte no MÓDULO socket, não uma
+  #     capacidade do sistema. As alternativas custam mais -- bluez[-obex] tira
+  #     transferência de ficheiros (visível ao utilizador) e libical[-introspection]
+  #     mexe numa flag que 373 ebuilds declaram.
+  #   docutils -> pillow[truetype] -> harfbuzz -> glib -> docutils
+  #     Portage ofereceu UM corte, portanto não há escolha a fazer.
+  #   ffmpeg -> libsdl2 -> pipewire -> ffmpeg
+  #     corte: pipewire[-ffmpeg], o mais barato dos três que o Portage oferece.
+  #     O ebuild do pipewire diz que a flag "is only used for pw-cat" e passa
+  #     -Dffmpeg=disabled porque o plugin SPA está morto a montante desde
+  #     Maio de 2020. As alternativas custam mais: ffmpeg[-sdl] tira o comando
+  #     ffplay -- e é INVÁLIDA sob kde, porque kde-apps/kdenlive depende de
+  #     ffmpeg[sdl] -- e libsdl2[-pipewire] tira o backend PipeWire do SDL2.
+  #
+  # Um flavor ACRESCENTA a esta lista; já não a substitui.
+  - { name: graphics, packages: [], sets: [gpu, extra-media], use_break: [
+        { atom: dev-lang/python, flag: bluetooth, enable: false },
+        { atom: dev-python/pillow, flag: truetype, enable: false },
+        { atom: media-video/pipewire, flag: ffmpeg, enable: false },
+      ] }
   - { name: desktop, packages: [], sets: [], use_break: [] }
   - { name: apps, packages: [], sets: [base, extra-system, extra-desktop, extra-dev, extra-virt, archive-nonfree], use_break: [] }

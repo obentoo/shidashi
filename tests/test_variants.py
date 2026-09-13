@@ -101,11 +101,20 @@ def test_base_parses_with_canonical_profile_and_sets() -> None:
     assert set(base.sets) == {"base"}
 
 
-def test_every_base_phase_has_empty_use_break() -> None:
+def test_base_declares_only_trunk_cycle_breaks() -> None:
+    """A base cura os ciclos do TRONCO; o resto é por flavor.
+
+    Antes este teste exigia use_break vazio em toda phase da base, o que
+    obrigava as quebras do tronco a viverem fora do repositório -- num ficheiro
+    escrito à mão no laboratório.
+    """
     base = _load_base()
     assert base.phases, "base deve declarar phases"
-    for phase in base.phases:
-        assert phase.use_break == (), f"phase {phase.name!r} não tem use_break vazio"
+    breaks = {p.name: p.use_break for p in base.phases if p.use_break}
+    assert set(breaks) == {"graphics"}, f"só a phase graphics deve curar ciclos: {set(breaks)}"
+    atoms = {b.atom for b in breaks["graphics"]}
+    assert atoms == {"dev-lang/python", "dev-python/pillow", "media-video/pipewire"}, atoms
+    assert all(b.enable is False for b in breaks["graphics"])
 
 
 def test_base_declares_the_desktop_phase_named_exactly_desktop() -> None:

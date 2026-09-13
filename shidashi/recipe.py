@@ -277,8 +277,13 @@ def merge(
     # injeta os use_break curados do flavor na phase de mesmo nome (R4.1/R4.5/
     # R4.6); phases sem entrada no mapa preservam o use_break vazio. A ordem das
     # phases já montadas é mantida.
+    # ACUMULA base + flavor. Substituir era errado: as quebras de ciclo do TRONCO
+    # (python[-bluetooth], pillow[-truetype]) valem para todo flavor, enquanto a
+    # do desktop é curada por flavor. Com substituição, um flavor que declarasse
+    # a sua APAGAVA as do tronco -- e como a base declarava tudo vazio, as do
+    # tronco viviam só num arquivo escrito à mão no laboratório, fora do repo.
     phases = tuple(
-        p.model_copy(update={"use_break": flavor.use_break[p.name]})
+        p.model_copy(update={"use_break": p.use_break + flavor.use_break[p.name]})
         if p.name in flavor.use_break
         else p
         for p in phases
