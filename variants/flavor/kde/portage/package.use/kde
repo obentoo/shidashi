@@ -13,6 +13,11 @@ kde-apps/gwenview activities share
 kde-apps/okular epub markdown
 kde-frameworks/kconfig qml
 kde-plasma/kwin lock
+# Upstream split kwin: kde-plasma/kwin is the Wayland compositor and
+# kde-plasma/kwin-x11 the X11 one, each with its own `lock` flag.
+# kde-plasma/plasma-meta[X] pulls kwin-x11, and step12-kde-resolve asked for the
+# flag there too (lab, 2026-09-12).
+kde-plasma/kwin-x11 lock
 kde-frameworks/sonnet qml
 kde-frameworks/kfilemetadata taglib
 kde-plasma/powerdevil brightness-control

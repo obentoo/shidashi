@@ -6,6 +6,16 @@
 dev-db/sqlitebrowser
 dev-debug/gdb
 dev-java/openjdk
+# openjdk-bin is NOT a second JDK by accident -- it is what breaks the bootstrap
+# cycle. dev-java/openjdk[system-bootstrap] (on by default, and REQUIRED_USE
+# "!system-bootstrap? ( ppc64 )" makes turning it off impossible on amd64)
+# depends on
+#     || ( dev-java/openjdk-bin:${SLOT}  dev-java/openjdk:${SLOT} )
+# and with only the source ebuild in the plan Portage satisfies that branch with
+# openjdk ITSELF, which step12-kde-resolve reported as
+#     Error: circular dependencies: openjdk-25 depends on openjdk-25 (buildtime)
+# Listing the binary makes the first branch reachable (lab, 2026-09-12).
+dev-java/openjdk-bin
 dev-lang/php
 dev-python/pip
 dev-python/uv
