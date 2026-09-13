@@ -86,3 +86,11 @@ dev-qt/qt5compat icu qml      # (F37) icu must MATCH dev-qt/qtbase: qt5compat
 kde-frameworks/sonnet qml
 virtual/zlib minizip
 app-emulation/qemu -pin-upstream-blobs
+
+# Former global flags, each declared by a single package in the plan:
+#   gles1        <- media-libs/libsdl2   (was in the GRAPHICS group)
+#   gnome-keyring<- sys-auth/pambase    (was a -negation in REMOVED)
+#   sound-server <- media-video/pipewire (was in AUDIO)
+media-libs/libsdl2 gles1
+sys-auth/pambase -gnome-keyring
+media-video/pipewire sound-server

@@ -15,3 +15,8 @@ llvm-core/llvm -debug
 
 # GCC
 sys-devel/gcc graphite
+
+# pcre16/pcre32 were in the global CORE group. Only the pcre libraries declare
+# them; every consumer links whatever the library was built with.
+dev-libs/libpcre2 pcre16 pcre32
+dev-libs/libpcre pcre16 pcre32

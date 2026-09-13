@@ -1,0 +1,18 @@
+# variants/base/portage/package.use/21-virt — virtualization.
+#
+# Numeric prefix: Portage reads this directory in sorted order and the LAST
+# file wins a conflict (measured 2026-09-13), so the number is precedence, not
+# decoration. Ranges: 00-09 hardware · 10-19 languages and toolchain ·
+# 20-39 system and graphics · 40-49 applications · 50-69 axis and flavor
+# layers · 90-99 late overrides.
+#
+# These five flags used to be a VIRTUALIZATION group in the global USE. Measured
+# against the 1763-package kde plan, each is declared by one or two packages --
+# they were never statements about the distribution, only qemu/libvirt
+# configuration written where it reached everything. A global flag also catches
+# any FUTURE package declaring the same name, silently.
+app-emulation/qemu spice usbredir virtfs
+app-emulation/libvirt qemu virt-network
+sys-firmware/ipxe qemu
+net-misc/remmina spice
+net-misc/spice-gtk usbredir

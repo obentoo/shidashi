@@ -2,7 +2,7 @@
 # `d3d9` and no `nine` anywhere in the ebuild, so the flag named a state mesa can
 # no longer be in -- and Portage ignores an unknown package.use flag in silence
 # (checked 2026-09-08).
-media-libs/mesa lm-sensors opencl
+media-libs/mesa llvm lm-sensors opencl
 media-libs/libvpx postproc
 # libdrm[video_cards_radeon] is REQUIRED, and the reason is not mesa.
 #
@@ -17,3 +17,7 @@ media-libs/libvpx postproc
 # back (lab, 2026-09-12).
 x11-libs/libdrm video_cards_radeon
 media-libs/vulkan-loader layers
+
+# `llvm` on the line above was a global DEVELOPMENT flag until 2026-09-13.
+# media-libs/mesa is the only package in the plan declaring it -- everything
+# else selects LLVM through LLVM_SLOT.

@@ -55,3 +55,7 @@ gui-libs/gtk gstreamer
 # No wxGTK:3.0 line: the only ebuild left is 3.2.8.1 with SLOT="${WXRELEASE}/3.2",
 # so slot 3.0 matches nothing (2026-09-08).
 x11-libs/wxGTK:3.2 -webkit
+
+# `corefonts` was a global GRAPHICS flag; media-gfx/imagemagick is the only
+# package in the plan that declares it (measured 2026-09-13).
+media-gfx/imagemagick corefonts
