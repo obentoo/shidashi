@@ -4,13 +4,16 @@
 # (checked 2026-09-08).
 media-libs/mesa lm-sensors opencl
 media-libs/libvpx postproc
-# No libdrm[video_cards_radeon]. That flag builds libdrm_radeon, which serves
-# mesa's r300/r600 gallium drivers -- and package.use/00video_cards clears
-# VIDEO_CARDS with "-*" and does not list `radeon`, so mesa builds neither.
-# radeonsi uses the amdgpu winsys, not this one. The line was building a library
-# with no consumer in the plan.
+# libdrm[video_cards_radeon] is REQUIRED, and the reason is not mesa.
 #
-# TRADE-OFF: pre-GCN AMD cards (HD 2000-6000) fall back to llvmpipe on the live
-# ISO. Adding `radeon` to VIDEO_CARDS is the fix if that matters -- this line
-# alone would not have helped, since mesa is what needs the flag (2026-09-09).
+# It was removed on 2026-09-09 on the grounds that no consumer wanted it -- that
+# search covered media-libs/mesa and x11-drivers/*, and missed x11-base/. The
+# real chain is:
+#     VIDEO_CARDS=radeonsi -> x11-base/xorg-drivers
+#                          -> x11-drivers/xf86-video-ati
+#                          -> >=x11-libs/libdrm-2.4.89[video_cards_radeon]
+# xf86-video-ati serves BOTH radeon and radeonsi, and its libdrm dependency is
+# unconditional. step12-kde-resolve stopped on exactly this, asking for the flag
+# back (lab, 2026-09-12).
+x11-libs/libdrm video_cards_radeon
 media-libs/vulkan-loader layers

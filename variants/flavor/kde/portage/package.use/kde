@@ -18,6 +18,12 @@ kde-frameworks/kfilemetadata taglib
 kde-plasma/powerdevil brightness-control
 sys-power/upower policykit
 
+# Required by kde-frameworks/kdnssd, which declares
+# net-dns/avahi[mdnsresponder-compat] outright. It reaches the plan through
+# kde-misc/kdeconnect in sets/kde, so it belongs to this layer rather than the
+# base: no other flavor pulls kdnssd (lab, 2026-09-12).
+net-dns/avahi mdnsresponder-compat
+
 # Flags dropped 2026-09-09, each absent from the package's IUSE and therefore
 # ignored by Portage in silence: spectacle[kipi], dolphin[activities],
 # kdenlive[share,v4l], gwenview[kipi], kio-extras[phonon], kwin[plasma], and the
