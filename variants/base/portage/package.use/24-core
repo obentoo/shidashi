@@ -73,17 +73,20 @@ media-libs/opensubdiv tbb
 # No dev-qt/qtmultimedia line: `widgets` is not in its IUSE ("+X alsa +dbus eglfs
 # +ffmpeg gstreamer opengl pipewire pulseaudio qml +v4l vaapi vulkan wayland"),
 # so the line set nothing (2026-09-08).
-dev-qt/qtbase icu             # (F37) required by kde-frameworks/kcoreaddons <- net-im/telegram-desktop
-# qml on both, required by the @graphics set (a BASE set, so these belong in
-# base and not in flavor/kde, or `minimal` breaks):
-#   @graphics -> media-video/vlc[gui] -> dev-qt/qt5compat[qml]
-#   @graphics -> media-video/vlc[gui] -> kde-frameworks/qqc2-desktop-style
-#                                     -> kde-frameworks/sonnet[qml]
-# (lab, 2026-08-30, F33)
-dev-qt/qt5compat icu qml      # (F37) icu must MATCH dev-qt/qtbase: qt5compat
-                              # declares qtbase[icu=], and '=' means equality, so
-                              # enabling it on the base forces it on the consumer
-kde-frameworks/sonnet qml
+# NO Qt or KDE lines here any more (2026-09-13). Three used to live here --
+# dev-qt/qtbase[icu], dev-qt/qt5compat[icu,qml] and kde-frameworks/sonnet[qml] --
+# justified by F33:
+#     @graphics -> media-video/vlc[gui] -> dev-qt/qt5compat[qml]
+#                                       -> kde-frameworks/qqc2-desktop-style
+#                                       -> kde-frameworks/sonnet[qml]
+# That chain no longer exists: media-video/vlc moved to flavor/kde/sets/kde,
+# because vlc-4 builds its GUI against Qt6 where vlc-3 had no Qt at all.
+# Measured -- the minimal plan (910 ebuild lines) contains ZERO dev-qt,
+# kde-frameworks, kde-plasma or kde-apps packages, against 162 in the kde plan.
+#
+# Nothing had to be moved, only removed: the kde layer already carried supersets
+# of all three in package.use/kde (`dev-qt/qtbase libproxy icu cups`,
+# `dev-qt/qt5compat qml icu`, `kde-frameworks/sonnet qml`).
 virtual/zlib minizip
 app-emulation/qemu -pin-upstream-blobs
 

@@ -30,3 +30,13 @@ dev-qt/qtwebengine widgets
 # installed, so the dependency is satisfied here and the probe cannot exercise
 # the case. Verify in step12-kde-resolve (2026-09-09).
 dev-qt/qtwayland qml
+
+# Python bindings for Qt, moved from the base on 2026-09-13. Neither package
+# appears in the minimal plan, so configuring them there set nothing.
+#
+# On qtpy: the atom is LOWERCASE. The base spelled it `dev-python/QtPy` and
+# Portage atoms are case-sensitive, so that line matched nothing for as long as
+# it existed. `gui` and `printsupport` are IUSE defaults; only `svg` changes
+# anything.
+dev-python/qtpy gui printsupport svg
+dev-python/pyqt6 qml
