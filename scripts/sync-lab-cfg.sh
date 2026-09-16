@@ -204,12 +204,16 @@ if [ "$APPLY" -eq 1 ]; then
     echo "applied; previous trees kept as *.bak-$stamp"
     cat <<'NEXT'
 
-    NEXT: re-run ALL THREE steps, in order.
+    NEXT: re-run the config steps, in order.
 
         labrun step8-full-use        <- the ONLY step that copies cfg/ into the
-                                        container's /etc/portage
-        labrun step9a-break-check
-        labrun step12-kde-resolve
+                                        container's /etc/portage (and it wipes
+                                        99-break-pass, so 9a must follow)
+        labrun step9b-config-check   <- the gate: ALL CHECKS PASSED
+        labrun step9a-break-check    <- GRAPH CLOSES
+        labrun step10-phase-resolve  <- every phase rc=0
+        labrun step12-kde-resolve    <- only to re-measure the kde flavor; it
+                                        restores /etc/portage on exit
 
     step12 applies just the flavor layer on top of whatever /etc/portage already
     holds. Running it alone after a sync resolves the PREVIOUS configuration and

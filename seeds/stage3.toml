@@ -14,13 +14,16 @@
 # verify_signature); o sha512 pino trava os bytes exatos (reprodução).
 # Ao re-pinar, atualize snapshot + os dois filename + os dois sha512 juntos.
 
-snapshot = "20260524T170105Z"
+# 2026-09-16: 20260524T170105Z rotated off the mirror (404). Re-pinned to the
+# snapshot the laboratory bootstrapped from; both .DIGESTS verified against the
+# Gentoo release key before the hashes below were copied.
+snapshot = "20260823T153057Z"
 base_url = "https://distfiles.gentoo.org/releases/amd64/autobuilds"
 
 [systemd]
-filename = "stage3-amd64-nomultilib-systemd-20260524T170105Z.tar.xz"
-sha512   = "c483949919c5c528f06749ac3775dcba6e8537dcbd76cacf283411c841cb8f34b753f740218032a4b6a9ed832c5423a55707b270d70e03d99c599830d34ac031"
+filename = "stage3-amd64-nomultilib-systemd-20260823T153057Z.tar.xz"
+sha512   = "274953e4ebf3d3452ea19d0f7e824e0cb30bfffb4079a5101785f90d5f03495efb7f2925e56d9ef13cb3305f2c4cfc31630fd579b878a021e69b7e4ac6500d3b"
 
 [openrc]
-filename = "stage3-amd64-nomultilib-openrc-20260524T170105Z.tar.xz"
-sha512   = "16ffefecf4858b8536ac94aa895a9ed0a52b719739efb247f1396e83899d954b42a84dadea22b69009621cc17f2cfd62949ab6568255ed18e9f8634901f8f608"
+filename = "stage3-amd64-nomultilib-openrc-20260823T153057Z.tar.xz"
+sha512   = "d8129b9f39d61b9f2012105264f845ffdcbe0be94a3bd885415090616e8d2b178bf38cc771a5d19807b8b2d67cd1201dd032069be3ef614d25e7c4d775ceee6c"
