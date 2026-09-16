@@ -89,12 +89,15 @@ done
 
 # The init layer contributes package.use entries. apply_portage merges layer
 # directories as a union; /etc/portage/package.use is read the same way, so a
-# distinct filename is all that is required.
+# distinct filename is all that is required -- and since 7b7b0d8 the repo
+# numbers files by layer itself (base 10-39, init 50-, flavor 60-), so the
+# basename is copied as is. Prefixing again produced 50-systemd-50-systemd.
 if [ -d "$INIT_D/package.use" ]; then
     mkdir -p "$CFG_NEW/package.use"
     for f in "$INIT_D/package.use"/*; do
         [ -f "$f" ] || continue
-        cp -a "$f" "$CFG_NEW/package.use/50-$INIT-${f##*/}"
+        [ -e "$CFG_NEW/package.use/${f##*/}" ] && { echo "package.use name clash: ${f##*/}" >&2; exit 1; }
+        cp -a "$f" "$CFG_NEW/package.use/${f##*/}"
     done
 fi
 
