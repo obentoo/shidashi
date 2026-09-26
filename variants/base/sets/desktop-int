@@ -1,8 +1,0 @@
-# variants/base/sets/desktop-int — desktop integration: tray, gestures, XDG dirs and portals
-#
-# LEAF set: a flat list of atoms (2026-09-09). See sets/base for the layering contract.
-
-dev-libs/libayatana-appindicator-glib
-sys-apps/xdg-desktop-portal
-x11-misc/libinput-gestures
-x11-misc/xdg-user-dirs

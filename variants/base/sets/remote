@@ -1,9 +1,0 @@
-# variants/base/sets/remote — remote desktop, file transfer and API tooling
-#
-# LEAF set: a flat list of atoms (2026-09-09). See sets/base for the layering contract.
-
-net-ftp/filezilla
-net-misc/anydesk
-net-misc/nxplayer
-net-misc/postman-bin
-net-misc/remmina

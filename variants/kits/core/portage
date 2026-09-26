@@ -1,0 +1,20 @@
+# variants/kits/core/portage — package management -- a Gentoo you cannot maintain is not a Gentoo
+#
+# LEAF set: a flat list of atoms (2026-09-09). See kits/core/base for the layering contract.
+
+app-eselect/eselect-repository
+app-portage/bentoolkit
+app-portage/cpuid2cpuflags
+app-portage/eix
+app-portage/genlop
+app-portage/gentoolkit
+app-portage/pycargoebuild
+# The Rust compiler, built from SOURCE (D23, 2026-09-26). It is a build
+# dependency of the trunk itself -- media-libs/mesa, dev-vcs/git,
+# gnome-base/librsvg, dev-util/bindgen -- so an image that cannot rebuild them
+# cannot be maintained. Selecting dev-lang/rust here is what makes Portage use it
+# over dev-lang/rust-bin: packages depend on `|| ( rust-bin rust )` for a slot.
+# Measured on the built trunk: 5 packages (rust, rust-common, lld-22 and its
+# symlinks, oniguruma); system-llvm on the trunk's llvm-22, bootstrapped from the
+# trunk's own rust-bin-1.98.1 -- no extra rust-bin, unlike F41's August numbers.
+dev-lang/rust

@@ -1,0 +1,6 @@
+# variants/kits/services/sandbox — sandboxed app distribution and cleanup
+#
+# LEAF set: a flat list of atoms (2026-09-09). See kits/core/base for the layering contract.
+
+sys-apps/bleachbit
+sys-apps/flatpak

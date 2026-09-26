@@ -1,0 +1,7 @@
+# variants/kits/media/imaging — raster, vector and graph authoring
+#
+# LEAF set: a flat list of atoms (2026-09-09). See kits/core/base for the layering contract.
+
+media-gfx/gimp
+media-gfx/graphviz
+media-gfx/inkscape

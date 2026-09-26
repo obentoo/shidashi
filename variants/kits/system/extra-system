@@ -1,0 +1,12 @@
+# variants/kits/system/extra-system — optional system layer -- networking, printing, metrics, firmware.
+#
+# AGGREGATOR: references other sets with @name; Portage expands them (2026-09-09). See kits/core/base for the layering contract.
+
+@net-tools
+@vpn
+@print
+@monitoring
+@laptop
+@firmware
+@sandbox
+@misc

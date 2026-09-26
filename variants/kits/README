@@ -1,0 +1,29 @@
+variants/kits/ — the set library (D25)
+
+Every Portage set Bentoo ships lives here, as kits/<category>/<name>. Layers
+(base, flavor/<f>, ...) hold configuration and a selection -- the `sets:` list
+in their recipe -- and no set content of their own.
+
+Rules:
+  - A set's file location does not decide who installs it. Only the sets a
+    recipe declares are installed, plus every @ref they reach
+    (shidashi.resolve.install_sets).
+  - Categories are for people. Portage's set namespace is flat
+    (/etc/portage/sets/<name>), so a name is unique across the whole library;
+    tests/test_variants.py enforces it, and install_sets refuses a duplicate.
+  - There is no same-name override between layers. A flavor tunes a set by
+    declaring it, or by `exclude:`-ing atoms from it in its recipe.
+  - This README is the only non-set file here; the index skips README and
+    dotfiles.
+
+Categories:
+  core/      the universal core: @base and its leaves
+  system/    console kits: @extra-system and its leaves
+  graphics/  graphical infrastructure: gpu, fonts, desktop integration
+  services/  system services: vpn, print, sandbox
+  internet/  web, comms, p2p, remote
+  media/     audio, video, imaging
+  dev/       devel, containers
+  virt/      virtualization
+  groups/    the extra-* aggregators flavors choose from
+  desktops/  one set per desktop flavor

@@ -1,0 +1,7 @@
+# variants/kits/services/vpn — VPN clients and their NetworkManager plugins
+#
+# LEAF set: a flat list of atoms (2026-09-09). See kits/core/base for the layering contract.
+
+net-vpn/networkmanager-fortisslvpn
+net-vpn/networkmanager-openvpn
+net-vpn/wireguard-tools

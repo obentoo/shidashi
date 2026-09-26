@@ -165,11 +165,13 @@ def test_build_binds_binhost_ro_and_no_rw(monkeypatch: pytest.MonkeyPatch) -> No
 
 
 def test_install_sets_copies_curated_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # D25: every set lives in the kits library; the category folder is invisible
+    # to the result -- both land flat in /etc/portage/sets.
     variants = tmp_path / "variants"
-    (variants / "base" / "sets").mkdir(parents=True)
-    (variants / "base" / "sets" / "graphics").write_text("media-libs/mesa\n")
-    (variants / "flavor" / "kde" / "sets").mkdir(parents=True)
-    (variants / "flavor" / "kde" / "sets" / "kde").write_text("kde-plasma/plasma-meta\n")
+    (variants / "kits" / "graphics").mkdir(parents=True)
+    (variants / "kits" / "graphics" / "graphics").write_text("media-libs/mesa\n")
+    (variants / "kits" / "desktops").mkdir(parents=True)
+    (variants / "kits" / "desktops" / "kde").write_text("kde-plasma/plasma-meta\n")
     monkeypatch.setenv("SHIDASHI_VARIANTS_DIR", str(variants))
     rootfs = tmp_path / "rootfs"
 
@@ -369,22 +371,22 @@ def test_assemble_keeps_rootfs_on_squashfs_failure(
     assert rootfs.exists()  # ImageError pós-container também mantém o rootfs
 
 
-def test_install_sets_later_layer_overrides(
+def test_install_sets_refuses_a_name_defined_twice_in_the_library(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # §4.2/§13 — mesmo set em dois layers: o posterior (flavor) vence a base.
+    # D25 replaced "a later layer's set of the same name wins" with one library.
+    # Portage's set namespace is flat, so two files with one name in different
+    # categories would install whichever the walk met last. That is refused,
+    # naming both files -- per-flavor tuning is `exclude:`, which is explicit.
     variants = tmp_path / "variants"
-    (variants / "base" / "sets").mkdir(parents=True)
-    (variants / "base" / "sets" / "graphics").write_text("BASE\n")
-    (variants / "flavor" / "kde" / "sets").mkdir(parents=True)
-    (variants / "flavor" / "kde" / "sets" / "graphics").write_text("FLAVOR\n")
+    (variants / "kits" / "media").mkdir(parents=True)
+    (variants / "kits" / "media" / "graphics").write_text("A\n")
+    (variants / "kits" / "desktops").mkdir(parents=True)
+    (variants / "kits" / "desktops" / "graphics").write_text("B\n")
     monkeypatch.setenv("SHIDASHI_VARIANTS_DIR", str(variants))
-    rootfs = tmp_path / "rootfs"
 
-    _install_sets(rootfs, _recipe(sets=("graphics",)))
-
-    # portage_layers = (base, arch/znver5, flavor/kde, init/systemd): flavor é posterior.
-    assert (rootfs / "etc" / "portage" / "sets" / "graphics").read_text() == "FLAVOR\n"
+    with pytest.raises(ResolveError, match=r"defined twice.*desktops/graphics.*media/graphics"):
+        _install_sets(tmp_path / "rootfs", _recipe(sets=("graphics",)))
 
 
 # NB: o caminho privilegiado real (nspawn + emerge --usepkgonly + dracut +
@@ -402,9 +404,10 @@ def test_install_sets_follows_nested_set_references(
     # agregador exige instalar as folhas -- senão @base resolve para um alvo
     # inexistente DENTRO do container, longe da causa.
     variants = tmp_path / "variants"
-    (variants / "base" / "sets").mkdir(parents=True)
-    (variants / "base" / "sets" / "agg").write_text("@leaf\n")
-    (variants / "base" / "sets" / "leaf").write_text("app-editors/nano\n")
+    (variants / "kits" / "groups").mkdir(parents=True)
+    (variants / "kits" / "groups" / "agg").write_text("@leaf\n")
+    (variants / "kits" / "core").mkdir(parents=True)
+    (variants / "kits" / "core" / "leaf").write_text("app-editors/nano\n")
     monkeypatch.setenv("SHIDASHI_VARIANTS_DIR", str(variants))
     rootfs = tmp_path / "rootfs"
 
@@ -419,8 +422,8 @@ def test_install_sets_applies_flavor_exclude(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     variants = tmp_path / "variants"
-    (variants / "base" / "sets").mkdir(parents=True)
-    (variants / "base" / "sets" / "leaf").write_text(
+    (variants / "kits" / "core").mkdir(parents=True)
+    (variants / "kits" / "core" / "leaf").write_text(
         "media-video/vlc\napp-editors/nano  # com comentário\n"
     )
     monkeypatch.setenv("SHIDASHI_VARIANTS_DIR", str(variants))
@@ -441,7 +444,7 @@ def test_install_sets_raises_when_declared_set_is_missing(
 ) -> None:
     # Antes era ignorado em silêncio e só falhava no emerge, dentro do container.
     variants = tmp_path / "variants"
-    (variants / "base" / "sets").mkdir(parents=True)
+    (variants / "kits" / "core").mkdir(parents=True)
     monkeypatch.setenv("SHIDASHI_VARIANTS_DIR", str(variants))
 
     with pytest.raises(ResolveError, match="ausente"):

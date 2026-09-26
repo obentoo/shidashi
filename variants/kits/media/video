@@ -1,0 +1,8 @@
+# variants/kits/media/video — playback, muxing and capture. media-video/vlc is NOT here -- vlc-4 is a
+# Qt6/KDE-Frameworks application, so it lives in flavor/kde/sets/kde
+#
+# LEAF set: a flat list of atoms (2026-09-09). See kits/core/base for the layering contract.
+
+media-video/mkvtoolnix
+media-video/mpv
+media-video/obs-studio

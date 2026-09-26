@@ -1,0 +1,6 @@
+# variants/kits/services/print — printing. cups-meta pulls a large stack; not every image wants it
+#
+# LEAF set: a flat list of atoms (2026-09-09). See kits/core/base for the layering contract.
+
+net-print/cups-meta
+net-print/hplip-plugin

@@ -84,13 +84,39 @@ def _layer_dirs(recipe: ResolvedRecipe, variants_dir: Path) -> list[Path]:
 _MAKE_CONF = "make.conf"
 
 
+#: Files in the kits library that are documentation, not sets.
+_KIT_NON_SETS = frozenset({"README", "README.md"})
+
+
+def kit_index(kits_dir: Path) -> dict[str, Path]:
+    """Map every set name in the kits library to its file (D25).
+
+    The library is ``kits/<category>/<set>``; the category is for people only.
+    Portage's set namespace is flat (``/etc/portage/sets/<name>``), so a name
+    must be unique across ALL categories -- two files with one name would
+    silently install whichever the walk met last. That is an error here, raised
+    with both paths.
+    """
+    index: dict[str, Path] = {}
+    for path in sorted(kits_dir.rglob("*")):
+        if not path.is_file() or path.name in _KIT_NON_SETS or path.name.startswith("."):
+            continue
+        if path.name in index:
+            raise ResolveError(
+                f"set {path.name!r} is defined twice in the kits library: "
+                f"{index[path.name].relative_to(kits_dir)} and {path.relative_to(kits_dir)}"
+            )
+        index[path.name] = path
+    return index
+
+
 def install_sets(rootfs: Path, recipe: ResolvedRecipe) -> None:
     """Instala os sets da receita em ``${rootfs}/etc/portage/sets/`` (R6.4).
 
-    Cada nome tem seu arquivo curado em ``variants/<layer>/sets/<name>``
-    (irmão de ``portage/``, logo *não* copiado por :func:`apply_portage`).
-    Resolve-se varrendo os layers na ordem base→arch→flavor→init; o layer
-    posterior SOBRESCREVE (um flavor pode redefinir um set da base inteiro).
+    Todo set mora na biblioteca ``variants/kits/<categoria>/<name>`` (D25); as
+    camadas só declaram quais instalam. Não há mais sobrescrita por mesmo nome
+    entre camadas -- um nome é único na biblioteca (:func:`kit_index`), e o
+    ajuste por flavor é explícito: declarar um set, ou ``exclude:`` átomos.
 
     Três comportamentos que não são óbvios:
 
@@ -105,13 +131,14 @@ def install_sets(rootfs: Path, recipe: ResolvedRecipe) -> None:
     não impede o átomo de entrar como DEPENDÊNCIA de outro pacote -- é "não
     peço", não "proíbo".
 
-    **Falha alta.** Um set declarado sem arquivo em layer nenhum é erro de
-    curadoria e levanta :class:`FactoryError`. Antes era ignorado em
+    **Falha alta.** Um set declarado sem arquivo na biblioteca é erro de
+    curadoria e levanta :class:`ResolveError`. Antes era ignorado em
     silêncio, e a falha só aparecia no ``emerge``.
     """
     dest_dir = rootfs / "etc" / "portage" / "sets"
     dest_dir.mkdir(parents=True, exist_ok=True)
-    variants_dir = config.variants_dir()
+    kits = config.kits_dir()
+    index = kit_index(kits)
     excluded = frozenset(recipe.exclude)
 
     pending = list(recipe.sets)
@@ -121,16 +148,10 @@ def install_sets(rootfs: Path, recipe: ResolvedRecipe) -> None:
         if name in seen:
             continue
         seen.add(name)
-        src = None
-        for layer in recipe.portage_layers:
-            candidate = variants_dir / layer / "sets" / name
-            if candidate.is_file():
-                src = candidate
+        src = index.get(name)
         if src is None:
             raise ResolveError(
-                f"set {name!r} declarado na receita mas ausente de "
-                f"variants/<layer>/sets/ em todos os layers "
-                f"({', '.join(recipe.portage_layers)})"
+                f"set {name!r} declarado na receita mas ausente da biblioteca {kits}"
             )
         kept, dropped = [], []
         for line in src.read_text(encoding="utf-8").splitlines():

@@ -89,6 +89,16 @@ def base_path() -> Path:
     return variants_dir() / "base" / "base.yaml"
 
 
+def kits_dir() -> Path:
+    """Devolve ``variants_dir()/"kits"``: a biblioteca de TODOS os sets (D25).
+
+    Não é um eixo nem uma camada: não tem ``portage/`` nem receita. As camadas
+    (base, flavor, …) só DECLARAM quais sets instalam; o conteúdo mora aqui, em
+    ``kits/<categoria>/<set>``. As categorias são só para pessoas.
+    """
+    return variants_dir() / "kits"
+
+
 def scratch_dir() -> Path:
     """Devolve o diretório de scratch do fluxo *pretend* (R6.2).
 

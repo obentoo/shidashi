@@ -1,0 +1,10 @@
+# variants/kits/media/audio — audio server, routing and editing. rtkit grants realtime priority and is
+# only meaningful once an audio server is present, hence here and not in @admin
+#
+# LEAF set: a flat list of atoms (2026-09-09). See kits/core/base for the layering contract.
+
+media-plugins/obs-pipewire-audio-capture
+media-sound/audacity
+media-sound/jack2
+media-video/pipewire
+sys-auth/rtkit

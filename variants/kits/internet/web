@@ -1,0 +1,13 @@
+# variants/kits/internet/web — ONE browser, by decision (2026-09-09).
+#
+# chromium, firefox and librewolf were dropped: four browsers in every image is
+# three too many, and each carries its own multi-hour build. brave-browser is a
+# BINARY package from ::bentoo, so it costs download only -- no compile at all.
+#
+# net-libs/webkit-gtk:4.1 stays and is NOT a browser: it is the engine that GTK
+# applications embed. Kept explicit so the SLOT is pinned, not inherited.
+#
+# LEAF set: a flat list of atoms (2026-09-09). See kits/core/base for the layering contract.
+
+net-libs/webkit-gtk:4.1
+www-client/brave-browser

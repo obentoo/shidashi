@@ -102,15 +102,33 @@ if [ -d "$INIT_D/package.use" ]; then
 fi
 
 # --- sets ---------------------------------------------------------------------
-# Every base set, leaves and aggregators alike: Portage expands a nested @ref, so
-# an aggregator without its leaves resolves to a missing target inside the
-# container, far from the cause.
-cp -a "$V/base/sets" "$CFG_NEW/sets"
+# Written by shidashi.resolve.install_sets itself, not copied by hand: since D25
+# every set lives in variants/kits/<category>/, and install_sets is what turns a
+# recipe's declared sets -- with their nested @refs and the flavor's exclude --
+# into /etc/portage/sets. Calling it here keeps one rule with one implementation.
+# cfg/ gets minimal's sets (what the trunk and step13 install); the flavor layer
+# gets its own recipe's, which step12 lays over them.
+sets_for() {  # sets_for <flavor> <dest-dir>
+    local tmp; tmp=$(mktemp -d)
+    PYTHONPATH=$REPO SHIDASHI_VARIANTS_DIR=$V "$REPO/.venv/bin/python" - "$ARCH" "$INIT" "$1" "$tmp" <<'PYEOF'
+import sys
+from pathlib import Path
+from shidashi import config
+from shidashi.recipe import merge, load_base, load_arch, load_flavor, load_init
+from shidashi.resolve import install_sets
+arch, init, flavor, root = sys.argv[1:5]
+r = merge(load_base(config.base_path()), load_arch(config.recipe_path("arch", arch)),
+          load_flavor(config.recipe_path("flavor", flavor)), load_init(config.recipe_path("init", init)))
+install_sets(Path(root), r)
+PYEOF
+    mkdir -p "$2"; cp -a "$tmp/etc/portage/sets/." "$2/"; rm -rf "$tmp"
+}
+sets_for minimal "$CFG_NEW/sets"
 
 # --- flavor layer -------------------------------------------------------------
 [ -d "$FLAVOR_D/portage/package.use" ] && cp -a "$FLAVOR_D/portage/package.use" "$LAYER_NEW/package.use"
 [ -f "$FLAVOR_D/portage/make.conf" ] && cp -a "$FLAVOR_D/portage/make.conf" "$LAYER_NEW/make.conf"
-[ -d "$FLAVOR_D/sets" ] && cp -a "$FLAVOR_D/sets" "$LAYER_NEW/sets"
+sets_for "$FLAVOR" "$LAYER_NEW/sets"
 
 # --- emerge targets -----------------------------------------------------------
 # The lab's step scripts used to spell the set names out: `@graphics @bentoo-apps`.

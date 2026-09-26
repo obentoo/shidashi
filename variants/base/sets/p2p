@@ -1,7 +1,0 @@
-# variants/base/sets/p2p — peer-to-peer and sync
-#
-# LEAF set: a flat list of atoms (2026-09-09). See sets/base for the layering contract.
-
-net-p2p/bisq-bin
-net-p2p/qbittorrent
-net-p2p/syncthing

@@ -1,0 +1,5 @@
+# variants/kits/groups/extra-virt — virtualization layer.
+#
+# AGGREGATOR: references other sets with @name; Portage expands them (2026-09-09). See kits/core/base for the layering contract.
+
+@virt

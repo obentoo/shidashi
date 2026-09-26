@@ -1,0 +1,40 @@
+# variants/kits/dev/devel — language toolchains, build/debug/VCS tooling. x11-terms/alacritty is here
+# rather than in a graphical set: a terminal is a developer tool
+#
+# LEAF set: a flat list of atoms (2026-09-09). See kits/core/base for the layering contract.
+
+dev-db/sqlitebrowser
+dev-debug/gdb
+dev-java/openjdk
+# openjdk-bin is NOT a second JDK by accident -- it is what breaks the bootstrap
+# cycle. dev-java/openjdk[system-bootstrap] (on by default, and REQUIRED_USE
+# "!system-bootstrap? ( ppc64 )" makes turning it off impossible on amd64)
+# depends on
+#     || ( dev-java/openjdk-bin:${SLOT}  dev-java/openjdk:${SLOT} )
+# and with only the source ebuild in the plan Portage satisfies that branch with
+# openjdk ITSELF, which step12-kde-resolve reported as
+#     Error: circular dependencies: openjdk-25 depends on openjdk-25 (buildtime)
+# Listing the binary makes the first branch reachable (lab, 2026-09-12).
+dev-java/openjdk-bin
+# dev-lang/go-bootstrap, for the same reason as openjdk-bin above: dev-lang/go
+# needs a Go compiler to build one, its BDEPEND is a || ( ... ) listing itself
+# among the options, and with nothing else in the plan Portage picked go to
+# satisfy go. step12-kde-resolve reported it as
+#     Error: circular dependencies: go-1.27.1 depends on go-1.27.1 (buildtime)
+# Reached through app-containers/docker-cli -> dev-go/go-md2man (lab, 2026-09-13).
+dev-lang/go-bootstrap
+dev-lang/php
+dev-python/pip
+dev-python/uv
+dev-util/cargo-tarpaulin
+dev-util/ccache
+dev-util/github-cli
+dev-util/meld
+dev-util/pkgdev
+dev-util/rustup
+dev-util/sccache
+dev-vcs/git-filter-repo
+dev-vcs/git-lfs
+net-libs/nodejs
+sys-devel/distcc
+x11-terms/alacritty

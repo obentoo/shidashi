@@ -39,7 +39,7 @@ from shidashi.recipe import (
     load_init,
     merge,
 )
-from shidashi.resolve import apply_portage
+from shidashi.resolve import apply_portage, kit_index
 
 # Raiz do repo = pai de tests/; o variants/ real vive em <raiz>/variants.
 _VARIANTS_DIR = Path(__file__).resolve().parent.parent / "variants"
@@ -425,16 +425,41 @@ def test_assembled_make_conf_composes_use_across_axes(
 # --- integridade dos sets EMBARCADOS (variants/), não de dados sintéticos -----
 #
 # Estes testes existem porque a suíte inteira passou verde enquanto
-# `variants/base/sets/bentoo-apps` já tinha sido apagado e a fase `apps` ainda
+# `bentoo-apps` (então em variants/base/sets/) já tinha sido apagado e a fase `apps` ainda
 # apontava para `@bentoo-apps`: todo teste de fase montava uma receita sintética
 # e nenhum olhava para o que o repositório realmente embarca.
 
 
 def _shipped_sets() -> dict[str, Path]:
-    """Todo arquivo de set embarcado, de qualquer layer, por nome."""
-    return {p.name: p for p in config.variants_dir().glob("*/*/sets/*") if p.is_file()} | {
-        p.name: p for p in config.variants_dir().glob("*/sets/*") if p.is_file()
-    }
+    """Todo set embarcado, por nome: a biblioteca ``kits/`` (D25)."""
+    return kit_index(config.kits_dir())
+
+
+def test_sets_live_only_in_the_kits_library() -> None:
+    """D25: layers configure and choose; no layer carries a set of its own.
+
+    A ``sets/`` directory inside a layer would be dead weight -- install_sets
+    only reads the library -- and exactly the "where does this set live?"
+    confusion the library was made to end.
+    """
+    stray = sorted(
+        str(p.relative_to(config.variants_dir()))
+        for p in config.variants_dir().rglob("sets")
+        if p.is_dir() and "kits" not in p.relative_to(config.variants_dir()).parts
+    )
+    assert stray == [], f"sets outside kits/: {stray}"
+
+
+def test_set_names_are_unique_across_the_library() -> None:
+    """Portage's set namespace is flat; the categories are for people only."""
+    names = [
+        p.name
+        for p in config.kits_dir().rglob("*")
+        if p.is_file() and p.name not in {"README", "README.md"}
+    ]
+    dup = sorted({n for n in names if names.count(n) > 1})
+    assert dup == [], f"set names defined more than once: {dup}"
+    assert len(_shipped_sets()) == len(names)
 
 
 def _set_refs(path: Path) -> list[str]:
@@ -501,11 +526,7 @@ def test_no_orphan_sets() -> None:
     `p2p` sit unused after the base sets were split: proving the atoms are in the
     FILES says nothing about the files being USED.
     """
-    files: dict[str, Path] = {
-        p.name: p for p in (config.variants_dir() / "base" / "sets").iterdir() if p.is_file()
-    }
-    for p in config.variants_dir().glob("flavor/*/sets/*"):
-        files.setdefault(p.name, p)
+    files: dict[str, Path] = _shipped_sets()
 
     def refs(name: str) -> list[str]:
         path = files.get(name)

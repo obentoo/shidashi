@@ -1,0 +1,10 @@
+# variants/kits/core/hardware — hardware inspection; iucode_tool applies the microcode from @boot
+#
+# LEAF set: a flat list of atoms (2026-09-09). See kits/core/base for the layering contract.
+
+sys-apps/iucode_tool
+sys-apps/lm-sensors
+sys-apps/lshw
+sys-apps/nvme-cli
+sys-apps/pciutils
+sys-apps/usbutils

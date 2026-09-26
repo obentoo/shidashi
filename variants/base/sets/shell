@@ -1,9 +1,0 @@
-# variants/base/sets/shell — login shell and editors -- required to repair a broken system
-#
-# LEAF set: a flat list of atoms (2026-09-09). See sets/base for the layering contract.
-
-app-editors/nano
-app-editors/vim
-app-shells/starship
-app-shells/zsh
-app-shells/zsh-completions

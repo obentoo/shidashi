@@ -419,7 +419,7 @@ strategy:
 
 ## 13. Layout do Repositório
 
-Co-localizado **por eixo** (`variants/<eixo>/<nome>/`): tudo de uma variante numa pasta só — facilita adicionar/remover uma variante inteira (e contribuições de terceiros).
+Co-localizado **por eixo** (`variants/<eixo>/<nome>/`): a configuração de uma variante numa pasta só — facilita adicionar/remover uma variante inteira (e contribuições de terceiros). O **conteúdo** (os sets) mora numa biblioteca única, `variants/kits/` (D25): as camadas só configuram e escolhem.
 
 ```
 stages/                          # raiz do projeto (este repo)
@@ -436,21 +436,26 @@ stages/                          # raiz do projeto (este repo)
 │   ├── binhost.py               # gestão multi-instance + índice + assinatura
 │   ├── image.py                 # squashfs + dracut + ISO
 │   └── portage_api.py           # integração com `import portage`
-├── variants/                    # eixos componíveis (recipe + portage + sets juntos)
+├── variants/                    # eixos componíveis (recipe + portage) + a biblioteca de sets
+│   ├── kits/                    # TODOS os sets, por categoria (D25) — nomes únicos
+│   │   ├── core/                #   base (agregador) boot fs portage shell hardware admin archive network
+│   │   ├── system/              #   extra-system (agregador) net-tools monitoring laptop firmware misc …
+│   │   ├── graphics/ services/ internet/ media/ dev/ virt/
+│   │   ├── groups/              #   extra-desktop extra-dev extra-media extra-virt
+│   │   └── desktops/            #   kde gnome xfce wm
 │   ├── base/                    # comum a tudo
 │   │   ├── base.yaml
-│   │   ├── portage/             # /etc/portage base (CORE/FEATURES/DISTDIR/PKGDIR…)
-│   │   └── sets/
+│   │   └── portage/             # /etc/portage base (CORE/FEATURES/DISTDIR/PKGDIR…)
 │   ├── arch/
 │   │   ├── v3/{recipe.yaml, portage/}
 │   │   ├── znver5/{recipe.yaml, portage/}
 │   │   └── arrowlake/{recipe.yaml, portage/}
 │   ├── flavor/
-│   │   ├── minimal/{recipe.yaml, portage/, sets/}
-│   │   ├── kde/{recipe.yaml, portage/, sets/}
-│   │   ├── gnome/{recipe.yaml, portage/, sets/}
-│   │   ├── xfce/{recipe.yaml, portage/, sets/}
-│   │   └── wm/{recipe.yaml, portage/, sets/}     # Wayland-only: Hyprland, Sway, niri
+│   │   ├── minimal/{recipe.yaml, portage/}
+│   │   ├── kde/{recipe.yaml, portage/}
+│   │   ├── gnome/{recipe.yaml, portage/}
+│   │   ├── xfce/{recipe.yaml, portage/}
+│   │   └── wm/{recipe.yaml, portage/}     # Wayland-only: Hyprland, Sway, niri
 │   └── init/
 │       ├── systemd/{recipe.yaml, portage/}
 │       └── openrc/{recipe.yaml, portage/}
@@ -468,12 +473,21 @@ Os sets são de **dois níveis**: folhas com átomos, e agregadores que referenc
 outras folhas por `@nome` (o Portage expande recursivamente). Um flavor declara
 dois ou três agregadores em vez de vinte folhas.
 
+Todo set mora em `variants/kits/<categoria>/<nome>`. A categoria é só para
+pessoas: o Portage enxerga os sets num espaço de nomes plano
+(`/etc/portage/sets/<nome>`), então um nome é **único** na biblioteca inteira —
+um teste garante. **Onde o arquivo mora não decide quem o instala**: só é
+instalado o que uma receita declara (`sets:`), com as `@refs` seguidas até
+fechar. O ajuste por flavor é explícito: declarar um set, ou `exclude:` átomos
+dele. Não há sobrescrita por mesmo nome entre camadas.
+
 | Set | Local | Escopo |
 |---|---|---|
-| `base` (agregador) | `variants/base/sets/` | **universal** — declarado pelo `base.yaml`, entra em toda imagem |
-| `extra-system`, `extra-desktop`, `extra-media`, `extra-dev`, `extra-virt` | `variants/base/sets/` | **opcionais** — cada flavor declara os que quer |
-| folhas (`boot`, `fs`, `audio`, `web`, `devel` …) | `variants/base/sets/` | referenciadas pelos agregadores; um flavor pode declarar uma direto (ex.: `gpu`) |
-| `kde`, `gnome`, `xfce`, `wm` | `variants/flavor/<f>/sets/` | **específicos** do desktop (fase 3) |
+| `base` (agregador) | `kits/core/` | **universal** — declarado pelo `base.yaml`, entra em toda imagem |
+| `extra-system` | `kits/system/` | os kits de console — declarado por todo flavor |
+| `extra-desktop`, `extra-media`, `extra-dev`, `extra-virt` | `kits/groups/` | **opcionais** — cada flavor declara os que quer |
+| folhas (`boot`, `fs`, `audio`, `web`, `devel` …) | `kits/<categoria>/` | referenciadas pelos agregadores; um flavor pode declarar uma direto (ex.: `gpu`) |
+| `kde`, `gnome`, `xfce`, `wm` | `kits/desktops/` | **específicos** do desktop — cada um declarado só pelo seu flavor |
 
 Qual fase instala quais sets é **declarado** em `base.yaml` (campo `sets` de cada
 fase), não deduzido do nome da fase. `phase_target` intersecta com os sets da

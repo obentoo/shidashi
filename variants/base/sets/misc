@@ -1,9 +1,0 @@
-# variants/base/sets/misc — neither universal nor categorisable.
-#
-# app-misc/fastfetch replaced app-misc/neofetch, whose upstream was ARCHIVED in
-# 2024 (decided 2026-09-09).
-#
-# LEAF set: a flat list of atoms (2026-09-09). See sets/base for the layering contract.
-
-app-misc/fastfetch
-sys-block/zram-init

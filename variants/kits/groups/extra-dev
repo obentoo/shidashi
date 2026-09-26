@@ -1,0 +1,6 @@
+# variants/kits/groups/extra-dev — developer workstation layer.
+#
+# AGGREGATOR: references other sets with @name; Portage expands them (2026-09-09). See kits/core/base for the layering contract.
+
+@devel
+@containers

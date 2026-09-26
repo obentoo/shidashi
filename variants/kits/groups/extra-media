@@ -1,0 +1,6 @@
+# variants/kits/groups/extra-media — audio and video stack.
+#
+# AGGREGATOR: references other sets with @name; Portage expands them (2026-09-09). See kits/core/base for the layering contract.
+
+@audio
+@video

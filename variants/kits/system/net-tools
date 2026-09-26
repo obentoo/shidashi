@@ -1,0 +1,11 @@
+# variants/kits/system/net-tools — name resolution and network diagnostics. net-dns/bind brings the named
+# daemon along -- it has no USE flag to omit it (F38)
+#
+# LEAF set: a flat list of atoms (2026-09-09). See kits/core/base for the layering contract.
+
+net-dns/bind
+net-dns/dnscrypt-proxy
+net-misc/ntp
+net-misc/r8168
+net-misc/telnet-bsd
+net-misc/whois

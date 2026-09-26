@@ -1,0 +1,11 @@
+# variants/kits/groups/extra-desktop — end-user applications for a graphical image.
+#
+# AGGREGATOR: references other sets with @name; Portage expands them (2026-09-09). See kits/core/base for the layering contract.
+
+@web
+@comms
+@imaging
+@remote
+@desktop-int
+@fonts
+@p2p
