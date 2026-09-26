@@ -201,17 +201,30 @@ def test_systemd_init_appends_to_use_instead_of_replacing_it() -> None:
 def test_base_make_conf_keeps_unrelated_groups_verbatim() -> None:
     text = _base_make_conf_text()
     # amostras de grupos que NÃO migraram (R8.2: manter verbatim)
-    for token in ('FEATURES="', 'DISTDIR="', 'GRAPHICS="', 'L10N="'):
+    for token in ('FEATURES="', 'DISTDIR="', 'CORE="', 'L10N="'):
         assert token in text
 
 
-def test_base_video_cards_lives_in_package_use_with_wildcard_reset() -> None:
+def test_graphical_use_lives_in_the_desktop_stage_not_the_base() -> None:
+    """D24: the base is a console core. The graphical groups belong to the
+    desktop stage, and the base forces X off (many ebuilds default +X)."""
+    base = _base_make_conf_text()
+    desktop = (_VARIANTS_DIR / "desktop" / "portage" / "make.conf").read_text(encoding="utf-8")
+    for token in ('GRAPHICS="', 'IMAGE="', 'VIDEO="', 'INPUT_DEVICES="'):
+        assert token not in _live_text(base), f"{token} is still in the base"
+        assert token in _live_text(desktop), f"{token} missing from the desktop stage"
+    assert 'REMOVED="-X ' in base
+    assert 'USE="${USE} ' in desktop  # appends; never replaces the base's curation
+
+
+def test_video_cards_live_in_the_desktop_stage_with_wildcard_reset() -> None:
     # VIDEO_CARDS saiu do make.conf: uma atribuição lá NÃO consegue limpar os
     # defaults do profile (nouveau, vesa, dummy, radeon), só somar a eles. Em
     # package.use o prefixo "-*" zera antes de listar — sem isso esses drivers
     # seriam compilados em toda imagem, e o Portage não reporta nada.
     assert 'VIDEO_CARDS="' not in _base_make_conf_text()
-    entry = (_VARIANTS_DIR / "base" / "portage" / "package.use" / "00video_cards").read_text(
+    assert not (_VARIANTS_DIR / "base" / "portage" / "package.use" / "00video_cards").exists()
+    entry = (_VARIANTS_DIR / "desktop" / "portage" / "package.use" / "00video_cards").read_text(
         encoding="utf-8"
     )
     line = next(ln for ln in _live_text(entry).splitlines() if "VIDEO_CARDS:" in ln)
@@ -401,9 +414,11 @@ def test_apply_portage_keeps_both_package_use_system_files(tmp_path: Path) -> No
 @pytest.mark.parametrize(
     ("arch", "flavor", "init", "expect", "reject"),
     [
-        ("v3", "minimal", "systemd", {"boot", "uki", "ukify"}, {"kde", "qt6"}),
-        ("v3", "kde", "systemd", {"boot", "kde", "qt6", "plymouth"}, set()),
-        ("znver5", "kde", "openrc", {"kde", "qt6"}, {"boot", "uki", "ukify"}),
+        # minimal is the console core: no graphical flag at all, and X forced off
+        ("v3", "minimal", "systemd", {"boot", "uki", "ukify", "-X"},
+         {"kde", "qt6", "wayland", "vulkan", "opengl", "X"}),
+        ("v3", "kde", "systemd", {"boot", "kde", "qt6", "plymouth", "wayland", "vulkan"}, {"X"}),
+        ("znver5", "kde", "openrc", {"kde", "qt6", "wayland"}, {"boot", "uki", "ukify", "X"}),
     ],
 )
 def test_assembled_make_conf_composes_use_across_axes(
@@ -423,8 +438,9 @@ def test_assembled_make_conf_composes_use_across_axes(
     # fornece: aqui o make.conf é sourceado isolado, sem perfil algum. `acl` era a
     # sentinela original e passou a falhar no dia em que foi removida da receita
     # por já vir do perfil — o teste acusou "a curadoria sumiu" quando nada tinha
-    # sumido. Estas quatro vivem nos grupos de base/portage/make.conf.
-    assert {"wayland", "vulkan", "btrfs", "cryptsetup"} <= flags, "a curadoria da base sumiu"
+    # sumido. Estas vivem nos grupos de base/portage/make.conf (wayland e vulkan
+    # passaram ao estágio desktop em 2026-09-26, D24).
+    assert {"btrfs", "cryptsetup"} <= flags, "a curadoria da base sumiu"
     assert expect <= flags
     assert not (reject & flags)
 

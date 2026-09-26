@@ -3,7 +3,12 @@
 # app-misc/fastfetch replaced app-misc/neofetch, whose upstream was ARCHIVED in
 # 2024 (decided 2026-09-09).
 #
+# sys-apps/bleachbit moved here from @sandbox on 2026-09-26 (author's decision): the
+# cleaner belongs in every image, console included. Its ebuild needs gtk+:3
+# unconditionally, so it deliberately brings GTK3 back into the minimal image.
+#
 # LEAF set: a flat list of atoms (2026-09-09). See kits/core/base for the layering contract.
 
 app-misc/fastfetch
+sys-apps/bleachbit
 sys-block/zram-init

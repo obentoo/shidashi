@@ -42,12 +42,7 @@ media-gfx/imagemagick -openmp fftw fontconfig jbig jpeg jpeg2k lcms opencl opene
 media-gfx/qrencode png
 
 # Image
-media-libs/tiff jpeg          # (F37) required by dev-python/pillow[tiff], which
-                              # arrives through systemd[policykit] -> polkit ->
-                              # glib-utils -> docutils -> pillow
-media-libs/libwebp gif
 media-libs/freeimage jpeg jpeg2k png webp
-media-libs/libpng -apng
 media-libs/opencv contrib contribdnn features2d
 
 # GUI toolkits

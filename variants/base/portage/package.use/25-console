@@ -1,0 +1,18 @@
+# variants/base/portage/package.use/25-console — what forcing X off in the base
+# costs (D24, 2026-09-26). The base sets USE="-X" so that a console image stays
+# console even where an ebuild defaults X on; each line below is a REQUIRED_USE
+# or dependency the resolver reported once that negative was in place, found one
+# at a time (Portage reports one per run), with the reason next to it.
+
+# imlib2 defaults `shm` on, and REQUIRED_USE is `shm? ( X )`: shared memory with
+# the X server. Meaningless without one.
+media-libs/imlib2 -shm
+
+# sys-apps/bleachbit (@misc) needs gtk+:3 unconditionally, and gtk+ requires
+# "|| ( X wayland )". The X backend: its Wayland one needs libepoxy[egl], which
+# drags mesa and LLVM into the console image. X client libraries only, no server.
+x11-libs/gtk+:3 X
+# gtk+[X] requires the X side of its drawing stack.
+media-libs/libepoxy X
+x11-libs/cairo X
+media-libs/libglvnd X

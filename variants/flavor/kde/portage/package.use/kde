@@ -14,10 +14,8 @@ kde-apps/okular epub markdown
 kde-frameworks/kconfig qml
 kde-plasma/kwin lock
 # Upstream split kwin: kde-plasma/kwin is the Wayland compositor and
-# kde-plasma/kwin-x11 the X11 one, each with its own `lock` flag.
-# kde-plasma/plasma-meta[X] pulls kwin-x11, and step12-kde-resolve asked for the
-# flag there too (lab, 2026-09-12).
-kde-plasma/kwin-x11 lock
+# kde-plasma/kwin-x11 the X11 one. kwin-x11 is no longer pulled: plasma-meta
+# has no X since D24 (see plasma-x), so its `lock` line was dropped (2026-09-26).
 kde-frameworks/sonnet qml
 kde-frameworks/kfilemetadata taglib
 kde-plasma/powerdevil brightness-control

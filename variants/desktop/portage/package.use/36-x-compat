@@ -1,0 +1,42 @@
+# variants/desktop/portage/package.use/36-x-compat — the X pieces a Wayland-only
+# desktop still needs (D24, 2026-09-26). The base forces USE="-X"; there is no X
+# session anywhere. Each line below is a library or client that has no Wayland-
+# only build, found one at a time as the resolver reported it, with the reason.
+
+# virtual/opengl-8 RDEPENDs on media-libs/libglvnd[X] -- the GLX dispatch -- for
+# EVERY OpenGL consumer. So long as anything uses `opengl`, libglvnd carries its
+# X client side (libX11, libXext). Libraries only: no server, no session.
+media-libs/libglvnd X
+
+# vlc-4 builds its VA-API output only against X: REQUIRED_USE "vaapi? ( X )".
+# Off for vlc alone -- it still decodes in hardware through ffmpeg's VA-API.
+media-video/vlc -vaapi
+
+# --- X-only applications (author's decision, 2026-09-26): enable X on each one's
+# toolkit rather than drop the app. Still no X session and no Xorg -- the apps run
+# under XWayland, which the compositors already pull in.
+
+# Plasma: libplasma and KWin's XWayland support require the X side of Qt, of
+# KWindowSystem and of xkbcommon. OBS Studio needs qtbase[X] as well.
+dev-qt/qtbase X
+kde-frameworks/kwindowsystem X
+x11-libs/libxkbcommon X
+
+# Audacity (wxWidgets): wxGTK[X] -> gtk+[X] -> cairo[X], libepoxy[X].
+# Wine -> gst-plugins-nvcodec -> nvidia-drivers also needs gtk+[X].
+x11-libs/wxGTK X
+x11-libs/gtk+ X
+x11-libs/cairo X
+media-libs/libepoxy X
+
+# VirtualBox: its frontend and its SDL dependency are X-only.
+app-emulation/virtualbox X
+media-libs/libsdl2 X
+
+# Consumers that depend on the toolkits above with [X=]: once the toolkit has X,
+# they must match it (mkvtoolnix -> qtmultimedia; inkscape -> gtkmm -> cairomm;
+# gimp -> gegl[sdl] -> libsdl-1.2).
+dev-qt/qtmultimedia X
+dev-cpp/gtkmm X
+dev-cpp/cairomm X
+media-libs/libsdl X

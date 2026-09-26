@@ -1,0 +1,11 @@
+# variants/desktop/portage/package.use/34-qt-shared — Qt configuration every
+# graphical flavor needs, not only kde (2026-09-26).
+#
+# Shared kits pull Qt into ANY graphical image (qbittorrent, sqlitebrowser,
+# obs-studio, virtualbox, ...). dev-qt/qt5compat declares qtbase[icu=], and `=`
+# means equality: with icu set on qt5compat but not on qtbase, gnome could not
+# resolve at all ("no ebuilds built with USE flags to satisfy
+# ~dev-qt/qtbase-6.11.2:6[icu=]"). The pair used to live in the base, moved to
+# flavor/kde in ecca591 -- which fixed kde and broke every other graphical flavor.
+dev-qt/qtbase icu
+dev-qt/qt5compat icu

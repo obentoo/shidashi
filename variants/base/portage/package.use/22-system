@@ -75,3 +75,11 @@ sys-cluster/minikube libvirt
 x11-apps/xinit twm
 x11-base/xorg-server xvfb
 x11-base/xwayland libei
+
+# app-portage/bentoolkit defaults `browser` ON: the chromedp backend of its
+# "script" version parser, which drives an installed Chrome/Chromium. In the
+# base that meant compiling www-client/chromium -- and nodejs, gn, esbuild,
+# simdjson -- into a console image, for one maintainer feature (measured
+# 2026-09-26: 9 packages, chromium the longest build in Gentoo). Off here; a
+# graphical layer that ships a browser can turn it back on.
+app-portage/bentoolkit -browser

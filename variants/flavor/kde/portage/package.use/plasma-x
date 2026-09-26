@@ -1,0 +1,25 @@
+# Plasma with X (author's decision, 2026-09-26): the base forces USE="-X" and
+# Plasma has no Wayland-only build. Still no X session: KWin runs Wayland and
+# the X side serves XWayland clients. Kept in the kde flavor so that the cascade
+# below does not reach the other desktops.
+
+# plasma-workspace: REQUIRED_USE "fontconfig? ( X )". NOT on plasma-meta: its X
+# pulls kde-plasma/kwin-x11, the X11 session itself. Its [X?] deps only force X
+# when the meta has it, so the pieces take X here without it.
+kde-plasma/plasma-workspace X
+kde-plasma/kdesu-gui X
+kde-plasma/kglobalacceld X
+
+# The cascade of the Plasma pieces above, each asked by its [X] dependency:
+# plasma-workspace -> mesa[X]; kdesu-gui -> dbus[X];
+# breeze-plymouth -> plymouth[pango] -> pango[X]; kdenlive -> ffmpeg[X], and
+# ffmpeg[X,vaapi] -> libva[X].
+media-libs/mesa X
+sys-apps/dbus X
+x11-libs/pango X
+media-video/ffmpeg X
+media-libs/libva X
+
+# SDDM's greeter: with no compositor chosen, sddm-gentoo-config runs it on
+# x11-base/xorg-server. `kwin` runs it on `kwin_wayland --drm` instead.
+gui-apps/sddm-gentoo-config kwin

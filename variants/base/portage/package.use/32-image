@@ -1,0 +1,10 @@
+# variants/base/portage/package.use/32-image — image libraries the CONSOLE image
+# uses (pillow, imagemagick), kept in the base when the graphical per-package
+# configuration moved to variants/desktop/ (D24, 2026-09-26). They were in
+# 32-media, and moving that file whole broke the base: pillow[tiff] needs
+# tiff[jpeg], and that line had gone to the desktop stage with the rest.
+media-libs/tiff jpeg          # (F37) required by dev-python/pillow[tiff], which
+                              # arrives through systemd[policykit] -> polkit ->
+                              # glib-utils -> docutils -> pillow
+media-libs/libwebp gif
+media-libs/libpng -apng
