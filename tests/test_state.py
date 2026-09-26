@@ -20,7 +20,7 @@ from typing import Any
 
 import pytest
 
-from shidashi.recipe import Phase, ResolvedRecipe, ResolvedUse, UseBreak
+from shidashi.recipe import Phase, ResolvedRecipe, UseBreak
 from tests._pending import try_import
 
 EmergePlanEntry: Any = try_import("shidashi.state", "EmergePlanEntry")
@@ -45,7 +45,6 @@ def _recipe(*, flavor: str = "minimal", sets: tuple[str, ...] = ()) -> ResolvedR
         cpu_flags_x86=("sse4_2",),
         tier=1,
         runnable_on_build_host=True,
-        use=ResolvedUse(enabled=(), disabled=()),
         sets=sets,
         phases=(Phase(name="rebuild"), Phase(name="graphics")),
         portage_layers=("base", "arch/v3", "flavor/minimal", "init/systemd"),

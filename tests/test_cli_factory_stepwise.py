@@ -25,60 +25,17 @@ from typer.testing import CliRunner
 from shidashi import cli
 from shidashi.cli import app
 from tests._pending import try_import
+from tests._variants_tree import write_variants
 
 FactoryError: Any = try_import("shidashi.factory", "FactoryError")
 FactoryResult: Any = try_import("shidashi.factory", "FactoryResult")
 
 runner = CliRunner()
 
-_BASE_YAML = """\
-profile_base: default/linux/amd64/23.0/no-multilib
-sets:
-  - base
-  - extra-system
-phases:
-  - name: rebuild
-  - name: graphics
-  - name: apps
-"""
-_ARCH_V3 = """\
-arch: v3
-tier: 1
-runnable_on_build_host: true
-"""
-
-# The compile knobs live in the arch layer's make.conf, not in recipe.yaml --
-# load_arch() reads them from here (single source of truth).
-_ARCH_V3_MAKE_CONF = """\
-COMMON_FLAGS="-O2 -march=x86-64-v3 -pipe"
-GOAMD64="v3"
-RUSTFLAGS="-C target-cpu=x86-64-v3"
-CPU_FLAGS_X86="sse4_2 avx2"
-"""
-_FLAVOR_MINIMAL = "flavor: minimal\nsets: []\noverride_ok: true\n"
-_INIT_SYSTEMD = "init: systemd\nprofile_suffix: systemd\nuse_prefer:\n  add: [systemd]\n"
-
-_RECIPES = {
-    ("flavor", "minimal"): _FLAVOR_MINIMAL,
-    ("arch", "v3"): _ARCH_V3,
-    ("init", "systemd"): _INIT_SYSTEMD,
-}
-
-
 @pytest.fixture
 def variants_tree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    root = tmp_path / "variants"
-    base = root / "base" / "base.yaml"
-    base.parent.mkdir(parents=True, exist_ok=True)
-    base.write_text(_BASE_YAML, encoding="utf-8")
-    for (axis, name), text in _RECIPES.items():
-        recipe = root / axis / name / "recipe.yaml"
-        recipe.parent.mkdir(parents=True, exist_ok=True)
-        recipe.write_text(text, encoding="utf-8")
-        if axis == "arch":
-            make_conf = recipe.parent / "portage" / "make.conf"
-            make_conf.parent.mkdir(parents=True, exist_ok=True)
-            make_conf.write_text(_ARCH_V3_MAKE_CONF, encoding="utf-8")
+    """The shared stage-format tree (tests/_variants_tree.py), pointed at by the env."""
+    root = write_variants(tmp_path / "variants")
     monkeypatch.setenv("SHIDASHI_VARIANTS_DIR", str(root))
     return root
 

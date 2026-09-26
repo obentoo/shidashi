@@ -1,8 +1,7 @@
 # variants/init/systemd/recipe.yaml — systemd init (OVERVIEW §8/§14).
 # profile_suffix is a BARE TOKEN with no leading slash -- merge() adds the
 # slash, producing default/linux/amd64/23.0/no-multilib/systemd.
-# use_prefer.add: [systemd] -- enables the native init (seat = systemd-logind).
+# USE: portage/make.conf (the SYSTEMD group). The former `use_prefer.add:
+# [systemd]` only restated it and never reached the build.
 init: systemd
 profile_suffix: systemd
-use_prefer:
-  add:  [systemd]

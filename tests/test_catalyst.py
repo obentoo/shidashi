@@ -16,14 +16,14 @@ import pytest
 import shidashi.catalyst as cat
 from shidashi.catalyst import CatalystError, build_stage3_catalyst, render_specs
 from shidashi.recipe import ResolvedRecipe, merge
-from tests.test_merge import make_arch, make_base, make_flavor, make_init
+from tests.test_merge import make_arch, make_base, make_chain, make_init
 
 
 def _resolved(*, arch: str = "znver5", seed_source: str = "catalyst") -> ResolvedRecipe:
     return merge(
         make_base(),
         make_arch(arch=arch, seed_source=seed_source),
-        make_flavor(),
+        make_chain(),
         make_init(),
     )
 

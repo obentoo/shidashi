@@ -24,7 +24,7 @@ from typing import Any
 import pytest
 
 from shidashi import factory
-from shidashi.recipe import Phase, ResolvedRecipe, ResolvedUse
+from shidashi.recipe import Phase, ResolvedRecipe
 from tests._pending import try_import
 
 Factory: Any = try_import("shidashi.factory", "Factory")
@@ -52,7 +52,6 @@ def _recipe(*, flavor: str = "minimal") -> ResolvedRecipe:
         cpu_flags_x86=("sse4_2",),
         tier=1,
         runnable_on_build_host=True,
-        use=ResolvedUse(enabled=(), disabled=()),
         sets=(),
         phases=(Phase(name="rebuild"), Phase(name="graphics")),
         portage_layers=("base", "arch/v3", "flavor/minimal", "init/systemd"),

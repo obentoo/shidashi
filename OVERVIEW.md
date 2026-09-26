@@ -443,16 +443,17 @@ stages/                          # raiz do projeto (este repo)
 │   │   ├── graphics/ services/ internet/ media/ dev/ virt/
 │   │   ├── groups/              #   extra-desktop extra-dev extra-media extra-virt
 │   │   └── desktops/            #   kde gnome xfce wm
-│   ├── base/                    # comum a tudo
+│   ├── base/                    # ESTÁGIO 1 — o núcleo; a única reconstrução completa (D24)
 │   │   ├── base.yaml
 │   │   └── portage/             # /etc/portage base (CORE/FEATURES/DISTDIR/PKGDIR…)
+│   ├── minimal/minimal.yaml     # ESTÁGIO 2 — after: base; imagem entregue (console)
+│   ├── desktop/desktop.yaml     # ESTÁGIO 3 — after: minimal; infra gráfica, sem apps
 │   ├── arch/
 │   │   ├── v3/{recipe.yaml, portage/}
 │   │   ├── znver5/{recipe.yaml, portage/}
 │   │   └── arrowlake/{recipe.yaml, portage/}
 │   ├── flavor/
-│   │   ├── minimal/{recipe.yaml, portage/}
-│   │   ├── kde/{recipe.yaml, portage/}
+│   │   ├── kde/{recipe.yaml, portage/}      # ESTÁGIO 4 — after: desktop; imagem entregue
 │   │   ├── gnome/{recipe.yaml, portage/}
 │   │   ├── xfce/{recipe.yaml, portage/}
 │   │   └── wm/{recipe.yaml, portage/}     # Wayland-only: Hyprland, Sway, niri

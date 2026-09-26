@@ -1,17 +1,19 @@
 # variants/flavor/xfce/recipe.yaml — XFCE (OVERVIEW §8).
-# Characteristic USE: gtk -qt6 -gnome.
+# A stage of the chain, after desktop (D24): base ─► minimal ─► desktop ─► xfce.
 # sets: [xfce] -- a placeholder set, to be curated via pretend-resolve (§18.7).
-# override_ok: false -- XFCE is curated and authoritative (§14).
-flavor: xfce
-use_prefer:
-  add:  [gtk]
-  drop: [qt6, gnome]
+#
+# USE -- NOT YET APPLIED. This flavor has no portage/make.conf, and its former
+# `use_prefer` never reached the build (it was only displayed by `recipe show`),
+# so an image built today would miss its characteristic USE. The intent, to be
+# written into portage/make.conf in step 3 of D24, with a measurement:
+#   add:  [gtk]
+#   drop: [qt6, gnome]
+stage: xfce
+after: desktop
+ships: true
 sets:
-  - extra-system
+  - xfce
   - extra-desktop
   - extra-media
   - extra-dev
   - extra-virt
-  - gpu
-  - xfce
-override_ok: false

@@ -1,21 +1,19 @@
-# variants/flavor/wm/recipe.yaml — Wayland-only window managers (OVERVIEW §8).
-# The Wayland showcase: Hyprland (default), Sway and niri -- no X11 dependency,
-# consistent with a wayland base plus seatd/elogind (the seat comes from the
-# init fragment).
-# Characteristic USE: wayland -qt6 -gnome -kde.
+# variants/flavor/wm/recipe.yaml — Wayland-only window managers (OVERVIEW §8): Hyprland (default), Sway, niri.
+# A stage of the chain, after desktop (D24): base ─► minimal ─► desktop ─► wm.
 # sets: [wm] -- a placeholder set, to be curated via pretend-resolve (§18.7).
-# override_ok: true -- an open flavor: the user swaps compositor or USE without
-# forking.
-flavor: wm
-use_prefer:
-  add:  [wayland]
-  drop: [qt6, gnome, kde]
+#
+# USE -- NOT YET APPLIED. This flavor has no portage/make.conf, and its former
+# `use_prefer` never reached the build (it was only displayed by `recipe show`),
+# so an image built today would miss its characteristic USE. The intent, to be
+# written into portage/make.conf in step 3 of D24, with a measurement:
+#   add:  [wayland]
+#   drop: [qt6, gnome, kde]
+stage: wm
+after: desktop
+ships: true
 sets:
-  - extra-system
+  - wm
   - extra-desktop
   - extra-media
   - extra-dev
   - extra-virt
-  - gpu
-  - wm
-override_ok: true

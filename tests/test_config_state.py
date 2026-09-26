@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 from shidashi import config
-from shidashi.recipe import Phase, ResolvedRecipe, ResolvedUse
+from shidashi.recipe import Phase, ResolvedRecipe
 
 
 def _recipe(*, flavor: str = "minimal") -> ResolvedRecipe:
@@ -30,7 +30,6 @@ def _recipe(*, flavor: str = "minimal") -> ResolvedRecipe:
         cpu_flags_x86=("sse4_2",),
         tier=1,
         runnable_on_build_host=True,
-        use=ResolvedUse(enabled=(), disabled=()),
         sets=(),
         phases=(Phase(name="rebuild"),),
         portage_layers=("base", "arch/v3", "flavor/minimal", "init/systemd"),

@@ -10,6 +10,10 @@ lida a cada chamada para que testes possam fazer ``monkeypatch``.
 
 import os
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from shidashi.recipe import ResolvedRecipe
 
 from shidashi.recipe import ResolvedRecipe
 
@@ -87,6 +91,49 @@ def recipe_path(axis: str, name: str) -> Path:
 def base_path() -> Path:
     """Devolve ``variants_dir()/"base"/"base.yaml"`` (R1.3)."""
     return variants_dir() / "base" / "base.yaml"
+
+
+def stage_path(name: str) -> Path:
+    """The YAML of a stage (D24): where each kind of stage lives.
+
+    - ``base`` → ``variants/base/base.yaml``;
+    - ``minimal``, ``desktop`` → ``variants/<name>/<name>.yaml``;
+    - a flavor → ``variants/flavor/<name>/recipe.yaml``.
+
+    An unknown name raises :class:`UnknownAxisError` listing the targets.
+    """
+    if name == "base":
+        return base_path()
+    core = variants_dir() / name / f"{name}.yaml"
+    if name in ("minimal", "desktop") and core.is_file():
+        return core
+    flavor = variants_dir() / "flavor" / name / "recipe.yaml"
+    if flavor.is_file():
+        return flavor
+    raise UnknownAxisError("target", name, target_names())
+
+
+def target_names() -> list[str]:
+    """The images one can build: ``minimal`` and every flavor, in chain order."""
+    return ["minimal", *available_names("flavor")]
+
+
+def load_recipe(arch: str, target: str, init: str) -> ResolvedRecipe:
+    """Load the whole chain for ``target`` and merge it with ``arch`` and ``init``.
+
+    The one entry point for "give me the recipe of this image": CLI, lab sync
+    and tests all go through it, so the chain is walked in exactly one place.
+    """
+    from shidashi.recipe import load_arch, load_base, load_chain, load_init, merge
+
+    if target not in target_names():
+        raise UnknownAxisError("target", target, target_names())
+    return merge(
+        load_base(base_path()),
+        load_arch(recipe_path("arch", arch)),
+        load_chain(target, stage_path),
+        load_init(recipe_path("init", init)),
+    )
 
 
 def kits_dir() -> Path:

@@ -9,14 +9,12 @@ frozen (``extra="forbid"``) e fundem-se coerentemente.
 Cobertura:
 * ``base`` parseia; o make.conf de base teve fatorados os flags de compilador
   (sem ``COMMON_FLAGS``), o grupo ``SYSTEMD=`` (movido para init) e ``DESKTOPS``
-  fica vazio; toda phase de base tem ``use_break == ()`` e existe a phase
-  ``desktop``.
+  fica vazio; a base carrega os três cortes do tronco.
 * os três ``arch`` parseiam com flags coerentes (arrowlake sem avx512, znver5
   com avx512, v3 sem avx512).
-* ``kde`` parseia; ``merge(base, v3, kde, systemd)`` habilita ⊇ {qt6, kde,
-  wayland} e sets ⊇ {kde}.
-* ``minimal``/``gnome``/``xfce``/``wm`` parseiam; ``merge(base, v3, minimal,
-  systemd)`` OMITE a phase ``desktop``.
+* os estágios formam a cadeia ``base → minimal → desktop → <flavor>`` (D24);
+  o USE do kde está no make.conf montado, não num campo decorativo.
+* ``minimal`` é ``base → minimal``, sem desktop; cada flavor passa pelo desktop.
 * ``systemd``/``openrc`` parseiam; o profile de systemd termina em ``/systemd`` e
   o de openrc não; o merge openrc prepende a phase ``seat``.
 """
@@ -31,13 +29,13 @@ from shidashi.phases import phase_target
 from shidashi.recipe import (
     ArchFragment,
     BaseFragment,
-    FlavorFragment,
     InitFragment,
+    ResolvedRecipe,
+    StageFragment,
     load_arch,
     load_base,
-    load_flavor,
     load_init,
-    merge,
+    load_stage,
 )
 from shidashi.resolve import apply_portage, kit_index
 
@@ -62,8 +60,12 @@ def _load_arch(name: str) -> ArchFragment:
     return load_arch(config.recipe_path("arch", name))
 
 
-def _load_flavor(name: str) -> FlavorFragment:
-    return load_flavor(config.recipe_path("flavor", name))
+def _load_stage(name: str) -> StageFragment:
+    return load_stage(config.stage_path(name))
+
+
+def _recipe(target: str, init: str = "systemd", arch: str = "v3") -> ResolvedRecipe:
+    return config.load_recipe(arch, target, init)
 
 
 def _load_init(name: str) -> InitFragment:
@@ -109,12 +111,13 @@ def test_base_declares_only_trunk_cycle_breaks() -> None:
     escrito à mão no laboratório.
     """
     base = _load_base()
-    assert base.phases, "base deve declarar phases"
-    breaks = {p.name: p.use_break for p in base.phases if p.use_break}
-    assert set(breaks) == {"rebuild"}, f"os cortes do tronco vivem na phase rebuild: {set(breaks)}"
-    atoms = {b.atom for b in breaks["rebuild"]}
+    atoms = {b.atom for b in base.use_break}
     assert atoms == {"dev-lang/python", "dev-python/pillow", "media-video/pipewire"}, atoms
-    assert all(b.enable is False for b in breaks["rebuild"])
+    assert all(b.enable is False for b in base.use_break)
+    for name in config.target_names():
+        stage = _load_stage(name)
+        assert not stage.use_break, f"{name} declares cuts of its own: {stage.use_break}"
+
 
 
 @pytest.mark.parametrize("flavor", ["minimal", "kde"])
@@ -127,22 +130,27 @@ def test_trunk_cuts_ride_the_phase_that_builds_the_trunk(flavor: str) -> None:
     nunca eram aplicados. O lab não via: o sync junta os cortes de todas as
     phases num ficheiro só.
     """
-    recipe = merge(
-        _load_base(),
-        _load_arch("v3"),
-        _load_flavor(flavor),
-        load_init(config.recipe_path("init", "systemd")),
-    )
-    trunk = [p for p in recipe.phases if phase_target(p, recipe) == ("@world",)]
+    recipe = _recipe(flavor)
+    trunk = [p for p in recipe.phases if p.emptytree]
     assert len(trunk) == 1, [p.name for p in trunk]
     atoms = {b.atom for b in trunk[0].use_break}
     assert {"dev-lang/python", "dev-python/pillow", "media-video/pipewire"} <= atoms, atoms
 
 
-def test_base_declares_the_desktop_phase_named_exactly_desktop() -> None:
-    # o merge omite a phase de nome literal "desktop"; ela PRECISA existir na base
-    base = _load_base()
-    assert "desktop" in {p.name for p in base.phases}
+@pytest.mark.parametrize("flavor", ["kde", "gnome", "xfce", "wm"])
+def test_every_graphical_flavor_is_built_on_desktop_on_minimal(flavor: str) -> None:
+    """D24: base ─► minimal ─► desktop ─► flavor, and only the base rebuilds."""
+    recipe = _recipe(flavor)
+    assert recipe.stages == ("base", "minimal", "desktop", flavor)
+    assert [p.name for p in recipe.phases if p.ships] == ["minimal", "flavor"]
+    assert [p.name for p in recipe.phases if p.emptytree] == ["base"]
+
+
+def test_minimal_is_the_base_plus_the_console_kits() -> None:
+    recipe = _recipe("minimal")
+    assert recipe.stages == ("base", "minimal")
+    assert "desktop" not in {p.name for p in recipe.phases}
+    assert recipe.phases[-1].ships
 
 
 def test_base_make_conf_has_no_compiler_flags() -> None:
@@ -281,44 +289,43 @@ def test_arch_make_conf_mirrors_recipe_flags() -> None:
 # --- flavor kde: factored, merge habilita a camada KDE -----------------------
 
 
-def test_kde_flavor_parses_and_is_curated() -> None:
-    kde = _load_flavor("kde")
-    assert kde.flavor == "kde"
-    assert kde.override_ok is False  # curado/autoritativo
+def test_kde_flavor_parses_as_a_shipped_stage() -> None:
+    kde = _load_stage("kde")
+    assert (kde.stage, kde.after, kde.ships) == ("kde", "desktop", True)
     assert "kde" in kde.sets
 
 
-def test_merge_kde_v3_systemd_enables_kde_layer_and_set() -> None:
-    resolved = merge(_load_base(), _load_arch("v3"), _load_flavor("kde"), _load_init("systemd"))
-    assert {"qt6", "kde", "wayland"} <= set(resolved.use.enabled)
-    assert {"kde"} <= set(resolved.sets)
+def test_kde_use_lives_in_the_assembled_make_conf(tmp_path: Path) -> None:
+    """The USE of an image is its layers' make.conf -- there is no other source.
+
+    Until 2026-09-26 a `use_prefer` field claimed {qt6, kde, wayland} for kde and
+    this test checked THAT; the field was only ever displayed by `recipe show`
+    and never reached the build.
+    """
+    text = (_assemble(tmp_path, "v3", "kde", "systemd") / "make.conf").read_text(encoding="utf-8")
+    desktops = next(ln for ln in text.splitlines() if ln.startswith("DESKTOPS="))
+    assert {"kde", "qt6"} <= set(desktops.split('"')[1].split())
+    assert 'USE="${USE} ${DESKTOPS}"' in text
 
 
 # --- flavors minimal/gnome/xfce/wm: parseiam; minimal omite desktop ----------
 
 
-@pytest.mark.parametrize("name", ["minimal", "gnome", "xfce", "wm"])
-def test_other_flavors_parse(name: str) -> None:
-    flavor = _load_flavor(name)
-    assert flavor.flavor == name
+@pytest.mark.parametrize("name", ["minimal", "desktop", "gnome", "xfce", "wm"])
+def test_every_stage_parses(name: str) -> None:
+    assert _load_stage(name).stage == name
 
 
-def test_minimal_and_wm_are_free_flavors() -> None:
-    assert _load_flavor("minimal").override_ok is True
-    assert _load_flavor("wm").override_ok is True
-
-
-def test_gnome_and_xfce_are_curated_flavors() -> None:
-    assert _load_flavor("gnome").override_ok is False
-    assert _load_flavor("xfce").override_ok is False
-
-
-def test_merge_minimal_omits_desktop_phase() -> None:
-    resolved = merge(_load_base(), _load_arch("v3"), _load_flavor("minimal"), _load_init("systemd"))
-    names = [p.name for p in resolved.phases]
-    assert "desktop" not in names
-    # as demais phases de base permanecem
-    assert "rebuild" in names and "apps" in names
+def test_no_variant_yaml_still_carries_use_prefer() -> None:
+    """use_prefer never reached the build (D24); the models now forbid it, and
+    no shipped YAML may carry it as a live key."""
+    live = [
+        str(p.relative_to(_VARIANTS_DIR))
+        for p in _VARIANTS_DIR.rglob("*.yaml")
+        if any(ln.startswith(("use_prefer:", "override_ok:"))
+               for ln in p.read_text(encoding="utf-8").splitlines())
+    ]
+    assert live == []
 
 
 # --- init systemd/openrc: profile e phase de seat ----------------------------
@@ -330,19 +337,19 @@ def test_both_inits_parse() -> None:
 
 
 def test_systemd_merge_profile_ends_with_systemd_suffix() -> None:
-    resolved = merge(_load_base(), _load_arch("v3"), _load_flavor("kde"), _load_init("systemd"))
+    resolved = _recipe("kde", "systemd")
     assert resolved.profile.endswith("/systemd")
     assert resolved.profile == "default/linux/amd64/23.0/no-multilib/systemd"
 
 
 def test_openrc_merge_profile_has_no_systemd_suffix() -> None:
-    resolved = merge(_load_base(), _load_arch("v3"), _load_flavor("kde"), _load_init("openrc"))
+    resolved = _recipe("kde", "openrc")
     assert not resolved.profile.endswith("/systemd")
     assert resolved.profile == "default/linux/amd64/23.0/no-multilib"
 
 
 def test_openrc_merge_prepends_seat_phase() -> None:
-    resolved = merge(_load_base(), _load_arch("v3"), _load_flavor("minimal"), _load_init("openrc"))
+    resolved = _recipe("minimal", "openrc")
     assert resolved.phases[0].name == "seat"
 
 
@@ -350,7 +357,7 @@ def test_openrc_merge_prepends_seat_phase() -> None:
 
 
 def _assemble(tmp_path: Path, arch: str, flavor: str, init: str) -> Path:
-    resolved = merge(_load_base(), _load_arch(arch), _load_flavor(flavor), _load_init(init))
+    resolved = config.load_recipe(arch, flavor, init)
     rootfs = tmp_path / f"{arch}-{flavor}-{init}"
     (rootfs / "etc").mkdir(parents=True)
     apply_portage(rootfs, resolved, variants_dir=_VARIANTS_DIR)
@@ -481,12 +488,7 @@ def test_every_set_reference_resolves_to_a_shipped_file() -> None:
 
 @pytest.mark.parametrize("flavor", ["minimal", "kde", "gnome", "xfce", "wm"])
 def test_every_declared_set_is_shipped(flavor: str) -> None:
-    recipe = merge(
-        load_base(config.base_path()),
-        load_arch(config.recipe_path("arch", "v3")),
-        load_flavor(config.recipe_path("flavor", flavor)),
-        load_init(config.recipe_path("init", "systemd")),
-    )
+    recipe = _recipe(flavor)
     shipped = _shipped_sets()
     for name in recipe.sets:
         assert name in shipped, f"{flavor}: set {name!r} declarado mas não embarcado"
@@ -495,12 +497,7 @@ def test_every_declared_set_is_shipped(flavor: str) -> None:
 @pytest.mark.parametrize("flavor", ["minimal", "kde", "gnome", "xfce", "wm"])
 def test_every_phase_target_is_reachable(flavor: str) -> None:
     """Nenhuma fase pode apontar para um ``@set`` que não será instalado."""
-    recipe = merge(
-        load_base(config.base_path()),
-        load_arch(config.recipe_path("arch", "v3")),
-        load_flavor(config.recipe_path("flavor", flavor)),
-        load_init(config.recipe_path("init", "systemd")),
-    )
+    recipe = _recipe(flavor)
     shipped = _shipped_sets()
     for phase in recipe.phases:
         for target in phase_target(phase, recipe):
@@ -540,12 +537,7 @@ def test_no_orphan_sets() -> None:
 
     reachable: set[str] = set()
     for flavor in ("minimal", "kde", "gnome", "xfce", "wm"):
-        recipe = merge(
-            load_base(config.base_path()),
-            load_arch(config.recipe_path("arch", "v3")),
-            load_flavor(config.recipe_path("flavor", flavor)),
-            load_init(config.recipe_path("init", "systemd")),
-        )
+        recipe = _recipe(flavor)
         pending = list(recipe.sets)
         while pending:
             name = pending.pop()

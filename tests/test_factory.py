@@ -27,7 +27,7 @@ from typing import Any
 import pytest
 
 from shidashi import factory, phases
-from shidashi.recipe import Phase, ResolvedRecipe, ResolvedUse, SeedSource
+from shidashi.recipe import Phase, ResolvedRecipe, SeedSource
 from tests._pending import try_import
 
 Factory: Any = try_import("shidashi.factory", "Factory")
@@ -58,7 +58,6 @@ def _recipe(
         cpu_flags_x86=("sse4_2",),
         tier=1,
         runnable_on_build_host=True,
-        use=ResolvedUse(enabled=(), disabled=()),
         sets=sets,
         phases=phases_,
         portage_layers=("base", "arch/v3", "flavor/kde", "init/systemd"),

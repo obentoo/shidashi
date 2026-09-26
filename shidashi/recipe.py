@@ -1,28 +1,50 @@
 """Modelos de receita do Shidashi e loaders YAML→modelo.
 
-Este módulo define os fragmentos de receita (base, arch, flavor, init) e os
-tipos resolvidos, todos como modelos pydantic *frozen* com ``extra="forbid"``.
-Mantém-se livre de qualquer acoplamento com Portage: não importa
-``portage_api`` nem ``config`` (resolução de caminhos é de outro módulo).
+A receita de uma imagem é uma CADEIA DE ESTÁGIOS (D24)::
+
+    base ─► minimal ─► desktop ─► <flavor>
+
+cada estágio declarando quem vem antes dele (``after:``), mais dois eixos
+ortogonais: ``arch`` (knobs de CPU) e ``init`` (profile e seat). Todos os
+fragmentos são modelos pydantic *frozen* com ``extra="forbid"``. O módulo
+mantém-se livre de acoplamento com Portage e com ``config``: quem sabe onde os
+arquivos moram passa um ``locate`` para :func:`load_chain`.
+
+O USE não vive aqui. Até 2026-09-26 os fragmentos traziam ``use_prefer``, que
+só era EXIBIDO (``recipe show``) e nunca chegava ao build; o USE de verdade
+sempre veio do ``make.conf`` de cada camada, e agora essa é a única fonte.
 """
 
 import re
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict
 
-type UseToken = str  # uma USE flag, opcionalmente negada: "qt6", "-gtk"
 type SeedSource = Literal["download", "catalyst"]  # fonte do stage3 semente (story 005)
+type UpdateMode = Literal["emptytree", "newuse"]
 
 _STRICT = ConfigDict(frozen=True, extra="forbid")
 
+#: The stage every chain starts from, and the only one without ``after``.
+BASE_STAGE = "base"
 
-class UsePrefer(BaseModel):
-    model_config = _STRICT
-    add: tuple[UseToken, ...] = ()
-    drop: tuple[UseToken, ...] = ()
+#: Stages that live at ``variants/<name>/`` and give their phase their own
+#: name. Every other stage is a flavor, at ``variants/flavor/<name>/``, and its
+#: phase is called ``flavor`` -- one phase name however many flavors exist.
+CORE_STAGES = ("base", "minimal", "desktop")
+
+
+def stage_layer(name: str) -> str:
+    """The portage-layer identity of a stage: ``minimal`` or ``flavor/kde``. Pure."""
+    return name if name in CORE_STAGES else f"flavor/{name}"
+
+
+def stage_phase_name(name: str) -> str:
+    """The phase a stage runs as: its own name, or ``flavor`` for a flavor. Pure."""
+    return name if name in CORE_STAGES else "flavor"
 
 
 class UseBreak(BaseModel):
@@ -41,27 +63,57 @@ class UseBreak(BaseModel):
 
 
 class Phase(BaseModel):
-    """Uma fase de build e o que ela instala.
+    """Uma fase de build: o que ela instala e sob qual configuração.
 
-    ``sets`` é a fonte de verdade da relação fase→set. Antes ela era adivinhada
-    pelo NOME da fase em ``phase_target`` (``apps`` → ``@bentoo-apps`` literal),
-    o que amarrava o nome de uma fase ao nome de um set e deixava qualquer set
-    novo órfão: ele existia em ``variants/``, era copiado para o rootfs e nunca
-    era instalado, porque nenhuma fase o pedia.
+    Uma fase por estágio da cadeia (mais as que o ``init`` antepõe, como
+    ``seat``). ``sets`` é a relação fase→set, declarada pelo estágio.
+
+    - ``emptytree``: só a base -- a única reconstrução completa.
+    - ``ships``: uma imagem entregue termina aqui (``minimal`` e cada flavor);
+      o pipeline assenta os cortes de ciclo e grava o fork-point já assentado.
+    - ``layers``: as camadas de portage EM VIGOR nesta fase, acumuladas do
+      início da cadeia até o seu estágio (mais ``arch`` e ``init``). É isto
+      que deixa o USE gráfico entrar no meio do caminho, no estágio desktop.
     """
 
     model_config = _STRICT
     name: str
+    stage: str = ""
     packages: tuple[str, ...] = ()
     sets: tuple[str, ...] = ()
     use_break: tuple[UseBreak, ...] = ()
+    emptytree: bool = False
+    ships: bool = False
+    layers: tuple[str, ...] = ()
 
 
-class BaseFragment(BaseModel):
+class StageFragment(BaseModel):
+    """Um estágio da cadeia: configuração (o ``portage/`` ao lado) + escolha.
+
+    ``after`` nomeia o estágio anterior -- a cadeia é explícita. ``sets`` são os
+    sets que ESTE estágio instala (o conteúdo mora em ``variants/kits/``, D25).
+    ``exclude`` são átomos REMOVIDOS desses sets quando materializados no rootfs;
+    note o que ele NÃO faz: não impede o átomo de entrar como DEPENDÊNCIA de
+    outro pacote -- é "não peço", não "proíbo". ``use_break`` são os cortes de
+    ciclo que valem a partir deste estágio, até o settle da imagem.
+    """
+
     model_config = _STRICT
-    profile_base: str
+    stage: str
+    after: str | None = None
     sets: tuple[str, ...] = ()
-    phases: tuple[Phase, ...] = ()
+    exclude: tuple[str, ...] = ()
+    update: UpdateMode = "newuse"
+    ships: bool = False
+    use_break: tuple[UseBreak, ...] = ()
+
+
+class BaseFragment(StageFragment):
+    """O estágio ``base`` -- o núcleo, e a âncora do profile."""
+
+    stage: str = BASE_STAGE
+    update: UpdateMode = "emptytree"
+    profile_base: str
 
 
 class ArchFragment(BaseModel):
@@ -78,44 +130,18 @@ class ArchFragment(BaseModel):
     seed_source: SeedSource = "download"
 
 
-class FlavorFragment(BaseModel):
-    """Fragmento de flavor.
-
-    ``exclude`` são átomos REMOVIDOS dos sets herdados quando a Factory os
-    materializa no rootfs. A base é a regra e o flavor é a exceção: sem isto,
-    tirar um único átomo de um flavor obrigaria a fatiar o set inteiro.
-
-    Note o que ``exclude`` NÃO faz: ele não impede o átomo de entrar como
-    DEPENDÊNCIA de outro pacote. É "não peço explicitamente", não "proíbo" --
-    para proibir seria preciso ``emerge --exclude``, que é outra semântica.
-    """
-
-    model_config = _STRICT
-    flavor: str
-    use_prefer: UsePrefer = UsePrefer()
-    sets: tuple[str, ...] = ()
-    exclude: tuple[str, ...] = ()
-    override_ok: bool = False
-    use_break: dict[str, tuple[UseBreak, ...]] = {}  # phase-name → breaks curados
-
-
 class InitFragment(BaseModel):
     model_config = _STRICT
     init: str
     profile_suffix: str = ""  # token puro, SEM barra inicial
-    use_prefer: UsePrefer = UsePrefer()
     phases_prepend: tuple[Phase, ...] = ()
-
-
-class ResolvedUse(BaseModel):
-    model_config = _STRICT
-    enabled: tuple[UseToken, ...]
-    disabled: tuple[UseToken, ...]
 
 
 class ResolvedRecipe(BaseModel):
     model_config = _STRICT
     arch: str
+    #: The TARGET: the last stage of the chain -- ``minimal``, ``kde``, … The
+    #: field keeps its historical name because the whole pipeline keys on it.
     flavor: str
     init: str
     profile: str
@@ -125,11 +151,12 @@ class ResolvedRecipe(BaseModel):
     cpu_flags_x86: tuple[str, ...]
     tier: int
     runnable_on_build_host: bool
-    use: ResolvedUse
     sets: tuple[str, ...]
     exclude: tuple[str, ...] = ()
     phases: tuple[Phase, ...]
     portage_layers: tuple[str, ...]
+    #: The chain, base first: ``("base", "minimal", "desktop", "kde")``.
+    stages: tuple[str, ...] = ()
     # default "download" mantém retrocompatível quem constrói ResolvedRecipe
     # diretamente; merge() sempre o preenche explicitamente a partir do arch.
     seed_source: SeedSource = "download"
@@ -147,20 +174,9 @@ class RecipeSourceError(Exception):
     """
 
 
-class RecipeConflictError(Exception):
-    """Conflito de USE flag entre duas camadas (layers) da receita.
-
-    Levantada pelo motor de merge (tarefa posterior). Aqui apenas definimos a
-    exceção, carregando a flag em conflito e os nomes das duas camadas.
-    """
-
-    def __init__(self, flag: str, layer_a: str, layer_b: str) -> None:
-        self.flag = flag
-        self.layer_a = layer_a
-        self.layer_b = layer_b
-        super().__init__(
-            f"conflito na USE flag {flag!r} entre as camadas {layer_a!r} e {layer_b!r}"
-        )
+class RecipeChainError(Exception):
+    """A broken stage chain: an ``after:`` that loops, or a stage that starts
+    one without being the base, or a file that declares another stage's name."""
 
 
 def _read_yaml(path: Path) -> dict[str, Any]:
@@ -175,46 +191,6 @@ def _read_yaml(path: Path) -> dict[str, Any]:
     return data
 
 
-def _accumulate_use(flavor: FlavorFragment, init: InitFragment) -> dict[str, tuple[str, str]]:
-    """Acumula a intenção de USE das camadas ``flavor`` e ``init`` (R2.3).
-
-    ``arch`` e ``base`` não contribuem com USE. Processa as camadas na ordem
-    flavor → init. O estado mapeia ``flag -> (sign, layer_name)`` onde ``sign``
-    é ``"+"`` (habilitar) ou ``"-"`` (desabilitar) e ``layer_name`` é a camada
-    que fixou o sinal atual (``"flavor"`` ou ``"init"``).
-
-    Um token ``"-gtk"`` significa ``flag="gtk", sign="-"``; ``"qt6"`` significa
-    ``flag="qt6", sign="+"``. ``use_prefer.add`` entra como ``"+"`` e
-    ``use_prefer.drop`` como ``"-"``.
-
-    Regra de conflito (R3.1/R3.2, design §5.1): num conflito de sinal oposto, se
-    a camada anterior for ``"flavor"`` e ``flavor.override_ok`` for ``False``, a
-    flavor é autoritativa e levanta-se :class:`RecipeConflictError`. Caso
-    contrário a camada posterior vence (override permitido). Repetições de mesmo
-    sinal são idempotentes (dedup, sem erro).
-    """
-    state: dict[str, tuple[str, str]] = {}
-
-    def apply(flag: str, sign: str, layer_name: str) -> None:
-        prev = state.get(flag)
-        if prev is not None and prev[0] != sign:
-            prev_sign, prev_layer = prev
-            if prev_layer == "flavor" and flavor.override_ok is False:
-                raise RecipeConflictError(flag, prev_layer, layer_name)
-            # senão: camada posterior vence (override permitido)
-        state[flag] = (sign, layer_name)
-
-    def apply_layer(prefer: UsePrefer, layer_name: str) -> None:
-        for token in prefer.add:
-            apply(token.lstrip("-"), "+", layer_name)
-        for token in prefer.drop:
-            apply(token.lstrip("-"), "-", layer_name)
-
-    apply_layer(flavor.use_prefer, "flavor")
-    apply_layer(init.use_prefer, "init")
-    return state
-
-
 def _ordered_unique(items: tuple[str, ...]) -> tuple[str, ...]:
     """Une preservando a ordem da primeira ocorrência e descartando duplicatas."""
     seen: dict[str, None] = {}
@@ -226,72 +202,59 @@ def _ordered_unique(items: tuple[str, ...]) -> tuple[str, ...]:
 def merge(
     base: BaseFragment,
     arch: ArchFragment,
-    flavor: FlavorFragment,
+    stages: tuple[StageFragment, ...],
     init: InitFragment,
 ) -> ResolvedRecipe:
-    """Funde os quatro fragmentos numa :class:`ResolvedRecipe` (design §5–§7).
+    """Funde a cadeia de estágios com ``arch`` e ``init`` numa receita (D24). Puro.
 
-    - **Profile (R2.2):** ``base.profile_base`` acrescido de ``/<suffix>`` quando
-      ``init.profile_suffix`` não é vazio (o sufixo é um token puro, sem barra
-      inicial). ``arch`` e ``flavor`` nunca tocam no profile.
-    - **Knobs de arch (R2.6):** ``common_flags, goamd64, rustflags,
-      cpu_flags_x86, tier, runnable_on_build_host`` são copiados de ``arch``.
-    - **portage_layers (R2.7):** tupla ordenada registrando a ordem das camadas
-      base → arch → flavor → init. Como os caminhos de diretório de cada eixo
-      são resolvidos noutro módulo (``config.py``, indisponível aqui), registra-se
-      a *identidade* de cada eixo na ordem, pela convenção estável
-      ``("base", f"arch/{arch.arch}", f"flavor/{flavor.flavor}", f"init/{init.init}")``.
-      Não há I/O de filesystem.
-    - **USE (R2.3):** ver :func:`_accumulate_use`. ``enabled`` = flags com sinal
-      ``"+"`` ordenadas; ``disabled`` = flags com sinal ``"-"`` ordenadas
-      (armazenadas SEM o ``"-"`` inicial).
-    - **sets (R2.4):** união ordenada-única de ``base.sets + flavor.sets``.
-    - **phases (R2.5):** ``init.phases_prepend + base.phases``; quando
-      ``flavor.sets == ()`` omite-se a phase de nome ``"desktop"``.
-    - **use_break (R4.1/R4.5/R4.6):** depois de montadas as phases, cada uma cujo
-      nome é chave em ``flavor.use_break`` é substituída por
-      ``phase.model_copy(update={"use_break": flavor.use_break[name]})``. Phases
-      sem entrada preservam ``use_break`` vazio; a ordem é mantida. O flavor é a
-      única fonte de curadoria de quebra de ciclo.
+    ``stages`` é o que :func:`load_chain` devolve: os estágios DEPOIS da base,
+    na ordem da cadeia. O último é o alvo (``flavor`` da receita); cadeia vazia
+    é a própria base.
+
+    - **Profile:** ``base.profile_base`` + ``/<init.profile_suffix>`` quando há
+      sufixo. Só ``init`` mexe no profile.
+    - **Camadas:** ``base``, ``arch/<a>``, cada estágio na ordem da cadeia
+      (:func:`stage_layer`), ``init/<i>``. ``portage_layers`` é a lista FINAL;
+      cada fase carrega em ``layers`` as camadas até o seu estágio -- o
+      ``init`` vale em todas, porque o profile e o seat valem desde o seed.
+    - **Fases:** ``init.phases_prepend`` e depois uma por estágio
+      (:func:`stage_phase_name`), com os sets, os cortes e o modo do estágio.
+    - **sets / exclude:** união ordenada-única sobre toda a cadeia.
     """
+    chain: tuple[StageFragment, ...] = (base, *stages)
+    for prev, stage in zip(chain, chain[1:], strict=False):
+        if stage.after != prev.stage:
+            raise RecipeChainError(
+                f"stage {stage.stage!r} follows {stage.after!r}, but the chain has {prev.stage!r}"
+            )
     profile = (
         f"{base.profile_base}/{init.profile_suffix}" if init.profile_suffix else base.profile_base
     )
+    head_layers = (BASE_STAGE, f"arch/{arch.arch}")
+    init_layer = f"init/{init.init}"
 
-    use_state = _accumulate_use(flavor, init)
-    enabled = tuple(sorted(flag for flag, (sign, _) in use_state.items() if sign == "+"))
-    disabled = tuple(sorted(flag for flag, (sign, _) in use_state.items() if sign == "-"))
-
-    sets = _ordered_unique(base.sets + flavor.sets)
-
-    base_phases: tuple[Phase, ...] = base.phases
-    # A phase `desktop` instala @<flavor>. Ela só faz sentido quando o flavor
-    # declara um set com o PRÓPRIO nome -- `kde` lista `- kde`, `minimal` não
-    # lista `- minimal`. O teste antigo era `flavor.sets == ()`, que passou a dar
-    # falso positivo quando um flavor sem desktop declara sets de sistema:
-    # `minimal` com `sets: [extra-system]` ganhava uma phase `desktop` apontando
-    # para @minimal, um set que não existe. Continua puro, sem I/O.
-    if flavor.flavor not in flavor.sets:
-        base_phases = tuple(p for p in base_phases if p.name != "desktop")
-    phases = init.phases_prepend + base_phases
-    # injeta os use_break curados do flavor na phase de mesmo nome (R4.1/R4.5/
-    # R4.6); phases sem entrada no mapa preservam o use_break vazio. A ordem das
-    # phases já montadas é mantida.
-    # ACUMULA base + flavor. Substituir era errado: as quebras de ciclo do TRONCO
-    # (python[-bluetooth], pillow[-truetype]) valem para todo flavor, enquanto a
-    # do desktop é curada por flavor. Com substituição, um flavor que declarasse
-    # a sua APAGAVA as do tronco -- e como a base declarava tudo vazio, as do
-    # tronco viviam só num arquivo escrito à mão no laboratório, fora do repo.
-    phases = tuple(
-        p.model_copy(update={"use_break": p.use_break + flavor.use_break[p.name]})
-        if p.name in flavor.use_break
-        else p
-        for p in phases
-    )
+    phases: list[Phase] = [
+        p.model_copy(update={"layers": (*head_layers, init_layer)}) for p in init.phases_prepend
+    ]
+    stage_layers: list[str] = []
+    for stage in chain:
+        if stage.stage != BASE_STAGE:
+            stage_layers.append(stage_layer(stage.stage))
+        phases.append(
+            Phase(
+                name=stage_phase_name(stage.stage),
+                stage=stage.stage,
+                sets=stage.sets,
+                use_break=stage.use_break,
+                emptytree=stage.update == "emptytree",
+                ships=stage.ships,
+                layers=(*head_layers, *stage_layers, init_layer),
+            )
+        )
 
     return ResolvedRecipe(
         arch=arch.arch,
-        flavor=flavor.flavor,
+        flavor=chain[-1].stage,
         init=init.init,
         profile=profile,
         common_flags=arch.common_flags,
@@ -300,16 +263,11 @@ def merge(
         cpu_flags_x86=arch.cpu_flags_x86,
         tier=arch.tier,
         runnable_on_build_host=arch.runnable_on_build_host,
-        use=ResolvedUse(enabled=enabled, disabled=disabled),
-        sets=sets,
-        exclude=flavor.exclude,
-        phases=phases,
-        portage_layers=(
-            "base",
-            f"arch/{arch.arch}",
-            f"flavor/{flavor.flavor}",
-            f"init/{init.init}",
-        ),
+        sets=_ordered_unique(tuple(s for st in chain for s in st.sets)),
+        exclude=_ordered_unique(tuple(a for st in chain for a in st.exclude)),
+        phases=tuple(phases),
+        portage_layers=(*head_layers, *stage_layers, init_layer),
+        stages=tuple(st.stage for st in chain),
         seed_source=arch.seed_source,
     )
 
@@ -379,8 +337,37 @@ def load_arch(path: Path) -> ArchFragment:
     return ArchFragment(**data)
 
 
-def load_flavor(path: Path) -> FlavorFragment:
-    return FlavorFragment(**_read_yaml(path))
+def load_stage(path: Path) -> StageFragment:
+    return StageFragment(**_read_yaml(path))
+
+
+def load_chain(target: str, locate: Callable[[str], Path]) -> tuple[StageFragment, ...]:
+    """Walk ``after:`` from ``target`` down to the base; return the stages after it.
+
+    ``locate`` maps a stage name to its YAML (the caller owns the filesystem
+    layout -- this module stays free of ``config``). The result is ordered from
+    the base outwards and EXCLUDES the base itself, so ``load_chain("kde", …)``
+    is ``(minimal, desktop, kde)`` and ``load_chain("base", …)`` is ``()``.
+    A stage without ``after``, other than the base, or a loop, is a
+    :class:`RecipeChainError`.
+    """
+    chain: list[StageFragment] = []
+    seen: set[str] = set()
+    name = target
+    while name != BASE_STAGE:
+        if name in seen:
+            raise RecipeChainError(f"stage chain loops back to {name!r}: {' -> '.join(seen)}")
+        seen.add(name)
+        stage = load_stage(locate(name))
+        if stage.stage != name:
+            raise RecipeChainError(
+                f"{locate(name)} declares stage {stage.stage!r}, expected {name!r}"
+            )
+        if stage.after is None:
+            raise RecipeChainError(f"stage {name!r} has no `after:`; only the base starts a chain")
+        chain.append(stage)
+        name = stage.after
+    return tuple(reversed(chain))
 
 
 def load_init(path: Path) -> InitFragment:

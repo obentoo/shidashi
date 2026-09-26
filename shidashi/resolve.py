@@ -192,16 +192,18 @@ def apply_portage(rootfs: Path, recipe: ResolvedRecipe, *, variants_dir: Path) -
     ``CFLAGS`` e ``CHOST``; e ``package.use/system`` caía de 69 linhas para 4
     (lab 2026-08-30, F28).
 
-    Um diretório de layer ausente levanta :class:`ResolveError`.
+    Um layer INEXISTENTE levanta :class:`ResolveError` -- é nome errado. Um
+    layer que existe mas não tem ``portage/`` é um estágio que não configura
+    nada (``minimal`` e ``desktop`` hoje, D24) e simplesmente não contribui.
     """
     dest = rootfs / "etc" / "portage"
     dest.mkdir(parents=True, exist_ok=True)
 
     layer_dirs = _layer_dirs(recipe, variants_dir)
     for layer_dir in layer_dirs:
-        if not layer_dir.is_dir():
+        if not layer_dir.parent.is_dir():
             raise ResolveError(
-                f"layer de portage ausente: {layer_dir} (receita "
+                f"layer ausente: {layer_dir.parent} (receita "
                 f"{recipe.arch}×{recipe.flavor}×{recipe.init})"
             )
 
@@ -209,6 +211,8 @@ def apply_portage(rootfs: Path, recipe: ResolvedRecipe, *, variants_dir: Path) -
     make_conf_parts: list[tuple[str, str]] = []
 
     for layer, layer_dir in zip(recipe.portage_layers, layer_dirs, strict=True):
+        if not layer_dir.is_dir():
+            continue  # a stage with nothing to configure
         for item in sorted(layer_dir.rglob("*")):
             if not item.is_file():
                 continue

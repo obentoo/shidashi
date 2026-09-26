@@ -1,12 +1,14 @@
 # variants/init/openrc/recipe.yaml — OpenRC init (OVERVIEW §8/§14).
 # profile_suffix: "" -- a profile WITHOUT /systemd (plain no-multilib).
-# use_prefer turns on elogind and udev (seat = elogind + seatd) and drops
-# systemd (§8, the init<->seat coupling). phases_prepend adds a `seat` phase
-# BEFORE the base phases, installing elogind/seatd early.
+# phases_prepend adds a `seat` phase BEFORE the chain, installing elogind/seatd
+# early (§8, the init<->seat coupling).
+#
+# USE -- NOT YET APPLIED. There is no portage/make.conf here, and the former
+# `use_prefer` never reached the build, so an openrc image built today would
+# lack its seat USE. The intent, for step 3 of D24, with a measurement:
+#   add:  [elogind, udev]
+#   drop: [systemd]
 init: openrc
 profile_suffix: ""
-use_prefer:
-  add:  [elogind, udev]
-  drop: [systemd]
 phases_prepend:
   - { name: seat, packages: [sys-auth/elogind, sys-auth/seatd] }

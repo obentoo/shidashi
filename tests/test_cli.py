@@ -1,10 +1,9 @@
 """Testes de INTEGRAÇÃO da CLI do Shidashi (shidashi.cli) via Typer ``CliRunner``.
 
-Constrói uma árvore ``variants/`` mínima e VÁLIDA em ``tmp_path`` e aponta a CLI
-para ela com ``SHIDASHI_VARIANTS_DIR``. A fixture permite que ``v3 × minimal ×
-systemd`` e ``v3 × kde × systemd`` fundam-se sem conflito; ``init/badinit`` (que
-derruba ``qt6``) força um :class:`RecipeConflictError` sintético contra a flavor
-``kde`` (``override_ok: false``).
+Constrói a árvore ``variants/`` mínima e VÁLIDA de ``tests/_variants_tree.py``
+em ``tmp_path`` e aponta a CLI para ela com ``SHIDASHI_VARIANTS_DIR``. As cadeias
+``minimal`` e ``kde`` resolvem; ``flavor/broken`` declara o nome de outro estágio
+e força um :class:`RecipeChainError`, que a CLI tem de reportar sem traceback.
 
 Requisitos exercitados: R1.4, R4.1, R4.2, R4.3, R5.1, R5.2, R6.1, R6.2, R6.3.
 """
@@ -17,103 +16,14 @@ import yaml
 from typer.testing import CliRunner
 
 from shidashi.cli import app
+from tests._variants_tree import write_variants
 
 runner = CliRunner()
 
-# --- conteúdo da fixture variants/ -------------------------------------------
-
-_BASE_YAML = """\
-profile_base: default/linux/amd64/23.0/no-multilib
-sets:
-  - base
-  - extra-system
-phases:
-  - name: rebuild
-  - name: desktop
-  - name: apps
-"""
-
-_ARCH_V3 = """\
-arch: v3
-tier: 1
-runnable_on_build_host: true
-"""
-
-# The compile knobs live in the arch layer's make.conf, not in recipe.yaml --
-# load_arch() reads them from here (single source of truth).
-_ARCH_V3_MAKE_CONF = """\
-COMMON_FLAGS="-O2 -march=x86-64-v3 -pipe"
-GOAMD64="v3"
-RUSTFLAGS="-C target-cpu=x86-64-v3"
-CPU_FLAGS_X86="sse4_2 avx2"
-"""
-
-_FLAVOR_MINIMAL = """\
-flavor: minimal
-sets: []
-override_ok: true
-"""
-
-_FLAVOR_KDE = """\
-flavor: kde
-use_prefer:
-  add: [qt6, kde, wayland]
-  drop: [gtk, gnome, webkit]
-sets: [kde]
-override_ok: false
-"""
-
-_INIT_SYSTEMD = """\
-init: systemd
-profile_suffix: systemd
-use_prefer:
-  add: [systemd]
-"""
-
-_INIT_OPENRC = """\
-init: openrc
-profile_suffix: ""
-use_prefer:
-  add: [elogind, udev]
-  drop: [systemd]
-phases_prepend:
-  - name: seat
-"""
-
-# badinit derruba qt6, que a flavor kde ADICIONA (sinal oposto). Como kde tem
-# override_ok=false, o merge levanta RecipeConflictError → validate sai com 1.
-_INIT_BADINIT = """\
-init: badinit
-profile_suffix: bad
-use_prefer:
-  drop: [qt6]
-"""
-
-_RECIPES = {
-    ("flavor", "minimal"): _FLAVOR_MINIMAL,
-    ("flavor", "kde"): _FLAVOR_KDE,
-    ("arch", "v3"): _ARCH_V3,
-    ("init", "systemd"): _INIT_SYSTEMD,
-    ("init", "openrc"): _INIT_OPENRC,
-    ("init", "badinit"): _INIT_BADINIT,
-}
-
-
 @pytest.fixture
 def variants_tree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Monta a árvore variants/ mínima e aponta SHIDASHI_VARIANTS_DIR para ela."""
-    root = tmp_path / "variants"
-    base = root / "base" / "base.yaml"
-    base.parent.mkdir(parents=True, exist_ok=True)
-    base.write_text(_BASE_YAML, encoding="utf-8")
-    for (axis, name), text in _RECIPES.items():
-        recipe = root / axis / name / "recipe.yaml"
-        recipe.parent.mkdir(parents=True, exist_ok=True)
-        recipe.write_text(text, encoding="utf-8")
-        if axis == "arch":
-            make_conf = recipe.parent / "portage" / "make.conf"
-            make_conf.parent.mkdir(parents=True, exist_ok=True)
-            make_conf.write_text(_ARCH_V3_MAKE_CONF, encoding="utf-8")
+    """The shared stage-format tree, with kde, openrc and a broken flavor."""
+    root = write_variants(tmp_path / "variants", kde=True, openrc=True, broken=True)
     monkeypatch.setenv("SHIDASHI_VARIANTS_DIR", str(root))
     return root
 
@@ -163,13 +73,13 @@ def test_validate_clean_merge_exit0(variants_tree: Path) -> None:
     assert "v3" in result.stdout
 
 
-def test_validate_synthetic_conflict_exit1_friendly(variants_tree: Path) -> None:
-    result = runner.invoke(app, ["recipe", "validate", "v3", "kde", "badinit"])
+def test_validate_broken_chain_exit1_friendly(variants_tree: Path) -> None:
+    result = runner.invoke(app, ["recipe", "validate", "v3", "broken", "systemd"])
     assert result.exit_code == 1
     assert result.exception is None or isinstance(result.exception, SystemExit)
     combined = result.stdout + (result.stderr or "")
     assert "Traceback" not in combined
-    assert "qt6" in combined  # a flag em conflito aparece na mensagem amigável
+    assert "not-broken" in combined  # the offending stage name reaches the message
 
 
 def test_validate_unknown_arch_lists_available(variants_tree: Path) -> None:

@@ -1,26 +1,26 @@
-# variants/flavor/kde/recipe.yaml — KDE Plasma flavor (OVERVIEW §8/§14).
+# variants/flavor/kde/recipe.yaml — the KDE Plasma flavor (OVERVIEW §8/§14).
+# A stage of the chain, after desktop (D24): base ─► minimal ─► desktop ─► kde.
 # No desktop-specific profile: the anchor is just no-multilib[/systemd], and the
-# "KDE layer" is built from use_prefer + portage/package.use + sets (§14,
-# "Profile resolution").
-# `sets: [kde]` -- `graphics` already comes from base, and merge() takes the
-# ordered union, so repeating it here would be redundant.
-# override_ok: false -- KDE is curated and authoritative (§14).
-flavor: kde
-use_prefer:
-  add:  [qt6, kde, wayland]
-  drop: [gtk, gnome, webkit]
+# "KDE layer" is portage/ (make.conf + package.use) plus the sets below.
+#
+# USE: carried by portage/make.conf (DESKTOPS="kde qt5 qt6 …"), the only source.
+# The former `use_prefer` never reached the build. Its `add: [qt6, kde, wayland]`
+# is already in make.conf; its `drop: [gtk, gnome, webkit]` was never applied and,
+# measured on 2026-09-26 over the 1758 packages of the kde image, would change
+# exactly one: gui-libs/libdecor loses gtk. Not carried over -- a targeted
+# package.use line is the way to cut one package, as the base does with -qt6.
+stage: kde
+after: desktop
+ships: true
 sets:
-  - extra-system
+  - kde
   - extra-desktop
   - extra-media
   - extra-dev
   - extra-virt
-  - gpu
-  - kde
-override_ok: false
-# No use_break here. All three trunk cycles are cut in base.yaml, and merge()
-# now ACCUMULATES base + flavor instead of replacing, so this flavor would only
-# declare a cut of its OWN. It once declared media-video/ffmpeg[-sdl] -- copied
-# from what works for minimal -- which is invalid here, because kde-apps/kdenlive
-# depends on ffmpeg[sdl]. The base cuts the same cycle at pipewire[-ffmpeg],
-# which is valid for every flavor (lab, 2026-09-13).
+# No use_break here. All three trunk cycles are cut by the base stage, and a
+# stage's cuts ADD to the chain's, so this flavor would only declare a cut of its
+# OWN. It once declared media-video/ffmpeg[-sdl] -- copied from what works for
+# minimal -- which is invalid here, because kde-apps/kdenlive depends on
+# ffmpeg[sdl]. The base cuts the same cycle at pipewire[-ffmpeg], which is valid
+# for every flavor (lab, 2026-09-13).

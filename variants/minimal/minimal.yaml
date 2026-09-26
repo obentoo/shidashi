@@ -1,0 +1,21 @@
+# variants/minimal/minimal.yaml — the MINIMAL stage (D24): a shipped image, and
+# the step every graphical flavor is built on.
+#
+# Console-only, no graphical environment (OVERVIEW §8/§14): the base plus the
+# console kits -- a stage4 in the Arch / Debian-netinst mould, TTY only, no
+# compositor. Every graphical flavor already declared @extra-system, so minimal
+# was always contained in them; it is therefore a stage of the chain, not a
+# sibling branch. It ships: its image is settled, and that settled state is the
+# fork point `desktop` starts from.
+#
+# Formerly variants/flavor/minimal/recipe.yaml. Two things did not come along:
+#   - `use_prefer: {drop: [qt6, kde, gnome, gtk]}` -- it never reached the build
+#     (use_prefer was only ever displayed by `recipe show`); the base's make.conf
+#     is where the console USE is decided (step 3 of D24).
+#   - portage/package.use/README, a placeholder with no configuration; a stage
+#     with nothing to configure simply has no portage/ directory.
+stage: minimal
+after: base
+ships: true
+sets:
+  - extra-system

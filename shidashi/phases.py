@@ -109,34 +109,22 @@ class PhaseResult(pydantic.BaseModel):
 
 
 def phase_target(phase: Phase, recipe: ResolvedRecipe) -> tuple[str, ...]:
-    """Devolve o alvo ``emerge`` de uma fase (R3.1/R3.2/R3.3). Puro.
+    """Devolve o alvo ``emerge`` de uma fase (R3.1/R3.2/R3.3, D24). Puro.
 
-    Ordem de decisão:
+    - a fase da base (``emptytree``) → ``@world`` e depois os seus sets;
+    - uma fase com ``sets`` → um ``@<nome>`` por set que o ESTÁGIO declara;
+    - senão → ``phase.packages`` (átomos explícitos, como a fase ``seat``).
 
-    1. ``rebuild`` → ``@world`` (reconstrução do tronco);
-    2. ``desktop`` → ``@<flavor>``, o set curado do flavor;
-    3. ``phase.sets`` não vazio → um ``@<nome>`` por set DECLARADO;
-    4. senão → ``phase.packages`` (átomos explícitos, como a fase ``seat``).
-
-    O passo 3 substituiu um conjunto de convenções por NOME de fase (``apps`` →
-    ``@bentoo-apps`` literal, e "se o nome da fase for também o nome de um set,
-    use-o"). Aquilo acoplava o nome da fase ao nome do set: renomear ou dividir
-    um set deixava a fase apontando para um alvo inexistente, e qualquer set
-    novo ficava órfão porque nenhuma fase o nomeava. Agora a relação é dado, não
-    convenção -- ``base.yaml`` declara qual fase instala quais sets.
+    Nada aqui depende do NOME da fase. Duas convenções por nome já custaram
+    caro: ``apps`` → ``@bentoo-apps`` literal (renomear o set deixou a fase
+    apontando para o vazio) e ``desktop`` → ``@<flavor>``. A relação agora é
+    dado do estágio, e ``recipe`` fica na assinatura só por compatibilidade.
     """
-    if phase.name == "rebuild":
-        return ("@world",)
-    if phase.name == "desktop":
-        return ("@" + recipe.flavor,)
-    if phase.sets:
-        # Só os sets que a receita realmente declara. base.yaml enumera a
-        # INTENÇÃO da fase para qualquer flavor; um flavor que não declara
-        # `gpu` simplesmente não o instala, em vez de pedir um @gpu ausente.
-        declared = tuple("@" + n for n in phase.sets if n in recipe.sets)
-        if declared:
-            return declared
-    return phase.packages
+    del recipe  # the stage says it all; kept for the callers' signature
+    sets = tuple("@" + name for name in phase.sets)
+    if phase.emptytree:
+        return ("@world", *sets)
+    return sets or phase.packages
 
 
 def phase_emerge_argv(phase: Phase, recipe: ResolvedRecipe, *, emptytree: bool) -> list[str]:
@@ -149,7 +137,7 @@ def phase_emerge_argv(phase: Phase, recipe: ResolvedRecipe, *, emptytree: bool) 
     return [
         "emerge",
         "--verbose",
-        *(("--emptytree",) if (emptytree and phase.name == "rebuild") else ()),
+        *(("--emptytree",) if (emptytree and phase.emptytree) else ()),
         *phase_target(phase, recipe),
     ]
 
@@ -229,17 +217,17 @@ def fork_point(recipe: ResolvedRecipe, *, snapshot: str, fork_points_dir: Path) 
 
 
 def trunk_phase_names(recipe: ResolvedRecipe) -> tuple[str, ...]:
-    """Nomes das fases do *tronco*: as que precedem ``desktop`` (R5.4). Puro.
+    """Nomes das fases do *tronco*: até e incluindo a da base (R5.4, D24). Puro.
 
-    O tronco é a parte das fases comum entre flavors (depende só do init), antes
-    do fork na fase ``desktop``. Para um flavor sem fase ``desktop`` (ex.:
-    ``minimal``) o tronco é toda a sequência de fases.
+    O tronco é o que toda imagem do mesmo arch × init compartilha: o seed, as
+    fases que o ``init`` antepõe (``seat``) e a base, a única reconstrução
+    completa. É o fork-point 1 da árvore ``base → minimal → desktop → flavor``.
     """
     names: list[str] = []
     for phase in recipe.phases:
-        if phase.name == "desktop":
-            break
         names.append(phase.name)
+        if phase.emptytree:
+            break
     return tuple(names)
 
 

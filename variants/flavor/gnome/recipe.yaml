@@ -1,18 +1,19 @@
 # variants/flavor/gnome/recipe.yaml — GNOME (OVERVIEW §8).
-# Characteristic USE: gtk gnome wayland -qt6 -kde.
+# A stage of the chain, after desktop (D24): base ─► minimal ─► desktop ─► gnome.
 # sets: [gnome] -- a placeholder set, to be curated via pretend-resolve (§18.7).
-# A non-empty set is what keeps the `desktop` phase in the merge.
-# override_ok: false -- GNOME is curated and authoritative (§14).
-flavor: gnome
-use_prefer:
-  add:  [gtk, gnome, wayland]
-  drop: [qt6, kde]
+#
+# USE -- NOT YET APPLIED. This flavor has no portage/make.conf, and its former
+# `use_prefer` never reached the build (it was only displayed by `recipe show`),
+# so an image built today would miss its characteristic USE. The intent, to be
+# written into portage/make.conf in step 3 of D24, with a measurement:
+#   add:  [gtk, gnome, wayland]
+#   drop: [qt6, kde]
+stage: gnome
+after: desktop
+ships: true
 sets:
-  - extra-system
+  - gnome
   - extra-desktop
   - extra-media
   - extra-dev
   - extra-virt
-  - gpu
-  - gnome
-override_ok: false

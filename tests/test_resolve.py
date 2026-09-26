@@ -62,7 +62,6 @@ _LAYERS = ("base", "arch/v3", "flavor/minimal", "init/systemd")
 def _recipe() -> ResolvedRecipe:
     # constrói um ResolvedRecipe mínimo com portage_layers conhecido; só esse
     # campo importa para _layer_dirs/apply_portage.
-    from shidashi.recipe import ResolvedUse
 
     return ResolvedRecipe(
         arch="v3",
@@ -75,7 +74,6 @@ def _recipe() -> ResolvedRecipe:
         cpu_flags_x86=(),
         tier=1,
         runnable_on_build_host=True,
-        use=ResolvedUse(enabled=(), disabled=()),
         sets=(),
         phases=(),
         portage_layers=_LAYERS,

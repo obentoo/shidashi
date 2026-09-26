@@ -25,7 +25,7 @@ from shidashi.assembler import (
     iso_emerge_argv,
 )
 from shidashi.image import ImageError
-from shidashi.recipe import ResolvedRecipe, ResolvedUse
+from shidashi.recipe import ResolvedRecipe
 from shidashi.resolve import ResolveError
 
 
@@ -48,7 +48,6 @@ def _recipe(
         cpu_flags_x86=("avx2",),
         tier=1,
         runnable_on_build_host=True,
-        use=ResolvedUse(enabled=(), disabled=()),
         sets=sets,
         exclude=exclude,
         phases=(),

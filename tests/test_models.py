@@ -20,18 +20,15 @@ from pydantic import ValidationError
 from shidashi.recipe import (
     ArchFragment,
     BaseFragment,
-    FlavorFragment,
     InitFragment,
     Phase,
-    RecipeConflictError,
     RecipeSourceError,
     ResolvedRecipe,
-    ResolvedUse,
-    UsePrefer,
+    StageFragment,
     load_arch,
     load_base,
-    load_flavor,
     load_init,
+    load_stage,
 )
 from tests._pending import try_import
 
@@ -40,7 +37,6 @@ UseBreak: Any = try_import("shidashi.recipe", "UseBreak")
 # --- dicts válidos representativos por modelo ---------------------------------
 
 VALID: dict[Any, dict[str, Any]] = {
-    UsePrefer: {"add": ["qt6"], "drop": ["-gtk"]},
     Phase: {
         "name": "graphics",
         "packages": ["sys-apps/foo"],
@@ -48,8 +44,8 @@ VALID: dict[Any, dict[str, Any]] = {
     },
     BaseFragment: {
         "profile_base": "default/linux/amd64/23.0",
-        "sets": ["@system"],
-        "phases": [{"name": "system", "packages": ["sys-apps/foo"]}],
+        "sets": ["base"],
+        "use_break": [{"atom": "dev-lang/python", "flag": "bluetooth"}],
     },
     ArchFragment: {
         "arch": "amd64",
@@ -60,20 +56,18 @@ VALID: dict[Any, dict[str, Any]] = {
         "runnable_on_build_host": True,
         "tier": 1,
     },
-    FlavorFragment: {
-        "flavor": "desktop",
-        "use_prefer": {"add": ["qt6"], "drop": ["-gtk"]},
-        "sets": ["@desktop"],
-        "override_ok": True,
-        "use_break": {"graphics": [{"atom": "media-video/ffmpeg", "flag": "sdl", "enable": False}]},
+    StageFragment: {
+        "stage": "kde",
+        "after": "desktop",
+        "sets": ["kde"],
+        "ships": True,
+        "use_break": [{"atom": "media-video/ffmpeg", "flag": "sdl", "enable": False}],
     },
     InitFragment: {
         "init": "openrc",
         "profile_suffix": "openrc",
-        "use_prefer": {"add": ["-systemd"]},
         "phases_prepend": [{"name": "early"}],
     },
-    ResolvedUse: {"enabled": ["qt6"], "disabled": ["gtk"]},
     ResolvedRecipe: {
         "arch": "amd64",
         "flavor": "desktop",
@@ -85,7 +79,6 @@ VALID: dict[Any, dict[str, Any]] = {
         "cpu_flags_x86": ["sse2"],
         "tier": 1,
         "runnable_on_build_host": True,
-        "use": {"enabled": ["qt6"], "disabled": ["gtk"]},
         "sets": ["@system", "@desktop"],
         "phases": [{"name": "system"}],
         "portage_layers": ["base", "arch/amd64"],
@@ -94,12 +87,10 @@ VALID: dict[Any, dict[str, Any]] = {
 
 # Modelos que existem hoje (parametrizáveis sem depender de UseBreak).
 EXISTING_MODELS = [
-    UsePrefer,
     BaseFragment,
     ArchFragment,
-    FlavorFragment,
+    StageFragment,
     InitFragment,
-    ResolvedUse,
     ResolvedRecipe,
     Phase,
 ]
@@ -123,9 +114,9 @@ def test_tuple_coercion_from_list() -> None:
 
 def test_nested_models_typed() -> None:
     base = BaseFragment(**VALID[BaseFragment])
-    assert isinstance(base.phases[0], Phase)
-    flavor = FlavorFragment(**VALID[FlavorFragment])
-    assert isinstance(flavor.use_prefer, UsePrefer)
+    assert isinstance(base.use_break[0], UseBreak)
+    init = InitFragment(**VALID[InitFragment])
+    assert isinstance(init.phases_prepend[0], Phase)
 
 
 def test_defaults_applied() -> None:
@@ -138,11 +129,13 @@ def test_defaults_applied() -> None:
     )
     assert frag.runnable_on_build_host is False
     assert frag.tier == 2
-    flavor = FlavorFragment(flavor="minimal")
-    assert flavor.use_prefer == UsePrefer()
-    assert flavor.override_ok is False
-    # minimal não traz mapa de use_break (default vazio)
-    assert flavor.use_break == {}
+    stage = StageFragment(stage="minimal", after="base")
+    assert stage.update == "newuse"
+    assert stage.ships is False
+    assert stage.use_break == ()
+    # the base is the one full rebuild, and anchors the chain
+    base = BaseFragment(profile_base="x")
+    assert (base.stage, base.after, base.update) == ("base", None, "emptytree")
 
 
 # --- UseBreak (story 003 1.1) -------------------------------------------------
@@ -177,10 +170,9 @@ def test_phase_use_break_defaults_empty() -> None:
     assert phase.use_break == ()
 
 
-def test_flavor_fragment_parses_use_break_map() -> None:
-    flavor = FlavorFragment(**VALID[FlavorFragment])
-    assert "graphics" in flavor.use_break
-    breaks = flavor.use_break["graphics"]
+def test_stage_fragment_parses_its_own_cuts() -> None:
+    stage = StageFragment(**VALID[StageFragment])
+    breaks = stage.use_break
     assert isinstance(breaks, tuple)
     assert isinstance(breaks[0], UseBreak)
     assert breaks[0].atom == "media-video/ffmpeg"
@@ -221,7 +213,7 @@ def test_load_base(tmp_path: Path) -> None:
     p = _write_yaml(tmp_path / "base.yaml", VALID[BaseFragment])
     frag = load_base(p)
     assert frag == BaseFragment(**VALID[BaseFragment])
-    assert frag.phases[0].name == "system"
+    assert frag.use_break[0].flag == "bluetooth"
 
 
 #: What an arch recipe.yaml may declare: identity and policy only. The compile
@@ -283,12 +275,12 @@ def test_load_arch_requires_every_knob(tmp_path: Path) -> None:
         load_arch(p)
 
 
-def test_load_flavor(tmp_path: Path) -> None:
-    p = _write_yaml(tmp_path / "flavor.yaml", VALID[FlavorFragment])
-    frag = load_flavor(p)
-    assert frag == FlavorFragment(**VALID[FlavorFragment])
-    assert frag.use_prefer.add == ("qt6",)
-    assert frag.use_break["graphics"][0].flag == "sdl"
+def test_load_stage(tmp_path: Path) -> None:
+    p = _write_yaml(tmp_path / "kde.yaml", VALID[StageFragment])
+    frag = load_stage(p)
+    assert frag == StageFragment(**VALID[StageFragment])
+    assert (frag.after, frag.ships) == ("desktop", True)
+    assert frag.use_break[0].flag == "sdl"
 
 
 def test_load_init(tmp_path: Path) -> None:
@@ -325,18 +317,3 @@ def test_loader_rejects_missing_required_field(tmp_path: Path) -> None:
     p = _write_yaml(tmp_path / "arch.yaml", data)
     with pytest.raises(ValidationError):
         load_arch(p)
-
-
-# --- RecipeConflictError ------------------------------------------------------
-
-
-def test_recipe_conflict_error_carries_fields() -> None:
-    err = RecipeConflictError("qt6", "flavor/desktop", "init/openrc")
-    assert isinstance(err, Exception)
-    assert err.flag == "qt6"
-    assert err.layer_a == "flavor/desktop"
-    assert err.layer_b == "init/openrc"
-    msg = str(err)
-    assert "qt6" in msg
-    assert "flavor/desktop" in msg
-    assert "init/openrc" in msg

@@ -1,10 +1,14 @@
-"""Golden integration cases — merge real de ``variants/`` (R11.3).
+"""Golden integration cases — the real ``variants/`` tree, merged (R11.3, D24).
 
-Ancora as duas combinações canônicas da story em valores resolvidos concretos,
-sobre a árvore ``variants/`` realmente enviada:
+Anchors the two canonical images to concrete resolved values:
 
-* ``v3 × minimal × systemd`` — perfil systemd, sem desktop (phase omitida).
-* ``v3 × kde × systemd``     — perfil systemd, USE qt6/kde/wayland, set kde.
+* ``v3 × minimal × systemd`` — the chain ``base → minimal``, console only.
+* ``v3 × kde × systemd``     — the chain ``base → minimal → desktop → kde``.
+
+The final configuration and sets of both were proven identical to the
+pre-D24 model on 2026-09-26 (apply_portage + install_sets over all ten
+flavor × init combinations); what changed is the ORDER in which the chain
+installs them, which is the point of the stage tree.
 """
 
 from __future__ import annotations
@@ -14,14 +18,8 @@ from pathlib import Path
 import pytest
 
 from shidashi import config
-from shidashi.recipe import (
-    ResolvedRecipe,
-    load_arch,
-    load_base,
-    load_flavor,
-    load_init,
-    merge,
-)
+from shidashi.phases import phase_target
+from shidashi.recipe import ResolvedRecipe
 
 _VARIANTS_DIR = Path(__file__).resolve().parent.parent / "variants"
 
@@ -31,45 +29,55 @@ def _point_at_shipped_variants(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SHIDASHI_VARIANTS_DIR", str(_VARIANTS_DIR))
 
 
-def _resolve(arch: str, flavor: str, init: str) -> ResolvedRecipe:
-    return merge(
-        load_base(config.base_path()),
-        load_arch(config.recipe_path("arch", arch)),
-        load_flavor(config.recipe_path("flavor", flavor)),
-        load_init(config.recipe_path("init", init)),
-    )
+def _resolve(arch: str, target: str, init: str) -> ResolvedRecipe:
+    return config.load_recipe(arch, target, init)
+
+
+def _targets(r: ResolvedRecipe) -> dict[str, tuple[str, ...]]:
+    return {p.name: phase_target(p, r) for p in r.phases}
 
 
 def test_golden_v3_minimal_systemd() -> None:
     r = _resolve("v3", "minimal", "systemd")
+    assert r.flavor == "minimal"
+    assert r.stages == ("base", "minimal")
     assert r.profile == "default/linux/amd64/23.0/no-multilib/systemd"
-    assert r.use.enabled == ("systemd",)
-    assert r.use.disabled == ("gnome", "gtk", "kde", "qt6")
-    # base declara só o agregador universal; tudo mais vem do flavor.
     assert r.sets == ("base", "extra-system")
     assert "gpu" not in r.sets
-    # minimal tem sets vazio → a phase `desktop` é omitida (R2.5)
-    assert tuple(p.name for p in r.phases) == ("rebuild", "graphics", "apps")
-    assert "desktop" not in {p.name for p in r.phases}
+    assert _targets(r) == {
+        "base": ("@world", "@base"),
+        "minimal": ("@extra-system",),
+    }
+    base, minimal = r.phases
+    assert base.emptytree and not base.ships
+    assert minimal.ships and not minimal.emptytree
+    assert base.layers == ("base", "arch/v3", "init/systemd")
+    assert minimal.layers == ("base", "arch/v3", "minimal", "init/systemd")
+    assert r.portage_layers == ("base", "arch/v3", "minimal", "init/systemd")
     assert r.tier == 1
     assert r.goamd64 == "v3"
     assert r.runnable_on_build_host is True
-    assert r.portage_layers == ("base", "arch/v3", "flavor/minimal", "init/systemd")
 
 
 def test_golden_v3_kde_systemd() -> None:
     r = _resolve("v3", "kde", "systemd")
+    assert r.flavor == "kde"
+    assert r.stages == ("base", "minimal", "desktop", "kde")
     assert r.profile == "default/linux/amd64/23.0/no-multilib/systemd"
-    # USE ordenado/deduplicado; kde adiciona qt6/kde/wayland, init adiciona systemd
-    assert r.use.enabled == ("kde", "qt6", "systemd", "wayland")
-    assert {"qt6", "kde", "wayland"} <= set(r.use.enabled)
-    assert r.use.disabled == ("gnome", "gtk", "webkit")
-    # os sets do flavor entram na união ordenada APÓS os de base
     assert r.sets == (
-        "base", "extra-system", "extra-desktop", "extra-media",
-        "extra-dev", "extra-virt", "gpu", "kde",
+        "base", "extra-system", "gpu", "kde",
+        "extra-desktop", "extra-media", "extra-dev", "extra-virt",
     )
-    assert "kde" in r.sets
-    # kde tem desktop → a phase `desktop` permanece
-    assert tuple(p.name for p in r.phases) == ("rebuild", "graphics", "desktop", "apps")
-    assert r.portage_layers == ("base", "arch/v3", "flavor/kde", "init/systemd")
+    assert _targets(r) == {
+        "base": ("@world", "@base"),
+        "minimal": ("@extra-system",),
+        "desktop": ("@gpu",),
+        "flavor": ("@kde", "@extra-desktop", "@extra-media", "@extra-dev", "@extra-virt"),
+    }
+    # minimal ships on its way to kde: the graphical stages start from it settled
+    assert tuple(p.name for p in r.phases if p.ships) == ("minimal", "flavor")
+    # the configuration grows stage by stage; the graphical USE enters at desktop
+    assert [p.layers[-2] for p in r.phases] == ["arch/v3", "minimal", "desktop", "flavor/kde"]
+    assert r.portage_layers == (
+        "base", "arch/v3", "minimal", "desktop", "flavor/kde", "init/systemd",
+    )

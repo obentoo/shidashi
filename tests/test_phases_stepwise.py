@@ -32,7 +32,7 @@ from typing import Any
 import pytest
 
 from shidashi import phases
-from shidashi.recipe import Phase, ResolvedRecipe, ResolvedUse
+from shidashi.recipe import Phase, ResolvedRecipe
 from tests._pending import try_import
 
 checkpoint_sequence: Any = try_import("shidashi.phases", "checkpoint_sequence")
@@ -57,7 +57,7 @@ def _recipe(
     flavor: str = "minimal",
     sets: tuple[str, ...] = (),
     phases_: tuple[Phase, ...] = (
-        Phase(name="rebuild"),
+        Phase(name="rebuild", emptytree=True),
         Phase(name="graphics"),
         Phase(name="apps"),
     ),
@@ -73,7 +73,6 @@ def _recipe(
         cpu_flags_x86=("sse4_2",),
         tier=1,
         runnable_on_build_host=True,
-        use=ResolvedUse(enabled=(), disabled=()),
         sets=sets,
         phases=phases_,
         portage_layers=("base", "arch/v3", "flavor/minimal", "init/systemd"),
@@ -89,7 +88,7 @@ def test_checkpoint_sequence_is_seed_phases_settle() -> None:
 
 
 def test_checkpoint_sequence_seed_first_settle_last() -> None:
-    seq = checkpoint_sequence(_recipe(phases_=(Phase(name="rebuild"),)))
+    seq = checkpoint_sequence(_recipe(phases_=(Phase(name="rebuild", emptytree=True),)))
     assert seq[0] == "seed"
     assert seq[-1] == "settle"
 
@@ -346,7 +345,7 @@ def test_stepwise_failure_retry_then_continue(monkeypatch: pytest.MonkeyPatch) -
 
     results = _stepwise(
         container,
-        _recipe(phases_=(Phase(name="rebuild"),)),
+        _recipe(phases_=(Phase(name="rebuild", emptytree=True),)),
         monkeypatch,
         on_failure=on_failure,
         on_checkpoint=lambda *_a: CheckpointDecision.CONTINUE,
@@ -367,7 +366,7 @@ def test_stepwise_failure_abort_raises_factory_error(monkeypatch: pytest.MonkeyP
     with pytest.raises(phases.FactoryError):
         run_phases_stepwise(
             container,
-            _recipe(phases_=(Phase(name="rebuild"),)),
+            _recipe(phases_=(Phase(name="rebuild", emptytree=True),)),
             emptytree=True,
             completed=(),
             until=None,
@@ -384,7 +383,7 @@ def test_stepwise_settle_runs_only_at_true_final_phase(monkeypatch: pytest.Monke
     # plano completo, todos CONTINUE → settle deve rodar exatamente uma vez no fim
     results = _stepwise(
         container,
-        _recipe(phases_=(Phase(name="rebuild"),)),
+        _recipe(phases_=(Phase(name="rebuild", emptytree=True),)),
         monkeypatch,
         on_checkpoint=lambda *_a: CheckpointDecision.CONTINUE,
     )

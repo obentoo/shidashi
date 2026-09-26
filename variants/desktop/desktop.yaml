@@ -1,0 +1,17 @@
+# variants/desktop/desktop.yaml — the DESKTOP stage (D24): the graphical
+# infrastructure shared by every graphical flavor, and no applications.
+#
+# Built over the settled minimal with `emerge -uDN @world`: only what the
+# graphical USE changes is rebuilt, once for all four flavors. Its fork point is
+# where kde, gnome, xfce and wm branch.
+#
+# Deliberately thin today (step 2 of D24 is neutral): it installs @gpu, which the
+# old `graphics` phase did, and has no portage/ yet. Step 3 moves the graphical
+# USE here from the base -- Wayland as server and compositor, no X session
+# (`-X wayland`; XWayland and legacy X libraries stay only as compatibility) --
+# together with the infrastructure sets: fonts, portals, the audio server, and
+# @vpn @print @sandbox as system services.
+stage: desktop
+after: minimal
+sets:
+  - gpu

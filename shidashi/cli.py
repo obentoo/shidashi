@@ -8,7 +8,7 @@ fundem fragmentos (``shidashi.recipe``) e renderizam — sem jamais importar ou
 acionar ``shidashi.portage_api``.
 
 Mapeamento de erros (R5.2/R6.3): ``UnknownAxisError`` (de ``config``) e
-``RecipeConflictError`` (de ``merge``) são capturados, exibidos como mensagem
+``RecipeChainError`` (de ``merge``/``load_chain``) são capturados, exibidos como mensagem
 amigável e convertidos em ``typer.Exit(1)`` — nenhum traceback escapa ao
 usuário.
 """
@@ -38,15 +38,8 @@ from shidashi.factory import (
     StaleStateError,
 )
 from shidashi.image import ImageError
-from shidashi.recipe import (
-    RecipeConflictError,
-    ResolvedRecipe,
-    load_arch,
-    load_base,
-    load_flavor,
-    load_init,
-    merge,
-)
+from shidashi.phases import phase_target
+from shidashi.recipe import RecipeChainError, ResolvedRecipe
 from shidashi.resolve import PretendReport, ResolveError, pretend_resolve
 from shidashi.seed import SeedError
 from shidashi.state import PhaseDiff
@@ -107,19 +100,15 @@ def _apply_work_dir(work_dir: Path | None) -> None:
 
 
 def _resolve(arch: str, flavor: str, init: str) -> ResolvedRecipe:
-    """Carrega os quatro fragmentos e funde-os numa :class:`ResolvedRecipe`.
+    """Carrega a cadeia de estágios do alvo e funde-a (D24).
 
-    Resolve caminhos via :mod:`shidashi.config` (que levanta
-    :class:`~shidashi.config.UnknownAxisError` para nomes desconhecidos) e funde via
-    :func:`shidashi.recipe.merge` (que pode levantar
-    :class:`~shidashi.recipe.RecipeConflictError`). Não captura nada: deixa as duas
-    exceções conhecidas propagarem para os chamadores mapearem.
+    ``flavor`` é o ALVO: ``minimal`` ou um flavor. Delega a
+    :func:`shidashi.config.load_recipe`, que levanta
+    :class:`~shidashi.config.UnknownAxisError` para nomes desconhecidos e
+    :class:`~shidashi.recipe.RecipeChainError` para uma cadeia quebrada. Não
+    captura nada: os chamadores mapeiam as duas.
     """
-    base = load_base(config.base_path())
-    arch_fragment = load_arch(config.recipe_path("arch", arch))
-    flavor_fragment = load_flavor(config.recipe_path("flavor", flavor))
-    init_fragment = load_init(config.recipe_path("init", init))
-    return merge(base, arch_fragment, flavor_fragment, init_fragment)
+    return config.load_recipe(arch, flavor, init)
 
 
 def _render_pretty(resolved: ResolvedRecipe) -> None:
@@ -137,25 +126,21 @@ def _render_pretty(resolved: ResolvedRecipe) -> None:
     summary.add_row("cpu_flags_x86", " ".join(resolved.cpu_flags_x86))
     summary.add_row("sets", " ".join(resolved.sets))
     summary.add_row("portage_layers", " → ".join(resolved.portage_layers))
+    summary.add_row("stages", " → ".join(resolved.stages))
     console.print(summary)
-
-    use_table = Table(title="USE")
-    use_table.add_column("enabled", style="green")
-    use_table.add_column("disabled", style="red")
-    use_table.add_row(
-        "\n".join(resolved.use.enabled) or "—",
-        "\n".join(resolved.use.disabled) or "—",
-    )
-    console.print(use_table)
 
     phases_table = Table(title="phases")
     phases_table.add_column("name", style="bold")
-    phases_table.add_column("packages")
+    phases_table.add_column("stage")
+    phases_table.add_column("targets")
+    phases_table.add_column("layers in effect")
     phases_table.add_column("use_break")
     for phase in resolved.phases:
         phases_table.add_row(
-            phase.name,
-            " ".join(phase.packages) or "—",
+            phase.name + (" (ships)" if phase.ships else ""),
+            phase.stage or "—",
+            " ".join(phase_target(phase, resolved)) or "—",
+            " ".join(phase.layers) or "—",
             ", ".join(f"{b.atom} {'' if b.enable else '-'}{b.flag}" for b in phase.use_break)
             or "—",
         )
@@ -175,7 +160,7 @@ def recipe_show(
     """Resolve, funde e renderiza a receita (R4.1–R4.3)."""
     try:
         resolved = _resolve(arch, flavor, init)
-    except (config.UnknownAxisError, RecipeConflictError) as err:
+    except (config.UnknownAxisError, RecipeChainError) as err:
         _err_console.print(f"[bold red]erro:[/bold red] {err}")
         raise typer.Exit(1) from err
 
@@ -192,7 +177,7 @@ def recipe_validate(arch: str, flavor: str, init: str) -> None:
     """Valida load+merge: sucesso → exit 0; conflito/eixo desconhecido → exit 1 (R5.1/R5.2)."""
     try:
         _resolve(arch, flavor, init)
-    except (config.UnknownAxisError, RecipeConflictError) as err:
+    except (config.UnknownAxisError, RecipeChainError) as err:
         _err_console.print(f"[bold red]inválida:[/bold red] {err}")
         raise typer.Exit(1) from err
     typer.echo(f"válida: {arch} × {flavor} × {init}")
@@ -200,10 +185,18 @@ def recipe_validate(arch: str, flavor: str, init: str) -> None:
 
 @recipe_app.command("list")
 def recipe_list() -> None:
-    """Lista os nomes disponíveis de cada eixo (base é implícita) (R6.1)."""
-    for axis in ("arch", "flavor", "init"):
-        names = config.available_names(axis)
-        typer.echo(f"{axis}: {', '.join(names) if names else '(nenhum)'}")
+    """Lista o que se pode pedir: arches, ALVOS (imagens entregues) e inits (R6.1).
+
+    O alvo é ``minimal`` ou um flavor (D24) -- não o eixo ``flavor``, onde o
+    ``minimal`` já não mora. A base é implícita: toda cadeia começa nela.
+    """
+    rows = (
+        ("arch", config.available_names("arch")),
+        ("target", config.target_names()),
+        ("init", config.available_names("init")),
+    )
+    for label, names in rows:
+        typer.echo(f"{label}: {', '.join(names) if names else '(nenhum)'}")
 
 
 def _render_report_pretty(report: PretendReport) -> None:
@@ -257,7 +250,7 @@ def pretend(
     _apply_work_dir(work_dir)
     try:
         report = pretend_resolve(arch, flavor, init, download=not no_download, keep=keep)
-    except (SeedError, ResolveError, config.UnknownAxisError, RecipeConflictError) as err:
+    except (SeedError, ResolveError, config.UnknownAxisError, RecipeChainError) as err:
         if isinstance(err, ResolveError) and err.raw_output:
             _err_console.print(err.raw_output)
         _err_console.print(f"[bold red]erro:[/bold red] {err}")
@@ -452,7 +445,7 @@ def factory(
     _apply_work_dir(work_dir)
     try:
         resolved = _resolve(arch, flavor, init)
-    except (config.UnknownAxisError, RecipeConflictError) as err:
+    except (config.UnknownAxisError, RecipeChainError) as err:
         _err_console.print(f"[bold red]erro:[/bold red] {err}")
         raise typer.Exit(1) from err
 
@@ -524,7 +517,7 @@ def _run_factory_oneshot(
         if err.output:
             _err_console.print(err.output)
         raise typer.Exit(1) from err
-    except (SeedError, ResolveError, config.UnknownAxisError, RecipeConflictError) as err:
+    except (SeedError, ResolveError, config.UnknownAxisError, RecipeChainError) as err:
         if isinstance(err, ResolveError) and err.raw_output:
             _err_console.print(err.raw_output)
         _err_console.print(f"[bold red]erro:[/bold red] {err}")
@@ -595,7 +588,7 @@ def _run_factory_stepwise(
             if err.output:
                 _err_console.print(err.output)
             raise typer.Exit(1) from err
-        except (SeedError, ResolveError, config.UnknownAxisError, RecipeConflictError) as err:
+        except (SeedError, ResolveError, config.UnknownAxisError, RecipeChainError) as err:
             if isinstance(err, ResolveError) and err.raw_output:
                 _err_console.print(err.raw_output)
             _err_console.print(f"[bold red]erro:[/bold red] {err}")
@@ -717,7 +710,7 @@ def assemble(
     _apply_work_dir(work_dir)
     try:
         resolved = _resolve(arch, flavor, init)
-    except (config.UnknownAxisError, RecipeConflictError) as err:
+    except (config.UnknownAxisError, RecipeChainError) as err:
         _err_console.print(f"[bold red]erro:[/bold red] {err}")
         raise typer.Exit(1) from err
 

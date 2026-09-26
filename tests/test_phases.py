@@ -23,7 +23,7 @@ teste fica Red no uso, nomeando o símbolo pendente (Red esperado da story 003).
 from pathlib import Path
 from typing import Any
 
-from shidashi.recipe import Phase, ResolvedRecipe, ResolvedUse
+from shidashi.recipe import Phase, ResolvedRecipe
 from tests._pending import try_import
 
 UseBreak: Any = try_import("shidashi.recipe", "UseBreak")
@@ -56,7 +56,6 @@ def _recipe(
         cpu_flags_x86=("sse4_2",),
         tier=1,
         runnable_on_build_host=True,
-        use=ResolvedUse(enabled=(), disabled=()),
         sets=sets,
         phases=phases,
         portage_layers=("base", "arch/v3", "flavor/kde", "init/systemd"),
@@ -75,8 +74,12 @@ def _phase(name: str, *, packages: tuple[str, ...] = (), breaks: tuple[Any, ...]
 # --- 3.1 phase_target ---------------------------------------------------------
 
 
-def test_phase_target_rebuild_is_world() -> None:
-    assert phase_target(Phase(name="rebuild"), _recipe()) == ("@world",)
+def test_phase_target_of_the_base_is_world_then_its_sets() -> None:
+    """The full rebuild is a property of the stage (``emptytree``), not of a
+    phase NAME -- the name-based rule is what tied `rebuild` to @world."""
+    base = Phase(name="base", stage="base", sets=("base",), emptytree=True)
+    assert phase_target(base, _recipe()) == ("@world", "@base")
+    assert phase_target(Phase(name="anything", emptytree=True), _recipe()) == ("@world",)
 
 
 def test_phase_target_seat_is_packages() -> None:
@@ -84,8 +87,12 @@ def test_phase_target_seat_is_packages() -> None:
     assert phase_target(phase, _recipe()) == ("sys-apps/dbus", "sys-auth/seatd")
 
 
-def test_phase_target_desktop_is_flavor_set() -> None:
-    assert phase_target(Phase(name="desktop"), _recipe(flavor="kde")) == ("@kde",)
+def test_phase_target_is_the_stages_own_sets_whatever_the_phase_is_called() -> None:
+    """No convention by name: `desktop` used to mean @<flavor>. A flavor stage
+    lists its own set like any other."""
+    flavor = Phase(name="flavor", stage="kde", sets=("kde", "extra-desktop"))
+    assert phase_target(flavor, _recipe(flavor="kde")) == ("@kde", "@extra-desktop")
+    assert phase_target(Phase(name="desktop"), _recipe(flavor="kde")) == ()
 
 
 def test_phase_target_uses_declared_sets() -> None:
@@ -94,16 +101,18 @@ def test_phase_target_uses_declared_sets() -> None:
     assert phase_target(phase, _recipe()) == ("@base", "@graphics")
 
 
-def test_phase_target_filters_sets_not_in_recipe() -> None:
-    # base.yaml enumera a intenção da fase para QUALQUER flavor; um flavor que
-    # não declara o set simplesmente não o instala, em vez de pedir um @ausente.
-    phase = Phase(name="graphics", sets=("graphics", "gpu"))
-    assert phase_target(phase, _recipe(sets=("base", "graphics"))) == ("@graphics",)
+def test_phase_target_takes_every_set_the_stage_declares() -> None:
+    # Pre-D24 the base listed each phase's intent for ANY flavor and the target
+    # was filtered by the recipe's sets. Now each stage declares only what it
+    # installs, so there is nothing to filter.
+    phase = Phase(name="desktop", stage="desktop", sets=("gpu", "fonts"))
+    assert phase_target(phase, _recipe(sets=("base",))) == ("@gpu", "@fonts")
 
 
-def test_phase_target_falls_back_to_packages_when_no_set_matches() -> None:
-    phase = Phase(name="graphics", sets=("gpu",), packages=("cat/pkg",))
-    assert phase_target(phase, _recipe(sets=("base",))) == ("cat/pkg",)
+def test_phase_target_falls_back_to_packages_when_there_are_no_sets() -> None:
+    # the init-prepended `seat` phase names atoms, not sets
+    phase = Phase(name="seat", packages=("sys-auth/elogind", "sys-auth/seatd"))
+    assert phase_target(phase, _recipe()) == ("sys-auth/elogind", "sys-auth/seatd")
 
 
 def test_phase_target_unknown_phase_falls_back_to_packages() -> None:
@@ -115,11 +124,15 @@ def test_phase_target_unknown_phase_falls_back_to_packages() -> None:
 
 
 def test_phase_emerge_argv_rebuild_has_emptytree() -> None:
-    argv = phase_emerge_argv(Phase(name="rebuild"), _recipe(), emptytree=True)
+    base = Phase(name="base", stage="base", sets=("base",), emptytree=True)
+    argv = phase_emerge_argv(base, _recipe(), emptytree=True)
     assert argv[0] == "emerge"
     assert "--verbose" in argv
     assert "--emptytree" in argv
-    assert "@world" in argv
+    assert argv[-2:] == ["@world", "@base"]
+    # a phase that is not the base never gets --emptytree, whatever it is called
+    other = Phase(name="rebuild", sets=("gpu",))
+    assert "--emptytree" not in phase_emerge_argv(other, _recipe(), emptytree=True)
 
 
 def test_phase_emerge_argv_non_rebuild_has_no_emptytree() -> None:
@@ -225,18 +238,19 @@ def test_fork_point_key_includes_arch_flavor_init_snapshot(tmp_path: Path) -> No
     assert "v3" in name and "kde" in name and "systemd" in name and "SNAP" in name
 
 
-def test_trunk_phase_names_excludes_desktop_for_kde() -> None:
+def test_trunk_is_everything_up_to_and_including_the_base() -> None:
+    """The trunk -- fork point 1 of base → minimal → desktop → flavor -- is what
+    every image of one arch × init shares: the init's prepended phases and the
+    base, the only full rebuild."""
     phases = (
-        Phase(name="rebuild"),
-        Phase(name="graphics"),
-        Phase(name="desktop"),
-        Phase(name="apps"),
+        Phase(name="seat", packages=("sys-auth/seatd",)),
+        Phase(name="base", stage="base", emptytree=True),
+        Phase(name="minimal", stage="minimal", ships=True),
+        Phase(name="desktop", stage="desktop"),
+        Phase(name="flavor", stage="kde", ships=True),
     )
     recipe = _recipe(flavor="kde", sets=("kde",), phases=phases)
-    names = trunk_phase_names(recipe)
-    assert "desktop" not in names
-    assert names[0] == "rebuild"
-    assert "graphics" in names
+    assert trunk_phase_names(recipe) == ("seat", "base")
 
 
 def test_trunk_phase_names_all_phases_for_minimal() -> None:
