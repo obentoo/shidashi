@@ -26,6 +26,12 @@ class CommandResult:
         self.stderr = stderr
 
 
+#: The lab's validated nspawn line (start.sh). --resolv-conf=copy-host: fetches
+#: must not depend on whatever resolv.conf the stage3 ships. --register=no: not a
+#: --boot container, so there is nothing for systemd-machined to manage.
+_HOST_OPTIONS = ("--register=no", "--resolv-conf=copy-host")
+
+
 def _emit_binds(
     binds: Sequence[tuple[Path, Path]],
     binds_rw: Sequence[tuple[Path, Path]],
@@ -61,7 +67,7 @@ def _nspawn_argv(
     separador ``--``; o ``argv`` do comando vem depois. Sem ``binds_rw`` o argv
     é idêntico ao da story 002 (R7.3 back-compat).
     """
-    cmd: list[str] = ["systemd-nspawn", "--directory", str(rootfs)]
+    cmd: list[str] = ["systemd-nspawn", "--directory", str(rootfs), *_HOST_OPTIONS]
     if ephemeral:
         cmd.append("--ephemeral")
     cmd.extend(_emit_binds(binds, binds_rw))
@@ -84,7 +90,7 @@ def _nspawn_shell_argv(
     (sem o separador ``--`` nem argv), de modo que o nspawn caia no shell de
     login do container. Não altera o argv de :func:`_nspawn_argv` (R8.4).
     """
-    cmd: list[str] = ["systemd-nspawn", "--directory", str(rootfs)]
+    cmd: list[str] = ["systemd-nspawn", "--directory", str(rootfs), *_HOST_OPTIONS]
     cmd.extend(_emit_binds(binds, binds_rw))
     return cmd
 

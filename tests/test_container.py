@@ -22,7 +22,7 @@ from pathlib import Path
 
 import pytest
 
-from shidashi.container import CommandResult, Container, _nspawn_argv
+from shidashi.container import CommandResult, Container, _nspawn_argv, _nspawn_shell_argv
 
 _NEEDS_ROOT = os.geteuid() != 0 or shutil.which("systemd-nspawn") is None
 _skip_privileged = pytest.mark.skipif(
@@ -56,6 +56,17 @@ def test_nspawn_argv_basic_shape() -> None:
     # o argv do comando vem após o separador "--"
     sep = argv.index("--")
     assert argv[sep + 1 :] == ["emerge", "--pretend"]
+
+
+def test_nspawn_argv_and_shell_share_the_labs_host_options() -> None:
+    """--resolv-conf=copy-host: the stage3's resolv.conf is not trusted to reach
+    the mirrors; --register=no: not a --boot container, nothing for machined."""
+    run = _nspawn_argv(Path("/r"), ["sh"], binds=[], ephemeral=False)
+    shell = _nspawn_shell_argv(Path("/r"))
+    for argv in (run, shell):
+        assert "--resolv-conf=copy-host" in argv
+        assert "--register=no" in argv
+    assert run.index("--register=no") < run.index("--")
 
 
 def test_nspawn_argv_ephemeral_flag() -> None:
