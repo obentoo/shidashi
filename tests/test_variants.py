@@ -618,4 +618,4 @@ def test_the_kde_layer_is_not_in_force_until_the_kde_stage(
     kde_files = {p.name for p in kde_package_use.iterdir()}
     assert ["DESKTOPS=" in mc for _a, mc, _pu in stage_emerges] == [False, False, False, True]
     assert [bool(kde_files & pu) for _a, _mc, pu in stage_emerges] == [False, False, False, True]
-    assert stage_emerges[0][0][2] == "--emptytree"
+    assert stage_emerges[0][0][3] == "--emptytree"

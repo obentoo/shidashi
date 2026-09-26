@@ -25,6 +25,7 @@ from shidashi import config, isacheck, state
 from shidashi.bootstrap import BootstrapResult, run_bootstrap
 from shidashi.catalyst import build_stage3_catalyst
 from shidashi.container import Container
+from shidashi.generation import check_or_record, fingerprint
 from shidashi.phases import (
     CheckpointDecision,
     CheckpointHook,
@@ -388,7 +389,9 @@ class Factory:
         4. Monta os binds (:func:`_build_binds`, ccache owned by the image's
            ``portage``) e abre um :class:`Container` **não-efêmero**.
         5. Over a fresh stage3 only: the toolchain bootstrap
-           (:func:`shidashi.bootstrap.run_bootstrap`), then its checkpoint.
+           (:func:`shidashi.bootstrap.run_bootstrap`), then its checkpoint. Then
+           the generation fingerprint is recorded in, or checked against, the
+           PKGDIR (:func:`shidashi.generation.check_or_record`, D26).
         6. :func:`shidashi.phases.run_phases` (fases + settle-pass).
         7. Monta o :class:`FactoryResult`. Em sucesso e sem ``keep``, remove o
            rootfs de build; em falha ou ``keep``, preserva-o (R8.4). Uma falha de
@@ -429,6 +432,8 @@ class Factory:
                     bootstrap = _bootstrap(
                         container, recipe, snapshot=snapshot, fork_points_dir=fork_points_dir
                     )
+                # before any emerge can reuse a binpkg (D26)
+                check_or_record(self.pkgdir, fingerprint(rootfs, recipe))
                 results = run_phases(
                     container,
                     recipe,
@@ -590,6 +595,8 @@ class Factory:
                 )
                 if seeded is not None:
                     state.save_state(state_path, seeded.model_copy(update={"bootstrap_done": True}))
+            # before any emerge can reuse a binpkg (D26)
+            check_or_record(self.pkgdir, fingerprint(rootfs, recipe))
             results = run_phases_stepwise(
                 container,
                 recipe,

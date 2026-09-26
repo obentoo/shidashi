@@ -77,7 +77,7 @@ class BootstrapResult(pydantic.BaseModel):
     output: str
 
 
-def _natural_key(name: str) -> tuple[tuple[int, int | str], ...]:
+def natural_key(name: str) -> tuple[tuple[int, int | str], ...]:
     """``sort -V``-like key: digit runs compare as numbers (``-9`` < ``-10``)."""
     return tuple(
         (0, int(part)) if part.isdigit() else (1, part)
@@ -99,7 +99,7 @@ def newest_profile(env_dir: Path) -> str:
     ]
     if not names:
         raise BootstrapError(f"no toolchain profile in {env_dir}", phase="bootstrap")
-    return max(names, key=_natural_key)
+    return max(names, key=natural_key)
 
 
 def emerge_argv(*targets: str) -> list[str]:

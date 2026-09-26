@@ -138,6 +138,11 @@ def phase_emerge_argv(phase: Phase, recipe: ResolvedRecipe, *, emptytree: bool) 
       que a configuração daquele estágio muda (o USE gráfico, no desktop) e
       instala os seus sets. Também a base quando ``emptytree`` é falso;
     - uma fase sem estágio (a ``seat`` do openrc) → só os seus átomos.
+
+    ``--usepkg`` always: a binpkg of the same package, version and USE is
+    reused. Safe only because the PKGDIR belongs to ONE generation -- the
+    fingerprint check (:mod:`shidashi.generation`) runs before the first phase,
+    since Portage itself never compares CFLAGS or the toolchain (D26).
     """
     if phase.emptytree and emptytree:
         mode: tuple[str, ...] = ("--emptytree",)
@@ -145,7 +150,7 @@ def phase_emerge_argv(phase: Phase, recipe: ResolvedRecipe, *, emptytree: bool) 
         mode = ("--update", "--deep", "--newuse")
     else:
         mode = ()
-    return ["emerge", "--verbose", *mode, *phase_target(phase, recipe)]
+    return ["emerge", "--verbose", "--usepkg", *mode, *phase_target(phase, recipe)]
 
 
 # --- 3.2 package.use transitório do break-pass -------------------------------

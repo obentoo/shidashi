@@ -140,6 +140,18 @@ def test_phase_emerge_argv_rebuild_has_emptytree() -> None:
     assert "--emptytree" not in phase_emerge_argv(other, _recipe(), emptytree=True)
 
 
+def test_phase_emerge_argv_always_reuses_binpkgs_of_the_generation() -> None:
+    """--usepkg on every stage: the PKGDIR is one generation's (D26), checked
+    by its fingerprint before the first phase, so a matching binpkg is safe."""
+    for phase in (
+        Phase(name="base", stage="base", sets=("base",), emptytree=True),
+        Phase(name="minimal", stage="minimal", sets=("extra-system",)),
+    ):
+        assert phase_emerge_argv(phase, _recipe(), emptytree=True)[:3] == [
+            "emerge", "--verbose", "--usepkg",
+        ]
+
+
 def test_phase_emerge_argv_non_rebuild_has_no_emptytree() -> None:
     argv = phase_emerge_argv(
         Phase(name="graphics", sets=("graphics",)), _recipe(), emptytree=True
@@ -316,8 +328,8 @@ def test_run_phases_settles_each_shipped_stage_and_snapshots_every_stage(
     ]
     assert snaps == [f"v3-systemd-S-{s}.tar" for s in ("base", "minimal", "desktop", "kde")]
     base, minimal, settle_minimal, desktop, *_ = container.emerge_calls
-    assert base[:3] == ["emerge", "--verbose", "--emptytree"]
-    assert minimal[2:5] == desktop[2:5] == ["--update", "--deep", "--newuse"]
+    assert base[:4] == ["emerge", "--verbose", "--usepkg", "--emptytree"]
+    assert minimal[3:6] == desktop[3:6] == ["--update", "--deep", "--newuse"]
     # minimal's settle undoes the trunk cut, which rode the base phase
     assert settle_minimal[-1] == "dev-lang/python"
     assert not (tmp_path / "rootfs" / "etc" / "portage" / "package.use"
