@@ -18,6 +18,13 @@ sets:
   - extra-media
   - extra-dev
   - extra-virt
+# The display manager depends on the init (2026-09-26, author's decision:
+# plasma-login-manager, Plasma's own and the current default). It needs systemd,
+# so openrc keeps SDDM. plasma-meta's own display-manager flag is off
+# (package.use/kde), so each image ships exactly one.
+init_sets:
+  systemd: [kde-dm-plasma]
+  openrc: [kde-dm-sddm]
 # No use_break here. All three trunk cycles are cut by the base stage, and a
 # stage's cuts ADD to the chain's, so this flavor would only declare a cut of its
 # OWN. It once declared media-video/ffmpeg[-sdl] -- copied from what works for

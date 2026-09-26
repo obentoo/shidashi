@@ -4,7 +4,9 @@ kde-misc/kdeconnect bluetooth
 kde-plasma/spectacle share
 kde-apps/dolphin semantic-desktop
 kde-apps/ark zip
-kde-plasma/plasma-meta bluetooth cups
+# -display-manager: plasma-meta would pull SDDM (or LightDM with -sddm) next to
+# the display manager the kde stage installs per init (recipe.yaml init_sets).
+kde-plasma/plasma-meta bluetooth cups -display-manager
 kde-apps/kdenlive semantic-desktop
 kde-frameworks/prison qml
 kde-plasma/kde-cli-tools kdesu

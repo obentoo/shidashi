@@ -18,9 +18,9 @@ kde-apps/okular
 # KDE misc
 kde-misc/kdeconnect
 
-# Plasma desktop
+# Plasma desktop. The display manager is NOT here: it depends on the init --
+# see kde-dm-plasma / kde-dm-sddm and `init_sets` in flavor/kde/recipe.yaml.
 kde-plasma/kde-gtk-config
-kde-plasma/plasma-login-manager
 kde-plasma/plasma-meta
 kde-plasma/print-manager
 kde-plasma/spectacle

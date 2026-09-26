@@ -96,12 +96,17 @@ class StageFragment(BaseModel):
     note o que ele NÃO faz: não impede o átomo de entrar como DEPENDÊNCIA de
     outro pacote -- é "não peço", não "proíbo". ``use_break`` são os cortes de
     ciclo que valem a partir deste estágio, até o settle da imagem.
+
+    ``init_sets`` maps an init to extra sets this stage installs only under it
+    (kde's display manager: plasma-login-manager needs systemd, openrc gets
+    sddm). They join ``sets`` on this stage's phase; other inits' are ignored.
     """
 
     model_config = _STRICT
     stage: str
     after: str | None = None
     sets: tuple[str, ...] = ()
+    init_sets: dict[str, tuple[str, ...]] = {}
     exclude: tuple[str, ...] = ()
     update: UpdateMode = "newuse"
     ships: bool = False
@@ -219,7 +224,8 @@ def merge(
       ``init`` vale em todas, porque o profile e o seat valem desde o seed.
     - **Fases:** ``init.phases_prepend`` e depois uma por estágio
       (:func:`stage_phase_name`), com os sets, os cortes e o modo do estágio.
-    - **sets / exclude:** união ordenada-única sobre toda a cadeia.
+    - **sets / exclude:** união ordenada-única sobre toda a cadeia; os sets de
+      cada estágio incluem os do seu ``init_sets`` para ``init.init``.
     """
     chain: tuple[StageFragment, ...] = (base, *stages)
     for prev, stage in zip(chain, chain[1:], strict=False):
@@ -237,6 +243,7 @@ def merge(
         p.model_copy(update={"layers": (*head_layers, init_layer)}) for p in init.phases_prepend
     ]
     stage_layers: list[str] = []
+    stage_sets = {st.stage: (*st.sets, *st.init_sets.get(init.init, ())) for st in chain}
     for stage in chain:
         if stage.stage != BASE_STAGE:
             stage_layers.append(stage_layer(stage.stage))
@@ -244,7 +251,7 @@ def merge(
             Phase(
                 name=stage_phase_name(stage.stage),
                 stage=stage.stage,
-                sets=stage.sets,
+                sets=stage_sets[stage.stage],
                 use_break=stage.use_break,
                 emptytree=stage.update == "emptytree",
                 ships=stage.ships,
@@ -263,7 +270,7 @@ def merge(
         cpu_flags_x86=arch.cpu_flags_x86,
         tier=arch.tier,
         runnable_on_build_host=arch.runnable_on_build_host,
-        sets=_ordered_unique(tuple(s for st in chain for s in st.sets)),
+        sets=_ordered_unique(tuple(s for st in chain for s in stage_sets[st.stage])),
         exclude=_ordered_unique(tuple(a for st in chain for a in st.exclude)),
         phases=tuple(phases),
         portage_layers=(*head_layers, *stage_layers, init_layer),

@@ -67,13 +67,17 @@ def test_golden_v3_kde_systemd() -> None:
     assert r.sets == (
         "base", "extra-system",
         "gpu", "fonts", "desktop-int", "audio", "vpn", "print", "sandbox",
-        "kde", "extra-desktop", "extra-media", "extra-dev", "extra-virt",
+        "kde", "extra-desktop", "extra-media", "extra-dev", "extra-virt", "kde-dm-plasma",
     )
     assert _targets(r) == {
         "base": ("@world", "@base"),
         "minimal": ("@extra-system",),
         "desktop": ("@gpu", "@fonts", "@desktop-int", "@audio", "@vpn", "@print", "@sandbox"),
-        "flavor": ("@kde", "@extra-desktop", "@extra-media", "@extra-dev", "@extra-virt"),
+        # init_sets: the display manager joins the flavor phase, per init
+        "flavor": (
+            "@kde", "@extra-desktop", "@extra-media", "@extra-dev", "@extra-virt",
+            "@kde-dm-plasma",
+        ),
     }
     # minimal ships on its way to kde: the graphical stages start from it settled
     assert tuple(p.name for p in r.phases if p.ships) == ("minimal", "flavor")

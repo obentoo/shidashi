@@ -1,0 +1,11 @@
+# variants/kits/desktops/kde-dm-sddm — KDE's display manager under openrc.
+#
+# plasma-login-manager needs systemd, so openrc keeps SDDM, with its Plasma
+# settings module. Installed by the kde stage only when init is openrc
+# (`init_sets`, 2026-09-26). The greeter runs on kwin_wayland: see
+# flavor/kde/portage/package.use/plasma-x (sddm-gentoo-config kwin).
+#
+# LEAF set: a flat list of atoms (2026-09-09). See kits/core/base for the layering contract.
+
+x11-misc/sddm
+kde-plasma/sddm-kcm

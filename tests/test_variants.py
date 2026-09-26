@@ -19,6 +19,7 @@ Cobertura:
   o de openrc não; o merge openrc prepende a phase ``seat``.
 """
 
+import itertools
 import subprocess
 from pathlib import Path
 
@@ -62,6 +63,9 @@ def _load_arch(name: str) -> ArchFragment:
 
 def _load_stage(name: str) -> StageFragment:
     return load_stage(config.stage_path(name))
+
+
+_INITS = ("systemd", "openrc")
 
 
 def _recipe(target: str, init: str = "systemd", arch: str = "v3") -> ResolvedRecipe:
@@ -418,7 +422,10 @@ def test_apply_portage_keeps_both_package_use_system_files(tmp_path: Path) -> No
         ("v3", "minimal", "systemd", {"boot", "uki", "ukify", "-X"},
          {"kde", "qt6", "wayland", "vulkan", "opengl", "X"}),
         ("v3", "kde", "systemd", {"boot", "kde", "qt6", "plymouth", "wayland", "vulkan"}, {"X"}),
-        ("znver5", "kde", "openrc", {"kde", "qt6", "wayland"}, {"boot", "uki", "ukify", "X"}),
+        ("znver5", "kde", "openrc", {"kde", "qt6", "wayland", "elogind", "udev"},
+         {"boot", "uki", "ukify", "X"}),
+        ("v3", "gnome", "systemd", {"gtk", "gnome", "wayland"}, {"kde", "qt6", "X", "elogind"}),
+        ("v3", "xfce", "systemd", {"gtk", "wayland"}, {"gnome", "kde", "qt6", "X"}),
     ],
 )
 def test_assembled_make_conf_composes_use_across_axes(
@@ -552,8 +559,9 @@ def test_no_orphan_sets() -> None:
         ]
 
     reachable: set[str] = set()
-    for flavor in ("minimal", "kde", "gnome", "xfce", "wm"):
-        recipe = _recipe(flavor)
+    # Every init: a stage's init_sets reach a set only under their own init.
+    for flavor, init in itertools.product(("minimal", "kde", "gnome", "xfce", "wm"), _INITS):
+        recipe = _recipe(flavor, init)
         pending = list(recipe.sets)
         while pending:
             name = pending.pop()

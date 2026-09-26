@@ -230,6 +230,25 @@ def test_sets_and_exclude_are_ordered_unions_over_the_chain() -> None:
     assert r.exclude == ("a/x", "b/y")
 
 
+def test_init_sets_add_the_current_inits_sets_to_their_stage_only() -> None:
+    """A stage may install a set only under one init -- kde's display manager:
+    plasma-login-manager needs systemd, openrc gets sddm. The init's sets join
+    the stage's own, on that stage's phase; another init's are ignored."""
+    chain = (
+        make_stage("minimal", "base", sets=("extra-system",)),
+        make_stage(
+            "kde", "minimal", sets=("kde",),
+            init_sets={"systemd": ("kde-dm-plasma",), "openrc": ("kde-dm-sddm",)},
+        ),
+    )
+    sd = merge(make_base(), make_arch(), chain, make_init())
+    rc = merge(make_base(), make_arch(), chain, make_init(init="openrc", profile_suffix=""))
+    assert {p.name: p.sets for p in sd.phases}["flavor"] == ("kde", "kde-dm-plasma")
+    assert {p.name: p.sets for p in rc.phases}["flavor"] == ("kde", "kde-dm-sddm")
+    assert sd.sets == ("base", "extra-system", "kde", "kde-dm-plasma")
+    assert "kde-dm-plasma" not in rc.sets
+
+
 def test_each_stage_keeps_its_own_cuts_on_its_own_phase() -> None:
     """The trunk's cuts ride the base phase; a later stage adds its own on its
     phase and never replaces the base's."""

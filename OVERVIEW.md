@@ -497,7 +497,9 @@ pessoas: o Portage enxerga os sets num espaço de nomes plano
 um teste garante. **Onde o arquivo mora não decide quem o instala**: só é
 instalado o que uma receita declara (`sets:`), com as `@refs` seguidas até
 fechar. O ajuste por flavor é explícito: declarar um set, ou `exclude:` átomos
-dele. Não há sobrescrita por mesmo nome entre camadas.
+dele. Não há sobrescrita por mesmo nome entre camadas. Um set que só vale sob
+um init vai em `init_sets: {<init>: [...]}` do estágio — o display manager do
+kde: `kde-dm-plasma` (plasma-login-manager, exige systemd) ou `kde-dm-sddm`.
 
 | Set | Local | Escopo |
 |---|---|---|

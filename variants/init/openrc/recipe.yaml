@@ -3,11 +3,9 @@
 # phases_prepend adds a `seat` phase BEFORE the chain, installing elogind/seatd
 # early (§8, the init<->seat coupling).
 #
-# USE -- NOT YET APPLIED. There is no portage/make.conf here, and the former
-# `use_prefer` never reached the build, so an openrc image built today would
-# lack its seat USE. The intent, for step 3 of D24, with a measurement:
-#   add:  [elogind, udev]
-#   drop: [systemd]
+# USE: portage/make.conf (SEAT="elogind udev"), written in D24 step 3c from
+# the intent of the former `use_prefer` (F69). Its drop [systemd] was already off:
+# a profile without /systemd does not enable it.
 init: openrc
 profile_suffix: ""
 phases_prepend:

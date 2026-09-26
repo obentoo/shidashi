@@ -1,0 +1,9 @@
+# variants/kits/desktops/kde-dm-plasma — KDE's display manager under systemd.
+#
+# Plasma Login Manager is Plasma's own login manager, the current default, and it
+# depends on sys-apps/systemd (masked outside the systemd profiles). Installed by
+# the kde stage only when init is systemd (`init_sets`, 2026-09-26).
+#
+# LEAF set: a flat list of atoms (2026-09-09). See kits/core/base for the layering contract.
+
+kde-plasma/plasma-login-manager
