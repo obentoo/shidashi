@@ -3,7 +3,7 @@
 Camada de planejamento PURA da story 003 (grupos 3 + 4.1):
 
 * **3.1** :func:`phase_target` / :func:`phase_emerge_argv` — alvo emerge de cada
-  fase e o argv completo (``--emptytree`` só no ``rebuild``).
+  fase e o argv completo (``--emptytree`` só na base, ``-uDN`` nos demais estágios).
 * **3.2** :func:`use_break_lines` / :func:`write_use_break` / :func:`clear_use_break`
   — ``package.use`` transitório do break-pass (I/O só contra um rootfs em disco,
   sem root).
@@ -32,10 +32,10 @@ from pathlib import Path
 
 import pydantic
 
-from shidashi import state
+from shidashi import config, state
 from shidashi.container import Container
 from shidashi.recipe import Phase, ResolvedRecipe, UseBreak
-from shidashi.resolve import _atom_from_ebuild_line, _iter_atom_lines
+from shidashi.resolve import _atom_from_ebuild_line, _iter_atom_lines, apply_portage
 from shidashi.state import EmergePlanEntry, PhaseDiff
 
 _USE_BREAK_FILE = ("etc", "portage", "package.use", "zz-shidashi-use-break")
@@ -128,18 +128,24 @@ def phase_target(phase: Phase, recipe: ResolvedRecipe) -> tuple[str, ...]:
 
 
 def phase_emerge_argv(phase: Phase, recipe: ResolvedRecipe, *, emptytree: bool) -> list[str]:
-    """Monta o argv de ``emerge`` para uma fase (R3.1). Puro.
+    """Monta o argv de ``emerge`` para uma fase (R3.1, D24). Puro.
 
-    Sempre ``emerge --verbose`` seguido do(s) alvo(s) de :func:`phase_target`.
-    ``--emptytree`` é emitido apenas na fase ``rebuild`` e somente quando
-    ``emptytree`` é verdadeiro (reconstrução total do tronco).
+    O modo vem do estágio, não do nome da fase:
+
+    - a base (``phase.emptytree``) → ``--emptytree`` quando ``emptytree`` é
+      verdadeiro: a única reconstrução completa, que "cozinha" o stage3;
+    - todo estágio depois dela → ``--update --deep --newuse``: recompila só o
+      que a configuração daquele estágio muda (o USE gráfico, no desktop) e
+      instala os seus sets. Também a base quando ``emptytree`` é falso;
+    - uma fase sem estágio (a ``seat`` do openrc) → só os seus átomos.
     """
-    return [
-        "emerge",
-        "--verbose",
-        *(("--emptytree",) if (emptytree and phase.emptytree) else ()),
-        *phase_target(phase, recipe),
-    ]
+    if phase.emptytree and emptytree:
+        mode: tuple[str, ...] = ("--emptytree",)
+    elif phase.stage:
+        mode = ("--update", "--deep", "--newuse")
+    else:
+        mode = ()
+    return ["emerge", "--verbose", *mode, *phase_target(phase, recipe)]
 
 
 # --- 3.2 package.use transitório do break-pass -------------------------------
@@ -205,15 +211,55 @@ def _variant_key(recipe: ResolvedRecipe) -> str:
     return f"{recipe.arch}-{recipe.flavor}-{recipe.init}"
 
 
-def fork_point(recipe: ResolvedRecipe, *, snapshot: str, fork_points_dir: Path) -> Path | None:
-    """Devolve o snapshot do tronco a reusar antes da fase de desktop (R5.1/R5.2).
+def stage_fork_point_path(
+    recipe: ResolvedRecipe, stage: str, *, snapshot: str, fork_points_dir: Path
+) -> Path:
+    """Where the fork point of one STAGE lives (D24, F70). Pure.
 
-    A chave do tarball é ``<arch>-<flavor>-<init>-<snapshot>.tar`` sob
-    ``fork_points_dir``. Devolve o caminho se o arquivo existir, senão ``None``.
-    Apenas sonda o filesystem — não cria, extrai nem escreve nada.
+    ``<arch>-<init>-<snapshot>-<stage>.tar`` -- with no target in it, so that
+    the fork point of ``base``, ``minimal`` or ``desktop`` built on the way to
+    one image is found by every other image of the same arch × init. The old
+    key carried the flavor, so the trunk was never shared between flavors.
     """
-    candidate = fork_points_dir / f"{_variant_key(recipe)}-{snapshot}.tar"
-    return candidate if candidate.exists() else None
+    return fork_points_dir / f"{recipe.arch}-{recipe.init}-{snapshot}-{stage}.tar"
+
+
+def fork_point(
+    recipe: ResolvedRecipe, *, snapshot: str, fork_points_dir: Path
+) -> tuple[Phase, Path] | None:
+    """The deepest stage fork point on disk BEFORE the target (D24). Probes only.
+
+    Walks the chain backwards from the stage before the target and returns
+    the first whose tarball exists, with its phase -- the point to resume
+    after. The target's own stage is never restored: asking for an image is
+    asking to build its last stage. ``None`` when nothing is reusable.
+    """
+    stage_phases = [p for p in recipe.phases if p.stage]
+    for phase in reversed(stage_phases[:-1]):
+        path = stage_fork_point_path(
+            recipe, phase.stage, snapshot=snapshot, fork_points_dir=fork_points_dir
+        )
+        if path.exists():
+            return phase, path
+    return None
+
+
+def pending_breaks(recipe: ResolvedRecipe, *, through: str | None) -> tuple[UseBreak, ...]:
+    """The cycle cuts still in force after phase ``through`` (D24). Pure.
+
+    A shipped stage settles every cut accumulated since the previous settle, so
+    what is pending is the cuts of the phases after the last shipped one, up to
+    and including ``through``. Resuming from a fork point needs it: the base's
+    fork point carries its cuts unsettled, and minimal's settle must undo them.
+    """
+    pending: tuple[UseBreak, ...] = ()
+    if through is None:
+        return pending
+    for phase in recipe.phases:
+        pending = () if phase.ships else pending + phase.use_break
+        if phase.name == through:
+            return pending
+    return pending
 
 
 def trunk_phase_names(recipe: ResolvedRecipe) -> tuple[str, ...]:
@@ -523,7 +569,7 @@ def run_phase(
     PRIVILEGIADO (``emerge`` roda dentro do nspawn). Escreve o ``package.use``
     transitório do break-pass da fase (:func:`write_use_break`), roda
     ``emerge --verbose`` com o(s) alvo(s) de :func:`phase_emerge_argv`
-    (``--emptytree`` só em ``rebuild`` quando ``emptytree``) e devolve um
+    (``--emptytree`` só na base, ``-uDN`` nos estágios seguintes) e devolve um
     :class:`PhaseResult` com os átomos de :func:`parse_built_atoms`
     (``snapshot=None`` — o fork-point é materializado por :func:`run_phases`).
     Um ``emerge`` com saída não-zero (``CalledProcessError``) é embrulhado em
@@ -536,6 +582,13 @@ def run_phase(
         # `gpu` nem `extra-media`, logo a fase `graphics` não tem o que instalar.
         # Sem isto o argv seria `emerge --verbose` sem alvo nenhum.
         return PhaseResult(phase=phase, built_atoms=(), snapshot=None, output="")
+    if phase.layers:
+        # The configuration in force for THIS stage (D24). Layers only grow
+        # along the chain, so re-applying is additive: the desktop stage adds the
+        # graphical layer on top of what minimal already had.
+        apply_portage(
+            container.rootfs, recipe, variants_dir=config.variants_dir(), layers=phase.layers
+        )
     write_use_break(container.rootfs, phase)
     argv = phase_emerge_argv(phase, recipe, emptytree=emptytree)
     built, output = _run_emerge(container, argv, phase=phase.name)
@@ -543,7 +596,7 @@ def run_phase(
 
 
 def settle_pass(
-    container: Container, recipe: ResolvedRecipe, breaks: tuple[UseBreak, ...]
+    container: Container, recipe: ResolvedRecipe, breaks: tuple[UseBreak, ...], *, stage: str = ""
 ) -> PhaseResult:
     """Settle-pass: re-emerge os átomos quebrados com o USE final (R4.2/R4.3/R4.4).
 
@@ -555,7 +608,7 @@ def settle_pass(
     reconstruí-los com o USE definitivo. Falha de ``emerge`` (não-zero) embrulha em
     :class:`FactoryError` (``phase="settle"``).
     """
-    settle = Phase(name="settle")
+    settle = Phase(name="settle", stage=stage)
     if not breaks:
         return PhaseResult(phase=settle, built_atoms=(), snapshot=None)
     clear_use_break(container.rootfs)
@@ -575,37 +628,41 @@ def run_phases(
     snapshot: str,
     fork_points_dir: Path,
 ) -> tuple[PhaseResult, ...]:
-    """Orquestra todas as fases da receita na ordem definida (R3.1/R3.2/R4.x/R5.x).
+    """Orquestra a cadeia de estágios na ordem (R3.x/R4.x/R5.x, D24).
 
-    PRIVILEGIADO. Quando ``resume_at`` é dado (restauração de um fork-point), as
-    fases até e incluindo ``resume_at`` são puladas — o tronco já está no rootfs.
-    Cada fase restante roda via :func:`run_phase`; ao concluir a última fase do
-    tronco (:func:`trunk_phase_names`) o rootfs é capturado num fork-point via
-    :func:`snapshot_fork_point` em ``fork_points_dir`` sob a chave
-    ``<arch>-<flavor>-<init>-<snapshot>.tar`` (R5.1/R5.2). As quebras de ciclo de
-    todas as fases são acumuladas e reconciliadas por um :func:`settle_pass` final
-    (R4.2/R4.3). Devolve a tupla de :class:`PhaseResult` das fases executadas.
+    PRIVILEGIADO. Quando ``resume_at`` é dado (um fork-point restaurado), as
+    fases até e incluindo ele são puladas e os cortes que ainda valiam ali
+    (:func:`pending_breaks`) seguem pendentes. Para cada fase restante:
+
+    1. :func:`run_phase` -- aplica as camadas do estágio, os cortes e o emerge;
+    2. se o estágio é ENTREGUE (``ships``), :func:`settle_pass` desfaz os cortes
+       acumulados desde o último settle -- a imagem é assentada aqui, e o que
+       vem depois parte dela assentada;
+    3. se a fase é de um estágio, grava o fork-point dele
+       (:func:`stage_fork_point_path`), depois do settle.
+
+    Devolve os :class:`PhaseResult` na ordem, cada settle logo após o seu estágio.
     """
-    trunk = trunk_phase_names(recipe)
-    last_trunk = trunk[-1] if trunk else None
-    fork_key = f"{_variant_key(recipe)}-{snapshot}.tar"
-
+    pending = pending_breaks(recipe, through=resume_at)
     skipping = resume_at is not None
     results: list[PhaseResult] = []
-    accumulated: tuple[UseBreak, ...] = ()
     for phase in recipe.phases:
-        accumulated += phase.use_break
         if skipping:
-            # pula o tronco já materializado pelo fork-point restaurado, até e
-            # incluindo a fase nomeada por resume_at.
             if phase.name == resume_at:
                 skipping = False
             continue
         results.append(run_phase(container, recipe, phase, emptytree=emptytree))
-        if phase.name == last_trunk:
-            snapshot_fork_point(container.rootfs, fork_points_dir / fork_key)
-
-    results.append(settle_pass(container, recipe, accumulated))
+        pending += phase.use_break
+        if phase.ships:
+            results.append(settle_pass(container, recipe, pending, stage=phase.stage))
+            pending = ()
+        if phase.stage:
+            snapshot_fork_point(
+                container.rootfs,
+                stage_fork_point_path(
+                    recipe, phase.stage, snapshot=snapshot, fork_points_dir=fork_points_dir
+                ),
+            )
     return tuple(results)
 
 
@@ -728,20 +785,27 @@ def run_phases_stepwise(
       gravar progresso falha alto);
     * consulta ``on_checkpoint(phase.name, diff)`` (``None`` ⇒ auto-CONTINUE) e
       honra a :class:`CheckpointDecision`: ``CONTINUE`` segue; ``STOP`` interrompe o
-      laço SEM settle (R1.3/R2.3); ``SHELL`` abre ``container.shell()`` e
+      laço antes da fase seguinte (R1.3/R2.3); ``SHELL`` abre ``container.shell()`` e
       re-apresenta o MESMO checkpoint.
 
-    Ao fim roda :func:`settle_pass` e o anexa SOMENTE quando o plano alcançou a
-    fase FINAL da receita e NÃO houve stop antecipado (R1.3): sem STOP e ``until``
-    ``None`` ou igual ao nome da última fase. Devolve a tupla de
-    :class:`PhaseResult` das fases executadas (incluindo o settle quando rodou).
+    Cada estágio ENTREGUE (``ships``) é assentado logo depois da sua fase
+    (D24): :func:`settle_pass` desfaz os cortes acumulados desde o último
+    settle, e o snapshot e o checkpoint daquela fase já veem a imagem assentada.
+    Um STOP interrompe antes da fase seguinte, nunca no meio de uma imagem. Ao
+    retomar, os cortes ainda pendentes vêm de :func:`pending_breaks`. Devolve os
+    :class:`PhaseResult` executados, cada settle logo após o seu estágio.
     """
     plan = plan_phase_run(recipe, completed=completed, until=until)
-    final_phase = recipe.phases[-1].name if recipe.phases else None
+    last_done = next((p.name for p in reversed(recipe.phases) if p.name in completed), None)
 
-    run = _RunState(recipe=recipe, state_path=state_path, snapshot=snapshot, completed=completed)
+    run = _RunState(
+        recipe=recipe,
+        state_path=state_path,
+        snapshot=snapshot,
+        completed=completed,
+        accumulated_breaks=pending_breaks(recipe, through=last_done),
+    )
     results: list[PhaseResult] = []
-    stopped = False
 
     for phase in plan:
         result = _run_phase_retrying(
@@ -756,6 +820,13 @@ def run_phases_stepwise(
 
         entries, blockers = parse_emerge_plan(result.output)
         diff = compute_phase_diff(phase.name, entries, blockers, prior_atoms=run.prior_atoms)
+        run.record(phase, diff, result.built_atoms)
+
+        if phase.ships:
+            results.append(
+                settle_pass(container, recipe, run.accumulated_breaks, stage=phase.stage)
+            )
+            run.accumulated_breaks = ()
 
         snapshot_fork_point(
             container.rootfs,
@@ -763,19 +834,13 @@ def run_phases_stepwise(
                 recipe, snapshot=snapshot, phase=phase.name, fork_points_dir=fork_points_dir
             ),
         )
-
-        run.record(phase, diff, result.built_atoms)
         run.persist()
 
         if _checkpoint_decision(on_checkpoint, container, phase.name, diff) is (
             CheckpointDecision.STOP
         ):
-            stopped = True
             break
 
-    reached_final = bool(plan) and plan[-1].name == final_phase
-    if reached_final and not stopped and (until is None or until == final_phase):
-        results.append(settle_pass(container, recipe, run.accumulated_breaks))
     return tuple(results)
 
 

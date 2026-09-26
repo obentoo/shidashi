@@ -32,7 +32,7 @@ from typing import Any
 import pytest
 
 from shidashi import phases
-from shidashi.recipe import Phase, ResolvedRecipe
+from shidashi.recipe import Phase, ResolvedRecipe, UseBreak
 from tests._pending import try_import
 
 checkpoint_sequence: Any = try_import("shidashi.phases", "checkpoint_sequence")
@@ -378,16 +378,43 @@ def test_stepwise_failure_abort_raises_factory_error(monkeypatch: pytest.MonkeyP
         )
 
 
-def test_stepwise_settle_runs_only_at_true_final_phase(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_stepwise_settles_each_shipped_stage_right_after_it(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """D24: minimal ships on the way to kde, so it is settled in the MIDDLE of the
+    plan, and the stages after it start from the settled image. A stage that does
+    not ship (base, desktop) is never followed by a settle."""
+    cut = UseBreak(atom="dev-lang/python", flag="bluetooth")
+    chain = (
+        Phase(name="base", stage="base", emptytree=True, use_break=(cut,)),
+        Phase(name="minimal", stage="minimal", ships=True),
+        Phase(name="desktop", stage="desktop"),
+        Phase(name="flavor", stage="kde", ships=True),
+    )
     container = _FakeContainer()
-    # plano completo, todos CONTINUE → settle deve rodar exatamente uma vez no fim
+    container.rootfs = tmp_path  # the base's cut is really written, then removed
+    results = _stepwise(
+        container, _recipe(phases_=chain), monkeypatch,
+        on_checkpoint=lambda *_a: CheckpointDecision.CONTINUE,
+    )
+    assert [(r.phase.name, r.phase.stage) for r in results] == [
+        ("base", "base"), ("minimal", "minimal"), ("settle", "minimal"),
+        ("desktop", "desktop"), ("flavor", "kde"), ("settle", "kde"),
+    ]
+    # the first settle redoes the trunk cut; the second has nothing pending
+    settles = [c for c in container.emerge_calls if "--oneshot" in c]
+    assert settles == [["emerge", "--verbose", "--newuse", "--oneshot", "dev-lang/python"]]
+
+
+def test_stepwise_with_no_shipped_stage_never_settles(monkeypatch: pytest.MonkeyPatch) -> None:
+    container = _FakeContainer()
     results = _stepwise(
         container,
         _recipe(phases_=(Phase(name="rebuild", emptytree=True),)),
         monkeypatch,
         on_checkpoint=lambda *_a: CheckpointDecision.CONTINUE,
     )
-    assert results[-1].phase.name == "settle"
+    assert [r.phase.name for r in results] == ["rebuild"]
 
 
 # --- INTEGRAÇÃO host-gated (Red DIFERIDO ao host privilegiado real) ----------

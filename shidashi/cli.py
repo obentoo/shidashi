@@ -317,7 +317,7 @@ def _render_factory_stepwise_pretty(
     Reusa :func:`_render_factory_pretty` (pkgdir/fases/fork-point/átomos/settle) e
     complementa com o ``stopped_at`` (o rótulo onde parou, ou ``completed`` quando
     ``None``) e os diffs por fase de ``phase_diffs``. O caminho de stop limpo
-    imprime o valor de ``stopped_at`` (ex.: ``rebuild``) em stdout.
+    imprime o valor de ``stopped_at`` (ex.: ``minimal``) em stdout.
     """
     _render_factory_pretty(result, arch, flavor, init)
     console = Console()

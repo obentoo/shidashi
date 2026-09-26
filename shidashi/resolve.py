@@ -72,13 +72,16 @@ class PretendReport(BaseModel):
 # --- layering (R3.1) ---------------------------------------------------------
 
 
-def _layer_dirs(recipe: ResolvedRecipe, variants_dir: Path) -> list[Path]:
+def _layer_dirs(
+    recipe: ResolvedRecipe, variants_dir: Path, layers: tuple[str, ...] | None = None
+) -> list[Path]:
     """Mapeia cada entrada de ``portage_layers`` → ``variants_dir/<entry>/portage``.
 
     As entradas são valores de layer crus (``"base"``, ``"arch/v3"`` …) **sem**
     prefixo ``variants/`` — não se faz double-join. **Pura.**
     """
-    return [variants_dir / entry / "portage" for entry in recipe.portage_layers]
+    chosen = recipe.portage_layers if layers is None else layers
+    return [variants_dir / entry / "portage" for entry in chosen]
 
 
 _MAKE_CONF = "make.conf"
@@ -168,7 +171,13 @@ def install_sets(rootfs: Path, recipe: ResolvedRecipe) -> None:
         (dest_dir / name).write_text("\n".join(kept) + "\n", encoding="utf-8")
 
 
-def apply_portage(rootfs: Path, recipe: ResolvedRecipe, *, variants_dir: Path) -> None:
+def apply_portage(
+    rootfs: Path,
+    recipe: ResolvedRecipe,
+    *,
+    variants_dir: Path,
+    layers: tuple[str, ...] | None = None,
+) -> None:
     """Compõe os ``portage/`` dos layers em ``${rootfs}/etc/portage`` (R3.1).
 
     Os layers são percorridos na ordem base→arch→flavor→init, e há exatamente
@@ -192,6 +201,9 @@ def apply_portage(rootfs: Path, recipe: ResolvedRecipe, *, variants_dir: Path) -
     ``CFLAGS`` e ``CHOST``; e ``package.use/system`` caía de 69 linhas para 4
     (lab 2026-08-30, F28).
 
+    ``layers`` escolhe QUAIS camadas compor -- as de uma fase (``phase.layers``,
+    D24), que crescem ao longo da cadeia; o padrão é a lista final da receita.
+
     Um layer INEXISTENTE levanta :class:`ResolveError` -- é nome errado. Um
     layer que existe mas não tem ``portage/`` é um estágio que não configura
     nada (``minimal`` e ``desktop`` hoje, D24) e simplesmente não contribui.
@@ -199,7 +211,8 @@ def apply_portage(rootfs: Path, recipe: ResolvedRecipe, *, variants_dir: Path) -
     dest = rootfs / "etc" / "portage"
     dest.mkdir(parents=True, exist_ok=True)
 
-    layer_dirs = _layer_dirs(recipe, variants_dir)
+    chosen = recipe.portage_layers if layers is None else layers
+    layer_dirs = _layer_dirs(recipe, variants_dir, chosen)
     for layer_dir in layer_dirs:
         if not layer_dir.parent.is_dir():
             raise ResolveError(
@@ -210,7 +223,7 @@ def apply_portage(rootfs: Path, recipe: ResolvedRecipe, *, variants_dir: Path) -
     provider: dict[str, str] = {}
     make_conf_parts: list[tuple[str, str]] = []
 
-    for layer, layer_dir in zip(recipe.portage_layers, layer_dirs, strict=True):
+    for layer, layer_dir in zip(chosen, layer_dirs, strict=True):
         if not layer_dir.is_dir():
             continue  # a stage with nothing to configure
         for item in sorted(layer_dir.rglob("*")):

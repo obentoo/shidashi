@@ -36,7 +36,7 @@ from shidashi.phases import (
     restore_fork_point,
     run_phases,
     run_phases_stepwise,
-    trunk_phase_names,
+    stage_fork_point_path,
 )
 from shidashi.recipe import ResolvedRecipe
 from shidashi.resolve import apply_portage, bind_repos, install_sets
@@ -176,26 +176,57 @@ def _seed_or_restore(
     Bloco *seed-or-restore* extraído de :meth:`Factory.build` SEM mudança de
     comportamento (R8.2): se :func:`shidashi.phases.fork_point` acha o tronco pinado
     para ``snapshot``, restaura-o num rootfs limpo e devolve
-    ``(resume_at, fork_point_path, True)`` onde ``resume_at`` é a última fase do
+    ``(resume_at, fork_point_path, True)`` onde ``resume_at`` é a fase do estágio restaurado --
     tronco; senão faz :func:`_fresh_seed` e devolve ``(None, <chave do tronco>,
     False)`` — o caminho fresco compartilhado com o stepwise. PRIVILEGIADO.
     """
-    existing = fork_point(recipe, snapshot=snapshot, fork_points_dir=fork_points_dir)
-    if existing is not None:
+    found = fork_point(recipe, snapshot=snapshot, fork_points_dir=fork_points_dir)
+    if found is not None:
+        # the deepest STAGE already built for this arch × init, by any image
+        # (D24, F70): resume right after it
+        phase, existing = found
         shutil.rmtree(rootfs, ignore_errors=True)
         rootfs.mkdir(parents=True, exist_ok=True)
         restore_fork_point(existing, rootfs)
-        trunk = trunk_phase_names(recipe)
-        resume_at = trunk[-1] if trunk else None
-        return resume_at, existing, True
+        return phase.name, existing, True
     _fresh_seed(rootfs, pointer, download=download, recipe=recipe)
-    fork_point_path = fork_points_dir / (
-        f"{recipe.arch}-{recipe.flavor}-{recipe.init}-{snapshot}.tar"
+    first_stage = next((p.stage for p in recipe.phases if p.stage), "base")
+    fork_point_path = stage_fork_point_path(
+        recipe, first_stage, snapshot=snapshot, fork_points_dir=fork_points_dir
     )
     return None, fork_point_path, False
 
 
-def _prepare_portage(rootfs: Path, recipe: ResolvedRecipe) -> None:
+def _phases_through(recipe: ResolvedRecipe, name: str | None) -> tuple[str, ...]:
+    """Names of the phases up to and including ``name``; ``()`` for ``None``. Pure."""
+    names: list[str] = []
+    if name is None:
+        return ()
+    for phase in recipe.phases:
+        names.append(phase.name)
+        if phase.name == name:
+            break
+    return tuple(names)
+
+
+def _entry_layers(recipe: ResolvedRecipe, *, done: tuple[str, ...]) -> tuple[str, ...] | None:
+    """The layers of the first phase still to run, skipping ``done`` (D24). Pure.
+
+    The configuration grows along the chain and ``run_phase`` re-applies it per
+    phase; before the container opens, only what the FIRST phase needs goes in
+    -- applying every layer here would leave the flavor's package.use in place
+    while the base is still being built. ``None`` means "all of them": a recipe
+    whose phases carry no layers (built directly, as in the tests).
+    """
+    for phase in recipe.phases:
+        if phase.name not in done and phase.layers:
+            return phase.layers
+    return None
+
+
+def _prepare_portage(
+    rootfs: Path, recipe: ResolvedRecipe, *, layers: tuple[str, ...] | None = None
+) -> None:
     """Sobrepõe os layers de portage e instala os sets da receita (R6.4/R8.2).
 
     Bloco *portage-apply* extraído de :meth:`Factory.build` SEM mudança de
@@ -203,7 +234,7 @@ def _prepare_portage(rootfs: Path, recipe: ResolvedRecipe) -> None:
     :func:`shidashi.config.variants_dir`) seguido de :meth:`Factory._install_sets`.
     Compartilhado por :meth:`Factory.build` e :meth:`Factory.build_stepwise`.
     """
-    apply_portage(rootfs, recipe, variants_dir=config.variants_dir())
+    apply_portage(rootfs, recipe, variants_dir=config.variants_dir(), layers=layers)
     Factory._install_sets(rootfs, recipe)
 
 
@@ -299,7 +330,8 @@ class Factory:
             download=download,
         )
 
-        _prepare_portage(rootfs, recipe)
+        entry = _entry_layers(recipe, done=_phases_through(recipe, resume_at))
+        _prepare_portage(rootfs, recipe, layers=entry)
 
         binds_ro, binds_rw = _build_binds(
             recipe, pkgdir=self.pkgdir, repos_conf_dir=rootfs / "etc" / "portage" / "repos.conf"
@@ -326,7 +358,7 @@ class Factory:
         settle_atoms: tuple[str, ...] = ()
         for r in results:
             if r.phase.name == "settle":
-                settle_atoms = r.built_atoms
+                settle_atoms += r.built_atoms  # one settle per shipped stage (D24)
             else:
                 built_atoms += r.built_atoms
 
@@ -447,7 +479,7 @@ class Factory:
         if stopped_at_seed:
             return self._assemble_result(state_path, stopped_at="seed", results=())
 
-        _prepare_portage(rootfs, recipe)
+        _prepare_portage(rootfs, recipe, layers=_entry_layers(recipe, done=completed))
 
         binds_ro, binds_rw = _build_binds(
             recipe, pkgdir=self.pkgdir, repos_conf_dir=rootfs / "etc" / "portage" / "repos.conf"
@@ -473,7 +505,13 @@ class Factory:
             )
 
         return self._assemble_result(
-            state_path, stopped_at=self._stopped_label(results, until=until), results=results
+            state_path,
+            stopped_at=self._stopped_label(
+                results,
+                until=until,
+                final_phase=recipe.phases[-1].name if recipe.phases else None,
+            ),
+            results=results
         )
 
     def _seed_or_restore_stepwise(
@@ -593,7 +631,7 @@ class Factory:
         settle_atoms: tuple[str, ...] = ()
         for r in results:
             if r.phase.name == "settle":
-                settle_atoms = r.built_atoms
+                settle_atoms += r.built_atoms  # one settle per shipped stage (D24)
             else:
                 built_atoms += r.built_atoms
 
@@ -610,19 +648,20 @@ class Factory:
         )
 
     @staticmethod
-    def _stopped_label(results: tuple[PhaseResult, ...], *, until: str | None) -> str | None:
-        """Rótulo onde o stepwise parou: última fase quando parou cedo, senão ``None``.
+    def _stopped_label(
+        results: tuple[PhaseResult, ...], *, until: str | None, final_phase: str | None
+    ) -> str | None:
+        """Rótulo onde o stepwise parou: a última fase real se não foi a final.
 
-        ``None`` (rodou até o fim) quando o settle-pass rodou — :func:`run_phases_stepwise`
-        só anexa o settle ao alcançar a fase FINAL sem STOP antecipado. Caso contrário
-        (``--until`` curto ou STOP) devolve o nome da última fase real executada, ou
-        ``until`` quando nenhuma fase rodou (tudo já estava completado).
+        ``None`` (rodou até o fim) quando a última fase REAL executada é a fase
+        final da receita. Antes o critério era "houve settle", que deixou de
+        valer com um settle por estágio entregue (D24): o minimal é assentado no
+        meio do caminho do kde. Sem nenhuma fase real executada (tudo já estava
+        completado), devolve ``until``.
         """
-        if any(r.phase.name == "settle" for r in results):
-            return None
         real = [r.phase.name for r in results if r.phase.name != "settle"]
         if real:
-            return real[-1]
+            return None if real[-1] == final_phase else real[-1]
         return until
 
     @staticmethod

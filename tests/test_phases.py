@@ -23,6 +23,9 @@ teste fica Red no uso, nomeando o símbolo pendente (Red esperado da story 003).
 from pathlib import Path
 from typing import Any
 
+import pytest
+
+from shidashi import phases
 from shidashi.recipe import Phase, ResolvedRecipe
 from tests._pending import try_import
 
@@ -35,6 +38,8 @@ clear_use_break: Any = try_import("shidashi.phases", "clear_use_break")
 parse_built_atoms: Any = try_import("shidashi.phases", "parse_built_atoms")
 fork_point: Any = try_import("shidashi.phases", "fork_point")
 trunk_phase_names: Any = try_import("shidashi.phases", "trunk_phase_names")
+stage_fork_point_path: Any = try_import("shidashi.phases", "stage_fork_point_path")
+pending_breaks: Any = try_import("shidashi.phases", "pending_breaks")
 snapshot_fork_point: Any = try_import("shidashi.phases", "snapshot_fork_point")
 restore_fork_point: Any = try_import("shidashi.phases", "restore_fork_point")
 
@@ -223,19 +228,109 @@ def test_fork_point_returns_none_when_absent(tmp_path: Path) -> None:
     assert fork_point(_recipe(), snapshot="20260524", fork_points_dir=tmp_path) is None
 
 
-def test_fork_point_returns_path_when_present(tmp_path: Path) -> None:
-    expected = tmp_path / "v3-kde-systemd-20260524.tar"
-    expected.write_bytes(b"")
-    got = fork_point(_recipe(), snapshot="20260524", fork_points_dir=tmp_path)
-    assert got == expected
+def _chain_recipe(flavor: str = "kde") -> ResolvedRecipe:
+    """A kde-shaped chain: base (cuts) → minimal (ships) → desktop → flavor (ships)."""
+    trunk_cut = UseBreak(atom="dev-lang/python", flag="bluetooth", enable=False)
+    return _recipe(
+        flavor=flavor,
+        phases=(
+            Phase(name="base", stage="base", sets=("base",), emptytree=True,
+                  use_break=(trunk_cut,)),
+            Phase(name="minimal", stage="minimal", sets=("extra-system",), ships=True),
+            Phase(name="desktop", stage="desktop", sets=("gpu",)),
+            Phase(name="flavor", stage=flavor, sets=(flavor,), ships=True),
+        ),
+    )
 
 
-def test_fork_point_key_includes_arch_flavor_init_snapshot(tmp_path: Path) -> None:
-    (tmp_path / "v3-kde-systemd-SNAP.tar").write_bytes(b"")
-    got = fork_point(_recipe(flavor="kde"), snapshot="SNAP", fork_points_dir=tmp_path)
-    assert got is not None
-    name = got.name
-    assert "v3" in name and "kde" in name and "systemd" in name and "SNAP" in name
+def test_stage_fork_point_key_has_no_target_so_images_share_it(tmp_path: Path) -> None:
+    """F70: the old key carried the flavor, so the trunk was never shared."""
+    kde = stage_fork_point_path(
+        _chain_recipe("kde"), "desktop", snapshot="S", fork_points_dir=tmp_path
+    )
+    gnome = stage_fork_point_path(
+        _chain_recipe("gnome"), "desktop", snapshot="S", fork_points_dir=tmp_path
+    )
+    assert kde == gnome == tmp_path / "v3-systemd-S-desktop.tar"
+
+
+def test_fork_point_resumes_from_the_deepest_stage_before_the_target(tmp_path: Path) -> None:
+    recipe = _chain_recipe()
+    for stage in ("base", "desktop"):
+        (tmp_path / f"v3-systemd-S-{stage}.tar").write_bytes(b"")
+    found = fork_point(recipe, snapshot="S", fork_points_dir=tmp_path)
+    assert found is not None
+    phase, path = found
+    assert (phase.name, path.name) == ("desktop", "v3-systemd-S-desktop.tar")
+
+
+def test_fork_point_never_restores_the_target_itself(tmp_path: Path) -> None:
+    """Asking for an image is asking to build its last stage."""
+    (tmp_path / "v3-systemd-S-kde.tar").write_bytes(b"")
+    assert fork_point(_chain_recipe(), snapshot="S", fork_points_dir=tmp_path) is None
+
+
+def test_pending_breaks_resets_at_every_shipped_stage() -> None:
+    recipe = _chain_recipe()
+    assert [b.atom for b in pending_breaks(recipe, through="base")] == ["dev-lang/python"]
+    assert pending_breaks(recipe, through="minimal") == ()  # minimal ships: settled
+    assert pending_breaks(recipe, through="desktop") == ()
+    assert pending_breaks(recipe, through=None) == ()
+
+
+class _RecordingContainer:
+    """Records every emerge; the rootfs is a real tmp dir so cuts can be written."""
+
+    def __init__(self, rootfs: Path) -> None:
+        self.rootfs = rootfs
+        self.emerge_calls: list[list[str]] = []
+
+    def run(self, argv: Any, **_k: Any) -> Any:
+        from shidashi.container import CommandResult
+
+        self.emerge_calls.append(list(argv))
+        return CommandResult(0, "[ebuild  N    ] cat/pkg-1\n", "")
+
+
+def _run_chain(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, **kw: Any) -> Any:
+    snaps: list[str] = []
+    monkeypatch.setattr(
+        phases, "snapshot_fork_point", lambda _root, dest: snaps.append(dest.name) or dest
+    )
+    container = _RecordingContainer(tmp_path / "rootfs")
+    results = phases.run_phases(
+        container, _chain_recipe(), emptytree=True, snapshot="S",
+        fork_points_dir=tmp_path, **kw,
+    )
+    return results, container, snaps
+
+
+def test_run_phases_settles_each_shipped_stage_and_snapshots_every_stage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D24: minimal is settled on the way to kde, and desktop starts from it settled."""
+    results, container, snaps = _run_chain(tmp_path, monkeypatch)
+    assert [(r.phase.name, r.phase.stage) for r in results] == [
+        ("base", "base"), ("minimal", "minimal"), ("settle", "minimal"),
+        ("desktop", "desktop"), ("flavor", "kde"), ("settle", "kde"),
+    ]
+    assert snaps == [f"v3-systemd-S-{s}.tar" for s in ("base", "minimal", "desktop", "kde")]
+    base, minimal, settle_minimal, desktop, *_ = container.emerge_calls
+    assert base[:3] == ["emerge", "--verbose", "--emptytree"]
+    assert minimal[2:5] == desktop[2:5] == ["--update", "--deep", "--newuse"]
+    # minimal's settle undoes the trunk cut, which rode the base phase
+    assert settle_minimal[-1] == "dev-lang/python"
+    assert not (tmp_path / "rootfs" / "etc" / "portage" / "package.use"
+                / "zz-shidashi-use-break").exists()
+
+
+def test_run_phases_resumed_from_desktop_builds_only_the_flavor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    results, container, snaps = _run_chain(tmp_path, monkeypatch, resume_at="desktop")
+    assert [r.phase.name for r in results] == ["flavor", "settle"]
+    assert len(container.emerge_calls) == 1  # the settle has no pending cut to redo
+    assert snaps == ["v3-systemd-S-kde.tar"]
 
 
 def test_trunk_is_everything_up_to_and_including_the_base() -> None:

@@ -548,3 +548,50 @@ def test_no_orphan_sets() -> None:
 
     orphans = set(files) - reachable - _INTENTIONALLY_UNREACHABLE
     assert not orphans, f"sets curados que ninguém instala: {sorted(orphans)}"
+
+
+# --- D24: the configuration grows stage by stage (the shipped tree, for real) ---
+
+
+class _MakeConfWitness:
+    """A container that records the make.conf in force at every emerge."""
+
+    def __init__(self, rootfs: Path) -> None:
+        self.rootfs = rootfs
+        self.seen: list[tuple[list[str], str, frozenset[str]]] = []
+
+    def run(self, argv: object, **_k: object) -> object:
+        from shidashi.container import CommandResult
+
+        portage = self.rootfs / "etc" / "portage"
+        package_use = frozenset(p.name for p in (portage / "package.use").iterdir())
+        mc = (portage / "make.conf").read_text(encoding="utf-8")
+        self.seen.append((list(argv), mc, package_use))  # type: ignore[call-overload]
+        return CommandResult(0, "", "")
+
+
+def test_the_kde_layer_is_not_in_force_until_the_kde_stage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Runs the real kde chain against a recording container: the base, minimal
+    and desktop stages must be built WITHOUT the kde layer's make.conf, and the
+    flavor stage with it. Applying every layer up front -- what the pipeline
+    did before D24 -- would have built the trunk with DESKTOPS="kde qt6 …"."""
+    from shidashi import phases
+
+    monkeypatch.setattr(phases, "snapshot_fork_point", lambda _root, dest: dest)
+    recipe = _recipe("kde")
+    witness = _MakeConfWitness(tmp_path / "rootfs")
+    phases.run_phases(
+        witness, recipe, emptytree=True, snapshot="S", fork_points_dir=tmp_path  # type: ignore[arg-type]
+    )
+    stage_emerges = [s for s in witness.seen if "--oneshot" not in s[0]]
+    assert len(stage_emerges) == 4  # base, minimal, desktop, flavor
+    # make.conf is REWRITTEN per stage, package.use only ever ADDS -- check both:
+    # a kde package.use file present while the base builds is the regression
+    # that applying every layer up front would bring back.
+    kde_package_use = _VARIANTS_DIR / "flavor" / "kde" / "portage" / "package.use"
+    kde_files = {p.name for p in kde_package_use.iterdir()}
+    assert ["DESKTOPS=" in mc for _a, mc, _pu in stage_emerges] == [False, False, False, True]
+    assert [bool(kde_files & pu) for _a, _mc, pu in stage_emerges] == [False, False, False, True]
+    assert stage_emerges[0][0][2] == "--emptytree"
