@@ -111,10 +111,32 @@ def test_base_declares_only_trunk_cycle_breaks() -> None:
     base = _load_base()
     assert base.phases, "base deve declarar phases"
     breaks = {p.name: p.use_break for p in base.phases if p.use_break}
-    assert set(breaks) == {"graphics"}, f"só a phase graphics deve curar ciclos: {set(breaks)}"
-    atoms = {b.atom for b in breaks["graphics"]}
+    assert set(breaks) == {"rebuild"}, f"os cortes do tronco vivem na phase rebuild: {set(breaks)}"
+    atoms = {b.atom for b in breaks["rebuild"]}
     assert atoms == {"dev-lang/python", "dev-python/pillow", "media-video/pipewire"}, atoms
-    assert all(b.enable is False for b in breaks["graphics"])
+    assert all(b.enable is False for b in breaks["rebuild"])
+
+
+@pytest.mark.parametrize("flavor", ["minimal", "kde"])
+def test_trunk_cuts_ride_the_phase_that_builds_the_trunk(flavor: str) -> None:
+    """A phase cujo alvo é @world carrega os três cortes do tronco.
+
+    run_phase escreve o use_break DA PRÓPRIA phase antes do emerge, e pula uma
+    phase sem alvo antes de escrever. Com os cortes na phase graphics (até
+    2026-09-26), o tronco rodava sem corte algum e, sob minimal, os cortes
+    nunca eram aplicados. O lab não via: o sync junta os cortes de todas as
+    phases num ficheiro só.
+    """
+    recipe = merge(
+        _load_base(),
+        _load_arch("v3"),
+        _load_flavor(flavor),
+        load_init(config.recipe_path("init", "systemd")),
+    )
+    trunk = [p for p in recipe.phases if phase_target(p, recipe) == ("@world",)]
+    assert len(trunk) == 1, [p.name for p in trunk]
+    atoms = {b.atom for b in trunk[0].use_break}
+    assert {"dev-lang/python", "dev-python/pillow", "media-video/pipewire"} <= atoms, atoms
 
 
 def test_base_declares_the_desktop_phase_named_exactly_desktop() -> None:

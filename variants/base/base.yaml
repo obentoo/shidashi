@@ -31,8 +31,16 @@ sets:
 #   rebuild  -> @world, sempre (reconstrução do tronco)
 #   desktop  -> @<flavor>, o set curado do flavor
 phases:
-  - { name: rebuild, packages: [], sets: [], use_break: [] }
-  # As duas quebras do TRONCO, medidas no laboratório. Portage revela um ciclo
+  # The three TRUNK cuts live on `rebuild`, the phase that builds the trunk.
+  # Until 2026-09-26 they sat on `graphics`: run_phase writes a phase's own
+  # use_break before its emerge, so the trunk (`--emptytree @world`) would run
+  # with no cut and stop on the first cycle -- and under `minimal`, `graphics`
+  # has no target and is skipped BEFORE writing, so the cuts were never applied.
+  # The lab never saw it: sync-lab-cfg.sh concatenates every phase's cuts into
+  # one break-pass, applied before the trunk. The file persists through later
+  # phases (a phase without cuts writes nothing); the settle-pass removes it.
+  #
+  # As três quebras do TRONCO, medidas no laboratório. Portage revela um ciclo
   # por vez, então elas foram descobertas em sequência:
   #   python[bluetooth] -> bluez[obex] -> libical[introspection]
   #                     -> gobject-introspection -> python
@@ -51,10 +59,11 @@ phases:
   #     ffmpeg[sdl] -- e libsdl2[-pipewire] tira o backend PipeWire do SDL2.
   #
   # Um flavor ACRESCENTA a esta lista; já não a substitui.
-  - { name: graphics, packages: [], sets: [gpu, extra-media], use_break: [
+  - { name: rebuild, packages: [], sets: [], use_break: [
         { atom: dev-lang/python, flag: bluetooth, enable: false },
         { atom: dev-python/pillow, flag: truetype, enable: false },
         { atom: media-video/pipewire, flag: ffmpeg, enable: false },
       ] }
+  - { name: graphics, packages: [], sets: [gpu, extra-media], use_break: [] }
   - { name: desktop, packages: [], sets: [], use_break: [] }
   - { name: apps, packages: [], sets: [base, extra-system, extra-desktop, extra-dev, extra-virt, archive-nonfree], use_break: [] }
