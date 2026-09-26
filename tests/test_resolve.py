@@ -300,6 +300,23 @@ def test_bind_repos_missing_repo_raises_naming_it(
     assert "bentoo" in str(excinfo.value)
 
 
+def test_bind_repos_binds_an_override_at_the_repos_usual_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The pinned ::gentoo snapshot replaces the host's tree, at the path the
+    image's repos.conf expects; bentoo still comes from the host (D26)."""
+    host_repos = tmp_path / "var" / "db" / "repos"
+    (host_repos / "bentoo").mkdir(parents=True)  # no host gentoo needed at all
+    monkeypatch.setattr(resolve, "_HOST_REPOS_ROOT", host_repos, raising=False)
+    pinned = tmp_path / "cache" / "repos" / "gentoo-20260919"
+    pinned.mkdir(parents=True)
+
+    pairs = bind_repos(_write_repos_conf_dir(tmp_path, host_repos), overrides={"gentoo": pinned})
+
+    assert (pinned, host_repos / "gentoo") in pairs
+    assert (host_repos / "bentoo", host_repos / "bentoo") in pairs
+
+
 # --- parse_cycle_breaks (R5.2) — núcleo da curadoria §18.2 -------------------
 
 # Fixture inspirada na saída real do emerge ao reportar dependências circulares

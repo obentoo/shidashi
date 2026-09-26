@@ -1,0 +1,128 @@
+"""Unit tests of shidashi.tree -- the pinned, cooled-down ::gentoo tree (D26)."""
+
+import datetime
+import hashlib
+import io
+import tarfile
+from pathlib import Path
+
+import pytest
+
+from shidashi import config, tree
+from shidashi.tree import (
+    TreeError,
+    TreePin,
+    check_cooldown,
+    ensure_tree,
+    fetch_snapshot,
+    load_tree_pin,
+    signature_ok,
+    verify_detached,
+)
+
+_LAB_SNAPSHOT = Path("/var/tmp/bentoo-lab/dl/gentoo-20260919.tar.xz")
+
+
+def _snapshot_bytes(date: str) -> bytes:
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:xz") as tar:
+        data = b"MANIFEST"
+        info = tarfile.TarInfo(f"gentoo-{date}/Manifest")
+        info.size = len(data)
+        tar.addfile(info, io.BytesIO(data))
+    return buf.getvalue()
+
+
+def _pin(date: str = "20260919", payload: bytes = b"") -> TreePin:
+    return TreePin(
+        date=date, base_url="https://mirror.test/snapshots",
+        sha512=hashlib.sha512(payload).hexdigest(),
+    )
+
+
+def test_the_repository_pin_loads_and_names_its_file() -> None:
+    pin = load_tree_pin(config.seeds_dir())
+    assert pin.filename == f"gentoo-{pin.date}.tar.xz"
+    assert len(pin.sha512) == 128
+
+
+def test_a_missing_pin_is_a_tree_error(tmp_path: Path) -> None:
+    with pytest.raises(TreeError, match="cannot read"):
+        load_tree_pin(tmp_path)
+
+
+def test_cooldown_accepts_a_week_old_snapshot_and_refuses_a_younger_one() -> None:
+    pin = _pin("20260919")
+    check_cooldown(pin, today=datetime.date(2026, 9, 26))  # exactly 7 days
+    with pytest.raises(TreeError, match="6 day\\(s\\) old.*gentoo-20260918"):
+        check_cooldown(pin, today=datetime.date(2026, 9, 25))
+
+
+def test_signature_ok_needs_goodsig_validsig_and_exit_zero() -> None:
+    good = "[GNUPG:] GOODSIG EC59 Gentoo\n[GNUPG:] VALIDSIG E1D6 2026-09-20\n"
+    assert signature_ok(good, 0)
+    assert not signature_ok(good, 1)
+    assert not signature_ok("[GNUPG:] GOODSIG EC59 Gentoo\n", 0)  # e.g. an expired key
+    assert not signature_ok("[GNUPG:] BADSIG EC59 Gentoo\n", 1)
+
+
+def _mirror(monkeypatch: pytest.MonkeyPatch, files: dict[str, bytes]) -> list[str]:
+    fetched: list[str] = []
+
+    def _download(url: str, dest: Path) -> None:
+        fetched.append(url)
+        dest.write_bytes(files[url.rsplit("/", 1)[1]])
+
+    monkeypatch.setattr(tree, "_download", _download)
+    return fetched
+
+
+def test_fetch_and_extract_verify_then_cache(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    payload = _snapshot_bytes("20260919")
+    pin = _pin(payload=payload)
+    fetched = _mirror(monkeypatch, {pin.filename: payload, f"{pin.filename}.gpgsig": b"sig"})
+    verified: list[tuple[str, str]] = []
+
+    def _verify(data: Path, sig: Path) -> None:
+        verified.append((data.name, sig.name))
+
+    dest = ensure_tree(pin, cache_dir=tmp_path, verify=_verify)
+
+    assert dest == tmp_path / "repos" / "gentoo-20260919"
+    assert (dest / "Manifest").read_bytes() == b"MANIFEST"
+    assert verified == [(pin.filename, f"{pin.filename}.gpgsig")]
+    assert len(fetched) == 2
+    # second call: the extracted tree is reused, nothing is fetched
+    assert ensure_tree(pin, cache_dir=tmp_path, download=False, verify=_verify) == dest
+    assert len(fetched) == 2
+    # and the cached tarball satisfies a fetch without the network
+    assert fetch_snapshot(pin, cache_dir=tmp_path, download=False, verify=_verify).is_file()
+
+
+def test_fetch_refuses_a_tarball_that_does_not_match_the_pin(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    pin = _pin(payload=b"the pinned bytes")
+    _mirror(monkeypatch, {pin.filename: b"other bytes", f"{pin.filename}.gpgsig": b"sig"})
+    with pytest.raises(TreeError, match="sha512 mismatch"):
+        fetch_snapshot(pin, cache_dir=tmp_path, verify=lambda d, s: None)
+    assert not (tmp_path / "trees" / pin.filename).exists()
+
+
+def test_no_download_without_a_cached_snapshot_is_a_tree_error(tmp_path: Path) -> None:
+    with pytest.raises(TreeError, match="--no-download"):
+        fetch_snapshot(_pin(), cache_dir=tmp_path, download=False)
+
+
+@pytest.mark.skipif(
+    not _LAB_SNAPSHOT.is_file() or not Path(f"{_LAB_SNAPSHOT}.gpgsig").is_file(),
+    reason="the lab's downloaded snapshot is not on this machine",
+)
+def test_the_pinned_snapshot_verifies_against_the_gentoo_key() -> None:
+    """The real thing: the tarball the pin names, its signature, the system key."""
+    pin = load_tree_pin(config.seeds_dir())
+    assert _LAB_SNAPSHOT.name == pin.filename
+    verify_detached(_LAB_SNAPSHOT, Path(f"{_LAB_SNAPSHOT}.gpgsig"))
+    assert hashlib.sha512(_LAB_SNAPSHOT.read_bytes()).hexdigest() == pin.sha512

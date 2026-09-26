@@ -45,6 +45,7 @@ from shidashi.recipe import ResolvedRecipe
 from shidashi.resolve import apply_portage, apply_rootfs, bind_repos, install_sets
 from shidashi.seed import Stage3Pointer, extract_stage3, fetch_stage3, load_pointer
 from shidashi.state import PhaseDiff
+from shidashi.tree import pinned_tree
 
 __all__ = [
     "CheckpointDecision",
@@ -288,7 +289,11 @@ def _prepare_portage(
 
 
 def _build_binds(
-    recipe: ResolvedRecipe, *, pkgdir: Path, repos_conf_dir: Path | None = None
+    recipe: ResolvedRecipe,
+    *,
+    pkgdir: Path,
+    repos_conf_dir: Path | None = None,
+    tree: Path | None = None,
 ) -> tuple[list[tuple[Path, Path]], list[tuple[Path, Path]]]:
     """Monta os binds RO (repos) e RW (PKGDIR/caches) do container (R6.2/R6.3/R7.2). Pura.
 
@@ -303,8 +308,13 @@ def _build_binds(
     ``repos_conf_dir`` é opcional para manter a chamada de teste (que monkeypatcha
     ``bind_repos``) trivial; :meth:`Factory.build` passa o ``repos.conf`` real do
     rootfs. ``bind_repos`` é resolvido via global do módulo (monkeypatchável).
+    ``tree``, the pinned ::gentoo snapshot (D26), is bound in place of the
+    host's synced tree.
     """
-    binds_ro = bind_repos(repos_conf_dir if repos_conf_dir is not None else Path())
+    binds_ro = bind_repos(
+        repos_conf_dir if repos_conf_dir is not None else Path(),
+        overrides={"gentoo": tree} if tree is not None else None,
+    )
     binds_rw: list[tuple[Path, Path]] = [
         (pkgdir, _PKGDIR_DST),
         (config.ccache_dir(), _CCACHE_DST),
@@ -406,6 +416,11 @@ class Factory:
         pointer = load_pointer(recipe.init, seeds_dir=config.seeds_dir())
         snapshot = pointer.snapshot
         fork_points_dir = config.fork_points_dir()
+        # first: a pin that is missing or inside the cooldown refuses the build
+        # before any seed is extracted (D26)
+        tree = pinned_tree(
+            seeds_dir=config.seeds_dir(), cache_dir=config.cache_dir(), download=download
+        )
 
         resume_at, fork_point_path, fork_point_reused, bootstrapped = _seed_or_restore(
             recipe,
@@ -420,7 +435,10 @@ class Factory:
         _prepare_portage(rootfs, recipe, layers=entry)
 
         binds_ro, binds_rw = _build_binds(
-            recipe, pkgdir=self.pkgdir, repos_conf_dir=rootfs / "etc" / "portage" / "repos.conf"
+            recipe,
+            pkgdir=self.pkgdir,
+            repos_conf_dir=rootfs / "etc" / "portage" / "repos.conf",
+            tree=tree,
         )
         _ensure_bind_dirs(binds_rw, rootfs=rootfs)
 
@@ -535,6 +553,9 @@ class Factory:
         fork_points_dir = config.fork_points_dir()
         state_path = config.build_state_path(recipe)
         rh = state.recipe_hash(recipe)
+        tree = pinned_tree(
+            seeds_dir=config.seeds_dir(), cache_dir=config.cache_dir(), download=download
+        )
 
         if reset:
             state.clear_state(state_path)
@@ -579,7 +600,10 @@ class Factory:
         _prepare_portage(rootfs, recipe, layers=_entry_layers(recipe, done=completed))
 
         binds_ro, binds_rw = _build_binds(
-            recipe, pkgdir=self.pkgdir, repos_conf_dir=rootfs / "etc" / "portage" / "repos.conf"
+            recipe,
+            pkgdir=self.pkgdir,
+            repos_conf_dir=rootfs / "etc" / "portage" / "repos.conf",
+            tree=tree,
         )
         _ensure_bind_dirs(binds_rw, rootfs=rootfs)
 

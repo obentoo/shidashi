@@ -14,7 +14,7 @@ via ``import portage``.
 import configparser
 import os
 import shutil
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
@@ -313,7 +313,9 @@ def _assemble_make_conf(parts: list[tuple[str, str]]) -> str:
 # --- repo binding (R3.2, R3.3, R6.3) -----------------------------------------
 
 
-def bind_repos(repos_conf_dir: Path) -> list[tuple[Path, Path]]:
+def bind_repos(
+    repos_conf_dir: Path, *, overrides: Mapping[str, Path] | None = None
+) -> list[tuple[Path, Path]]:
     """Produz binds RO host→container para cada repo declarado (R3.2/R3.3).
 
     ``repos.conf`` é um **diretório** (estilo eselect-repo): itera seus ``*.conf``
@@ -321,7 +323,12 @@ def bind_repos(repos_conf_dir: Path) -> list[tuple[Path, Path]]:
     Para cada repo declarado mapeia o host ``_HOST_REPOS_ROOT/<name>`` para o
     mesmo caminho no container (RO). Se o host path não existir, levanta
     :class:`ResolveError` nomeando o repo e sugerindo ``emerge --sync``.
+
+    ``overrides`` maps a repo name to the host directory to bind INSTEAD, at the
+    repo's usual container path -- the pinned ::gentoo snapshot (D26,
+    :mod:`shidashi.tree`) in place of the host's synced tree.
     """
+    overrides = overrides or {}
     declared: list[str] = []
     for conf in sorted(repos_conf_dir.glob("*.conf")):
         parser = configparser.ConfigParser()
@@ -330,13 +337,14 @@ def bind_repos(repos_conf_dir: Path) -> list[tuple[Path, Path]]:
 
     pairs: list[tuple[Path, Path]] = []
     for name in declared:
-        host_path = _HOST_REPOS_ROOT / name
+        container_path = _HOST_REPOS_ROOT / name
+        host_path = overrides.get(name, container_path)
         if not host_path.is_dir():
             raise ResolveError(
                 f"repo declarado {name!r} ausente em {host_path}; "
                 f"rode 'emerge --sync' (ou 'eselect repo enable {name}') no host"
             )
-        pairs.append((host_path, host_path))
+        pairs.append((host_path, container_path))
     return pairs
 
 
@@ -464,8 +472,14 @@ def pretend_resolve(
     tarball = seed.fetch_stage3(pointer, cache_dir=config.cache_dir(), download=download)
     seed.extract_stage3(tarball, rootfs)
 
+    from shidashi.tree import pinned_tree  # local: tree imports seed, like this module
+
+    tree = pinned_tree(
+        seeds_dir=config.seeds_dir(), cache_dir=config.cache_dir(), download=download
+    )
+    apply_rootfs(rootfs, recipe, variants_dir=variants_dir)
     apply_portage(rootfs, recipe, variants_dir=variants_dir)
-    binds = bind_repos(rootfs / "etc" / "portage" / "repos.conf")
+    binds = bind_repos(rootfs / "etc" / "portage" / "repos.conf", overrides={"gentoo": tree})
 
     with Container(rootfs, ephemeral=not keep, binds=binds) as container:
         result = run_pretend(container)

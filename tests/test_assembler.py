@@ -29,6 +29,14 @@ from shidashi.recipe import ResolvedRecipe
 from shidashi.resolve import ResolveError
 
 
+@pytest.fixture(autouse=True)
+def _no_tree_download(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """No unit test may fetch the real ::gentoo snapshot (49 MB, D26)."""
+    tree = tmp_path / "pinned-gentoo"
+    tree.mkdir()
+    monkeypatch.setattr(asm, "pinned_tree", lambda **_k: tree)
+
+
 def _recipe(
     *,
     flavor: str = "kde",
@@ -155,7 +163,7 @@ def test_locate_kernel_missing_raises(tmp_path: Path) -> None:
 
 def test_build_binds_binhost_ro_and_no_rw(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        asm, "bind_repos", lambda d: [(Path("/h/repo"), Path("/var/db/repos/gentoo"))]
+        asm, "bind_repos", lambda d, **_k: [(Path("/h/repo"), Path("/var/db/repos/gentoo"))]
     )
     binds_ro, binds_rw = _build_binds(Path("/bh/znver5"), Path("/rootfs/etc/portage/repos.conf"))
     assert binds_ro[0] == (Path("/h/repo"), Path("/var/db/repos/gentoo"))
@@ -250,7 +258,8 @@ def test_assemble_orchestrates_seed_emerge_dracut_squashfs_iso(
     monkeypatch.setattr(
         asm, "apply_portage", lambda rootfs, recipe, *, variants_dir: events.append("apply_portage")
     )
-    monkeypatch.setattr(asm, "bind_repos", lambda d: [])
+    monkeypatch.setattr(asm, "apply_rootfs", lambda *_a, **_k: ())
+    monkeypatch.setattr(asm, "bind_repos", lambda d, **_k: [])
 
     class _OrchContainer(_FakeContainer):
         def run(self, argv: list[str], **kw: object) -> None:
@@ -321,7 +330,7 @@ def test_assemble_keeps_rootfs_on_emerge_failure(
 
     monkeypatch.setattr(asm, "extract_stage3", fake_extract)
     monkeypatch.setattr(asm, "apply_portage", lambda rootfs, recipe, *, variants_dir: None)
-    monkeypatch.setattr(asm, "bind_repos", lambda d: [])
+    monkeypatch.setattr(asm, "bind_repos", lambda d, **_k: [])
 
     class _BoomContainer(_FakeContainer):
         def run(self, argv: list[str], **kw: object) -> None:
@@ -356,7 +365,7 @@ def test_assemble_keeps_rootfs_on_squashfs_failure(
 
     monkeypatch.setattr(asm, "extract_stage3", fake_extract)
     monkeypatch.setattr(asm, "apply_portage", lambda rootfs, recipe, *, variants_dir: None)
-    monkeypatch.setattr(asm, "bind_repos", lambda d: [])
+    monkeypatch.setattr(asm, "bind_repos", lambda d, **_k: [])
     monkeypatch.setattr(asm, "Container", _FakeContainer)  # run() é no-op (sucesso)
 
     def boom_squashfs(rootfs: Path, output: Path) -> Path:

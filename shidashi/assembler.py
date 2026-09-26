@@ -24,8 +24,9 @@ from pathlib import Path
 from shidashi import config, image
 from shidashi.container import Container
 from shidashi.recipe import ResolvedRecipe
-from shidashi.resolve import apply_portage, bind_repos, install_sets
+from shidashi.resolve import apply_portage, apply_rootfs, bind_repos, install_sets
 from shidashi.seed import extract_stage3, fetch_stage3, load_pointer
+from shidashi.tree import pinned_tree
 
 __all__ = ["Assembler", "AssemblerError"]
 
@@ -127,7 +128,7 @@ def _locate_kernel(rootfs: Path, kver: str) -> Path:
 
 
 def _build_binds(
-    binhost_dir: Path, repos_conf_dir: Path
+    binhost_dir: Path, repos_conf_dir: Path, *, tree: Path | None = None
 ) -> tuple[list[tuple[Path, Path]], list[tuple[Path, Path]]]:
     """Monta os binds RO (repos + binhost) e RW (vazio) do container. **Pura**.
 
@@ -135,9 +136,11 @@ def _build_binds(
     e o binhost por arch (montado sobre :data:`_BINHOST_DST`) entram **read-only**
     (``--usepkgonly`` não escreve no PKGDIR). Não há binds RW: o rootfs é mutado
     in-place pelo emerge/dracut, não via bind. ``bind_repos`` é global do módulo
-    (monkeypatchável nos testes).
+    (monkeypatchável nos testes). ``tree`` is the pinned ::gentoo snapshot the
+    binpkgs were built from (D26): assembling against another tree would ask
+    the binhost for versions it does not have.
     """
-    binds_ro = bind_repos(repos_conf_dir)
+    binds_ro = bind_repos(repos_conf_dir, overrides={"gentoo": tree} if tree else None)
     binds_ro.append((binhost_dir, _BINHOST_DST))
     return binds_ro, []
 
@@ -188,6 +191,9 @@ class Assembler:
         _require_root()
 
         recipe = self.recipe
+        tree = pinned_tree(
+            seeds_dir=config.seeds_dir(), cache_dir=config.cache_dir(), download=download
+        )
         key = f"{recipe.arch}-{recipe.flavor}-{recipe.init}"
         rootfs = config.scratch_dir() / "assemble" / key
 
@@ -195,11 +201,12 @@ class Assembler:
         tarball = fetch_stage3(pointer, cache_dir=config.cache_dir(), download=download)
         extract_stage3(tarball, rootfs)
 
+        apply_rootfs(rootfs, recipe, variants_dir=config.variants_dir())
         apply_portage(rootfs, recipe, variants_dir=config.variants_dir())
         _install_sets(rootfs, recipe)
 
         binds_ro, binds_rw = _build_binds(
-            self.binhost_dir, rootfs / "etc" / "portage" / "repos.conf"
+            self.binhost_dir, rootfs / "etc" / "portage" / "repos.conf", tree=tree
         )
 
         keep_rootfs = keep

@@ -645,7 +645,7 @@ O `make.conf` de referência (já organizado em grupos nomeados) mapeia diretame
 
 ### Fase 4 — Automação
 - [ ] CI matriz semanal (cron domingo 00:00) + publicação + checksums/GPG. *(scaffold gated com `if: false`; falta runner Gentoo + leitura de pointer file + comando `release`.)*
-- [ ] Pin de snapshot reprodutível. *(pin do stage3 seed pronto; pin do snapshot `::gentoo` por release pendente.)*
+- [x] Pin de snapshot reprodutível. *(stage3 em `seeds/stage3.toml`; `::gentoo` em `seeds/gentoo.toml` — snapshot diário assinado, com ≥ 7 dias (cooldown, D26), montado no lugar da árvore do host em factory/assemble/pretend. Overlay `::bentoo` ainda segue o host.)*
 
 ### Fase 5 — Operação (opcional)
 - [ ] Dashboard de releases (FastAPI).
