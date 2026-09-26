@@ -712,6 +712,8 @@ class _RunState:
                 snapshot=self.snapshot,
                 recipe_hash=state.recipe_hash(self.recipe),
                 seed_done=True,
+                # phases only ever run after the toolchain bootstrap
+                bootstrap_done=True,
                 completed_phases=self.completed,
                 accumulated_breaks=self.accumulated_breaks,
                 phase_diffs=self.phase_diffs,

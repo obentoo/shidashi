@@ -184,13 +184,20 @@ Uma imagem é uma **cadeia de estágios**; cada estágio declara quem vem antes 
 
 ```
 estágio   após      emerge                                   camadas em vigor
-seed                 (stage3 verificado)
+seed                 (stage3 verificado)          + rootfs/ das camadas
+bootstrap seed       --oneshot da toolchain (abaixo)          base arch init
 base      —          --emptytree @world @base                 base arch init
 minimal   base       -uDN @world @extra-system  → settle      + minimal
 desktop   minimal    -uDN @world @gpu …                       + desktop
 <flavor>  desktop    -uDN @world @<flavor> @extra-*  → settle + flavor/<f>
 ```
 
+- O **bootstrap** leva a toolchain do stage3 às versões da árvore, em ordem:
+  locale → linux-headers + binutils → gcc → libtool → glibc →
+  `@preserved-rebuild` → ccache (`shidashi/bootstrap.py`, BOOTSTRAP-PROCESS §1).
+  Tudo `--oneshot` (o world termina vazio) e com `FEATURES="-buildpkg -ccache"`
+  (D22); binutils e gcc são selecionados **pelo nome** lido de `/etc/env.d/`. Sem
+  ele a base compilaria `--emptytree @world` com o gcc do stage3.
 - A **base** é a única reconstrução completa: "cozinha" o stage3 para a
   microarquitetura e o idioma. Os estágios seguintes usam `--update --deep
   --newuse`: só recompila o que a configuração daquele estágio muda — o USE
@@ -210,18 +217,19 @@ desktop   minimal    -uDN @world @gpu …                       + desktop
 ### 6.5 Fork-points por estágio
 
 ```
-seed ─ base ─ minimal ──┬── (imagem minimal)
-                        └── desktop ──┬── kde
-                                      ├── gnome
-                                      ├── xfce
-                                      └── wm
+seed ─ bootstrap ─ base ─ minimal ──┬── (imagem minimal)
+                                    └── desktop ──┬── kde
+                                                  ├── gnome
+                                                  ├── xfce
+                                                  └── wm
 ```
 
 Cada estágio grava um snapshot com chave **sem o alvo** —
 `<arch>-<init>-<stage3>-<estágio>.tar` — depois do settle quando é entregue. Um
 build retoma do **mais profundo que existir antes do alvo**: o kde construído
 depois do gnome parte do `desktop` que o gnome deixou. O estágio do próprio alvo
-é sempre reconstruído. (Até 2026-09-26 a chave carregava o flavor, e nenhuma
+é sempre reconstruído. Sem nenhum estágio gravado, o checkpoint
+`<arch>-<init>-<stage3>-bootstrap.tar` poupa o stage3 cru e a toolchain. (Até 2026-09-26 a chave carregava o flavor, e nenhuma
 imagem reusava o tronco de outra — F70.)
 
 ### 6.6 Estratégia de build: tronco persistente + wipe na toolchain

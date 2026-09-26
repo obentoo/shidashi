@@ -323,3 +323,108 @@ def test_stepwise_persists_catalyst_seed_sha512(
     assert saved is not None
     assert saved.seed_sha512 == "cafe" * 32
     assert saved.seed_done is True
+
+
+# --- toolchain bootstrap: where a build starts from (BOOTSTRAP-PROCESS §5) ------
+
+
+def _staged_recipe() -> ResolvedRecipe:
+    return _recipe(
+        phases_=(
+            Phase(name="base", stage="base", emptytree=True),
+            Phase(name="flavor", stage="kde", ships=True),
+        )
+    )
+
+
+def _tarball_of(tmp_path: Path, name: str, marker: str) -> Path:
+    tree = tmp_path / f"tree-{name}"
+    (tree / "etc").mkdir(parents=True)
+    (tree / "etc" / "marker").write_text(marker, encoding="utf-8")
+    return phases.snapshot_fork_point(tree, tmp_path / "fp" / name)
+
+
+def _no_fresh_seed(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    seeded: list[str] = []
+    monkeypatch.setattr(
+        factory, "_fresh_seed", lambda *a, **k: seeded.append("fresh") or "", raising=False
+    )
+    return seeded
+
+
+def test_seed_or_restore_without_checkpoints_seeds_fresh_and_asks_for_bootstrap(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    seeded = _no_fresh_seed(monkeypatch)
+    (tmp_path / "fp").mkdir()
+    resume, _fp, reused, bootstrapped = factory._seed_or_restore(
+        _staged_recipe(), tmp_path / "rootfs", _pointer(),
+        snapshot="S", fork_points_dir=tmp_path / "fp", download=False,
+    )
+    assert (resume, reused, bootstrapped) == (None, False, False)
+    assert seeded == ["fresh"]
+
+
+def test_seed_or_restore_restores_the_bootstrap_checkpoint_instead_of_the_stage3(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    seeded = _no_fresh_seed(monkeypatch)
+    recipe = _staged_recipe()
+    path = factory.bootstrap_fork_point_path(recipe, snapshot="S", fork_points_dir=tmp_path / "fp")
+    assert path.name == "v3-systemd-S-bootstrap.tar"
+    (tmp_path / "fp").mkdir()
+    _tarball_of(tmp_path, path.name, "bootstrapped")
+    rootfs = tmp_path / "rootfs"
+
+    resume, _fp, reused, bootstrapped = factory._seed_or_restore(
+        recipe, rootfs, _pointer(), snapshot="S", fork_points_dir=tmp_path / "fp", download=False,
+    )
+    assert (resume, reused, bootstrapped) == (None, False, True)
+    assert seeded == []
+    assert (rootfs / "etc" / "marker").read_text(encoding="utf-8") == "bootstrapped"
+
+
+def test_seed_or_restore_prefers_a_stage_fork_point_over_the_bootstrap(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _no_fresh_seed(monkeypatch)
+    recipe = _staged_recipe()
+    (tmp_path / "fp").mkdir()
+    _tarball_of(tmp_path, "v3-systemd-S-bootstrap.tar", "bootstrapped")
+    _tarball_of(tmp_path, "v3-systemd-S-base.tar", "base built")
+    rootfs = tmp_path / "rootfs"
+
+    resume, _fp, reused, bootstrapped = factory._seed_or_restore(
+        recipe, rootfs, _pointer(), snapshot="S", fork_points_dir=tmp_path / "fp", download=False,
+    )
+    assert (resume, reused, bootstrapped) == ("base", True, True)
+    assert (rootfs / "etc" / "marker").read_text(encoding="utf-8") == "base built"
+
+
+def test_portage_ids_come_from_the_rootfs(tmp_path: Path) -> None:
+    (tmp_path / "etc").mkdir()
+    (tmp_path / "etc/passwd").write_text(
+        "root:x:0:0::/root:/bin/bash\nportage:x:250:250:portage:/var/lib/portage/home:/sbin/nologin\n",
+        encoding="utf-8",
+    )
+    assert factory.portage_ids(tmp_path) is None  # no group file yet
+    (tmp_path / "etc/group").write_text("portage:x:250:\n", encoding="utf-8")
+    assert factory.portage_ids(tmp_path) == (250, 250)
+
+
+def test_ensure_bind_dirs_hands_only_ccache_to_the_images_portage_user(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    rootfs = tmp_path / "rootfs"
+    (rootfs / "etc").mkdir(parents=True)
+    (rootfs / "etc/passwd").write_text("portage:x:250:250::/:/sbin/nologin\n", encoding="utf-8")
+    (rootfs / "etc/group").write_text("portage:x:250:\n", encoding="utf-8")
+    chowned: list[tuple[Path, int, int]] = []
+    monkeypatch.setattr(os, "chown", lambda p, u, g: chowned.append((Path(p), u, g)))
+    binds = [
+        (tmp_path / "ccache", Path("/var/cache/ccache")),
+        (tmp_path / "distfiles", Path("/var/cache/distfiles")),
+    ]
+    factory._ensure_bind_dirs(binds, rootfs=rootfs)
+    assert chowned == [(tmp_path / "ccache", 250, 250)]
+    assert (tmp_path / "distfiles").is_dir()

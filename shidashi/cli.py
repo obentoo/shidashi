@@ -273,6 +273,14 @@ def _render_factory_pretty(result: FactoryResult, arch: str, flavor: str, init: 
     fork = str(result.fork_point) if result.fork_point is not None else "—"
     reuse = "reusado" if result.fork_point_reused else "criado"
     summary.add_row("fork_point", f"{fork} ({reuse})")
+    if result.bootstrap is not None:
+        b = result.bootstrap
+        summary.add_row(
+            "bootstrap",
+            f"binutils {b.binutils} · gcc {b.gcc} · locales {b.locales_before}→{b.locales_after}",
+        )
+    else:
+        summary.add_row("bootstrap", "— (resumed from a checkpoint)")
     console.print(summary)
 
     atoms = Table(title="átomos construídos")

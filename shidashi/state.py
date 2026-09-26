@@ -88,6 +88,9 @@ class BuildState(BaseModel):
     # quando a seed veio por download. Aditivo/defaultado: JSON antigo (sem o
     # campo) ainda carrega sob extra="forbid".
     seed_sha512: str = ""
+    #: The toolchain bootstrap ran over the seed (BOOTSTRAP-PROCESS §5). Additive
+    #: and defaulted, like seed_sha512: older state files still load.
+    bootstrap_done: bool = False
     completed_phases: tuple[str, ...] = ()
     accumulated_breaks: tuple[UseBreak, ...] = ()
     phase_diffs: tuple[PhaseDiff, ...] = ()

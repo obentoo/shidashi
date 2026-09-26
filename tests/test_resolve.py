@@ -45,6 +45,7 @@ from shidashi.resolve import (
     ResolveError,
     _layer_dirs,
     apply_portage,
+    apply_rootfs,
     bind_repos,
     parse_cycle_breaks,
     parse_packages,
@@ -190,6 +191,44 @@ def test_apply_portage_raises_when_two_layers_provide_the_same_file(tmp_path: Pa
     assert "package.use/system" in msg
     assert "base" in msg
     assert "init/systemd" in msg
+
+
+# --- apply_rootfs ------------------------------------------------------------
+
+
+def _seed_rootfs_file(variants: Path, layer: str, rel: str, content: str) -> None:
+    target = variants / layer / "rootfs" / rel
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(content, encoding="utf-8")
+
+
+def test_apply_rootfs_copies_each_layers_tree_over_the_root(tmp_path: Path) -> None:
+    """A layer's rootfs/ lands at / -- the stage3's locale.gen (~500 commented
+    entries) is replaced by the curated one before the bootstrap's locale-gen."""
+    variants = tmp_path / "variants"
+    _seed_rootfs_file(variants, "base", "etc/locale.gen", "en_US.UTF-8 UTF-8\n")
+    _seed_rootfs_file(variants, "init/systemd", "etc/systemd/x.conf", "X")
+    rootfs = tmp_path / "rootfs"
+    (rootfs / "etc").mkdir(parents=True)
+    (rootfs / "etc" / "locale.gen").write_text("# stage3 default\n", encoding="utf-8")
+
+    copied = apply_rootfs(rootfs, _recipe(), variants_dir=variants)
+
+    assert (rootfs / "etc/locale.gen").read_text(encoding="utf-8") == "en_US.UTF-8 UTF-8\n"
+    assert (rootfs / "etc/systemd/x.conf").read_text(encoding="utf-8") == "X"
+    assert copied == ("/etc/locale.gen", "/etc/systemd/x.conf")
+
+
+def test_apply_rootfs_later_layer_wins_and_missing_trees_are_skipped(tmp_path: Path) -> None:
+    variants = tmp_path / "variants"
+    _seed_rootfs_file(variants, "base", "etc/motd", "base")
+    _seed_rootfs_file(variants, "init/systemd", "etc/motd", "init")
+    rootfs = tmp_path / "rootfs"
+    rootfs.mkdir()
+
+    apply_rootfs(rootfs, _recipe(), variants_dir=variants)  # arch/flavor have no rootfs/
+
+    assert (rootfs / "etc/motd").read_text(encoding="utf-8") == "init"
 
 
 def test_apply_portage_missing_layer_raises(tmp_path: Path) -> None:

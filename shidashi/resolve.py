@@ -13,6 +13,7 @@ via ``import portage``.
 
 import configparser
 import os
+import shutil
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -250,6 +251,41 @@ def apply_portage(
         (dest / _MAKE_CONF).write_text(
             _assemble_make_conf(make_conf_parts), encoding="utf-8"
         )
+
+
+def apply_rootfs(
+    rootfs: Path,
+    recipe: ResolvedRecipe,
+    *,
+    variants_dir: Path,
+    layers: tuple[str, ...] | None = None,
+) -> tuple[str, ...]:
+    """Copy each layer's ``rootfs/`` tree over ``rootfs``; return what it wrote.
+
+    Files outside ``/etc/portage`` that the image needs from the start -- today
+    only ``base/rootfs/etc/locale.gen``, the curated locale list the bootstrap's
+    ``locale-gen`` reads (the stage3 ships every entry commented out). The lab
+    did this at reseed (``apply-rootfs.sh``); the pipeline never did.
+
+    Unlike ``portage/`` these are whole files, not union directories, so a later
+    layer simply wins. A layer without ``rootfs/`` contributes nothing. Modes are
+    kept (``copy2``); ownership is the caller's (root) and so stays root's.
+    """
+    chosen = recipe.portage_layers if layers is None else layers
+    written: list[str] = []
+    for layer in chosen:
+        tree = variants_dir / layer / "rootfs"
+        if not tree.is_dir():
+            continue
+        for item in sorted(tree.rglob("*")):
+            if not item.is_file():
+                continue
+            rel = item.relative_to(tree)
+            target = rootfs / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(item, target)
+            written.append("/" + rel.as_posix())
+    return tuple(dict.fromkeys(written))
 
 
 def _assemble_make_conf(parts: list[tuple[str, str]]) -> str:

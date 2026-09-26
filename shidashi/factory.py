@@ -22,6 +22,7 @@ from pathlib import Path
 import pydantic
 
 from shidashi import config, isacheck, state
+from shidashi.bootstrap import BootstrapResult, run_bootstrap
 from shidashi.catalyst import build_stage3_catalyst
 from shidashi.container import Container
 from shidashi.phases import (
@@ -36,10 +37,11 @@ from shidashi.phases import (
     restore_fork_point,
     run_phases,
     run_phases_stepwise,
+    snapshot_fork_point,
     stage_fork_point_path,
 )
 from shidashi.recipe import ResolvedRecipe
-from shidashi.resolve import apply_portage, bind_repos, install_sets
+from shidashi.resolve import apply_portage, apply_rootfs, bind_repos, install_sets
 from shidashi.seed import Stage3Pointer, extract_stage3, fetch_stage3, load_pointer
 from shidashi.state import PhaseDiff
 
@@ -93,6 +95,9 @@ class FactoryResult(pydantic.BaseModel):
     #: TARGET, they simply cannot be test-run or smoke-tested here. Always empty
     #: when target and host share an ISA, which is the common case.
     unrunnable_here: tuple[str, ...] = ()
+    #: The toolchain bootstrap this build ran over a fresh stage3; ``None`` when
+    #: it resumed from the bootstrap checkpoint or from a stage fork point.
+    bootstrap: BootstrapResult | None = None
 
 
 class StaleStateError(FactoryError):
@@ -162,6 +167,39 @@ def _fresh_seed(
     return ""
 
 
+def bootstrap_fork_point_path(
+    recipe: ResolvedRecipe, *, snapshot: str, fork_points_dir: Path
+) -> Path:
+    """Where the bootstrap checkpoint lives: the stage3 with its toolchain rebuilt.
+
+    ``<arch>-<init>-<snapshot>-bootstrap.tar``, beside the stage fork points and
+    keyed like them (no target): every image of one arch × init starts here. The
+    arch is in the key because the toolchain is built with the arch's CFLAGS.
+    """
+    return fork_points_dir / f"{recipe.arch}-{recipe.init}-{snapshot}-bootstrap.tar"
+
+
+def _bootstrap(
+    container: Container, recipe: ResolvedRecipe, *, snapshot: str, fork_points_dir: Path
+) -> BootstrapResult:
+    """Run the toolchain bootstrap and checkpoint it (BOOTSTRAP-PROCESS §5, items 1-2).
+
+    The checkpoint is what a failed base build restores to -- not the raw stage3,
+    which would redo the ~15 min of toolchain first.
+    """
+    result = run_bootstrap(container)
+    dest = bootstrap_fork_point_path(recipe, snapshot=snapshot, fork_points_dir=fork_points_dir)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    snapshot_fork_point(container.rootfs, dest)
+    return result
+
+
+def _restore_into(tarball: Path, rootfs: Path) -> None:
+    shutil.rmtree(rootfs, ignore_errors=True)
+    rootfs.mkdir(parents=True, exist_ok=True)
+    restore_fork_point(tarball, rootfs)
+
+
 def _seed_or_restore(
     recipe: ResolvedRecipe,
     rootfs: Path,
@@ -170,31 +208,37 @@ def _seed_or_restore(
     snapshot: str,
     fork_points_dir: Path,
     download: bool,
-) -> tuple[str | None, Path, bool]:
+) -> tuple[str | None, Path, bool, bool]:
     """Decide entre reusar o fork-point do tronco e um seed fresco (R5.1/R5.2/R8.2).
 
     Bloco *seed-or-restore* extraído de :meth:`Factory.build` SEM mudança de
     comportamento (R8.2): se :func:`shidashi.phases.fork_point` acha o tronco pinado
     para ``snapshot``, restaura-o num rootfs limpo e devolve
-    ``(resume_at, fork_point_path, True)`` onde ``resume_at`` é a fase do estágio restaurado --
-    tronco; senão faz :func:`_fresh_seed` e devolve ``(None, <chave do tronco>,
-    False)`` — o caminho fresco compartilhado com o stepwise. PRIVILEGIADO.
+    ``(resume_at, fork_point_path, True, True)`` onde ``resume_at`` é a fase do estágio
+    restaurado; senão restaura o checkpoint do bootstrap, se existe, ou faz
+    :func:`_fresh_seed` -- ``(None, <chave do primeiro estágio>, False,
+    bootstrapped)``. The last flag says whether the toolchain bootstrap is
+    already in the rootfs; ``False`` means the caller must run it. PRIVILEGIADO.
     """
     found = fork_point(recipe, snapshot=snapshot, fork_points_dir=fork_points_dir)
     if found is not None:
         # the deepest STAGE already built for this arch × init, by any image
         # (D24, F70): resume right after it
         phase, existing = found
-        shutil.rmtree(rootfs, ignore_errors=True)
-        rootfs.mkdir(parents=True, exist_ok=True)
-        restore_fork_point(existing, rootfs)
-        return phase.name, existing, True
-    _fresh_seed(rootfs, pointer, download=download, recipe=recipe)
+        _restore_into(existing, rootfs)
+        return phase.name, existing, True, True
     first_stage = next((p.stage for p in recipe.phases if p.stage), "base")
     fork_point_path = stage_fork_point_path(
         recipe, first_stage, snapshot=snapshot, fork_points_dir=fork_points_dir
     )
-    return None, fork_point_path, False
+    checkpoint = bootstrap_fork_point_path(
+        recipe, snapshot=snapshot, fork_points_dir=fork_points_dir
+    )
+    if checkpoint.exists():
+        _restore_into(checkpoint, rootfs)
+        return None, fork_point_path, False, True
+    _fresh_seed(rootfs, pointer, download=download, recipe=recipe)
+    return None, fork_point_path, False, False
 
 
 def _phases_through(recipe: ResolvedRecipe, name: str | None) -> tuple[str, ...]:
@@ -233,7 +277,11 @@ def _prepare_portage(
     comportamento (R8.2): :func:`shidashi.resolve.apply_portage` (layers sob
     :func:`shidashi.config.variants_dir`) seguido de :meth:`Factory._install_sets`.
     Compartilhado por :meth:`Factory.build` e :meth:`Factory.build_stepwise`.
+
+    The layers' ``rootfs/`` trees go first (:func:`shidashi.resolve.apply_rootfs`):
+    the bootstrap's ``locale-gen`` reads the curated ``/etc/locale.gen``.
     """
+    apply_rootfs(rootfs, recipe, variants_dir=config.variants_dir(), layers=layers)
     apply_portage(rootfs, recipe, variants_dir=config.variants_dir(), layers=layers)
     Factory._install_sets(rootfs, recipe)
 
@@ -265,15 +313,48 @@ def _build_binds(
     return binds_ro, binds_rw
 
 
-def _ensure_bind_dirs(binds_rw: list[tuple[Path, Path]]) -> None:
+def portage_ids(rootfs: Path) -> tuple[int, int] | None:
+    """The ``portage`` uid and gid of the ROOTFS (not the host's). Pure I/O.
+
+    ``None`` when either file lacks the entry. Read from the image because the
+    host may have no portage user, or another id for it.
+    """
+
+    def _lookup(path: Path) -> int | None:
+        if not path.is_file():
+            return None
+        for line in path.read_text(encoding="utf-8").splitlines():
+            fields = line.split(":")
+            if len(fields) > 2 and fields[0] == "portage" and fields[2].isdigit():
+                return int(fields[2])
+        return None
+
+    uid = _lookup(rootfs / "etc" / "passwd")
+    gid = _lookup(rootfs / "etc" / "group")
+    return None if uid is None or gid is None else (uid, gid)
+
+
+def _ensure_bind_dirs(
+    binds_rw: list[tuple[Path, Path]], *, rootfs: Path | None = None
+) -> None:
     """Cria os diretórios host-side dos binds RW antes do nspawn.
 
     ``systemd-nspawn`` exige que o *source* de cada ``--bind=`` exista no host;
     sem isto o spawn aborta com ``Failed to clone …``. Fica fora de
     :func:`_build_binds` para preservar a pureza (e o unit test) daquela montagem.
+
+    With ``rootfs``, the ccache directory is also handed to the image's
+    ``portage`` user: compiles run under ``userpriv``, and a root-owned cache
+    fails the first one (BOOTSTRAP-PROCESS §5, item 7).
     """
     for src, _dst in binds_rw:
         src.mkdir(parents=True, exist_ok=True)
+    ids = portage_ids(rootfs) if rootfs is not None else None
+    if ids is None:
+        return
+    for src, dst in binds_rw:
+        if dst == _CCACHE_DST:
+            os.chown(src, *ids)
 
 
 class Factory:
@@ -300,14 +381,16 @@ class Factory:
         2. Resolve o ``snapshot`` do pointer do stage3 (``seed.load_pointer``).
            Se :func:`shidashi.phases.fork_point` acha o tronco pinado, restaura-o no
            rootfs e retoma após a última fase do tronco (``resume_at``,
-           ``fork_point_reused=True``); senão ``fetch_stage3`` + ``extract_stage3``
-           num rootfs fresco (``fork_point_reused=False``).
-        3. ``apply_portage`` (layers) + instala ``recipe.sets`` em
-           ``/etc/portage/sets/``.
-        4. Monta os binds (:func:`_build_binds`) e abre um :class:`Container`
-           **não-efêmero** (``binds`` RO, ``binds_rw`` RW).
-        5. :func:`shidashi.phases.run_phases` (fases + settle-pass).
-        6. Monta o :class:`FactoryResult`. Em sucesso e sem ``keep``, remove o
+           ``fork_point_reused=True``); else the bootstrap checkpoint, when it
+           exists; else ``fetch_stage3`` + ``extract_stage3`` num rootfs fresco.
+        3. ``apply_rootfs`` + ``apply_portage`` (layers) + instala ``recipe.sets``
+           em ``/etc/portage/sets/``.
+        4. Monta os binds (:func:`_build_binds`, ccache owned by the image's
+           ``portage``) e abre um :class:`Container` **não-efêmero**.
+        5. Over a fresh stage3 only: the toolchain bootstrap
+           (:func:`shidashi.bootstrap.run_bootstrap`), then its checkpoint.
+        6. :func:`shidashi.phases.run_phases` (fases + settle-pass).
+        7. Monta o :class:`FactoryResult`. Em sucesso e sem ``keep``, remove o
            rootfs de build; em falha ou ``keep``, preserva-o (R8.4). Uma falha de
            ``emerge`` já sobe como :class:`FactoryError` de ``run_phase``/
            ``settle_pass`` e propaga.
@@ -321,7 +404,7 @@ class Factory:
         snapshot = pointer.snapshot
         fork_points_dir = config.fork_points_dir()
 
-        resume_at, fork_point_path, fork_point_reused = _seed_or_restore(
+        resume_at, fork_point_path, fork_point_reused, bootstrapped = _seed_or_restore(
             recipe,
             rootfs,
             pointer,
@@ -336,11 +419,16 @@ class Factory:
         binds_ro, binds_rw = _build_binds(
             recipe, pkgdir=self.pkgdir, repos_conf_dir=rootfs / "etc" / "portage" / "repos.conf"
         )
-        _ensure_bind_dirs(binds_rw)
+        _ensure_bind_dirs(binds_rw, rootfs=rootfs)
 
         keep_rootfs = keep
+        bootstrap: BootstrapResult | None = None
         try:
             with Container(rootfs, ephemeral=False, binds=binds_ro, binds_rw=binds_rw) as container:
+                if not bootstrapped:
+                    bootstrap = _bootstrap(
+                        container, recipe, snapshot=snapshot, fork_points_dir=fork_points_dir
+                    )
                 results = run_phases(
                     container,
                     recipe,
@@ -384,6 +472,7 @@ class Factory:
             fork_point_reused=fork_point_reused,
             settle_atoms=settle_atoms,
             unrunnable_here=unrunnable,
+            bootstrap=bootstrap,
         )
 
         if not keep_rootfs:
@@ -479,18 +568,28 @@ class Factory:
         if stopped_at_seed:
             return self._assemble_result(state_path, stopped_at="seed", results=())
 
+        seeded = state.load_state(state_path)
+        needs_bootstrap = not completed and (seeded is None or not seeded.bootstrap_done)
+
         _prepare_portage(rootfs, recipe, layers=_entry_layers(recipe, done=completed))
 
         binds_ro, binds_rw = _build_binds(
             recipe, pkgdir=self.pkgdir, repos_conf_dir=rootfs / "etc" / "portage" / "repos.conf"
         )
-        _ensure_bind_dirs(binds_rw)
+        _ensure_bind_dirs(binds_rw, rootfs=rootfs)
 
         # Teardown rule (R1.6): o stepwise NUNCA auto-deleta o rootfs — stop,
         # conclusão e falha TODOS o mantêm; só ``reset`` (acima) o remove. Por isso
         # NÃO há cláusula de remoção aqui, e uma falha de emerge propaga com o
         # estado já persistido por run_phases_stepwise e o rootfs intacto (R3.5).
+        bootstrap: BootstrapResult | None = None
         with Container(rootfs, ephemeral=False, binds=binds_ro, binds_rw=binds_rw) as container:
+            if needs_bootstrap:
+                bootstrap = _bootstrap(
+                    container, recipe, snapshot=snapshot, fork_points_dir=fork_points_dir
+                )
+                if seeded is not None:
+                    state.save_state(state_path, seeded.model_copy(update={"bootstrap_done": True}))
             results = run_phases_stepwise(
                 container,
                 recipe,
@@ -511,7 +610,8 @@ class Factory:
                 until=until,
                 final_phase=recipe.phases[-1].name if recipe.phases else None,
             ),
-            results=results
+            results=results,
+            bootstrap=bootstrap,
         )
 
     def _seed_or_restore_stepwise(
@@ -568,7 +668,28 @@ class Factory:
             # reusa o rootfs persistente como está — não re-seeda nem restaura (R1.4).
             return False
 
-        # (c) sem estado: seed fresco e persiste o marco seed_done. Quando
+        # (c) sem estado. The bootstrap checkpoint, when one exists, replaces
+        # the raw stage3 AND the ~15 min toolchain rebuild on top of it.
+        checkpoint = bootstrap_fork_point_path(
+            recipe, snapshot=snapshot, fork_points_dir=fork_points_dir
+        )
+        if checkpoint.exists():
+            _restore_into(checkpoint, rootfs)
+            state.save_state(
+                state_path,
+                state.BuildState(
+                    arch=recipe.arch,
+                    flavor=recipe.flavor,
+                    init=recipe.init,
+                    snapshot=snapshot,
+                    recipe_hash=recipe_hash,
+                    seed_done=True,
+                    bootstrap_done=True,
+                ),
+            )
+            return self._seed_checkpoint(rootfs, recipe, on_checkpoint) if interactive else False
+
+        # Seed fresco e persiste o marco seed_done. Quando
         # seed_source=catalyst, _fresh_seed devolve o sha512 do stage3 buildado
         # localmente, pinado no BuildState (R4.1); vazio no caminho download.
         seed_sha512 = _fresh_seed(rootfs, pointer, download=download, recipe=recipe)
@@ -612,7 +733,12 @@ class Factory:
             Container(rootfs, ephemeral=False).shell()
 
     def _assemble_result(
-        self, state_path: Path, *, stopped_at: str | None, results: tuple[PhaseResult, ...]
+        self,
+        state_path: Path,
+        *,
+        stopped_at: str | None,
+        results: tuple[PhaseResult, ...],
+        bootstrap: BootstrapResult | None = None,
     ) -> FactoryResult:
         """Monta o :class:`FactoryResult` estendido lendo o estado persistido (R6.1).
 
@@ -645,6 +771,7 @@ class Factory:
             stopped_at=stopped_at,
             phase_diffs=phase_diffs,
             completed_phases=completed_phases,
+            bootstrap=bootstrap,
         )
 
     @staticmethod
