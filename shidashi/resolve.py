@@ -247,6 +247,9 @@ def apply_portage(
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(item.read_bytes())
 
+    jobs = _jobs_override()
+    if jobs is not None:
+        make_conf_parts.append((f"runtime ({_JOBS_ENV})", f'MAKEOPTS="-j{jobs} -l{jobs}"\n'))
     if make_conf_parts:
         (dest / _MAKE_CONF).write_text(
             _assemble_make_conf(make_conf_parts), encoding="utf-8"
@@ -286,6 +289,25 @@ def apply_rootfs(
             shutil.copy2(item, target)
             written.append("/" + rel.as_posix())
     return tuple(dict.fromkeys(written))
+
+
+_JOBS_ENV = "SHIDASHI_JOBS"
+
+
+def _jobs_override() -> int | None:
+    """``SHIDASHI_JOBS`` (``factory --jobs``) as a positive int; ``None`` when unset.
+
+    How many jobs THIS build host runs is not part of the recipe, so it is not a
+    layer: it is appended after every layer, where the shell's last-assignment
+    rule makes it win over the base's MAKEOPTS in every phase. Validated because
+    the value is written into a shell-sourced file.
+    """
+    raw = os.environ.get(_JOBS_ENV)
+    if raw is None:
+        return None
+    if not raw.isdigit() or int(raw) < 1:
+        raise ResolveError(f"{_JOBS_ENV} must be a positive integer, got {raw!r}")
+    return int(raw)
 
 
 def _assemble_make_conf(parts: list[tuple[str, str]]) -> str:

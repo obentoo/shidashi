@@ -170,6 +170,40 @@ def test_apply_portage_assembled_make_conf_gives_the_last_assignment(tmp_path: P
     assert sorted(use.split()) == ["a", "b", "systemd"]  # init SOMOU, não trocou
 
 
+def test_apply_portage_jobs_override_is_the_last_makeopts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SHIDASHI_JOBS (factory --jobs) sets MAKEOPTS for THIS host, after every
+    layer, so it wins over the base's -j32 in every phase that re-applies it."""
+    variants = tmp_path / "variants"
+    _seed_layer(variants, "base", "make.conf", 'MAKEOPTS="-j32 -l32"\n')
+    rootfs = tmp_path / "rootfs"
+    (rootfs / "etc").mkdir(parents=True)
+    monkeypatch.setenv("SHIDASHI_JOBS", "16")
+
+    apply_portage(rootfs, _recipe(), variants_dir=variants, layers=("base",))
+
+    make_conf = rootfs / "etc" / "portage" / "make.conf"
+    out = subprocess.run(
+        ["bash", "-c", f'. "{make_conf}"; printf "%s" "$MAKEOPTS"'],
+        capture_output=True, text=True, check=True,
+    )
+    assert out.stdout == "-j16 -l16"
+    assert "layer: runtime (SHIDASHI_JOBS)" in make_conf.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("bad", ["0", "-3", "sixteen", "16; rm -rf /"])
+def test_apply_portage_refuses_a_jobs_value_that_is_not_a_positive_integer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, bad: str
+) -> None:
+    variants = tmp_path / "variants"
+    _seed_layer(variants, "base", "make.conf", 'MAKEOPTS="-j32"\n')
+    (tmp_path / "rootfs" / "etc").mkdir(parents=True)
+    monkeypatch.setenv("SHIDASHI_JOBS", bad)
+    with pytest.raises(ResolveError, match="SHIDASHI_JOBS"):
+        apply_portage(tmp_path / "rootfs", _recipe(), variants_dir=variants, layers=("base",))
+
+
 def test_apply_portage_raises_when_two_layers_provide_the_same_file(tmp_path: Path) -> None:
     # Fora do make.conf, esses caminhos são DIRETÓRIOS que o Portage lê como
     # união: dois layers no mesmo caminho não se combinam, um apaga o outro. Era

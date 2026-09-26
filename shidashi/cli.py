@@ -447,6 +447,14 @@ def factory(
             help="Raiz de trabalho: cache+scratch sob <DIR> (vence SHIDASHI_CACHE/_SCRATCH).",
         ),
     ] = None,
+    jobs: Annotated[
+        int | None,
+        typer.Option(
+            "--jobs",
+            min=1,
+            help="MAKEOPTS=-jN -lN for this host, over the recipe's (every phase).",
+        ),
+    ] = None,
     update: Annotated[
         bool,
         typer.Option(
@@ -468,6 +476,8 @@ def factory(
     imprime a fase que falhou e a ``output`` do emerge.
     """
     _apply_work_dir(work_dir)
+    if jobs is not None:
+        os.environ["SHIDASHI_JOBS"] = str(jobs)  # read by resolve.apply_portage
     try:
         resolved = _resolve(arch, flavor, init)
     except (config.UnknownAxisError, RecipeChainError) as err:

@@ -321,3 +321,22 @@ def test_factory_update_refuses_the_stepwise_options(
     result = runner.invoke(app, ["factory", "v3", "minimal", "systemd", "--update", *extra])
     assert result.exit_code == 1
     assert "--update" in result.output
+
+
+def test_factory_jobs_sets_shidashi_jobs_for_the_run(
+    monkeypatch: pytest.MonkeyPatch, variants_tree: Path
+) -> None:
+    # registered with monkeypatch so the value the CLI writes is undone afterwards
+    monkeypatch.setenv("SHIDASHI_JOBS", "1")
+    monkeypatch.delenv("SHIDASHI_JOBS")
+    seen: dict[str, object] = {}
+
+    def _capture(_recipe: object, _pkgdir: Path) -> _FakeInstance:
+        seen["jobs"] = os.environ.get("SHIDASHI_JOBS")
+        return _FakeInstance(lambda **_k: _fake_result())
+
+    monkeypatch.setattr(cli, "Factory", _capture, raising=False)
+    result = runner.invoke(app, ["factory", "v3", "minimal", "systemd", "--jobs", "16"])
+    assert result.exit_code == 0, result.stdout
+    assert seen["jobs"] == "16"
+    assert runner.invoke(app, ["factory", "v3", "minimal", "systemd", "--jobs", "0"]).exit_code != 0
