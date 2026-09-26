@@ -32,13 +32,13 @@ O **Shidashi** (`仕出し`, "catering — produz lotes sob encomenda e entrega"
 | **init** | Sistema de init: `systemd` ou `openrc` (com elogind/seatd). |
 | **arch** | Alvo de microarquitetura: `v3` (baseline), `znver5`, `arrowlake`. |
 | **recipe** | Receita YAML componível que descreve uma release (`base + arch + flavor + init`). |
-| **step** (fase) | Etapa ordenada de `emerge` (toolchain → graphics → desktop → apps); pode carregar `use_break`. |
+| **estágio** / fase | Um degrau da cadeia `base → minimal → desktop → <flavor>` (D24); cada estágio vira uma fase de `emerge`, com a própria config, sets e `use_break`. |
 | **use_break** | USE transiente, por step, que quebra dependência circular de *build* (≠ USE final do flavor). Curado **manualmente** por flavor. |
 | **binhost** | Repositório HTTP de pacotes binários (binpkgs) servidos a clientes. |
 | **multi-instance** | Recurso do Portage: múltiplos binpkgs do mesmo pacote/versão com USE diferentes. |
 | **binpkg transiente** | binpkg construído só para quebrar um ciclo (ex.: `ffmpeg[-sdl]`); descartado após o *settle-pass*, nunca chega à ISO. |
 | **build-pool / publish-pool** | Duas vistas do binhost: build-pool inclui transientes (reuso entre semanas); publish-pool só finais (Assembler/usuários). |
-| **fork-point** | Ponto do pipeline onde o tronco compartilhado se ramifica por desktop. |
+| **fork-point** | Snapshot de um **estágio** (`<arch>-<init>-<stage3>-<estágio>.tar`), reusado por toda imagem que passa por ele. |
 | **toolchain-bump** | Mudança de major em GCC/glibc/binutils (ou novo pin de snapshot) que dispara rebuild total limpo (`--emptytree`). |
 
 ---
@@ -177,35 +177,52 @@ binhost/
 > (`-march`, `CFLAGS`…), então `znver5` nunca colide com `v3`. A pureza é garantida pelo *container*, não
 > pela segregação de cache. `mold` é linker — não gera cache; é só um knob de `RUSTFLAGS`/`LDFLAGS` por arch.
 
-### 6.4 Build em fases (resolve dependência circular)
+### 6.4 Build em estágios (D24)
 
-Cada fase é um `emerge` próprio, ordenado, com o `/etc/portage` do flavor já aplicado:
-
-```
-fase 0: stage3 base                       (já pronto)
-fase 1: rebuild      emerge --newuse @world  (reflete make.conf do flavor/arch)
-fase 2: graphics     @gpu @extra-media   (minimal não declara nenhum → no-op)
-fase 3: desktop      @kde | @gnome | @xfce | @wm   (minimal pula esta fase)
-fase 4: apps         @base @extra-system @extra-desktop @extra-dev @extra-virt
-```
-
-Isso resolve de forma **determinística** os ciclos circulares de pacotes grandes (ex.: KDE) — instala Wayland/toolchain primeiro, DE depois, reduzindo a área de conflito.
-
-> **Refinamento (teste de resolução — §18):** os steps *ordenam* o build, mas o teste mostrou que alguns ciclos exigem **`use_break`** — compilar com a USE desligada e religá-la num *settle-pass* (o mesmo pacote compila duas vezes no primeiro build). A USE de *completude* (qt6/gtk/VIDEO_CARDS/L10N) é **final desde o step 1**; **só a USE de quebra-de-ciclo se estagia**, e é **curada manualmente** por flavor. Ver §18.3.
-
-### 6.5 Cache de fases (fork-point)
-
-As fases iniciais dependem **só do init**, não do desktop. O fork ocorre tarde:
+Uma imagem é uma **cadeia de estágios**; cada estágio declara quem vem antes dele
+(`after:`) e vira uma fase de `emerge`, com a **configuração acumulada até ele**:
 
 ```
-stage3 ─ rebuild ─ seat ─ graphics ──┬── (minimal: para aqui) ─▶ binpkgs minimal
-        (por init)                   ├── +kde     ─▶ binpkgs kde
-                                     ├── +gnome   ─▶ binpkgs gnome
-                                     ├── +xfce    ─▶ binpkgs xfce
-                                     └── +wm      ─▶ binpkgs wm (Hyprland/Sway/niri)
+estágio   após      emerge                                   camadas em vigor
+seed                 (stage3 verificado)
+base      —          --emptytree @world @base                 base arch init
+minimal   base       -uDN @world @extra-system  → settle      + minimal
+desktop   minimal    -uDN @world @gpu …                       + desktop
+<flavor>  desktop    -uDN @world @<flavor> @extra-*  → settle + flavor/<f>
 ```
 
-Snapshot (btrfs subvol ou tarball) no fork-point: o tronco compila **uma vez por init**; só a fase de desktop ramifica. Builds semanais reusam o tronco quando a receita não mudou. O flavor `minimal` é praticamente o próprio tronco — não tem fase de desktop.
+- A **base** é a única reconstrução completa: "cozinha" o stage3 para a
+  microarquitetura e o idioma. Os estágios seguintes usam `--update --deep
+  --newuse`: só recompila o que a configuração daquele estágio muda — o USE
+  gráfico entra no `desktop`, e só o que ele toca é refeito, uma vez para os
+  quatro flavors.
+- A config **cresce ao longo da cadeia**: cada fase aplica as camadas até o seu
+  estágio. A camada do kde não está em vigor enquanto a base compila (há teste
+  que roda a cadeia real e confere isso).
+- **Settle por imagem entregue** (`ships`: `minimal` e cada flavor): os cortes de
+  ciclo acumulados desde o último settle são desfeitos ali mesmo. O `minimal` é
+  assentado no meio do caminho do kde, e o `desktop` parte dele assentado.
+
+> **Cortes de ciclo (`use_break`):** alguns ciclos exigem compilar com uma USE
+> desligada e religá-la no settle (§18.3). Cada corte mora no estágio que cria o
+> ciclo; os três do tronco moram na base.
+
+### 6.5 Fork-points por estágio
+
+```
+seed ─ base ─ minimal ──┬── (imagem minimal)
+                        └── desktop ──┬── kde
+                                      ├── gnome
+                                      ├── xfce
+                                      └── wm
+```
+
+Cada estágio grava um snapshot com chave **sem o alvo** —
+`<arch>-<init>-<stage3>-<estágio>.tar` — depois do settle quando é entregue. Um
+build retoma do **mais profundo que existir antes do alvo**: o kde construído
+depois do gnome parte do `desktop` que o gnome deixou. O estágio do próprio alvo
+é sempre reconstruído. (Até 2026-09-26 a chave carregava o flavor, e nenhuma
+imagem reusava o tronco de outra — F70.)
 
 ### 6.6 Estratégia de build: tronco persistente + wipe na toolchain
 
@@ -501,59 +518,40 @@ O `minimal` não tem set de desktop — consome `@base` e `@extra-system`. Cada 
 
 ## 14. Schema de Receita (exemplo)
 
-Uma release é a tupla `base + arch + flavor + init`, resolvida por *deep-merge*:
+Uma imagem é a cadeia de estágios até o alvo, mais os eixos `arch` e `init`
+(`config.load_recipe(arch, alvo, init)`). Cada estágio escolhe **sets** e
+**cortes**; o **USE** mora só no `portage/make.conf` de cada camada — é o
+arquivo que o build lê, e a única fonte:
 
 ```yaml
 # variants/flavor/kde/recipe.yaml
-flavor: kde
-# sem profile de DE: a âncora é só no-multilib[/systemd]; a "camada KDE"
-# vem de use_prefer + portage/package.use + sets (ver "Resolução de profile" abaixo).
-use_prefer:
-  add:  [qt6, kde, wayland]
-  drop: [gtk, gnome, webkit]
-sets:
-  - graphics
-  - kde
-override_ok: false                    # KDE é curado; WM teria true
+stage: kde
+after: desktop
+ships: true                     # imagem entregue: settle + fork-point assentado
+sets: [kde, extra-desktop, extra-media, extra-dev, extra-virt]
 ```
 
 ```yaml
-# variants/flavor/minimal/recipe.yaml
-flavor: minimal
-use_prefer:
-  drop: [qt6, kde, gnome, gtk]        # console-only (só TTY)
-sets: []                              # nenhum set de desktop — consome só os de base
-override_ok: true
-```
-
-```yaml
-# variants/arch/znver5/recipe.yaml
-arch: znver5
-common_flags: "-march=znver5 -O2 -pipe"
-goamd64: v4
-rustflags: "-C target-cpu=znver5 -C link-arg=-fuse-ld=mold"
-cpu_flags_x86: [aes, avx, avx2, avx512f, avx512bw, avx512cd, avx512dq,
-                avx512vl, avx512vbmi, avx512vbmi2, vaes, vpclmulqdq, gfni, sha]
-runnable_on_build_host: true          # tier 1 no 9950X (Zen 5 tem AVX-512)
+# variants/minimal/minimal.yaml
+stage: minimal
+after: base
+ships: true
+sets: [extra-system]
 ```
 
 ```yaml
 # variants/init/openrc/recipe.yaml
 init: openrc
 profile_suffix: ""                    # profile sem /systemd
-use_prefer:
-  add:  [elogind, udev]
-  drop: [systemd]
 phases_prepend:
   - { name: seat, packages: [sys-auth/elogind, sys-auth/seatd] }
 ```
 
-**Semântica de `override_ok`.** Controla se camadas posteriores do deep-merge (o fragmento de
-`init` e, no futuro, receitas de usuário) podem **sobrescrever/derrubar** a USE curada do flavor:
-- `false` (kde, gnome, xfce — curados): a `use_prefer` do flavor é **autoritativa**; o merge
-  **rejeita** drops/overrides conflitantes vindos de baixo → ISOs previsíveis e reproduzíveis.
-- `true` (wm, minimal — livres): camadas posteriores **podem** ajustar a USE, habilitando
-  customização (o usuário do `wm` troca compositor/USE sem precisar forkar a receita).
+> **Não há mais `use_prefer` nem `override_ok`** (F69). O `use_prefer` só era
+> exibido pelo `recipe show` e nunca chegou a um build; gnome, xfce, wm e openrc
+> dependiam dele e por isso nunca tiveram o USE característico aplicado — ele
+> passa ao `make.conf` deles no passo 3 do D24. Sem `use_prefer` não há conflito
+> de USE entre camadas para o `override_ok` arbitrar.
 
 **Resolução de profile (decisão: `no-multilib` apenas, tudo acima por USE).** O único eixo que toca o
 profile é o **init**. *Todos* os flavors herdam a mesma âncora; **não há profile de DE**:
@@ -563,7 +561,7 @@ profile é o **init**. *Todos* os flavors herdam a mesma âncora; **não há pro
 - `base` fixa `default/linux/amd64/23.0/no-multilib` (no-multilib é padrão — §3).
 - `init.profile_suffix` acrescenta `/systemd` (systemd) ou nada (openrc).
 - **O flavor NÃO contribui com profile.** A "camada de desktop" (KDE/GNOME/XFCE/WM) é construída
-  inteiramente **acima** do no-multilib via `use_prefer` → `portage/package.use` + `sets` (§13).
+  inteiramente **acima** do no-multilib via `portage/` (make.conf + package.use) + `sets` (§13).
 
 Profile resolvido (idêntico para minimal/kde/gnome/xfce/wm — só muda por init):
 - `* + openrc`  → `default/linux/amd64/23.0/no-multilib`
@@ -573,7 +571,7 @@ Profile resolvido (idêntico para minimal/kde/gnome/xfce/wm — só muda por ini
 > de `default/linux/amd64/23.0/` — não existe `no-multilib/desktop/plasma`, então não compõem. Em vez de
 > criar profiles próprios no overlay, o bentoo fica **só no profile `no-multilib[/systemd]`** e codifica
 > toda a diferenciação de DE via `portage/package.use` + sets (que já são load-bearing, §18.2). Vantagem:
-> nada de profiles custom para terceiros manterem; a receita (`use_prefer`/sets) é a **única** fonte da
+> nada de profiles custom para terceiros manterem; as camadas (`portage/` + sets) são a **única** fonte da
 > camada gráfica. (Decisão §19.1.)
 
 ---
@@ -759,7 +757,7 @@ só teste e vira parte do pipeline de curadoria.
 | **Cadência** | Release fixo **todo domingo 00:00** (§11). |
 | **multilib** | **no-multilib** por padrão; 32-bit só na futura fase de jogos, **por-pacote via `ABI_X86="32 64"`** (§3). |
 | **Seed** | stage3 **no-multilib** por init (systemd/openrc), do mesmo snapshot pinado (§11). |
-| **`override_ok`** | `false` = USE do flavor autoritativa (kde/gnome/xfce); `true` = customizável (wm/minimal) (§14). |
+| **`ships`** | O estágio é uma imagem entregue (`minimal` e cada flavor): recebe settle e um fork-point assentado (§6.4). |
 | **Camada de desktop** | **Profile `no-multilib[/systemd]` apenas** — sem profiles de DE no overlay; KDE/GNOME/XFCE/WM construídos **acima** via `package.use` + sets (§14). |
 | **Linguagem** | **Python ≥ 3.14** (em vias de virar o padrão do Gentoo), recursos modernos (PEP 695/749/750, `match`) (§12). |
 | **Hospedagem** | **Local agora → Cloudflare R2 depois** (sem egress) para binhost e ISOs (§16). |
