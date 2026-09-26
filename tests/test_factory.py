@@ -428,3 +428,38 @@ def test_ensure_bind_dirs_hands_only_ccache_to_the_images_portage_user(
     factory._ensure_bind_dirs(binds, rootfs=rootfs)
     assert chowned == [(tmp_path / "ccache", 250, 250)]
     assert (tmp_path / "distfiles").is_dir()
+
+
+# --- Factory.update preconditions (D26) -------------------------------------------
+
+
+def _update_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    monkeypatch.setattr(os, "geteuid", lambda: 0)
+    monkeypatch.setenv("SHIDASHI_CACHE", str(tmp_path / "cache"))
+    monkeypatch.setenv("SHIDASHI_SCRATCH", str(tmp_path / "scratch"))
+    monkeypatch.setattr(factory, "load_pointer", lambda init, *, seeds_dir: _pointer())
+    monkeypatch.setattr(factory, "pinned_tree", lambda **_k: tmp_path / "tree")
+    return tmp_path / "cache" / "binpkgs" / "v3" / "SNAP"
+
+
+def test_update_refuses_when_the_image_was_never_built(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    pkgdir = _update_env(monkeypatch, tmp_path)
+    recipe = _staged_recipe().model_copy(update={"stages": ("base", "kde")})
+    with pytest.raises(FactoryError, match="nothing to update: v3-systemd-20260524T170105Z-kde"):
+        Factory(recipe, pkgdir).update(download=False)
+
+
+def test_update_refuses_a_pkgdir_without_a_generation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    pkgdir = _update_env(monkeypatch, tmp_path)
+    recipe = _staged_recipe().model_copy(update={"stages": ("base", "kde")})
+    fps = factory.config.fork_points_dir()
+    fps.mkdir(parents=True)
+    (tmp_path / "fp").mkdir()
+    _tarball_of(tmp_path, "img", "kde image")
+    (tmp_path / "fp" / "img").replace(fps / "v3-systemd-20260524T170105Z-kde.tar")
+    with pytest.raises(FactoryError, match="never starts one"):
+        Factory(recipe, pkgdir).update(download=False)

@@ -238,10 +238,16 @@ Duas situações, duas estratégias (resolve a tensão "build barato" × "build 
 
 | Situação | Estratégia |
 |---|---|
-| Semana normal (bumps de pacote) | **Tronco persistente** → `--newuse`/delta sobre o binhost. Rápido. |
-| **toolchain-bump** (GCC/glibc/binutils major **ou** novo pin de snapshot) | **Wipe total + `--emptytree`** → recompila tudo do zero, **sem resíduo**. |
+| Semana normal (bumps de pacote) | **Update** (`factory --update`): restaura a imagem entregue e roda `-uDN --changed-deps @world` com `--usepkg` sobre a árvore `::gentoo` da semana (pinada, ≥ 7 dias). Rápido. |
+| **Nova geração** (novo pin do stage3; toolchain ou profile mudou) | **Build completo** num PKGDIR novo e vazio (`binpkgs/<arch>/<stage3>`): bootstrap, `--emptytree` na base, todos os estágios. **Sem resíduo.** |
 
-A detecção de toolchain-bump dispara também `@preserved-rebuild` e os subslot-rebuilds que o Portage sinaliza — para não restar binpkg linkado contra ABI antiga. Quando o GCC muda, **nada é mesclado**: o binhost novo é regenerado limpo, e o pin de snapshot garante que releases distintas nunca cruzem pacotes. (Ver §10 e §18.3.)
+Uma **geração** (D26) é tudo o que sai de um stage3 verificado com uma toolchain.
+Sua impressão digital (CFLAGS, CHOST, `LLVM_SLOT`, profile, versões de
+gcc/binutils/glibc) fica gravada no PKGDIR e é conferida antes de qualquer emerge
+— o Portage não compara nada disso ao reusar um binpkg. O update **recusa** um
+plano que mude gcc, binutils ou glibc: toolchain nova nunca entra por baixo de um
+sistema construído, ela abre uma geração. O update termina em
+`@preserved-rebuild`. (Ver §10 e §18.3.)
 
 ---
 

@@ -281,3 +281,43 @@ def test_factory_pkgdir_beats_work_dir(
     )
     assert result.exit_code == 0, result.stdout
     assert seen["pkgdir"] == override  # --pkgdir vence o cache derivado do work-dir
+
+
+# --- --update (D26) -------------------------------------------------------------
+
+
+class _UpdateOnly:
+    def __init__(self, _recipe: object, _pkgdir: Path) -> None:
+        pass
+
+    def build(self, **_k: object) -> Any:
+        raise AssertionError("--update must not run a build")
+
+    def update(self, **kwargs: object) -> Any:
+        _UpdateOnly.seen = kwargs
+        return _fake_result()
+
+    seen: dict[str, object] = {}
+
+
+def test_factory_update_runs_the_update_not_a_build(
+    monkeypatch: pytest.MonkeyPatch, variants_tree: Path
+) -> None:
+    monkeypatch.setattr(cli, "Factory", _UpdateOnly, raising=False)
+    result = runner.invoke(
+        app, ["factory", "v3", "minimal", "systemd", "--update", "--no-download"]
+    )
+    assert result.exit_code == 0, result.stdout
+    assert _UpdateOnly.seen == {"download": False, "keep": False}
+
+
+@pytest.mark.parametrize(
+    "extra", [["--step"], ["--until", "base"], ["--reset"], ["--force-resume"]]
+)
+def test_factory_update_refuses_the_stepwise_options(
+    monkeypatch: pytest.MonkeyPatch, variants_tree: Path, extra: list[str]
+) -> None:
+    monkeypatch.setattr(cli, "Factory", _UpdateOnly, raising=False)
+    result = runner.invoke(app, ["factory", "v3", "minimal", "systemd", "--update", *extra])
+    assert result.exit_code == 1
+    assert "--update" in result.output

@@ -25,7 +25,7 @@ from shidashi import config, isacheck, state
 from shidashi.bootstrap import BootstrapResult, run_bootstrap
 from shidashi.catalyst import build_stage3_catalyst
 from shidashi.container import Container
-from shidashi.generation import check_or_record, fingerprint
+from shidashi.generation import FINGERPRINT_FILE, check_or_record, fingerprint
 from shidashi.phases import (
     CheckpointDecision,
     CheckpointHook,
@@ -46,6 +46,7 @@ from shidashi.resolve import apply_portage, apply_rootfs, bind_repos, install_se
 from shidashi.seed import Stage3Pointer, extract_stage3, fetch_stage3, load_pointer
 from shidashi.state import PhaseDiff
 from shidashi.tree import pinned_tree
+from shidashi.update import run_update
 
 __all__ = [
     "CheckpointDecision",
@@ -501,6 +502,78 @@ class Factory:
         if not keep_rootfs:
             shutil.rmtree(rootfs, ignore_errors=True)
         return result
+
+    def update(self, *, download: bool = True, keep: bool = False) -> FactoryResult:
+        """Bring a shipped image to the week's pinned tree, within its generation (D26).
+
+        1. Root guard; the pinned ::gentoo tree (its cooldown refuses early).
+        2. The image's OWN fork point must exist -- an update updates a built
+           image, it never builds one -- and so must the generation's
+           fingerprint in the PKGDIR: an empty PKGDIR is a new generation, which
+           is a full build, not an update.
+        3. Restore it; apply the full configuration (every layer) and the sets.
+        4. In the container: the fingerprint must still match, then
+           :func:`shidashi.update.run_update` -- plan, refuse a toolchain change,
+           ``-uDN --changed-deps`` with ``--usepkg``, ``@preserved-rebuild``.
+        5. Snapshot the updated image over its fork point.
+        """
+        _require_root()
+
+        recipe = self.recipe
+        rootfs = config.build_root() / f"{recipe.arch}-{recipe.flavor}-{recipe.init}"
+        snapshot = load_pointer(recipe.init, seeds_dir=config.seeds_dir()).snapshot
+        fork_points_dir = config.fork_points_dir()
+        tree = pinned_tree(
+            seeds_dir=config.seeds_dir(), cache_dir=config.cache_dir(), download=download
+        )
+
+        target = recipe.stages[-1] if recipe.stages else recipe.flavor
+        image = stage_fork_point_path(
+            recipe, target, snapshot=snapshot, fork_points_dir=fork_points_dir
+        )
+        if not image.exists():
+            raise FactoryError(
+                f"nothing to update: {image.name} does not exist -- build the image first",
+                phase="update",
+            )
+        if not (self.pkgdir / FINGERPRINT_FILE).is_file():
+            raise FactoryError(
+                f"{self.pkgdir} has no generation fingerprint: an update continues a "
+                "generation, it never starts one -- run a full build",
+                phase="update",
+            )
+
+        _restore_into(image, rootfs)
+        _prepare_portage(rootfs, recipe)
+
+        binds_ro, binds_rw = _build_binds(
+            recipe,
+            pkgdir=self.pkgdir,
+            repos_conf_dir=rootfs / "etc" / "portage" / "repos.conf",
+            tree=tree,
+        )
+        _ensure_bind_dirs(binds_rw, rootfs=rootfs)
+
+        keep_rootfs = keep
+        try:
+            with Container(rootfs, ephemeral=False, binds=binds_ro, binds_rw=binds_rw) as container:
+                check_or_record(self.pkgdir, fingerprint(rootfs, recipe))
+                result = run_update(container, recipe)
+                snapshot_fork_point(rootfs, image)
+        except BaseException:
+            keep_rootfs = True  # preserved for debugging, as in build()
+            raise
+
+        if not keep_rootfs:
+            shutil.rmtree(rootfs, ignore_errors=True)
+        return FactoryResult(
+            pkgdir=self.pkgdir,
+            built_atoms=result.built_atoms,
+            phases=("update",),
+            fork_point=image,
+            fork_point_reused=True,
+            settle_atoms=(),
+        )
 
     def build_stepwise(
         self,

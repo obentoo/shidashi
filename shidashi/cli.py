@@ -447,6 +447,14 @@ def factory(
             help="Raiz de trabalho: cache+scratch sob <DIR> (vence SHIDASHI_CACHE/_SCRATCH).",
         ),
     ] = None,
+    update: Annotated[
+        bool,
+        typer.Option(
+            "--update",
+            help="Weekly update of the built image within its generation (D26): "
+            "-uDN --changed-deps over the pinned tree; refuses a toolchain change.",
+        ),
+    ] = False,
 ) -> None:
     """Constrói os binpkgs (stage4) da receita num container nspawn (R1.1–R1.5/R8.x).
 
@@ -472,6 +480,13 @@ def factory(
         _err_console.print(f"[bold red]erro:[/bold red] {err}")
         raise typer.Exit(1) from err
 
+    if update and (step or until is not None or reset or force_resume):
+        _err_console.print(
+            "[bold red]erro:[/bold red] --update updates a built image in one run; it "
+            "does not combine with --step/--until/--reset/--force-resume"
+        )
+        raise typer.Exit(1)
+
     if not step and until is None and not reset and not force_resume:
         _run_factory_oneshot(
             resolved,
@@ -483,6 +498,7 @@ def factory(
             emptytree=emptytree,
             download=not no_download,
             keep=keep,
+            update=update,
         )
         return
 
@@ -526,10 +542,18 @@ def _run_factory_oneshot(
     emptytree: bool,
     download: bool,
     keep: bool,
+    update: bool = False,
 ) -> None:
-    """Caminho one-shot da story 003 — comportamento byte-a-byte inalterado (R8.2)."""
+    """Caminho one-shot da story 003 — comportamento byte-a-byte inalterado (R8.2).
+
+    With ``update`` it runs :meth:`Factory.update` instead of a build (D26).
+    """
     try:
-        result = Factory(resolved, pkgdir).build(emptytree=emptytree, download=download, keep=keep)
+        factory_obj = Factory(resolved, pkgdir)
+        if update:
+            result = factory_obj.update(download=download, keep=keep)
+        else:
+            result = factory_obj.build(emptytree=emptytree, download=download, keep=keep)
     except FactoryError as err:
         if err.phase:
             _err_console.print(f"[bold red]falha na fase[/bold red] {err.phase}: {err}")
