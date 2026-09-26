@@ -9,3 +9,4 @@ net-misc/ntp
 net-misc/r8168
 net-misc/telnet-bsd
 net-misc/whois
+net-vpn/wireguard-tools

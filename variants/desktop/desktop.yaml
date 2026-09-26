@@ -13,5 +13,14 @@
 # @vpn @print @sandbox as system services.
 stage: desktop
 after: minimal
+# The graphical infrastructure (D24): drivers and their tools, fonts, portals
+# and desktop integration, the audio server, and the system services a
+# graphical session uses -- NetworkManager's VPN plugins, CUPS, flatpak.
 sets:
   - gpu
+  - fonts
+  - desktop-int
+  - audio
+  - vpn
+  - print
+  - sandbox

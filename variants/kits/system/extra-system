@@ -1,12 +1,12 @@
-# variants/kits/system/extra-system — optional system layer -- networking, printing, metrics, firmware.
+# variants/kits/system/extra-system — the console kits of the minimal stage: networking, metrics,
+# firmware. @vpn, @print and @sandbox moved to the desktop stage on 2026-09-26 (D24): the NM VPN
+# plugins, CUPS and flatpak serve a graphical session, and flatpak's bleachbit neighbour pulled
+# GTK3 into the console image.
 #
 # AGGREGATOR: references other sets with @name; Portage expands them (2026-09-09). See kits/core/base for the layering contract.
 
 @net-tools
-@vpn
-@print
 @monitoring
 @laptop
 @firmware
-@sandbox
 @misc

@@ -65,13 +65,14 @@ def test_golden_v3_kde_systemd() -> None:
     assert r.stages == ("base", "minimal", "desktop", "kde")
     assert r.profile == "default/linux/amd64/23.0/no-multilib/systemd"
     assert r.sets == (
-        "base", "extra-system", "gpu", "kde",
-        "extra-desktop", "extra-media", "extra-dev", "extra-virt",
+        "base", "extra-system",
+        "gpu", "fonts", "desktop-int", "audio", "vpn", "print", "sandbox",
+        "kde", "extra-desktop", "extra-media", "extra-dev", "extra-virt",
     )
     assert _targets(r) == {
         "base": ("@world", "@base"),
         "minimal": ("@extra-system",),
-        "desktop": ("@gpu",),
+        "desktop": ("@gpu", "@fonts", "@desktop-int", "@audio", "@vpn", "@print", "@sandbox"),
         "flavor": ("@kde", "@extra-desktop", "@extra-media", "@extra-dev", "@extra-virt"),
     }
     # minimal ships on its way to kde: the graphical stages start from it settled

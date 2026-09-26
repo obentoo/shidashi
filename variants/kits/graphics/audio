@@ -1,0 +1,9 @@
+# variants/kits/graphics/audio — the audio SERVER: pipewire, the JACK API, and rtkit, which grants
+# realtime priority and is only meaningful once an audio server is present, hence here and not in
+# @admin. Installed by the desktop stage (D24); the applications live in @audio-apps.
+#
+# LEAF set: a flat list of atoms (2026-09-09). See kits/core/base for the layering contract.
+
+media-sound/jack2
+media-video/pipewire
+sys-auth/rtkit

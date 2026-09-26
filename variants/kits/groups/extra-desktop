@@ -1,4 +1,5 @@
-# variants/kits/groups/extra-desktop — end-user applications for a graphical image.
+# variants/kits/groups/extra-desktop — end-user applications for a graphical image. @fonts and
+# @desktop-int are infrastructure and moved to the desktop stage (D24, 2026-09-26).
 #
 # AGGREGATOR: references other sets with @name; Portage expands them (2026-09-09). See kits/core/base for the layering contract.
 
@@ -6,6 +7,4 @@
 @comms
 @imaging
 @remote
-@desktop-int
-@fonts
 @p2p

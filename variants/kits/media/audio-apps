@@ -1,0 +1,8 @@
+# variants/kits/media/audio-apps — audio APPLICATIONS: recording and editing. Split from @audio on
+# 2026-09-26 (D24): the server belongs to the desktop stage, the applications to the flavors, and a
+# separate set keeps a flavor's exclude list short.
+#
+# LEAF set: a flat list of atoms (2026-09-09). See kits/core/base for the layering contract.
+
+media-plugins/obs-pipewire-audio-capture
+media-sound/audacity

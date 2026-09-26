@@ -1,6 +1,7 @@
-# variants/kits/groups/extra-media — audio and video stack.
+# variants/kits/groups/extra-media — audio and video applications. The audio server (@audio) is
+# infrastructure and is installed by the desktop stage (D24, 2026-09-26).
 #
 # AGGREGATOR: references other sets with @name; Portage expands them (2026-09-09). See kits/core/base for the layering contract.
 
-@audio
+@audio-apps
 @video
