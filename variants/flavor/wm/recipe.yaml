@@ -2,12 +2,9 @@
 # A stage of the chain, after desktop (D24): base ─► minimal ─► desktop ─► wm.
 # sets: [wm] -- a placeholder set, to be curated via pretend-resolve (§18.7).
 #
-# USE -- NOT YET APPLIED. This flavor has no portage/make.conf, and its former
-# `use_prefer` never reached the build (it was only displayed by `recipe show`),
-# so an image built today would miss its characteristic USE. The intent, to be
-# written into portage/make.conf in step 3 of D24, with a measurement:
-#   add:  [wayland]
-#   drop: [qt6, gnome, kde]
+# USE: none of its own. The former `use_prefer` (F69) asked for wayland, which
+# the desktop stage already sets, and dropped qt6/gnome/kde, which no shared
+# stage enables -- so a make.conf here would configure nothing (D24 step 3c).
 stage: wm
 after: desktop
 ships: true

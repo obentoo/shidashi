@@ -2,12 +2,9 @@
 # A stage of the chain, after desktop (D24): base ─► minimal ─► desktop ─► xfce.
 # sets: [xfce] -- a placeholder set, to be curated via pretend-resolve (§18.7).
 #
-# USE -- NOT YET APPLIED. This flavor has no portage/make.conf, and its former
-# `use_prefer` never reached the build (it was only displayed by `recipe show`),
-# so an image built today would miss its characteristic USE. The intent, to be
-# written into portage/make.conf in step 3 of D24, with a measurement:
-#   add:  [gtk]
-#   drop: [qt6, gnome]
+# USE: portage/make.conf (DESKTOPS="gtk"), written in D24 step 3c from the
+# intent of the former `use_prefer` (F69). Its drops [qt6, gnome] were already
+# off in every shared stage.
 stage: xfce
 after: desktop
 ships: true
