@@ -286,3 +286,12 @@ def build_state_path(recipe: ResolvedRecipe) -> Path:
     chamada) de :func:`state_dir`.
     """
     return state_dir() / f"{recipe.arch}-{recipe.flavor}-{recipe.init}.json"
+
+
+def build_log_path(recipe: ResolvedRecipe) -> Path:
+    """Where a factory run streams its container output: ``scratch_dir()/logs/<chave>.log``.
+
+    Appended to across runs (each command is stamped), and kept outside the
+    rootfs so that a discarded or restored rootfs does not take it along.
+    """
+    return scratch_dir() / "logs" / f"{recipe.arch}-{recipe.flavor}-{recipe.init}.log"

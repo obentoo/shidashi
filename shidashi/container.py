@@ -7,6 +7,7 @@ a execução (:meth:`Container.run`) e o ciclo de vida (context manager) exigem
 root + ``systemd-nspawn`` e são exercidos pelos testes de integração host-gated.
 """
 
+import datetime
 import shutil
 import subprocess
 from collections.abc import Mapping, Sequence
@@ -112,11 +113,16 @@ class Container:
         ephemeral: bool = False,
         binds: Sequence[tuple[Path, Path]] = (),
         binds_rw: Sequence[tuple[Path, Path]] = (),
+        log: Path | None = None,
     ) -> None:
         self.rootfs = rootfs
         self.ephemeral = ephemeral
         self.binds: tuple[tuple[Path, Path], ...] = tuple(binds)
         self.binds_rw: tuple[tuple[Path, Path], ...] = tuple(binds_rw)
+        #: When set, every command's output is appended here AS IT RUNS. A base
+        #: build is hours of emerge; without this nothing is visible until the
+        #: end, and a killed run leaves no trace at all.
+        self.log = log
 
     def run(
         self,
@@ -139,6 +145,8 @@ class Container:
             binds_rw=self.binds_rw,
             ephemeral=self.ephemeral,
         )
+        if self.log is not None:
+            return self._run_logged(cmd, argv, env=env, check=check)
         proc = subprocess.run(
             cmd,
             capture_output=True,
@@ -152,6 +160,47 @@ class Container:
                 proc.returncode, cmd, output=proc.stdout, stderr=proc.stderr
             )
         return result
+
+    def _run_logged(
+        self,
+        cmd: list[str],
+        argv: Sequence[str],
+        *,
+        env: Mapping[str, str] | None,
+        check: bool,
+    ) -> CommandResult:
+        """Run ``cmd`` streaming its merged stdout+stderr into :attr:`log`.
+
+        Returns the same :class:`CommandResult` as the captured path, with the
+        merged stream as ``stdout`` (every caller reads ``stdout + stderr``).
+        """
+        assert self.log is not None
+        self.log.parent.mkdir(parents=True, exist_ok=True)
+        lines: list[str] = []
+        with self.log.open("a", encoding="utf-8") as out:
+            stamp = datetime.datetime.now().isoformat(timespec="seconds")
+            out.write(f"### {stamp} $ {' '.join(argv)}\n")
+            out.flush()
+            with subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                errors="replace",
+                env=dict(env) if env is not None else None,
+            ) as proc:
+                assert proc.stdout is not None
+                for line in proc.stdout:
+                    lines.append(line)
+                    out.write(line)
+                    out.flush()
+                returncode = proc.wait()
+            stamp = datetime.datetime.now().isoformat(timespec="seconds")
+            out.write(f"### {stamp} exit {returncode}\n")
+        output = "".join(lines)
+        if check and returncode != 0:
+            raise subprocess.CalledProcessError(returncode, cmd, output=output, stderr="")
+        return CommandResult(returncode, output, "")
 
     def shell(self) -> None:
         """Abre um shell interativo no rootfs *vivo* e devolve quando ele sai (R7.1/R7.3).

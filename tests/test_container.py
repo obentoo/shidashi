@@ -18,6 +18,7 @@ PULAM (Red diferido ao host privilegiado real).
 
 import os
 import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -158,3 +159,44 @@ def test_container_check_true_raises_on_nonzero(tmp_path: Path) -> None:
     rootfs.mkdir()
     with Container(rootfs, ephemeral=True) as c, pytest.raises(Exception):  # noqa: B017
         c.run(["false"], check=True)
+
+
+# --- streaming log: a 3-hour emerge must be visible while it runs ---------------
+
+
+def test_run_with_a_log_streams_each_line_and_still_returns_the_output(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import shidashi.container as container_mod
+
+    monkeypatch.setattr(
+        container_mod, "_nspawn_argv",
+        lambda *_a, **_k: ["sh", "-c", "echo building; echo warned >&2; exit 0"],
+    )
+    log = tmp_path / "logs" / "v3-minimal-systemd.log"
+    result = Container(tmp_path, log=log).run(["emerge", "@world"])
+
+    assert result.exit_code == 0
+    assert "building" in result.stdout and "warned" in result.stdout
+    text = log.read_text(encoding="utf-8")
+    assert "$ emerge @world" in text
+    assert "building\n" in text and "warned\n" in text
+    assert text.rstrip().endswith("exit 0")
+
+
+def test_run_with_a_log_raises_on_failure_with_the_streamed_output(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import shidashi.container as container_mod
+
+    monkeypatch.setattr(
+        container_mod, "_nspawn_argv", lambda *_a, **_k: ["sh", "-c", "echo boom; exit 3"]
+    )
+    log = tmp_path / "build.log"
+    with pytest.raises(subprocess.CalledProcessError) as err:
+        Container(tmp_path, log=log).run(["emerge", "x"])
+    assert err.value.returncode == 3
+    assert "boom" in err.value.output
+    assert "exit 3" in log.read_text(encoding="utf-8")
+    # check=False returns instead
+    assert Container(tmp_path, log=log).run(["emerge", "x"], check=False).exit_code == 3

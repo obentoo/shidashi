@@ -446,7 +446,13 @@ class Factory:
         keep_rootfs = keep
         bootstrap: BootstrapResult | None = None
         try:
-            with Container(rootfs, ephemeral=False, binds=binds_ro, binds_rw=binds_rw) as container:
+            with Container(
+                rootfs,
+                ephemeral=False,
+                binds=binds_ro,
+                binds_rw=binds_rw,
+                log=config.build_log_path(recipe),
+            ) as container:
                 if not bootstrapped:
                     bootstrap = _bootstrap(
                         container, recipe, snapshot=snapshot, fork_points_dir=fork_points_dir
@@ -556,7 +562,13 @@ class Factory:
 
         keep_rootfs = keep
         try:
-            with Container(rootfs, ephemeral=False, binds=binds_ro, binds_rw=binds_rw) as container:
+            with Container(
+                rootfs,
+                ephemeral=False,
+                binds=binds_ro,
+                binds_rw=binds_rw,
+                log=config.build_log_path(recipe),
+            ) as container:
                 check_or_record(self.pkgdir, fingerprint(rootfs, recipe))
                 result = run_update(container, recipe)
                 snapshot_fork_point(rootfs, image)
@@ -685,7 +697,13 @@ class Factory:
         # NÃO há cláusula de remoção aqui, e uma falha de emerge propaga com o
         # estado já persistido por run_phases_stepwise e o rootfs intacto (R3.5).
         bootstrap: BootstrapResult | None = None
-        with Container(rootfs, ephemeral=False, binds=binds_ro, binds_rw=binds_rw) as container:
+        with Container(
+                rootfs,
+                ephemeral=False,
+                binds=binds_ro,
+                binds_rw=binds_rw,
+                log=config.build_log_path(recipe),
+            ) as container:
             if needs_bootstrap:
                 bootstrap = _bootstrap(
                     container, recipe, snapshot=snapshot, fork_points_dir=fork_points_dir
