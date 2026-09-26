@@ -41,7 +41,7 @@ from shidashi.image import ImageError
 from shidashi.phases import phase_target
 from shidashi.recipe import RecipeChainError, ResolvedRecipe
 from shidashi.resolve import PretendReport, ResolveError, pretend_resolve
-from shidashi.seed import SeedError
+from shidashi.seed import SeedError, load_pointer
 from shidashi.state import PhaseDiff
 
 app = typer.Typer(no_args_is_help=True, help="Shidashi — catering de builds e ISOs do bentoo.")
@@ -262,6 +262,15 @@ def pretend(
         _render_report_pretty(report)
 
 
+def _generation_pkgdir(arch: str, init: str) -> Path:
+    """The default PKGDIR: this arch's, for the generation of the pinned stage3 (D26).
+
+    The factory writes there and the assembler reads from there, so an ISO is
+    always assembled from the binpkgs of the stage3 it names.
+    """
+    return config.pkgdir(arch, load_pointer(init, seeds_dir=config.seeds_dir()).snapshot)
+
+
 def _render_factory_pretty(result: FactoryResult, arch: str, flavor: str, init: str) -> None:
     """Renderiza o :class:`FactoryResult` como tabelas ``rich`` (R1.1)."""
     console = Console()
@@ -457,7 +466,11 @@ def factory(
         _err_console.print(f"[bold red]erro:[/bold red] {err}")
         raise typer.Exit(1) from err
 
-    pkgdir = pkgdir_opt if pkgdir_opt is not None else config.pkgdir(arch)
+    try:
+        pkgdir = pkgdir_opt if pkgdir_opt is not None else _generation_pkgdir(arch, init)
+    except SeedError as err:
+        _err_console.print(f"[bold red]erro:[/bold red] {err}")
+        raise typer.Exit(1) from err
 
     if not step and until is None and not reset and not force_resume:
         _run_factory_oneshot(
@@ -722,7 +735,11 @@ def assemble(
         _err_console.print(f"[bold red]erro:[/bold red] {err}")
         raise typer.Exit(1) from err
 
-    binhost = binhost_opt if binhost_opt is not None else config.pkgdir(arch)
+    try:
+        binhost = binhost_opt if binhost_opt is not None else _generation_pkgdir(arch, init)
+    except SeedError as err:
+        _err_console.print(f"[bold red]erro:[/bold red] {err}")
+        raise typer.Exit(1) from err
     iso_path = output if output is not None else Path(f"bentoo-{flavor}-{init}-{arch}.iso")
 
     try:

@@ -28,7 +28,7 @@ from typing import Any
 import pytest
 from typer.testing import CliRunner
 
-from shidashi import cli
+from shidashi import cli, config
 from shidashi.cli import app
 from shidashi.resolve import ResolveError
 from shidashi.seed import SeedError
@@ -253,8 +253,12 @@ def test_factory_work_dir_derives_pkgdir(
     work = tmp_path / "work"
     result = runner.invoke(app, ["factory", "v3", "minimal", "systemd", "--work-dir", str(work)])
     assert result.exit_code == 0, result.stdout
-    # sem --pkgdir, o binhost deriva do cache sob o work-dir
-    assert seen["pkgdir"] == work / "cache" / "binpkgs" / "v3"
+    # sem --pkgdir, o binhost deriva do cache sob o work-dir -- one directory per
+    # GENERATION, named after the pinned stage3 (D26)
+    from shidashi.seed import load_pointer
+
+    generation = load_pointer("systemd", seeds_dir=config.seeds_dir()).snapshot
+    assert seen["pkgdir"] == work / "cache" / "binpkgs" / "v3" / generation
 
 
 def test_factory_pkgdir_beats_work_dir(

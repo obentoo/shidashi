@@ -151,15 +151,20 @@ def test_assemble_default_output_name(monkeypatch: pytest.MonkeyPatch, variants_
     assert captured["output"] == Path("bentoo-minimal-systemd-v3.iso")
 
 
-def test_assemble_binhost_default_is_per_arch(
+def test_assemble_binhost_default_is_per_arch_and_generation(
     monkeypatch: pytest.MonkeyPatch, variants_tree: Path
 ) -> None:
     sink: dict[str, Any] = {}
     monkeypatch.setattr(cli, "Assembler", _fake_assembler(lambda o, **_k: o, sink), raising=False)
     result = runner.invoke(app, ["assemble", "v3", "minimal", "systemd"])
     assert result.exit_code == 0, result.stdout
-    # binhost default particionado por arch (config.pkgdir): .../binpkgs/v3
-    assert sink["instance"].binhost.parts[-2:] == ("binpkgs", "v3")
+    # binhost default particionado por arch e por GERAÇÃO (D26): the same
+    # .../binpkgs/v3/<stage3 snapshot> the factory writes to
+    from shidashi import config
+    from shidashi.seed import load_pointer
+
+    generation = load_pointer("systemd", seeds_dir=config.seeds_dir()).snapshot
+    assert sink["instance"].binhost.parts[-3:] == ("binpkgs", "v3", generation)
 
 
 # --- mapeamento de erros → exit 1 amigável -----------------------------------

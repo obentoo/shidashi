@@ -93,6 +93,8 @@ def test_pkgdir_partitions_per_arch(monkeypatch: pytest.MonkeyPatch, tmp_path: P
     assert config.pkgdir("v3") != config.pkgdir("znver5")
     assert config.pkgdir("v3").name == "v3"
     assert config.pkgdir("znver5").name == "znver5"
+    # a generation gets its own directory under the arch (D26)
+    assert config.pkgdir("v3", "20260823T153057Z") == config.pkgdir("v3") / "20260823T153057Z"
 
 
 # --- cache subdirs (shared across flavors/archs) -----------------------------

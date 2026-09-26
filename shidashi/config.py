@@ -194,14 +194,20 @@ def build_root() -> Path:
     return scratch_dir() / "build"
 
 
-def pkgdir(arch: str) -> Path:
+def pkgdir(arch: str, generation: str | None = None) -> Path:
     """Devolve o ``PKGDIR`` de pacotes binários por arch (R6.2): ``cache_dir()/binpkgs/<arch>``.
 
     Particionado por ``arch`` para que variantes de microarquitetura (``v3``,
     ``znver5``, …) não compartilhem binpkgs incompatíveis. Herda o override
     ``SHIDASHI_CACHE`` (lido por chamada) de :func:`cache_dir`.
+
+    With ``generation`` -- the pinned stage3's snapshot -- one more level:
+    ``binpkgs/<arch>/<generation>``. A new stage3 pin therefore starts an empty
+    PKGDIR, and nothing is reused across generations but distfiles and ccache
+    (D26). The generation fingerprint guards what this layout cannot see.
     """
-    return cache_dir() / "binpkgs" / arch
+    base = cache_dir() / "binpkgs" / arch
+    return base / generation if generation is not None else base
 
 
 def catalyst_dir(arch: str) -> Path:
