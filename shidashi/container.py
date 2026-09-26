@@ -32,6 +32,13 @@ class CommandResult:
 #: --boot container, so there is nothing for systemd-machined to manage.
 _HOST_OPTIONS = ("--register=no", "--resolv-conf=copy-host")
 
+# Commands (not the interactive shell) add --console=pipe and get stdin from
+# /dev/null. nspawn's default console is INTERACTIVE when it is started from a
+# terminal -- a factory run inside tmux -- which would hand the build the
+# user's keyboard and raw tty for hours; otherwise it is read-only, still
+# through a pty that merges stderr into stdout. Pipe mode passes our pipes
+# straight through, which nspawn(1) documents as safe for pipe descriptors.
+
 
 def _emit_binds(
     binds: Sequence[tuple[Path, Path]],
@@ -68,7 +75,9 @@ def _nspawn_argv(
     separador ``--``; o ``argv`` do comando vem depois. Sem ``binds_rw`` o argv
     é idêntico ao da story 002 (R7.3 back-compat).
     """
-    cmd: list[str] = ["systemd-nspawn", "--directory", str(rootfs), *_HOST_OPTIONS]
+    cmd: list[str] = [
+        "systemd-nspawn", "--directory", str(rootfs), *_HOST_OPTIONS, "--console=pipe",
+    ]
     if ephemeral:
         cmd.append("--ephemeral")
     cmd.extend(_emit_binds(binds, binds_rw))
@@ -149,6 +158,7 @@ class Container:
             return self._run_logged(cmd, argv, env=env, check=check)
         proc = subprocess.run(
             cmd,
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
             env=dict(env) if env is not None else None,
@@ -183,6 +193,7 @@ class Container:
             out.flush()
             with subprocess.Popen(
                 cmd,
+                stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,

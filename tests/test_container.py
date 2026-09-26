@@ -70,6 +70,29 @@ def test_nspawn_argv_and_shell_share_the_labs_host_options() -> None:
     assert run.index("--register=no") < run.index("--")
 
 
+def test_commands_run_in_pipe_mode_and_never_read_the_callers_terminal() -> None:
+    """Without --console, nspawn picks INTERACTIVE when started from a terminal
+    (a tmux pane): it would grab the keyboard and put the tty in raw mode for a
+    whole build. Commands use pipe mode; only the interactive shell gets a tty."""
+    run = _nspawn_argv(Path("/r"), ["sh"], binds=[], ephemeral=False)
+    assert "--console=pipe" in run and run.index("--console=pipe") < run.index("--")
+    assert not any(a.startswith("--console") for a in _nspawn_shell_argv(Path("/r")))
+
+
+def test_run_never_passes_the_callers_stdin(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import shidashi.container as container_mod
+
+    monkeypatch.setattr(
+        container_mod, "_nspawn_argv", lambda *_a, **_k: ["sh", "-c", "cat; echo read-done"]
+    )
+    # cat would block forever on an inherited terminal; /dev/null ends it at once
+    for log in (None, tmp_path / "x.log"):
+        out = Container(tmp_path, log=log).run(["x"]).stdout
+        assert out.strip() == "read-done"
+
+
 def test_nspawn_argv_ephemeral_flag() -> None:
     with_eph = _nspawn_argv(Path("/r"), ["sh"], binds=[], ephemeral=True)
     without = _nspawn_argv(Path("/r"), ["sh"], binds=[], ephemeral=False)
