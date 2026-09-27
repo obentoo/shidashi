@@ -213,6 +213,13 @@ class Assembler:
         try:
             with Container(rootfs, ephemeral=False, binds=binds_ro, binds_rw=binds_rw) as container:
                 container.run(iso_emerge_argv(recipe))
+                # The stage3 under the ISO keeps what the closure does not reach:
+                # its own gcc and binutils slots, bootstrap leftovers. Measured on
+                # the pipeline's minimal (2026-09-27): gcc-15.3.0, binutils-2.46.1,
+                # autoconf-2.72-r7, rust-bin -- none needed by the image. The sets
+                # are in world_sets, so depclean keeps everything the recipe asks.
+                container.run(["emerge", "--depclean"])
+                container.run(["emerge", "--usepkgonly", "--oneshot", "@preserved-rebuild"])
                 kver = _kernel_version(rootfs)
                 initramfs = rootfs / "boot" / f"initramfs-{kver}.img"
                 container.run(_dracut_argv(kver, Path("/boot") / initramfs.name))

@@ -295,10 +295,13 @@ def test_assemble_orchestrates_seed_emerge_dracut_squashfs_iso(
     assert out.read_bytes() == b"ISO"
     # §18.6 — apply_portage estritamente ANTES do emerge (não só "foi chamado").
     assert events.index("apply_portage") < events.index("emerge")
-    # ordem dentro do container: emerge --usepkgonly e depois dracut.
+    # ordem dentro do container: emerge --usepkgonly, then the stage3's leftovers
+    # go (depclean + preserved-rebuild from binpkgs only), then dracut.
     inst = _FakeContainer.instances[0]
     assert inst.runs[0] == iso_emerge_argv(recipe)
-    assert inst.runs[1][0] == "dracut" and "dmsquash-live" in inst.runs[1]
+    assert inst.runs[1] == ["emerge", "--depclean"]
+    assert inst.runs[2] == ["emerge", "--usepkgonly", "--oneshot", "@preserved-rebuild"]
+    assert inst.runs[3][0] == "dracut" and "dmsquash-live" in inst.runs[3]
     # binhost montado RO no container (e nada RW) — fio condutor binhost_dir→Container.
     assert (tmp_path / "binhost" / "znver5", asm._BINHOST_DST) in inst.binds
     assert inst.binds_rw == []
