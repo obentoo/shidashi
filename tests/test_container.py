@@ -93,6 +93,16 @@ def test_run_never_passes_the_callers_stdin(
         assert out.strip() == "read-done"
 
 
+def test_commands_run_as_pid2_under_nspawns_stub_init() -> None:
+    """As PID 1, locale-gen aborted ("not all of the selected locales were
+    compiled") in the first real run; as a child it installs all 102 (reproduced
+    in a user+pid namespace, 2026-09-26). --as-pid2 gives every command a stub
+    init that reaps orphans. The interactive shell is unaffected."""
+    run = _nspawn_argv(Path("/r"), ["sh"], binds=[], ephemeral=False)
+    assert "--as-pid2" in run and run.index("--as-pid2") < run.index("--")
+    assert "--as-pid2" not in _nspawn_shell_argv(Path("/r"))
+
+
 def test_nspawn_argv_ephemeral_flag() -> None:
     with_eph = _nspawn_argv(Path("/r"), ["sh"], binds=[], ephemeral=True)
     without = _nspawn_argv(Path("/r"), ["sh"], binds=[], ephemeral=False)

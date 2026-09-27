@@ -38,6 +38,12 @@ _HOST_OPTIONS = ("--register=no", "--resolv-conf=copy-host")
 # user's keyboard and raw tty for hours; otherwise it is read-only, still
 # through a pty that merges stderr into stdout. Pipe mode passes our pipes
 # straight through, which nspawn(1) documents as safe for pipe descriptors.
+#
+# They also run with --as-pid2: a stub init is PID 1 and reaps orphans, and the
+# command is PID 2 like any process. Run as PID 1 itself, locale-gen aborted
+# with "not all of the selected locales were compiled" (its wait() accounting
+# broke); as a child it succeeds -- reproduced in a user+pid namespace on
+# 2026-09-26. The lab never saw it: its commands ran under a shell.
 
 
 def _emit_binds(
@@ -76,7 +82,8 @@ def _nspawn_argv(
     é idêntico ao da story 002 (R7.3 back-compat).
     """
     cmd: list[str] = [
-        "systemd-nspawn", "--directory", str(rootfs), *_HOST_OPTIONS, "--console=pipe",
+        "systemd-nspawn", "--directory", str(rootfs), *_HOST_OPTIONS,
+        "--console=pipe", "--as-pid2",
     ]
     if ephemeral:
         cmd.append("--ephemeral")
