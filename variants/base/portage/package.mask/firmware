@@ -1,0 +1,13 @@
+# Firmware that has a prebuilt equivalent in ::gentoo is taken prebuilt.
+#
+# sys-firmware/seabios: app-emulation/qemu depends on
+#     || ( >=sys-firmware/seabios-X[seavgabios] >=sys-firmware/seabios-bin-X )
+# and Portage takes the FIRST satisfiable alternative, so it compiled SeaBIOS.
+# That build is PYTHON_COMPAT=( python3_{10..13} ): it brought dev-lang/python:3.13
+# into the kde image, outside PYTHON_TARGETS=python3_14 (D15). Measured on the kde
+# plan (2026-09-27): with this mask python:3.13 is gone and seabios-bin-1.16.3 is
+# used; sys-power/iasl stays, because app-emulation/virtualbox builds with it too. The ebuild itself says "Please try
+# sys-firmware/seabios-bin before requesting support". Masking the source package
+# makes the || fall through to seabios-bin (no Python, no compiler), and a fork of
+# the ebuild with python3_14 is not needed.
+sys-firmware/seabios

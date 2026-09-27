@@ -651,3 +651,17 @@ def test_app_alternatives_alone_trade_collision_protect_for_protect_owned(
     assert ["app-alternatives/*", "protect-owned.conf"] in mapping
     env = (portage / "env" / "protect-owned.conf").read_text(encoding="utf-8")
     assert 'FEATURES="-collision-protect protect-owned"' in env
+
+
+def test_seabios_is_taken_prebuilt(tmp_path: Path) -> None:
+    """qemu's || ( seabios seabios-bin ) picked the source build, whose
+    PYTHON_COMPAT stops at 3.13 and pulled python:3.13 into kde (D15). The
+    source package is masked so the prebuilt one satisfies qemu."""
+    portage = _assemble(tmp_path, "v3", "kde", "systemd")
+    masked = [
+        line.strip()
+        for f in (portage / "package.mask").iterdir()
+        for line in f.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.startswith("#")
+    ]
+    assert "sys-firmware/seabios" in masked
