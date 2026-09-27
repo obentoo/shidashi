@@ -310,6 +310,8 @@ def _run_chain(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, **kw: Any) -> An
         phases, "snapshot_fork_point", lambda _root, dest: snaps.append(dest.name) or dest
     )
     container = _RecordingContainer(tmp_path / "rootfs")
+    # the settle only redoes cuts on INSTALLED packages: python is in the image
+    (tmp_path / "rootfs" / "var/db/pkg/dev-lang/python-3.14.7").mkdir(parents=True)
     results = phases.run_phases(
         container, _chain_recipe(), emptytree=True, snapshot="S",
         fork_points_dir=tmp_path, **kw,
@@ -433,3 +435,49 @@ def test_fork_point_round_trip_keeps_sticky_setuid_and_group_write(tmp_path: Pat
     restore_fork_point(tmp_path / "fp.tar", restored)
     assert _modes(restored) == {"tmp": "0o1777", "usr/bin/su": "0o4755",
                                 "var/cache/distfiles": "0o2775"}
+
+
+# --- regression: settle re-emerges only what is installed ------------------------
+
+
+class _SettleContainer:
+    def __init__(self, rootfs: Path) -> None:
+        self.rootfs = rootfs
+        self.calls: list[list[str]] = []
+
+    def run(self, argv: Any, **_k: Any) -> Any:
+        from shidashi.container import CommandResult
+
+        self.calls.append(list(argv))
+        return CommandResult(0, "", "")
+
+
+def test_settle_pass_skips_cut_packages_that_are_not_installed(tmp_path: Path) -> None:
+    """The first real run (2026-09-27) failed here: the base's cut
+    `media-video/pipewire -ffmpeg` was settled with `emerge --oneshot pipewire`
+    in minimal, where pipewire is not installed (the audio server arrives at the
+    desktop stage, D24) -- so the settle tried to INSTALL it. A cut whose package
+    is absent has nothing to undo."""
+    settle_pass: Any = try_import("shidashi.phases", "settle_pass")
+    for cpv in ("dev-lang/python-3.14.7", "dev-lang/python-exec-2.4.10",
+                "dev-python/pillow-12.3.0", "media-video/pipewire-common-1"):
+        (tmp_path / "var/db/pkg" / cpv).mkdir(parents=True)
+    c = _SettleContainer(tmp_path)
+    breaks = (
+        UseBreak(atom="dev-lang/python", flag="bluetooth", enable=False),
+        UseBreak(atom="dev-python/pillow", flag="truetype", enable=False),
+        UseBreak(atom="media-video/pipewire", flag="ffmpeg", enable=False),
+    )
+    settle_pass(c, _recipe(flavor="minimal"), breaks, stage="minimal")
+    assert c.calls == [
+        ["emerge", "--verbose", "--newuse", "--oneshot", "dev-lang/python", "dev-python/pillow"]
+    ]
+
+
+def test_settle_pass_with_no_cut_package_installed_runs_nothing(tmp_path: Path) -> None:
+    settle_pass: Any = try_import("shidashi.phases", "settle_pass")
+    c = _SettleContainer(tmp_path)
+    breaks = (UseBreak(atom="media-video/pipewire", flag="ffmpeg", enable=False),)
+    result = settle_pass(c, _recipe(flavor="minimal"), breaks, stage="minimal")
+    assert c.calls == []
+    assert result.built_atoms == ()

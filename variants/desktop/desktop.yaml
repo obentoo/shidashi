@@ -24,3 +24,16 @@ sets:
   - vpn
   - print
   - sandbox
+# The audio cycle forms HERE, where the graphical USE (ffmpeg, sdl) and the
+# audio server arrive (F72). Measured on 2026-09-27 by resolving this stage with
+# -uDN over the real vdb of a built minimal, with no cut pending:
+#   ffmpeg -> libsdl2 -> pipewire -> ffmpeg
+# Cut: pipewire[-ffmpeg], the cheapest of the three Portage offers. The ebuild
+# says the flag "is only used for pw-cat" and passes -Dffmpeg=disabled because
+# the SPA plugin has been dead upstream since May 2020. The alternatives cost
+# more: ffmpeg[-sdl] drops ffplay -- and is INVALID under kde, where
+# kde-apps/kdenlive needs ffmpeg[sdl] -- and libsdl2[-pipewire] drops SDL2's
+# PipeWire backend. Pending until the settle of the next shipped image (the
+# flavor), which rebuilds pipewire with ffmpeg.
+use_break:
+  - { atom: media-video/pipewire, flag: ffmpeg, enable: false }

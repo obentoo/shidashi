@@ -597,6 +597,22 @@ def run_phase(
     return PhaseResult(phase=phase, built_atoms=built, snapshot=None, output=output)
 
 
+def is_installed(rootfs: Path, cp: str) -> bool:
+    """Whether ``category/package`` has an entry in the rootfs's vdb. Pure I/O.
+
+    Matches ``<name>-<digit>`` so that ``python`` is not taken for
+    ``python-exec``.
+    """
+    category, name = cp.split("/", 1)
+    vdb = rootfs / "var" / "db" / "pkg" / category
+    if not vdb.is_dir():
+        return False
+    prefix = f"{name}-"
+    return any(
+        d.name.startswith(prefix) and d.name[len(prefix):][:1].isdigit() for d in vdb.iterdir()
+    )
+
+
 def settle_pass(
     container: Container, recipe: ResolvedRecipe, breaks: tuple[UseBreak, ...], *, stage: str = ""
 ) -> PhaseResult:
@@ -614,7 +630,13 @@ def settle_pass(
     if not breaks:
         return PhaseResult(phase=settle, built_atoms=(), snapshot=None)
     clear_use_break(container.rootfs)
-    atoms = sorted({b.atom for b in breaks})
+    # Only what is INSTALLED has a cut to undo. A cut declared by the base can
+    # name a package the shipped image does not contain -- pipewire is cut in the
+    # base, but minimal has no audio server (D24) -- and `--oneshot` on it would
+    # install it (first real run, 2026-09-27).
+    atoms = sorted({b.atom for b in breaks if is_installed(container.rootfs, b.atom)})
+    if not atoms:
+        return PhaseResult(phase=settle, built_atoms=(), snapshot=None)
     built, output = _run_emerge(
         container, ["emerge", "--verbose", "--newuse", "--oneshot", *atoms], phase="settle"
     )

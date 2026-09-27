@@ -393,6 +393,7 @@ def test_stepwise_settles_each_shipped_stage_right_after_it(
     )
     container = _FakeContainer()
     container.rootfs = tmp_path  # the base's cut is really written, then removed
+    (tmp_path / "var/db/pkg/dev-lang/python-3.14.7").mkdir(parents=True)  # installed
     results = _stepwise(
         container, _recipe(phases_=chain), monkeypatch,
         on_checkpoint=lambda *_a: CheckpointDecision.CONTINUE,

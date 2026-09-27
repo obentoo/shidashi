@@ -15,7 +15,7 @@ stage: base
 update: emptytree
 sets:
   - base
-# The three TRUNK cuts -- they belong to the stage that builds the trunk, and
+# The TRUNK cuts -- they belong to the stage that builds the trunk, and
 # last until the settle of the image. Until 2026-09-26 they sat on a phase named
 # `graphics`: run_phase writes a phase's own use_break before its emerge, so the
 # trunk would have run with no cut and stopped on the first cycle, and under
@@ -32,16 +32,12 @@ sets:
 #     mexe numa flag que 373 ebuilds declaram.
 #   docutils -> pillow[truetype] -> harfbuzz -> glib -> docutils
 #     Portage ofereceu UM corte, portanto não há escolha a fazer.
-#   ffmpeg -> libsdl2 -> pipewire -> ffmpeg
-#     corte: pipewire[-ffmpeg], o mais barato dos três que o Portage oferece.
-#     O ebuild do pipewire diz que a flag "is only used for pw-cat" e passa
-#     -Dffmpeg=disabled porque o plugin SPA está morto a montante desde
-#     Maio de 2020. As alternativas custam mais: ffmpeg[-sdl] tira o comando
-#     ffplay -- e é INVÁLIDA sob kde, porque kde-apps/kdenlive depende de
-#     ffmpeg[sdl] -- e libsdl2[-pipewire] tira o backend PipeWire do SDL2.
+#
+# The third lab cut, ffmpeg -> libsdl2 -> pipewire -> ffmpeg, moved to the
+# desktop stage (F72, 2026-09-27): since D24 step 3b the trunk has no ffmpeg
+# and no pipewire, so the cut did nothing here, and minimal's settle dropped it.
 #
 # A later stage ADDS its own cuts; it never replaces these.
 use_break:
   - { atom: dev-lang/python, flag: bluetooth, enable: false }
   - { atom: dev-python/pillow, flag: truetype, enable: false }
-  - { atom: media-video/pipewire, flag: ffmpeg, enable: false }

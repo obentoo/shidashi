@@ -116,7 +116,8 @@ def test_base_declares_only_trunk_cycle_breaks() -> None:
     """
     base = _load_base()
     atoms = {b.atom for b in base.use_break}
-    assert atoms == {"dev-lang/python", "dev-python/pillow", "media-video/pipewire"}, atoms
+    # pipewire's cut moved to the desktop stage (F72): the trunk has no pipewire
+    assert atoms == {"dev-lang/python", "dev-python/pillow"}, atoms
     assert all(b.enable is False for b in base.use_break)
     for name in config.target_names():
         stage = _load_stage(name)
@@ -138,7 +139,22 @@ def test_trunk_cuts_ride_the_phase_that_builds_the_trunk(flavor: str) -> None:
     trunk = [p for p in recipe.phases if p.emptytree]
     assert len(trunk) == 1, [p.name for p in trunk]
     atoms = {b.atom for b in trunk[0].use_break}
-    assert {"dev-lang/python", "dev-python/pillow", "media-video/pipewire"} <= atoms, atoms
+    assert {"dev-lang/python", "dev-python/pillow"} <= atoms, atoms
+
+
+@pytest.mark.parametrize("flavor", ["kde", "gnome", "xfce", "wm"])
+def test_the_audio_cycle_is_cut_by_the_desktop_stage(flavor: str) -> None:
+    """F72: ffmpeg -> libsdl2 -> pipewire -> ffmpeg forms where the graphical
+    USE and the audio server arrive -- the desktop stage. Declared on the base,
+    minimal's settle dropped it (pipewire is not in minimal) and the desktop
+    resolve over the real minimal vdb met the cycle again (2026-09-27)."""
+    recipe = _recipe(flavor)
+    desktop = next(p for p in recipe.phases if p.stage == "desktop")
+    assert [(b.atom, b.flag, b.enable) for b in desktop.use_break] == [
+        ("media-video/pipewire", "ffmpeg", False)
+    ]
+    base = next(p for p in recipe.phases if p.stage == "base")
+    assert "media-video/pipewire" not in {b.atom for b in base.use_break}
 
 
 @pytest.mark.parametrize("flavor", ["kde", "gnome", "xfce", "wm"])
