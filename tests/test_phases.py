@@ -494,3 +494,16 @@ def test_settle_pass_with_no_cut_package_installed_runs_nothing(tmp_path: Path) 
     result = settle_pass(c, _recipe(flavor="minimal"), breaks, stage="minimal")
     assert c.calls == []
     assert result.built_atoms == ()
+
+
+def test_parse_reused_atoms_reads_binary_lines_apart_from_built_ones() -> None:
+    """A stage installed from binpkgs reported "—" as built: minimal installed 92
+    binaries in the third run (2026-09-27) and the report looked empty."""
+    parse_reused_atoms: Any = try_import("shidashi.phases", "parse_reused_atoms")
+    out = (
+        "[binary     N    ] acct-group/tss-0-r3::gentoo  0 KiB\n"
+        "[ebuild   R    ] sys-apps/kbd-2.10.0::gentoo  USE=\"xkb*\" 1.747 KiB\n"
+        "[binary   R    ] dev-lang/python-3.14.7-1:3.14::gentoo  USE=\"-bluetooth\" 0 KiB\n"
+    )
+    assert parse_reused_atoms(out) == ("acct-group/tss-0-r3", "dev-lang/python-3.14.7-1")
+    assert parse_built_atoms(out) == ("sys-apps/kbd-2.10.0",)

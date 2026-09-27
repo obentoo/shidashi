@@ -103,6 +103,8 @@ class PhaseResult(pydantic.BaseModel):
     built_atoms: tuple[str, ...]
     snapshot: Path | None
     output: str = ""
+    #: Installed from the generation's binpkgs rather than compiled.
+    reused_atoms: tuple[str, ...] = ()
 
 
 # --- 3.1 phase_target / phase_emerge_argv (PURO) -----------------------------
@@ -195,6 +197,16 @@ def clear_use_break(rootfs: Path) -> None:
 
 
 # --- 3.3 parse de átomos construídos -----------------------------------------
+
+
+def parse_reused_atoms(emerge_output: str) -> tuple[str, ...]:
+    """The ``cat/pkg-version`` of the ``[binary ...]`` lines: installed from a binpkg. Pure.
+
+    Kept apart from :func:`parse_built_atoms` (compiled): a stage served wholly
+    from the generation's binpkgs used to report nothing at all.
+    """
+    atoms = (_atom_from_ebuild_line(line.strip(), "[binary") for line in emerge_output.splitlines())
+    return tuple(a for a in atoms if a is not None)
 
 
 def parse_built_atoms(emerge_output: str) -> tuple[str, ...]:
@@ -597,7 +609,13 @@ def run_phase(
     write_use_break(container.rootfs, phase)
     argv = phase_emerge_argv(phase, recipe, emptytree=emptytree)
     built, output = _run_emerge(container, argv, phase=phase.name)
-    return PhaseResult(phase=phase, built_atoms=built, snapshot=None, output=output)
+    return PhaseResult(
+        phase=phase,
+        built_atoms=built,
+        snapshot=None,
+        output=output,
+        reused_atoms=parse_reused_atoms(output),
+    )
 
 
 def is_installed(rootfs: Path, cp: str) -> bool:

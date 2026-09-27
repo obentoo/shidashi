@@ -292,6 +292,9 @@ def _render_factory_pretty(result: FactoryResult, arch: str, flavor: str, init: 
         summary.add_row("bootstrap", "— (resumed from a checkpoint)")
     console.print(summary)
 
+    summary_reuse = len(result.reused_atoms)
+    if summary_reuse:
+        console.print(f"[green]{summary_reuse}[/green] pacotes instalados dos binpkgs da geração")
     atoms = Table(title="átomos construídos")
     atoms.add_column("built_atoms", style="green")
     for atom in result.built_atoms:

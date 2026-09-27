@@ -98,6 +98,8 @@ class FactoryResult(pydantic.BaseModel):
     #: TARGET, they simply cannot be test-run or smoke-tested here. Always empty
     #: when target and host share an ISA, which is the common case.
     unrunnable_here: tuple[str, ...] = ()
+    #: Installed from the generation's binpkgs instead of compiled (--usepkg).
+    reused_atoms: tuple[str, ...] = ()
     #: The toolchain bootstrap this build ran over a fresh stage3; ``None`` when
     #: it resumed from the bootstrap checkpoint or from a stage fork point.
     bootstrap: BootstrapResult | None = None
@@ -482,6 +484,7 @@ class Factory:
                 settle_atoms += r.built_atoms  # one settle per shipped stage (D24)
             else:
                 built_atoms += r.built_atoms
+        reused_atoms = tuple(a for r in results for a in r.reused_atoms)
 
         # ISA gap check (R9.x). Scans the ROOTFS, not pkgdir: binpkgs are
         # compressed .gpkg.tar archives objdump cannot read, while the rootfs
@@ -506,6 +509,7 @@ class Factory:
             settle_atoms=settle_atoms,
             unrunnable_here=unrunnable,
             bootstrap=bootstrap,
+            reused_atoms=reused_atoms,
         )
 
         if not keep_rootfs:
@@ -898,6 +902,7 @@ class Factory:
             phase_diffs=phase_diffs,
             completed_phases=completed_phases,
             bootstrap=bootstrap,
+            reused_atoms=tuple(a for r in results for a in r.reused_atoms),
         )
 
     @staticmethod

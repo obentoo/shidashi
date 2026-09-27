@@ -373,7 +373,7 @@ def bind_repos(
 # --- emerge output parsing (R5.2) — puro -------------------------------------
 
 
-def _atom_from_ebuild_line(stripped: str) -> str | None:
+def _atom_from_ebuild_line(stripped: str, prefix: str = "[ebuild") -> str | None:
     """Extrai ``cat/pkg-version`` de uma linha ``[ebuild ...]`` já stripada. Pura.
 
     Núcleo compartilhado do matcher ``[ebuild ...]`` (R5.2 / R3.4 / R4.1): exige
@@ -382,7 +382,7 @@ def _atom_from_ebuild_line(stripped: str) -> str | None:
     linha não casa (não começa com ``[ebuild``, sem ``]`` ou sem token). Reusado
     por :func:`_iter_atom_lines` e por :func:`shidashi.phases.parse_emerge_plan`.
     """
-    if not stripped.startswith("[ebuild"):
+    if not stripped.startswith(prefix):  # "[binary" for a binpkg install
         return None
     after = stripped.split("]", 1)
     if len(after) != 2:
