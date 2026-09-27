@@ -116,9 +116,9 @@ def test_base_declares_only_trunk_cycle_breaks() -> None:
     """
     base = _load_base()
     atoms = {b.atom for b in base.use_break}
-    # pipewire's cut moved to the desktop stage (F72): the trunk has no pipewire
-    assert atoms == {"dev-lang/python", "dev-python/pillow"}, atoms
-    assert all(b.enable is False for b in base.use_break)
+    # no trunk cut since D24 step 3b (2026-09-27): the cycles the lab cut need
+    # USE the base no longer has; the audio cut lives on desktop (F72)
+    assert atoms == set(), atoms
     for name in config.target_names():
         stage = _load_stage(name)
         assert not stage.use_break, f"{name} declares cuts of its own: {stage.use_break}"
@@ -126,20 +126,13 @@ def test_base_declares_only_trunk_cycle_breaks() -> None:
 
 
 @pytest.mark.parametrize("flavor", ["minimal", "kde"])
-def test_trunk_cuts_ride_the_phase_that_builds_the_trunk(flavor: str) -> None:
-    """A phase cujo alvo é @world carrega os três cortes do tronco.
-
-    run_phase escreve o use_break DA PRÓPRIA phase antes do emerge, e pula uma
-    phase sem alvo antes de escrever. Com os cortes na phase graphics (até
-    2026-09-26), o tronco rodava sem corte algum e, sob minimal, os cortes
-    nunca eram aplicados. O lab não via: o sync junta os cortes de todas as
-    phases num ficheiro só.
-    """
+def test_the_trunk_phase_carries_no_cut(flavor: str) -> None:
+    """Since D24 step 3b the trunk's cycles do not form (2026-09-27): the base
+    phase -- the one whose target is @world with --emptytree -- has no cut."""
     recipe = _recipe(flavor)
     trunk = [p for p in recipe.phases if p.emptytree]
     assert len(trunk) == 1, [p.name for p in trunk]
-    atoms = {b.atom for b in trunk[0].use_break}
-    assert {"dev-lang/python", "dev-python/pillow"} <= atoms, atoms
+    assert trunk[0].use_break == (), trunk[0].use_break
 
 
 @pytest.mark.parametrize("flavor", ["kde", "gnome", "xfce", "wm"])
