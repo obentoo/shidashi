@@ -494,14 +494,14 @@ def pretend_resolve(
     tarball = seed.fetch_stage3(pointer, cache_dir=config.cache_dir(), download=download)
     seed.extract_stage3(tarball, rootfs)
 
-    from shidashi.tree import pinned_tree  # local: tree imports seed, like this module
+    from shidashi.tree import pinned_repos  # local: tree imports seed, like this module
 
-    tree = pinned_tree(
+    repos = pinned_repos(
         seeds_dir=config.seeds_dir(), cache_dir=config.cache_dir(), download=download
     )
     apply_rootfs(rootfs, recipe, variants_dir=variants_dir)
     apply_portage(rootfs, recipe, variants_dir=variants_dir)
-    binds = bind_repos(rootfs / "etc" / "portage" / "repos.conf", overrides={"gentoo": tree})
+    binds = bind_repos(rootfs / "etc" / "portage" / "repos.conf", overrides=repos)
 
     with Container(rootfs, ephemeral=not keep, binds=binds) as container:
         result = run_pretend(container)

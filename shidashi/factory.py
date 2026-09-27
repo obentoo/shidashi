@@ -17,6 +17,7 @@ testes possam monkeypatchá-los em ``shidashi.factory`` e :meth:`build` os obser
 
 import os
 import shutil
+from collections.abc import Mapping
 from pathlib import Path
 
 import pydantic
@@ -45,7 +46,7 @@ from shidashi.recipe import ResolvedRecipe
 from shidashi.resolve import apply_portage, apply_rootfs, bind_repos, install_sets
 from shidashi.seed import Stage3Pointer, extract_stage3, fetch_stage3, load_pointer
 from shidashi.state import PhaseDiff
-from shidashi.tree import pinned_tree
+from shidashi.tree import pinned_repos
 from shidashi.update import run_update
 
 __all__ = [
@@ -299,7 +300,7 @@ def _build_binds(
     *,
     pkgdir: Path,
     repos_conf_dir: Path | None = None,
-    tree: Path | None = None,
+    repos: Mapping[str, Path] | None = None,
 ) -> tuple[list[tuple[Path, Path]], list[tuple[Path, Path]]]:
     """Monta os binds RO (repos) e RW (PKGDIR/caches) do container (R6.2/R6.3/R7.2). Pura.
 
@@ -314,12 +315,11 @@ def _build_binds(
     ``repos_conf_dir`` é opcional para manter a chamada de teste (que monkeypatcha
     ``bind_repos``) trivial; :meth:`Factory.build` passa o ``repos.conf`` real do
     rootfs. ``bind_repos`` é resolvido via global do módulo (monkeypatchável).
-    ``tree``, the pinned ::gentoo snapshot (D26), is bound in place of the
-    host's synced tree.
+    ``repos`` are the pinned repositories by name (D26: the ::gentoo snapshot
+    and the overlays' commits), bound in place of the host's clones.
     """
     binds_ro = bind_repos(
-        repos_conf_dir if repos_conf_dir is not None else Path(),
-        overrides={"gentoo": tree} if tree is not None else None,
+        repos_conf_dir if repos_conf_dir is not None else Path(), overrides=repos
     )
     binds_rw: list[tuple[Path, Path]] = [
         (pkgdir, _PKGDIR_DST),
@@ -424,7 +424,7 @@ class Factory:
         fork_points_dir = config.fork_points_dir()
         # first: a pin that is missing or inside the cooldown refuses the build
         # before any seed is extracted (D26)
-        tree = pinned_tree(
+        repos = pinned_repos(
             seeds_dir=config.seeds_dir(), cache_dir=config.cache_dir(), download=download
         )
 
@@ -444,7 +444,7 @@ class Factory:
             recipe,
             pkgdir=self.pkgdir,
             repos_conf_dir=rootfs / "etc" / "portage" / "repos.conf",
-            tree=tree,
+            repos=repos,
         )
         _ensure_bind_dirs(binds_rw, rootfs=rootfs)
 
@@ -536,7 +536,7 @@ class Factory:
         rootfs = config.build_root() / f"{recipe.arch}-{recipe.flavor}-{recipe.init}"
         snapshot = load_pointer(recipe.init, seeds_dir=config.seeds_dir()).snapshot
         fork_points_dir = config.fork_points_dir()
-        tree = pinned_tree(
+        repos = pinned_repos(
             seeds_dir=config.seeds_dir(), cache_dir=config.cache_dir(), download=download
         )
 
@@ -563,7 +563,7 @@ class Factory:
             recipe,
             pkgdir=self.pkgdir,
             repos_conf_dir=rootfs / "etc" / "portage" / "repos.conf",
-            tree=tree,
+            repos=repos,
         )
         _ensure_bind_dirs(binds_rw, rootfs=rootfs)
 
@@ -645,7 +645,7 @@ class Factory:
         fork_points_dir = config.fork_points_dir()
         state_path = config.build_state_path(recipe)
         rh = state.recipe_hash(recipe)
-        tree = pinned_tree(
+        repos = pinned_repos(
             seeds_dir=config.seeds_dir(), cache_dir=config.cache_dir(), download=download
         )
 
@@ -695,7 +695,7 @@ class Factory:
             recipe,
             pkgdir=self.pkgdir,
             repos_conf_dir=rootfs / "etc" / "portage" / "repos.conf",
-            tree=tree,
+            repos=repos,
         )
         _ensure_bind_dirs(binds_rw, rootfs=rootfs)
 

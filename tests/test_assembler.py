@@ -34,7 +34,7 @@ def _no_tree_download(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """No unit test may fetch the real ::gentoo snapshot (49 MB, D26)."""
     tree = tmp_path / "pinned-gentoo"
     tree.mkdir()
-    monkeypatch.setattr(asm, "pinned_tree", lambda **_k: tree)
+    monkeypatch.setattr(asm, "pinned_repos", lambda **_k: {"gentoo": tree})
 
 
 def _recipe(

@@ -438,7 +438,7 @@ def _update_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     monkeypatch.setenv("SHIDASHI_CACHE", str(tmp_path / "cache"))
     monkeypatch.setenv("SHIDASHI_SCRATCH", str(tmp_path / "scratch"))
     monkeypatch.setattr(factory, "load_pointer", lambda init, *, seeds_dir: _pointer())
-    monkeypatch.setattr(factory, "pinned_tree", lambda **_k: tmp_path / "tree")
+    monkeypatch.setattr(factory, "pinned_repos", lambda **_k: {"gentoo": tmp_path / "tree"})
     return tmp_path / "cache" / "binpkgs" / "v3" / "SNAP"
 
 

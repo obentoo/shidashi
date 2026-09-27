@@ -1,0 +1,20 @@
+# The pinned overlays (D26) -- consumed by shidashi.tree.load_overlay_pins.
+#
+# Like ::gentoo (seeds/gentoo.toml), every factory, assemble and pretend run
+# binds THESE commits at /var/db/repos/<name>, never the host's clone. The
+# host's clone moved under a generation twice (2026-09-26): ::bentoo's vim
+# needed a vim-core the pinned ::gentoo lacked, and intel-microcode was added
+# and removed within one day, so what a build got depended on when the host
+# synced.
+#
+# `commit` is a FULL hash: git verifies every object it fetches against it, so
+# the hash is the integrity check. The host's clone is shallow (Portage's
+# sync-depth 1), so the commit is fetched from `url` into <cache>/git/ once.
+#
+# Pin the overlay to the SAME DAY as the ::gentoo snapshot and bump both
+# together: an overlay newer than the tree asks for versions the tree lacks.
+
+# 2026-09-27: the last commit of 2026-09-19 (UTC), the day of gentoo-20260919.
+[bentoo]
+url = "https://github.com/obentoo/bentoo.git"
+commit = "199e434501209293c85d3e67260fafffd5d38033"

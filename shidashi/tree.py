@@ -30,7 +30,7 @@ import urllib.request
 from collections.abc import Callable
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
 
 from shidashi.seed import SeedError
 
@@ -222,3 +222,105 @@ def pinned_tree(
     pin = load_tree_pin(seeds_dir)
     check_cooldown(pin, today=today or datetime.date.today())
     return ensure_tree(pin, cache_dir=cache_dir, download=download)
+
+
+# --- pinned overlays (::bentoo): a git commit, fetched by hash ------------------
+
+
+class OverlayPin(BaseModel):
+    """One ``[name]`` table of ``seeds/overlays.toml``: a repo URL and a FULL commit."""
+
+    model_config = _STRICT
+    name: str
+    url: str
+    commit: str
+
+    @field_validator("commit")
+    @classmethod
+    def _full_hash(cls, value: str) -> str:
+        # git verifies every fetched object against the full hash; an abbreviated
+        # one is ambiguous and would not be an integrity check at all
+        if len(value) != 40 or any(c not in "0123456789abcdef" for c in value):
+            raise ValueError(f"commit must be a full 40-hex hash, got {value!r}")
+        return value
+
+
+def load_overlay_pins(seeds_dir: Path) -> tuple[OverlayPin, ...]:
+    """Read ``seeds_dir/overlays.toml`` (one table per overlay); ``()`` when absent."""
+    path = seeds_dir / "overlays.toml"
+    if not path.is_file():
+        return ()
+    try:
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
+        return tuple(OverlayPin(name=name, **table) for name, table in data.items())
+    except (OSError, tomllib.TOMLDecodeError, TypeError, ValueError) as err:
+        raise TreeError(f"cannot read the overlay pins {path}: {err}") from err
+
+
+def _git(args: list[str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(["git", *args], capture_output=True, text=True, check=False)
+
+
+def ensure_overlay(pin: OverlayPin, *, cache_dir: Path, download: bool = True) -> Path:
+    """The overlay at ``pin.commit``, extracted once to ``cache_dir/repos/<name>-<hash12>``.
+
+    The commit is fetched by hash into a bare repository under ``cache_dir/git``
+    (the host's clone is shallow and at its own tip) and exported with
+    ``git archive``: no ``.git`` in the tree the container sees. Fetching by
+    hash needs the server to allow it, which GitHub does.
+    """
+    dest = cache_dir / "repos" / f"{pin.name}-{pin.commit[:12]}"
+    if dest.is_dir():
+        return dest
+    gitdir = cache_dir / "git" / f"{pin.name}.git"
+    if not gitdir.is_dir():
+        gitdir.parent.mkdir(parents=True, exist_ok=True)
+        _git(["init", "--quiet", "--bare", str(gitdir)])
+    have = _git(["--git-dir", str(gitdir), "cat-file", "-e", f"{pin.commit}^{{commit}}"])
+    if have.returncode != 0:
+        if not download:
+            raise TreeError(
+                f"--no-download: {pin.name} commit {pin.commit} is not in {gitdir}"
+            )
+        fetched = _git(["--git-dir", str(gitdir), "fetch", "--quiet", "--depth", "1",
+                        pin.url, pin.commit])
+        if fetched.returncode != 0:
+            raise TreeError(
+                f"cannot fetch {pin.name} {pin.commit} from {pin.url}: {fetched.stderr.strip()}"
+            )
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    tmp = Path(tempfile.mkdtemp(prefix=".extract-", dir=dest.parent))
+    try:
+        archive = subprocess.run(
+            ["git", "--git-dir", str(gitdir), "archive", "--format=tar", pin.commit],
+            capture_output=True, check=False,
+        )
+        if archive.returncode != 0:
+            raise TreeError(f"git archive {pin.commit} failed: {archive.stderr.decode().strip()}")
+        untar = subprocess.run(
+            ["tar", "--extract", "--directory", str(tmp)],
+            input=archive.stdout, capture_output=True, check=False,
+        )
+        if untar.returncode != 0:
+            raise TreeError(f"extracting {pin.name} failed: {untar.stderr.decode().strip()}")
+        tmp.replace(dest)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return dest
+
+
+def pinned_repos(
+    *, seeds_dir: Path, cache_dir: Path, download: bool, today: datetime.date | None = None
+) -> dict[str, Path]:
+    """Every pinned repository, by name: ``gentoo`` (cooldown enforced) and the overlays.
+
+    Bound in place of the host's clones by factory, assemble and pretend, so
+    the binpkgs and the ISO come from the same ebuilds on both repositories.
+    """
+    repos = {"gentoo": pinned_tree(
+        seeds_dir=seeds_dir, cache_dir=cache_dir, download=download, today=today
+    )}
+    for pin in load_overlay_pins(seeds_dir):
+        repos[pin.name] = ensure_overlay(pin, cache_dir=cache_dir, download=download)
+    return repos
+

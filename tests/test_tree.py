@@ -126,3 +126,66 @@ def test_the_pinned_snapshot_verifies_against_the_gentoo_key() -> None:
     assert _LAB_SNAPSHOT.name == pin.filename
     verify_detached(_LAB_SNAPSHOT, Path(f"{_LAB_SNAPSHOT}.gpgsig"))
     assert hashlib.sha512(_LAB_SNAPSHOT.read_bytes()).hexdigest() == pin.sha512
+
+
+# --- the pinned ::bentoo overlay (a git commit, fetched by hash) -----------------
+
+import subprocess  # noqa: E402
+
+from shidashi.tree import OverlayPin, ensure_overlay, load_overlay_pins  # noqa: E402
+
+
+def _git(*args: str, cwd: Path) -> str:
+    return subprocess.run(
+        ["git", *args], cwd=cwd, check=True, capture_output=True, text=True,
+        env={"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t",
+             "GIT_COMMITTER_EMAIL": "t@t", "PATH": "/usr/bin:/bin", "HOME": str(cwd)},
+    ).stdout.strip()
+
+
+def _overlay_remote(tmp_path: Path) -> tuple[Path, str, str]:
+    """A repo with two commits; the pin names the OLDER one, as a real pin does."""
+    repo = tmp_path / "remote"
+    (repo / "metadata").mkdir(parents=True)
+    _git("init", "-q", cwd=repo)
+    _git("config", "uploadpack.allowReachableSHA1InWant", "true", cwd=repo)  # as GitHub
+    (repo / "metadata" / "layout.conf").write_text("masters = gentoo\n", encoding="utf-8")
+    (repo / "pkg").write_text("old\n", encoding="utf-8")
+    _git("add", ".", cwd=repo)
+    _git("commit", "-qm", "old", cwd=repo)
+    old = _git("rev-parse", "HEAD", cwd=repo)
+    (repo / "pkg").write_text("new\n", encoding="utf-8")
+    _git("commit", "-qam", "new", cwd=repo)
+    return repo, old, _git("rev-parse", "HEAD", cwd=repo)
+
+
+def test_the_repository_pins_bentoo_by_full_commit() -> None:
+    pins = {p.name: p for p in load_overlay_pins(config.seeds_dir())}
+    assert len(pins["bentoo"].commit) == 40
+
+
+def test_ensure_overlay_extracts_exactly_the_pinned_commit(tmp_path: Path) -> None:
+    repo, old, _new = _overlay_remote(tmp_path)
+    pin = OverlayPin(name="bentoo", url=f"file://{repo}", commit=old)
+
+    dest = ensure_overlay(pin, cache_dir=tmp_path / "cache")
+
+    assert dest == tmp_path / "cache" / "repos" / f"bentoo-{old[:12]}"
+    assert (dest / "pkg").read_text(encoding="utf-8") == "old\n"  # not the branch tip
+    assert (dest / "metadata" / "layout.conf").is_file()
+    assert not (dest / ".git").exists()
+    # cached: no fetch needed any more
+    assert ensure_overlay(pin, cache_dir=tmp_path / "cache", download=False) == dest
+
+
+def test_ensure_overlay_without_the_commit_and_no_download_is_a_tree_error(
+    tmp_path: Path,
+) -> None:
+    pin = OverlayPin(name="bentoo", url="file:///nonexistent", commit="a" * 40)
+    with pytest.raises(TreeError, match="--no-download"):
+        ensure_overlay(pin, cache_dir=tmp_path, download=False)
+
+
+def test_an_overlay_pin_must_be_a_full_commit_hash() -> None:
+    with pytest.raises(ValueError):
+        OverlayPin(name="bentoo", url="https://x", commit="199e434501")
