@@ -619,3 +619,26 @@ def test_the_kde_layer_is_not_in_force_until_the_kde_stage(
     assert ["DESKTOPS=" in mc for _a, mc, _pu in stage_emerges] == [False, False, False, True]
     assert [bool(kde_files & pu) for _a, _mc, pu in stage_emerges] == [False, False, False, True]
     assert stage_emerges[0][0][3] == "--emptytree"
+
+
+def test_app_alternatives_alone_trade_collision_protect_for_protect_owned(
+    tmp_path: Path,
+) -> None:
+    """F71: app-arch/cpio's pkg_postinst leaves /bin/cpio UNOWNED for
+    app-alternatives/cpio to take over, which collision-protect refuses. The
+    exception is scoped to app-alternatives/*; the base stays strict (F43)."""
+    portage = _assemble(tmp_path, "v3", "minimal", "systemd")
+    out = subprocess.run(
+        ["bash", "-c", f'. "{portage / "make.conf"}"; printf "%s" "$FEATURES"'],
+        capture_output=True, text=True, check=True,
+    )
+    assert "collision-protect" in out.stdout.split()
+    mapping = [
+        line.split()
+        for f in (portage / "package.env").iterdir()
+        for line in f.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.startswith("#")
+    ]
+    assert ["app-alternatives/*", "protect-owned.conf"] in mapping
+    env = (portage / "env" / "protect-owned.conf").read_text(encoding="utf-8")
+    assert 'FEATURES="-collision-protect protect-owned"' in env

@@ -1,0 +1,3 @@
+# app-alternatives/* takes over symlinks its providers create unowned; see
+# env/protect-owned.conf (F71). Everything else keeps collision-protect.
+app-alternatives/*  protect-owned.conf
