@@ -25,7 +25,6 @@ import dataclasses
 import os
 import re
 import subprocess
-import tarfile
 from collections.abc import Callable
 from enum import StrEnum
 from pathlib import Path
@@ -36,6 +35,7 @@ from shidashi import config, state
 from shidashi.container import Container
 from shidashi.recipe import Phase, ResolvedRecipe, UseBreak
 from shidashi.resolve import _atom_from_ebuild_line, _iter_atom_lines, apply_portage
+from shidashi.seed import ROOTFS_TAR_FLAGS
 from shidashi.state import EmergePlanEntry, PhaseDiff
 
 _USE_BREAK_FILE = ("etc", "portage", "package.use", "zz-shidashi-use-break")
@@ -511,18 +511,16 @@ def snapshot_fork_point(rootfs: Path, dest: Path) -> Path:
 
     Escrita atômica: o tar é gravado primeiro num arquivo temporário irmão de
     ``dest`` (mesmo diretório, logo mesmo filesystem) e só então promovido via
-    :func:`os.replace`, que consome o nome temporário — em caso de sucesso não
-    fica nenhum temp pendente ao lado de ``dest``. Falha durante a escrita remove
-    o temp parcial. O ``arcname=""`` mantém o conteúdo do rootfs na raiz do tar,
-    de modo que :func:`restore_fork_point` o reconstrua diretamente sob outro
-    diretório (layout relativo preservado). Ownership/devices fiéis de um rootfs
-    real exigem root (coberto pelo teste de integração host-gated); a árvore em
-    tmp faz round-trip de conteúdo + layout sem root.
+    :func:`os.replace`. Falha durante a escrita remove o temp parcial. O
+    conteúdo fica na raiz do tar (``-C rootfs .``), de modo que
+    :func:`restore_fork_point` o reconstrua diretamente sob outro diretório.
+
+    GNU tar with :data:`shidashi.seed.ROOTFS_TAR_FLAGS`: every mode bit and the
+    xattrs (file capabilities) survive, which Python's ``tarfile`` did not.
     """
     tmp = dest.with_name(f".{dest.name}.tmp")
     try:
-        with tarfile.open(tmp, "w") as tar:
-            tar.add(rootfs, arcname="")
+        _tar(["--create", "--file", str(tmp), "--directory", str(rootfs), *ROOTFS_TAR_FLAGS, "."])
         os.replace(tmp, dest)
     except BaseException:
         tmp.unlink(missing_ok=True)
@@ -531,15 +529,14 @@ def snapshot_fork_point(rootfs: Path, dest: Path) -> Path:
 
 
 def restore_fork_point(tarball: Path, rootfs: Path) -> None:
-    """Extrai ``tarball`` dentro de ``rootfs`` (R5.1/R5.2).
+    """Extrai ``tarball`` dentro de ``rootfs`` (R5.1/R5.2), modes and xattrs intact."""
+    _tar(["--extract", "--file", str(tarball), "--directory", str(rootfs), *ROOTFS_TAR_FLAGS])
 
-    Usa o filtro ``"tar"`` na extração para preservar ownership/permissões quando
-    rodando como root (o teste de integração host-gated verifica ``st_uid == 0``);
-    sob a árvore tmp sem root isto degrada para conteúdo + layout relativo, que é
-    o que o round-trip unitário exige.
-    """
-    with tarfile.open(tarball, "r") as tar:
-        tar.extractall(rootfs, filter="tar")
+
+def _tar(args: list[str]) -> None:
+    result = subprocess.run(["tar", *args], capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        raise FactoryError(f"tar {args[0]} failed: {result.stderr.strip()}", phase="fork-point")
 
 
 # --- orquestração privilegiada (story 003 tarefa 5) --------------------------

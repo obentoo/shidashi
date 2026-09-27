@@ -179,3 +179,26 @@ def test_fetch_stage3_reuses_verified_cache(
     )
     got = fetch_stage3(p, cache_dir=cache, download=True)
     assert got == cache / filename
+
+
+def test_extract_stage3_keeps_sticky_setuid_and_group_write(tmp_path: Path) -> None:
+    """Regression (2026-09-26): the stage3 came out with /tmp 0755 and su without
+    setuid, and the bootstrap's locale-gen aborted. GNU tar, as the lab's reseed."""
+    import subprocess
+
+    from shidashi.seed import extract_stage3
+
+    src = tmp_path / "src"
+    (src / "tmp").mkdir(parents=True)
+    (src / "tmp").chmod(0o1777)
+    (src / "usr" / "bin").mkdir(parents=True)
+    (src / "usr" / "bin" / "su").write_text("x")
+    (src / "usr" / "bin" / "su").chmod(0o4755)
+    tarball = tmp_path / "stage3.tar.xz"
+    subprocess.run(["tar", "-cJf", str(tarball), "-C", str(src), "."], check=True)
+
+    rootfs = tmp_path / "rootfs"
+    extract_stage3(tarball, rootfs)
+
+    assert oct((rootfs / "tmp").stat().st_mode & 0o7777) == "0o1777"
+    assert oct((rootfs / "usr/bin/su").stat().st_mode & 0o7777) == "0o4755"

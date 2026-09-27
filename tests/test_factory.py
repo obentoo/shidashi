@@ -463,3 +463,25 @@ def test_update_refuses_a_pkgdir_without_a_generation(
     (tmp_path / "fp" / "img").replace(fps / "v3-systemd-20260524T170105Z-kde.tar")
     with pytest.raises(FactoryError, match="never starts one"):
         Factory(recipe, pkgdir).update(download=False)
+
+
+def test_seed_or_restore_wipes_a_leftover_rootfs_before_a_fresh_seed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A failed --keep run leaves its rootfs behind (2026-09-26: a stage3 with
+    broken modes); a clean start must not extract a new stage3 on top of it."""
+    rootfs = tmp_path / "rootfs"
+    (rootfs / "etc").mkdir(parents=True)
+    (rootfs / "etc" / "leftover").write_text("from the failed run", encoding="utf-8")
+    seen: list[bool] = []
+    monkeypatch.setattr(
+        factory, "_fresh_seed",
+        lambda root, *a, **k: seen.append((root / "etc" / "leftover").exists()) or "",
+        raising=False,
+    )
+    (tmp_path / "fp").mkdir()
+    factory._seed_or_restore(
+        _staged_recipe(), rootfs, _pointer(),
+        snapshot="S", fork_points_dir=tmp_path / "fp", download=False,
+    )
+    assert seen == [False]

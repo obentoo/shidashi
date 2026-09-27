@@ -11,13 +11,12 @@ sha512 por init) e verificado por SHA-512 **e** assinatura GPG do ``.DIGESTS``
 (cleartext-signed, assinatura PGP inline — o layout atual dos autobuilds da
 Gentoo, que não publica mais SHA-256 nem um ``.DIGESTS.asc`` separado) antes de
 qualquer extração. Usa apenas stdlib (``tomllib``/``urllib``/``hashlib``/
-``tarfile``) mais o ``gpg`` do host.
+GNU ``tar``) mais o ``gpg`` do host.
 """
 
 import hashlib
 import shutil
 import subprocess
-import tarfile
 import tempfile
 import tomllib
 import urllib.error
@@ -214,16 +213,34 @@ def fetch_stage3(pointer: Stage3Pointer, *, cache_dir: Path, download: bool = Tr
     return cached
 
 
+#: GNU tar flags that keep a rootfs intact: owners by number (the image's, not
+#: the host's name mapping), every mode bit (sticky /tmp, setuid su), and the
+#: xattrs that carry file capabilities. The lab's reseed.sh used exactly these.
+ROOTFS_TAR_FLAGS = ("--numeric-owner", "--preserve-permissions", "--xattrs",
+                    "--xattrs-include=*.*")
+
+
 def extract_stage3(tarball: Path, rootfs: Path) -> None:
     """Extrai o tarball verificado em ``rootfs`` preservando ownership.
 
     **Privilegiado** (requer root): preserva donos/permissões/devices do
     stage3. Cria ``rootfs`` sob o scratch. Em erro de extração levanta
     :class:`SeedError`.
+
+    GNU tar, not Python's ``tarfile``: its ``filter="tar"`` clears the setuid,
+    setgid and sticky bits and group/other write -- the first real run got a
+    stage3 with ``/tmp`` 0755 and ``su`` without setuid, and ``locale-gen``
+    aborted -- and ``tarfile`` does not restore xattrs (file capabilities).
     """
     rootfs.mkdir(parents=True, exist_ok=True)
-    try:
-        with tarfile.open(tarball, "r:*") as tar:
-            tar.extractall(rootfs, filter="tar")  # filter=tar preserva metadados
-    except (tarfile.TarError, OSError) as err:
-        raise SeedError(f"falha ao extrair {tarball.name} em {rootfs}: {err}") from err
+    result = subprocess.run(
+        ["tar", "--extract", "--file", str(tarball), "--directory", str(rootfs),
+         *ROOTFS_TAR_FLAGS],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise SeedError(
+            f"falha ao extrair {tarball.name} em {rootfs}: {result.stderr.strip()}"
+        )

@@ -401,3 +401,35 @@ def test_snapshot_writes_atomically_no_partial_temp(tmp_path: Path) -> None:
     assert dest.exists()
     leftovers = [p for p in tmp_path.iterdir() if p != dest and p != src]
     assert leftovers == []
+
+
+# --- regression: a rootfs keeps its special modes through a fork point ----------
+
+
+def _special_tree(root: Path) -> None:
+    (root / "tmp").mkdir(parents=True)
+    (root / "tmp").chmod(0o1777)
+    (root / "usr" / "bin").mkdir(parents=True)
+    (root / "usr" / "bin" / "su").write_text("x")
+    (root / "usr" / "bin" / "su").chmod(0o4755)
+    (root / "var" / "cache" / "distfiles").mkdir(parents=True)
+    (root / "var" / "cache" / "distfiles").chmod(0o2775)
+
+
+def _modes(root: Path) -> dict[str, str]:
+    return {
+        rel: oct((root / rel).stat().st_mode & 0o7777)
+        for rel in ("tmp", "usr/bin/su", "var/cache/distfiles")
+    }
+
+
+def test_fork_point_round_trip_keeps_sticky_setuid_and_group_write(tmp_path: Path) -> None:
+    """Python's tarfile filter="tar" cleared these bits: /tmp came back 0755 and
+    su lost its setuid, and locale-gen aborted in the first real run (2026-09-26)."""
+    src, restored = tmp_path / "src", tmp_path / "restored"
+    _special_tree(src)
+    restored.mkdir()
+    snapshot_fork_point(src, tmp_path / "fp.tar")
+    restore_fork_point(tmp_path / "fp.tar", restored)
+    assert _modes(restored) == {"tmp": "0o1777", "usr/bin/su": "0o4755",
+                                "var/cache/distfiles": "0o2775"}

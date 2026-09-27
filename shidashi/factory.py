@@ -240,6 +240,9 @@ def _seed_or_restore(
     if checkpoint.exists():
         _restore_into(checkpoint, rootfs)
         return None, fork_point_path, False, True
+    # a fresh seed is a fresh ROOTFS: a failed --keep run leaves its tree behind,
+    # and a stage3 extracted over it would inherit whatever that run broke
+    shutil.rmtree(rootfs, ignore_errors=True)
     _fresh_seed(rootfs, pointer, download=download, recipe=recipe)
     return None, fork_point_path, False, False
 
@@ -814,6 +817,7 @@ class Factory:
         # Seed fresco e persiste o marco seed_done. Quando
         # seed_source=catalyst, _fresh_seed devolve o sha512 do stage3 buildado
         # localmente, pinado no BuildState (R4.1); vazio no caminho download.
+        shutil.rmtree(rootfs, ignore_errors=True)  # no state: nothing to keep
         seed_sha512 = _fresh_seed(rootfs, pointer, download=download, recipe=recipe)
         state.save_state(
             state_path,
