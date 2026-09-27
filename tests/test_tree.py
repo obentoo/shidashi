@@ -189,3 +189,17 @@ def test_ensure_overlay_without_the_commit_and_no_download_is_a_tree_error(
 def test_an_overlay_pin_must_be_a_full_commit_hash() -> None:
     with pytest.raises(ValueError):
         OverlayPin(name="bentoo", url="https://x", commit="199e434501")
+
+
+def test_the_overlay_directory_is_readable_by_the_portage_user(tmp_path: Path) -> None:
+    """Regression (2026-09-27): the overlay was the mkdtemp directory itself,
+    mode 0700, and emerge -- reading repositories as the portage user --
+    failed with PermissionError on profiles/thirdpartymirrors. A tree already
+    cached with the bad mode is repaired on reuse."""
+    repo, old, _new = _overlay_remote(tmp_path)
+    pin = OverlayPin(name="bentoo", url=f"file://{repo}", commit=old)
+    dest = ensure_overlay(pin, cache_dir=tmp_path / "cache")
+    assert oct(dest.stat().st_mode & 0o777) == "0o755"
+    dest.chmod(0o700)  # as the first real run left it
+    assert oct(ensure_overlay(pin, cache_dir=tmp_path / "cache", download=False)
+               .stat().st_mode & 0o777) == "0o755"

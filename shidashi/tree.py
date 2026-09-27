@@ -271,6 +271,7 @@ def ensure_overlay(pin: OverlayPin, *, cache_dir: Path, download: bool = True) -
     """
     dest = cache_dir / "repos" / f"{pin.name}-{pin.commit[:12]}"
     if dest.is_dir():
+        dest.chmod(0o755)  # repairs a tree cached before the fix below
         return dest
     gitdir = cache_dir / "git" / f"{pin.name}.git"
     if not gitdir.is_dir():
@@ -303,6 +304,9 @@ def ensure_overlay(pin: OverlayPin, *, cache_dir: Path, download: bool = True) -
         )
         if untar.returncode != 0:
             raise TreeError(f"extracting {pin.name} failed: {untar.stderr.decode().strip()}")
+        # mkdtemp made tmp 0700 and tmp BECOMES the tree: emerge reads
+        # repositories as the portage user and was refused (2026-09-27)
+        tmp.chmod(0o755)
         tmp.replace(dest)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
