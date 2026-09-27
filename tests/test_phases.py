@@ -87,6 +87,19 @@ def test_phase_target_of_the_base_is_world_then_its_sets() -> None:
     assert phase_target(Phase(name="anything", emptytree=True), _recipe()) == ("@world",)
 
 
+def test_every_stage_after_the_base_updates_world_too() -> None:
+    """-uDN @world @<sets>, as OVERVIEW §6.4 says. With the sets alone, a package
+    an earlier stage installed is rebuilt for this stage's USE only if it sits in
+    the new sets' graph: measured on the real minimal, desktop left vim, kbd and
+    fastfetch with the old USE (2026-09-27)."""
+    desktop = Phase(name="desktop", stage="desktop", sets=("gpu", "fonts"))
+    assert phase_target(desktop, _recipe()) == ("@world", "@gpu", "@fonts")
+    assert phase_target(Phase(name="desktop", stage="desktop"), _recipe()) == ("@world",)
+    # a phase that is not a stage (openrc's seat) still names only its atoms
+    seat = Phase(name="seat", packages=("sys-auth/elogind",))
+    assert phase_target(seat, _recipe()) == ("sys-auth/elogind",)
+
+
 def test_phase_target_seat_is_packages() -> None:
     phase = Phase(name="seat", packages=("sys-apps/dbus", "sys-auth/seatd"))
     assert phase_target(phase, _recipe()) == ("sys-apps/dbus", "sys-auth/seatd")
@@ -96,7 +109,7 @@ def test_phase_target_is_the_stages_own_sets_whatever_the_phase_is_called() -> N
     """No convention by name: `desktop` used to mean @<flavor>. A flavor stage
     lists its own set like any other."""
     flavor = Phase(name="flavor", stage="kde", sets=("kde", "extra-desktop"))
-    assert phase_target(flavor, _recipe(flavor="kde")) == ("@kde", "@extra-desktop")
+    assert phase_target(flavor, _recipe(flavor="kde")) == ("@world", "@kde", "@extra-desktop")
     assert phase_target(Phase(name="desktop"), _recipe(flavor="kde")) == ()
 
 
@@ -111,7 +124,7 @@ def test_phase_target_takes_every_set_the_stage_declares() -> None:
     # was filtered by the recipe's sets. Now each stage declares only what it
     # installs, so there is nothing to filter.
     phase = Phase(name="desktop", stage="desktop", sets=("gpu", "fonts"))
-    assert phase_target(phase, _recipe(sets=("base",))) == ("@gpu", "@fonts")
+    assert phase_target(phase, _recipe(sets=("base",))) == ("@world", "@gpu", "@fonts")
 
 
 def test_phase_target_falls_back_to_packages_when_there_are_no_sets() -> None:

@@ -111,9 +111,12 @@ class PhaseResult(pydantic.BaseModel):
 def phase_target(phase: Phase, recipe: ResolvedRecipe) -> tuple[str, ...]:
     """Devolve o alvo ``emerge`` de uma fase (R3.1/R3.2/R3.3, D24). Puro.
 
-    - a fase da base (``emptytree``) → ``@world`` e depois os seus sets;
-    - uma fase com ``sets`` → um ``@<nome>`` por set que o ESTÁGIO declara;
-    - senão → ``phase.packages`` (átomos explícitos, como a fase ``seat``).
+    - every STAGE phase → ``@world`` and then the stage's own sets. The base
+      rebuilds it (``--emptytree``); a later stage updates it (``-uDN``), so
+      that a package an earlier stage installed is rebuilt for THIS stage's USE
+      even when it is outside the new sets' graph (measured on the real
+      minimal: desktop left vim, kbd and fastfetch with the old USE without it);
+    - a phase that is not a stage → ``phase.packages`` (the ``seat`` atoms).
 
     Nada aqui depende do NOME da fase. Duas convenções por nome já custaram
     caro: ``apps`` → ``@bentoo-apps`` literal (renomear o set deixou a fase
@@ -122,7 +125,7 @@ def phase_target(phase: Phase, recipe: ResolvedRecipe) -> tuple[str, ...]:
     """
     del recipe  # the stage says it all; kept for the callers' signature
     sets = tuple("@" + name for name in phase.sets)
-    if phase.emptytree:
+    if phase.emptytree or phase.stage:
         return ("@world", *sets)
     return sets or phase.packages
 

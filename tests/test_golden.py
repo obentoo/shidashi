@@ -46,7 +46,7 @@ def test_golden_v3_minimal_systemd() -> None:
     assert "gpu" not in r.sets
     assert _targets(r) == {
         "base": ("@world", "@base"),
-        "minimal": ("@extra-system",),
+        "minimal": ("@world", "@extra-system"),
     }
     base, minimal = r.phases
     assert base.emptytree and not base.ships
@@ -71,11 +71,13 @@ def test_golden_v3_kde_systemd() -> None:
     )
     assert _targets(r) == {
         "base": ("@world", "@base"),
-        "minimal": ("@extra-system",),
-        "desktop": ("@gpu", "@fonts", "@desktop-int", "@audio", "@vpn", "@print", "@sandbox"),
+        "minimal": ("@world", "@extra-system"),
+        "desktop": (
+            "@world", "@gpu", "@fonts", "@desktop-int", "@audio", "@vpn", "@print", "@sandbox",
+        ),
         # init_sets: the display manager joins the flavor phase, per init
         "flavor": (
-            "@kde", "@extra-desktop", "@extra-media", "@extra-dev", "@extra-virt",
+            "@world", "@kde", "@extra-desktop", "@extra-media", "@extra-dev", "@extra-virt",
             "@kde-dm-plasma",
         ),
     }
