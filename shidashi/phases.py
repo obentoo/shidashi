@@ -672,6 +672,7 @@ def run_phases(
     resume_at: str | None = None,
     snapshot: str,
     fork_points_dir: Path,
+    stop_after: str | None = None,
 ) -> tuple[PhaseResult, ...]:
     """Orquestra a cadeia de estágios na ordem (R3.x/R4.x/R5.x, D24).
 
@@ -687,6 +688,10 @@ def run_phases(
        (:func:`stage_fork_point_path`), depois do settle.
 
     Devolve os :class:`PhaseResult` na ordem, cada settle logo após o seu estágio.
+
+    ``stop_after`` names a STAGE: the run ends right after that stage's fork
+    point (and its settle, when it ships). The next run without it resumes from
+    that fork point -- e.g. build the desktop stage alone before a flavor.
     """
     pending = pending_breaks(recipe, through=resume_at)
     skipping = resume_at is not None
@@ -708,6 +713,8 @@ def run_phases(
                     recipe, phase.stage, snapshot=snapshot, fork_points_dir=fork_points_dir
                 ),
             )
+        if stop_after is not None and phase.stage == stop_after:
+            break
     return tuple(results)
 
 

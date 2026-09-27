@@ -340,3 +340,31 @@ def test_factory_jobs_sets_shidashi_jobs_for_the_run(
     assert result.exit_code == 0, result.stdout
     assert seen["jobs"] == "16"
     assert runner.invoke(app, ["factory", "v3", "minimal", "systemd", "--jobs", "0"]).exit_code != 0
+
+
+def test_factory_stop_after_reaches_the_one_shot_build(
+    monkeypatch: pytest.MonkeyPatch, variants_tree: Path
+) -> None:
+    seen: dict[str, object] = {}
+
+    def _build(**kw: object) -> Any:
+        seen.update(kw)
+        return _fake_result()
+
+    monkeypatch.setattr(cli, "Factory", _fake_factory(_build), raising=False)
+    result = runner.invoke(
+        app, ["factory", "v3", "minimal", "systemd", "--stop-after", "base"]
+    )
+    assert result.exit_code == 0, result.stdout
+    assert seen["stop_after"] == "base"
+
+
+def test_factory_stop_after_refuses_a_stage_not_in_the_chain(
+    monkeypatch: pytest.MonkeyPatch, variants_tree: Path
+) -> None:
+    monkeypatch.setattr(cli, "Factory", _fake_factory(lambda **_k: _fake_result()), raising=False)
+    result = runner.invoke(
+        app, ["factory", "v3", "minimal", "systemd", "--stop-after", "desktop"]
+    )
+    assert result.exit_code == 1
+    assert "desktop" in result.output

@@ -458,6 +458,13 @@ def factory(
             help="MAKEOPTS=-jN -lN for this host, over the recipe's (every phase).",
         ),
     ] = None,
+    stop_after: Annotated[
+        str | None,
+        typer.Option(
+            "--stop-after",
+            help="Stop after this STAGE (its fork point written); the next run resumes there.",
+        ),
+    ] = None,
     update: Annotated[
         bool,
         typer.Option(
@@ -493,6 +500,18 @@ def factory(
         _err_console.print(f"[bold red]erro:[/bold red] {err}")
         raise typer.Exit(1) from err
 
+    if stop_after is not None and stop_after not in resolved.stages:
+        _err_console.print(
+            f"[bold red]erro:[/bold red] --stop-after {stop_after!r} is not a stage of "
+            f"{arch}×{flavor}×{init}; stages: {' → '.join(resolved.stages)}"
+        )
+        raise typer.Exit(1)
+    if stop_after is not None and (update or step or until is not None or reset or force_resume):
+        _err_console.print(
+            "[bold red]erro:[/bold red] --stop-after belongs to a normal build; it does not "
+            "combine with --update/--step/--until/--reset/--force-resume"
+        )
+        raise typer.Exit(1)
     if update and (step or until is not None or reset or force_resume):
         _err_console.print(
             "[bold red]erro:[/bold red] --update updates a built image in one run; it "
@@ -512,6 +531,7 @@ def factory(
             download=not no_download,
             keep=keep,
             update=update,
+            stop_after=stop_after,
         )
         return
 
@@ -556,6 +576,7 @@ def _run_factory_oneshot(
     download: bool,
     keep: bool,
     update: bool = False,
+    stop_after: str | None = None,
 ) -> None:
     """Caminho one-shot da story 003 — comportamento byte-a-byte inalterado (R8.2).
 
@@ -566,7 +587,9 @@ def _run_factory_oneshot(
         if update:
             result = factory_obj.update(download=download, keep=keep)
         else:
-            result = factory_obj.build(emptytree=emptytree, download=download, keep=keep)
+            result = factory_obj.build(
+                emptytree=emptytree, download=download, keep=keep, stop_after=stop_after
+            )
     except FactoryError as err:
         if err.phase:
             _err_console.print(f"[bold red]falha na fase[/bold red] {err.phase}: {err}")

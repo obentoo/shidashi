@@ -507,3 +507,26 @@ def test_parse_reused_atoms_reads_binary_lines_apart_from_built_ones() -> None:
     )
     assert parse_reused_atoms(out) == ("acct-group/tss-0-r3", "dev-lang/python-3.14.7-1")
     assert parse_built_atoms(out) == ("sys-apps/kbd-2.10.0",)
+
+
+def test_run_phases_stop_after_a_stage_ends_with_its_fork_point(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """--stop-after desktop: resume from minimal, build ONLY the desktop stage and
+    snapshot it -- the next run without it resumes from that fork point."""
+    results, container, snaps = _run_chain(
+        tmp_path, monkeypatch, resume_at="minimal", stop_after="desktop"
+    )
+    assert [(r.phase.name, r.phase.stage) for r in results] == [("desktop", "desktop")]
+    assert snaps == ["v3-systemd-S-desktop.tar"]
+    assert len(container.emerge_calls) == 1
+
+
+def test_run_phases_stop_after_a_shipped_stage_includes_its_settle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    results, _container, snaps = _run_chain(tmp_path, monkeypatch, stop_after="minimal")
+    assert [(r.phase.name, r.phase.stage) for r in results] == [
+        ("base", "base"), ("minimal", "minimal"), ("settle", "minimal"),
+    ]
+    assert snaps == ["v3-systemd-S-base.tar", "v3-systemd-S-minimal.tar"]

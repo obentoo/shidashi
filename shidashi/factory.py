@@ -387,7 +387,12 @@ class Factory:
         self.pkgdir = pkgdir
 
     def build(
-        self, *, emptytree: bool = True, download: bool = True, keep: bool = False
+        self,
+        *,
+        emptytree: bool = True,
+        download: bool = True,
+        keep: bool = False,
+        stop_after: str | None = None,
     ) -> FactoryResult:
         """Compila os binpkgs da receita num container nspawn (OVERVIEW §6, R1.1/R8.x).
 
@@ -471,6 +476,7 @@ class Factory:
                     resume_at=resume_at,
                     snapshot=snapshot,
                     fork_points_dir=fork_points_dir,
+                    stop_after=stop_after,
                 )
         except BaseException:
             keep_rootfs = True  # preserva o rootfs para depuração em falha (R8.4)
