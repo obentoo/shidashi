@@ -179,6 +179,13 @@ binhost/
 
 ### 6.4 Build em estágios (D24)
 
+> **Onde ler e editar o processo** (2026-09-28): `variants/flow.yaml` descreve o
+> fluxo — os passos do **bootstrap** e os passos de **cada estágio** (config →
+> cortes → emerge → settle → fork-point), com as opções do emerge e do settle. O
+> código em `shidashi/` executa os *tipos* de passo (`shidashi/flow.py` os lista).
+> Os estágios e os sets/cortes de cada um estão nos YAMLs de `variants/` (base,
+> minimal, desktop, flavor), e as exceções por pacote em `variants/base/quirks.yaml`.
+
 Uma imagem é uma **cadeia de estágios**; cada estágio declara quem vem antes dele
 (`after:`) e vira uma fase de `emerge`, com a **configuração acumulada até ele**:
 
