@@ -194,7 +194,7 @@ desktop   minimal    -uDN @world @gpu …                       + desktop
 
 - O **bootstrap** leva a toolchain do stage3 às versões da árvore, em ordem:
   locale → linux-headers + binutils → gcc → libtool → glibc →
-  `@preserved-rebuild` → ccache (`shidashi/bootstrap.py`, BOOTSTRAP-PROCESS §1).
+  `@preserved-rebuild` → ccache — os passos estão em `variants/flow.yaml` (executados por `shidashi/bootstrap.py`; BOOTSTRAP-PROCESS §1).
   Tudo `--oneshot` (o world termina vazio) e com `FEATURES="-buildpkg -ccache"`
   (D22); binutils e gcc são selecionados **pelo nome** lido de `/etc/env.d/`. Sem
   ele a base compilaria `--emptytree @world` com o gcc do stage3.

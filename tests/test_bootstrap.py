@@ -11,15 +11,25 @@ from pathlib import Path
 
 import pytest
 
+from shidashi import config
 from shidashi.bootstrap import (
-    BOOTSTRAP_FEATURES,
-    LOCALE,
     BootstrapError,
     emerge_argv,
     newest_profile,
     run_bootstrap,
 )
 from shidashi.container import CommandResult
+from shidashi.flow import load_flow
+
+# The bootstrap's steps come from variants/flow.yaml. The expectations below are
+# LITERAL on purpose: they are the command sequence the lab ran and the Python
+# implementation reproduced before the steps moved into the YAML.
+_FEATURES = "FEATURES=-buildpkg -ccache"
+
+
+def _emerge(*atoms: str) -> list[str]:
+    return ["env", _FEATURES, "emerge", "--oneshot", *atoms]
+
 
 _CHOST = "x86_64-pc-linux-gnu"
 
@@ -81,11 +91,10 @@ def test_newest_profile_sorts_versions_naturally_and_skips_config(stage3: Path) 
     assert newest_profile(stage3 / "etc/env.d/gcc") == f"{_CHOST}-14"
 
 
-def test_emerge_argv_is_oneshot_with_the_bootstrap_features() -> None:
-    assert emerge_argv("sys-devel/gcc") == [
-        "env", f"FEATURES={BOOTSTRAP_FEATURES}", "emerge", "--oneshot", "sys-devel/gcc",
-    ]
-    assert BOOTSTRAP_FEATURES == "-buildpkg -ccache"
+def test_emerge_argv_is_oneshot_with_the_flows_environment() -> None:
+    env = load_flow(config.variants_dir()).bootstrap.env
+    assert env == {"FEATURES": "-buildpkg -ccache"}  # D22, F65
+    assert emerge_argv("sys-devel/gcc", env=env) == _emerge("sys-devel/gcc")
 
 
 def test_run_bootstrap_runs_the_lab_sequence_and_selects_the_new_slots(stage3: Path) -> None:
@@ -97,10 +106,10 @@ def test_run_bootstrap_runs_the_lab_sequence_and_selects_the_new_slots(stage3: P
     # the switch happens after the merge, by name
     assert ["binutils-config", f"{_CHOST}-2.45"] in c.calls
     assert ["gcc-config", f"{_CHOST}-15"] in c.calls
-    assert c.calls.index(emerge_argv("sys-devel/gcc")) < c.calls.index(
+    assert c.calls.index(_emerge("sys-devel/gcc")) < c.calls.index(
         ["gcc-config", f"{_CHOST}-15"]
     )
-    emerged = [call[4:] for call in c.calls if call[:4] == emerge_argv()]
+    emerged = [call[4:] for call in c.calls if call[:4] == _emerge()]
     assert emerged == [
         ["sys-kernel/linux-headers", "sys-devel/binutils"],
         ["sys-devel/gcc"],
@@ -109,8 +118,10 @@ def test_run_bootstrap_runs_the_lab_sequence_and_selects_the_new_slots(stage3: P
         ["@preserved-rebuild"],
         ["dev-util/ccache"],
     ]
-    assert c.calls[:2] == [["locale-gen"], ["eselect", "locale", "set", LOCALE]]
-    assert result.steps[-1] == "ccache"
+    assert c.calls[:2] == [["locale-gen"], ["eselect", "locale", "set", "en_US.UTF-8"]]
+    assert result.steps == (
+        "locale", "binutils", "gcc", "libtool", "glibc", "preserved", "ccache", "world",
+    )
 
 
 def test_run_bootstrap_refuses_a_locale_that_locale_gen_would_not_build(stage3: Path) -> None:
@@ -125,7 +136,7 @@ def test_run_bootstrap_refuses_a_locale_that_locale_gen_would_not_build(stage3: 
 def test_run_bootstrap_fails_when_glibc_loses_locales(stage3: Path) -> None:
     c = FakeContainer(stage3)
     c.on_emerge["sys-libs/glibc"] = lambda: c.locales.pop()
-    with pytest.raises(BootstrapError, match="lost locales: locale -a went 5 -> 4") as err:
+    with pytest.raises(BootstrapError, match="glibc lost locales: locale -a went 5 -> 4") as err:
         run_bootstrap(c)
     assert err.value.phase == "bootstrap:glibc"
 
@@ -147,3 +158,37 @@ def test_run_bootstrap_wraps_a_failed_command_with_step_and_transcript(stage3: P
     assert err.value.phase == "bootstrap:gcc"
     assert "boom" in err.value.output
     assert "[binutils] binutils-config" in err.value.output  # the transcript so far
+
+
+def test_the_flow_reproduces_the_whole_command_sequence(stage3: Path) -> None:
+    """Every command, in order: what bootstrap.py ran before its steps moved
+    into variants/flow.yaml (and what the lab's step0-5 + P scripts ran)."""
+    c = FakeContainer(stage3)
+    run_bootstrap(c)
+    assert c.calls == [
+        ["locale-gen"],
+        ["eselect", "locale", "set", "en_US.UTF-8"],
+        ["env-update"],
+        _emerge("sys-kernel/linux-headers", "sys-devel/binutils"),
+        ["binutils-config", f"{_CHOST}-2.45"],
+        ["env-update"],
+        _emerge("sys-devel/gcc"),
+        ["gcc-config", f"{_CHOST}-15"],
+        ["env-update"],
+        _emerge("dev-build/libtool"),
+        ["locale", "-a"],
+        _emerge("sys-libs/glibc"),
+        ["locale", "-a"],
+        _emerge("@preserved-rebuild"),
+        _emerge("dev-util/ccache"),
+    ]
+
+
+def test_the_flow_refuses_an_unknown_step_kind(tmp_path: Path) -> None:
+    from shidashi.flow import FlowError
+
+    (tmp_path / "flow.yaml").write_text(
+        "bootstrap:\n  steps:\n    - {name: x, do: reboot}\n", encoding="utf-8"
+    )
+    with pytest.raises(FlowError, match="reboot"):
+        load_flow(tmp_path)

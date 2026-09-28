@@ -1,0 +1,52 @@
+# variants/flow.yaml — what a build does, phase by phase, step by step.
+#
+# The engine (shidashi/) knows the step KINDS; the order, the packages and the
+# parameters are here. Edit this file to change the process. Each `do:` is one
+# kind, documented in shidashi/flow.py; `name` is what logs and errors show
+# (a failure reads "bootstrap:<name>").
+#
+# Order of a build (the parts not yet in this file are in shidashi/factory.py):
+#   seed (verified stage3) → layers' rootfs/ + portage/ → BOOTSTRAP (below) →
+#   bootstrap checkpoint → generation fingerprint → the stage chain
+#   (variants/base → minimal → desktop → flavor: sets, cuts, fork points).
+
+# --- bootstrap -------------------------------------------------------------------
+# Brings the stage3's toolchain to the pinned tree's versions before the base
+# rebuilds everything with --emptytree -- otherwise the whole image would be built
+# by the stage3's own gcc. Runs only over a fresh stage3; a build that restores a
+# checkpoint or a stage fork point skips it. (BOOTSTRAP-PROCESS.md §1, D22.)
+bootstrap:
+  # buildpkg and ccache are ON in the base make.conf for the world build; only
+  # the environment turns them off without touching package.env (F65).
+  env:
+    FEATURES: "-buildpkg -ccache"
+  steps:
+    # 0 -- locales from the curated /etc/locale.gen, selected BY NAME: indices
+    #      shift between runs (F9); the spelling must match locale.gen exactly.
+    - {name: locale, do: locale, locale: en_US.UTF-8}
+
+    # 1 -- kernel headers and binutils, then the newest binutils.
+    - {name: binutils, do: emerge, atoms: [sys-kernel/linux-headers, sys-devel/binutils]}
+    - {name: binutils, do: select-toolchain, tool: binutils}
+
+    # 2 -- gcc lands in a NEW slot; merging does not switch to it (F8).
+    - {name: gcc, do: emerge, atoms: [sys-devel/gcc]}
+    - {name: gcc, do: select-toolchain, tool: gcc}
+
+    # 3 -- libtool, rebuilt against the new gcc. (The category moved: dev-build.)
+    - {name: libtool, do: emerge, atoms: [dev-build/libtool]}
+
+    # 4 -- glibc is built -compile-locales: an upgrade can silently shrink
+    #      `locale -a`. The step counts before and after and fails if it dropped.
+    - {name: glibc, do: emerge, atoms: [sys-libs/glibc], keep_locales: true}
+
+    # 5 -- whatever still links against a replaced library.
+    - {name: preserved, do: emerge, atoms: ["@preserved-rebuild"]}
+
+    # P -- the ccache binary, while FEATURES still says -ccache: Portage refuses
+    #      FEATURES=ccache without it, and the base turns it on next.
+    - {name: ccache, do: emerge, atoms: [dev-util/ccache]}
+
+    # Every step above is --oneshot: anything in the world file would be rebuilt
+    # by the base and shipped.
+    - {name: world, do: assert-world-empty}
