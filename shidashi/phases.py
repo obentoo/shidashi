@@ -33,6 +33,7 @@ import pydantic
 
 from shidashi import config, state
 from shidashi.container import Container
+from shidashi.flow import StagesFlow, active_flow
 from shidashi.recipe import Phase, ResolvedRecipe, UseBreak
 from shidashi.resolve import _atom_from_ebuild_line, _iter_atom_lines, apply_portage
 from shidashi.seed import ROOTFS_TAR_FLAGS
@@ -132,7 +133,14 @@ def phase_target(phase: Phase, recipe: ResolvedRecipe) -> tuple[str, ...]:
     return sets or phase.packages
 
 
-def phase_emerge_argv(phase: Phase, recipe: ResolvedRecipe, *, emptytree: bool) -> list[str]:
+def stages_flow() -> StagesFlow:
+    """The ``stages`` part of the flow in force (``variants/flow.yaml``)."""
+    return active_flow(config.variants_dir()).stages
+
+
+def phase_emerge_argv(
+    phase: Phase, recipe: ResolvedRecipe, *, emptytree: bool, flow: StagesFlow | None = None
+) -> list[str]:
     """Monta o argv de ``emerge`` para uma fase (R3.1, D24). Puro.
 
     O modo vem do estágio, não do nome da fase:
@@ -149,13 +157,17 @@ def phase_emerge_argv(phase: Phase, recipe: ResolvedRecipe, *, emptytree: bool) 
     fingerprint check (:mod:`shidashi.generation`) runs before the first phase,
     since Portage itself never compares CFLAGS or the toolchain (D26).
     """
+    emerge = (flow or stages_flow()).emerge
     if phase.emptytree and emptytree:
-        mode: tuple[str, ...] = ("--emptytree",)
+        mode: tuple[str, ...] = emerge.rebuild
     elif phase.stage:
-        mode = ("--update", "--deep", "--newuse")
+        mode = emerge.update
     else:
         mode = ()
-    return ["emerge", "--verbose", "--usepkg", *mode, *phase_target(phase, recipe)]
+    target = phase_target(phase, recipe)
+    if phase.stage and not phase.emptytree and not emerge.world:
+        target = tuple(t for t in target if t != "@world")
+    return ["emerge", *emerge.options, *mode, *target]
 
 
 # --- 3.2 package.use transitório do break-pass -------------------------------
@@ -594,21 +606,26 @@ def run_phase(
     """
     if not phase_target(phase, recipe):
         # Fase sem alvo é NO-OP, no mesmo espírito de settle_pass com breaks
-        # vazio: nenhum `emerge` é executado. Acontece legitimamente quando a
-        # receita não declara nenhum dos sets da fase -- `minimal` não declara
-        # `gpu` nem `extra-media`, logo a fase `graphics` não tem o que instalar.
-        # Sem isto o argv seria `emerge --verbose` sem alvo nenhum.
+        # vazio: nenhum `emerge` é executado. Hoje só uma fase que não é estágio
+        # (a `seat` do openrc) sem átomos cairia aqui; um estágio sempre tem @world.
         return PhaseResult(phase=phase, built_atoms=(), snapshot=None, output="")
-    if phase.layers:
-        # The configuration in force for THIS stage (D24). Layers only grow
-        # along the chain, so re-applying is additive: the desktop stage adds the
-        # graphical layer on top of what minimal already had.
-        apply_portage(
-            container.rootfs, recipe, variants_dir=config.variants_dir(), layers=phase.layers
-        )
-    write_use_break(container.rootfs, phase)
-    argv = phase_emerge_argv(phase, recipe, emptytree=emptytree)
-    built, output = _run_emerge(container, argv, phase=phase.name)
+    flow = stages_flow()
+    before, _after = flow.split()
+    built: tuple[str, ...] = ()
+    output = ""
+    # the steps up to the emerge, in the order variants/flow.yaml declares them
+    for kind in before:
+        if kind == "apply-config" and phase.layers:
+            # The configuration in force for THIS stage (D24). Layers only grow
+            # along the chain, so re-applying is additive.
+            apply_portage(
+                container.rootfs, recipe, variants_dir=config.variants_dir(), layers=phase.layers
+            )
+        elif kind == "write-cuts":
+            write_use_break(container.rootfs, phase)
+        elif kind == "emerge-stage":
+            argv = phase_emerge_argv(phase, recipe, emptytree=emptytree, flow=flow)
+            built, output = _run_emerge(container, argv, phase=phase.name)
     return PhaseResult(
         phase=phase,
         built_atoms=built,
@@ -659,7 +676,7 @@ def settle_pass(
     if not atoms:
         return PhaseResult(phase=settle, built_atoms=(), snapshot=None)
     built, output = _run_emerge(
-        container, ["emerge", "--verbose", "--newuse", "--oneshot", *atoms], phase="settle"
+        container, ["emerge", *stages_flow().settle.options, *atoms], phase="settle"
     )
     return PhaseResult(phase=settle, built_atoms=built, snapshot=None, output=output)
 
@@ -694,6 +711,7 @@ def run_phases(
     that fork point -- e.g. build the desktop stage alone before a flavor.
     """
     pending = pending_breaks(recipe, through=resume_at)
+    _before, after = stages_flow().split()
     skipping = resume_at is not None
     results: list[PhaseResult] = []
     for phase in recipe.phases:
@@ -703,16 +721,18 @@ def run_phases(
             continue
         results.append(run_phase(container, recipe, phase, emptytree=emptytree))
         pending += phase.use_break
-        if phase.ships:
-            results.append(settle_pass(container, recipe, pending, stage=phase.stage))
-            pending = ()
-        if phase.stage:
-            snapshot_fork_point(
-                container.rootfs,
-                stage_fork_point_path(
-                    recipe, phase.stage, snapshot=snapshot, fork_points_dir=fork_points_dir
-                ),
-            )
+        # the steps after the emerge, in the order variants/flow.yaml declares them
+        for kind in after:
+            if kind == "settle" and phase.ships:
+                results.append(settle_pass(container, recipe, pending, stage=phase.stage))
+                pending = ()
+            elif kind == "snapshot" and phase.stage:
+                snapshot_fork_point(
+                    container.rootfs,
+                    stage_fork_point_path(
+                        recipe, phase.stage, snapshot=snapshot, fork_points_dir=fork_points_dir
+                    ),
+                )
         if stop_after is not None and phase.stage == stop_after:
             break
     return tuple(results)
@@ -850,6 +870,7 @@ def run_phases_stepwise(
     :class:`PhaseResult` executados, cada settle logo após o seu estágio.
     """
     plan = plan_phase_run(recipe, completed=completed, until=until)
+    _before, after = stages_flow().split()
     last_done = next((p.name for p in reversed(recipe.phases) if p.name in completed), None)
 
     run = _RunState(
@@ -876,18 +897,21 @@ def run_phases_stepwise(
         diff = compute_phase_diff(phase.name, entries, blockers, prior_atoms=run.prior_atoms)
         run.record(phase, diff, result.built_atoms)
 
-        if phase.ships:
-            results.append(
-                settle_pass(container, recipe, run.accumulated_breaks, stage=phase.stage)
-            )
-            run.accumulated_breaks = ()
-
-        snapshot_fork_point(
-            container.rootfs,
-            phase_snapshot_path(
-                recipe, snapshot=snapshot, phase=phase.name, fork_points_dir=fork_points_dir
-            ),
-        )
+        # the steps after the emerge, in the order variants/flow.yaml declares them
+        for kind in after:
+            if kind == "settle" and phase.ships:
+                results.append(
+                    settle_pass(container, recipe, run.accumulated_breaks, stage=phase.stage)
+                )
+                run.accumulated_breaks = ()
+            elif kind == "snapshot":
+                snapshot_fork_point(
+                    container.rootfs,
+                    phase_snapshot_path(
+                        recipe, snapshot=snapshot, phase=phase.name,
+                        fork_points_dir=fork_points_dir,
+                    ),
+                )
         run.persist()
 
         if _checkpoint_decision(on_checkpoint, container, phase.name, diff) is (

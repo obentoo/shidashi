@@ -50,3 +50,28 @@ bootstrap:
     # Every step above is --oneshot: anything in the world file would be rebuilt
     # by the base and shipped.
     - {name: world, do: assert-world-empty}
+
+# --- stages ---------------------------------------------------------------------
+# What EVERY stage of the chain does -- base → minimal → desktop → <flavor>, as
+# declared by variants/base/base.yaml, minimal/, desktop/ and flavor/<f>/ -- in
+# this order. Which sets it installs and which cycle cuts it declares come from
+# the stage's own YAML; how it emerges comes from here.
+stages:
+  emerge:
+    options: [--verbose, --usepkg]        # --usepkg: the generation's binpkgs (D26)
+    rebuild: [--emptytree]                 # the stage with `update: emptytree` (base)
+    update: [--update, --deep, --newuse]   # every later stage
+    world: true                            # -uDN @world @<sets>: USE changes reach
+                                           # packages outside the new sets (792f565)
+  settle:
+    options: [--verbose, --newuse, --oneshot]
+  steps:
+    # before the emerge
+    - {name: config, do: apply-config}     # layers up to this stage + quirks.yaml
+    - {name: cuts, do: write-cuts}         # this stage's use_break → package.use
+    - {name: emerge, do: emerge-stage}
+    # after the emerge
+    - {name: settle, do: settle}           # only where the stage `ships`: undo the
+                                           # cuts pending since the last settle, on
+                                           # the packages that are installed (F72)
+    - {name: fork-point, do: snapshot}     # restored by later builds (D24)

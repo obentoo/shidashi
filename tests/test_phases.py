@@ -530,3 +530,69 @@ def test_run_phases_stop_after_a_shipped_stage_includes_its_settle(
         ("base", "base"), ("minimal", "minimal"), ("settle", "minimal"),
     ]
     assert snaps == ["v3-systemd-S-base.tar", "v3-systemd-S-minimal.tar"]
+
+
+# --- the stage steps come from variants/flow.yaml ---------------------------------
+
+
+def _flow_with(**changes: Any) -> Any:
+    from shidashi.flow import StagesFlow
+
+    base = phases.stages_flow().model_dump()
+    base.update(changes)
+    return StagesFlow.model_validate(base)
+
+
+def test_an_option_added_in_the_flow_reaches_the_stage_emerge(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Adding e.g. --keep-going is an edit of flow.yaml, not of Python."""
+    flow = phases.stages_flow()
+    edited = _flow_with(emerge={**flow.emerge.model_dump(),
+                                "options": (*flow.emerge.options, "--keep-going")})
+    monkeypatch.setattr(phases, "stages_flow", lambda: edited)
+    base = Phase(name="base", stage="base", sets=("base",), emptytree=True)
+    argv = phase_emerge_argv(base, _recipe(), emptytree=True)
+    assert argv[:4] == ["emerge", "--verbose", "--usepkg", "--keep-going"]
+
+
+def test_the_steps_after_the_emerge_run_in_the_declared_order(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Declared snapshot-before-settle, the fork point is taken first."""
+    steps = [s.model_dump() for s in phases.stages_flow().steps]
+    settle = next(s for s in steps if s["do"] == "settle")
+    snap = next(s for s in steps if s["do"] == "snapshot")
+    order = [s for s in steps if s["do"] not in ("settle", "snapshot")] + [snap, settle]
+    edited = _flow_with(steps=order)
+    monkeypatch.setattr(phases, "stages_flow", lambda: edited)
+    events: list[str] = []
+    monkeypatch.setattr(
+        phases, "snapshot_fork_point", lambda _root, dest: events.append(f"snap:{dest.name}")
+    )
+    real_settle = phases.settle_pass
+
+    def _settle(*a: Any, **k: Any) -> Any:
+        events.append("settle")
+        return real_settle(*a, **k)
+
+    monkeypatch.setattr(phases, "settle_pass", _settle)
+    container = _RecordingContainer(tmp_path / "rootfs")
+    phases.run_phases(
+        container, _chain_recipe(), emptytree=True, snapshot="S",
+        fork_points_dir=tmp_path, stop_after="minimal",
+    )
+    assert events == ["snap:v3-systemd-S-base.tar", "snap:v3-systemd-S-minimal.tar", "settle"]
+
+
+def test_the_flow_refuses_stage_steps_that_make_no_sense() -> None:
+    from pydantic import ValidationError
+
+    flow = phases.stages_flow()
+    steps = [s.model_dump() for s in flow.steps]
+    no_settle = [s for s in steps if s["do"] != "settle"]
+    with pytest.raises(ValidationError, match="`settle` exactly once"):
+        _flow_with(steps=no_settle)
+    emerge_first = sorted(steps, key=lambda s: s["do"] != "emerge-stage")
+    with pytest.raises(ValidationError, match="must come before emerge-stage"):
+        _flow_with(steps=emerge_first)
