@@ -648,8 +648,9 @@ def test_app_alternatives_alone_trade_collision_protect_for_protect_owned(
         for line in f.read_text(encoding="utf-8").splitlines()
         if line.strip() and not line.startswith("#")
     ]
-    assert ["app-alternatives/*", "protect-owned.conf"] in mapping
-    env = (portage / "env" / "protect-owned.conf").read_text(encoding="utf-8")
+    # rendered from variants/base/quirks.yaml
+    assert ["app-alternatives/*", "quirk-app-alternatives.conf"] in mapping
+    env = (portage / "env" / "quirk-app-alternatives.conf").read_text(encoding="utf-8")
     assert 'FEATURES="-collision-protect protect-owned"' in env
 
 
@@ -678,10 +679,8 @@ def test_openjdk_builds_without_ccache(tmp_path: Path) -> None:
         for line in f.read_text(encoding="utf-8").splitlines()
         if line.strip() and not line.startswith("#")
     ]
-    assert ["dev-java/openjdk", "no-ccache.conf"] in mapping
-    assert 'FEATURES="-ccache"' in (portage / "env" / "no-ccache.conf").read_text(encoding="utf-8")
-    # F74: its javac server talks over loopback, which network-sandbox leaves
-    # down inside nspawn
-    assert ["dev-java/openjdk", "no-network-sandbox.conf"] in mapping
-    env = (portage / "env" / "no-network-sandbox.conf").read_text(encoding="utf-8")
-    assert 'FEATURES="-network-sandbox"' in env
+    # rendered from variants/base/quirks.yaml; F74: its javac server also talks
+    # over loopback, which network-sandbox leaves down inside nspawn
+    assert ["dev-java/openjdk", "quirk-dev-java_openjdk.conf"] in mapping
+    env = (portage / "env" / "quirk-dev-java_openjdk.conf").read_text(encoding="utf-8")
+    assert 'FEATURES="-ccache -network-sandbox"' in env

@@ -1,0 +1,48 @@
+# variants/base/quirks.yaml — packages that cannot build with the base's defaults.
+#
+# One entry per atom: what changes for it, why, and where it was found (a
+# LAB-NOTES finding or a date). Shidashi renders these into the Portage files --
+# /etc/portage/package.env/zz-quirks, env/quirk-*.conf, package.mask/zz-quirks --
+# every time it assembles the configuration. Edit here; never the rendered files.
+#
+#   atom:      a package atom; wildcards allowed (app-alternatives/*)
+#   features:  FEATURES tokens for that atom only, e.g. [-ccache]
+#   mask:      true to put the atom in package.mask
+#   why:       the reason, in words someone else can check
+#   found:     the finding id or date that proves it
+#
+# Any layer may have its own quirks.yaml; the ones of every layer in force apply.
+
+- atom: dev-java/openjdk
+  features: [-ccache, -network-sandbox]
+  why: |
+    Its ebuild dies in pkg_pretend under FEATURES=ccache ("FEATURES=ccache doesn't
+    work with openjdk", bug #677876), and pkg_pretend runs for every package of a
+    merge before the first build, so it stopped the whole kde stage at once.
+    Its build also runs a javac server reached over localhost. network-sandbox
+    puts each build in its own netns and must bring `lo` up there, which needs
+    CAP_NET_ADMIN; nspawn withholds it from a container on the host network
+    ("Unable to configure loopback interface"), so javac got "Network is
+    unreachable". Granting CAP_NET_ADMIN would let a build reconfigure the HOST
+    network, hence a per-package exception.
+  found: F73, F74 (kde runs, 2026-09-27/28)
+
+- atom: app-alternatives/*
+  features: [-collision-protect, protect-owned]
+  why: |
+    The base runs collision-protect (F43). Providers such as app-arch/cpio create
+    the alternative's symlink UNOWNED in pkg_postinst (`ln -s gcpio /bin/cpio`)
+    for app-alternatives/* to take over, which Gentoo's default protect-owned
+    allows and collision-protect refuses. gzip, tar, bzip2 and awk follow the same
+    pattern; they passed only because the stage3 already had their alternative.
+  found: F71 (base build, 2026-09-26)
+
+- atom: sys-firmware/seabios
+  mask: true
+  why: |
+    app-emulation/qemu depends on || ( seabios[seavgabios] seabios-bin ) and
+    Portage takes the first satisfiable one, so it compiled SeaBIOS, whose
+    PYTHON_COMPAT stops at python3_13 -- dev-lang/python:3.13 entered the kde
+    image outside PYTHON_TARGETS=python3_14 (D15). Masked, qemu takes seabios-bin,
+    which the seabios ebuild itself recommends.
+  found: kde plan, 2026-09-27

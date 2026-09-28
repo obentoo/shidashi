@@ -1,2 +1,0 @@
-# Builds that need a working loopback; see env/no-network-sandbox.conf (F74).
-dev-java/openjdk  no-network-sandbox.conf

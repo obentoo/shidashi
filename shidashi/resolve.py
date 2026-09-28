@@ -247,6 +247,8 @@ def apply_portage(
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(item.read_bytes())
 
+    _write_quirks(dest, variants_dir, chosen, provider)
+
     jobs = _jobs_override()
     if jobs is not None:
         make_conf_parts.append((f"runtime ({_JOBS_ENV})", f'MAKEOPTS="-j{jobs} -l{jobs}"\n'))
@@ -289,6 +291,48 @@ def apply_rootfs(
             shutil.copy2(item, target)
             written.append("/" + rel.as_posix())
     return tuple(dict.fromkeys(written))
+
+
+def _write_quirks(
+    dest: Path, variants_dir: Path, layers: tuple[str, ...], provider: dict[str, str]
+) -> None:
+    """Render every layer's ``quirks.yaml`` into ``dest`` (:mod:`shidashi.quirks`).
+
+    The entries of all layers in force are merged and rendered once. An atom in
+    two layers' registries is a curation error, like two layers delivering the
+    same file: it raises instead of letting one silently win.
+    """
+    from shidashi.quirks import Quirk, QuirksError, load_quirks, render_quirks
+
+    merged: list[Quirk] = []
+    sources: list[str] = []
+    owner: dict[str, str] = {}
+    for layer in layers:
+        path = variants_dir / layer / "quirks.yaml"
+        try:
+            quirks = load_quirks(path)
+        except QuirksError as err:
+            raise ResolveError(str(err)) from err
+        for q in quirks:
+            if q.atom in owner:
+                raise ResolveError(
+                    f"quirk {q.atom!r} is declared by both {owner[q.atom]!r} and {layer!r}"
+                )
+            owner[q.atom] = layer
+        if quirks:
+            merged.extend(quirks)
+            sources.append(f"variants/{layer}/quirks.yaml")
+    if not merged:
+        return
+    for rel, text in render_quirks(tuple(merged), source=", ".join(sources)).items():
+        if rel in provider:
+            raise ResolveError(
+                f"etc/portage/{rel} is rendered from quirks.yaml but layer "
+                f"{provider[rel]!r} also delivers it"
+            )
+        target = dest / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text, encoding="utf-8")
 
 
 _JOBS_ENV = "SHIDASHI_JOBS"
