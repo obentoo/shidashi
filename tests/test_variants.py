@@ -665,3 +665,18 @@ def test_seabios_is_taken_prebuilt(tmp_path: Path) -> None:
         if line.strip() and not line.startswith("#")
     ]
     assert "sys-firmware/seabios" in masked
+
+
+def test_openjdk_builds_without_ccache(tmp_path: Path) -> None:
+    """F73: openjdk's pkg_pretend dies under FEATURES=ccache, and pkg_pretend
+    runs for every package before the first build -- it stopped the whole kde
+    flavor. It gets its own package.env; the base keeps ccache on."""
+    portage = _assemble(tmp_path, "v3", "kde", "systemd")
+    mapping = [
+        line.split()
+        for f in (portage / "package.env").iterdir()
+        for line in f.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.startswith("#")
+    ]
+    assert ["dev-java/openjdk", "no-ccache.conf"] in mapping
+    assert 'FEATURES="-ccache"' in (portage / "env" / "no-ccache.conf").read_text(encoding="utf-8")
