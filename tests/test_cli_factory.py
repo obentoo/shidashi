@@ -368,3 +368,22 @@ def test_factory_stop_after_refuses_a_stage_not_in_the_chain(
     )
     assert result.exit_code == 1
     assert "desktop" in result.output
+
+
+def test_factory_failure_output_is_printed_verbatim_not_as_markup(
+    monkeypatch: pytest.MonkeyPatch, variants_tree: Path
+) -> None:
+    """Regression (2026-09-28): make's `[/var/tmp/.../Init.gmk:151: main]` in the
+    emerge output was parsed as a rich closing tag, and the CLI died with
+    MarkupError instead of showing why openjdk failed."""
+    make_line = "make[1]: *** [/var/tmp/portage/x/make/Init.gmk:151: main] Error 2"
+
+    def _boom(**_k: object) -> Any:
+        raise FactoryError("emerge failed [/in/brackets]", phase="flavor", output=make_line)
+
+    monkeypatch.setattr(cli, "Factory", _fake_factory(_boom), raising=False)
+    result = runner.invoke(app, ["factory", "v3", "minimal", "systemd"])
+    assert result.exit_code == 1
+    assert not isinstance(result.exception, Exception) or isinstance(result.exception, SystemExit)
+    assert "Init.gmk:151: main] Error 2" in result.output
+    assert "[/in/brackets]" in result.output

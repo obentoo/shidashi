@@ -680,3 +680,8 @@ def test_openjdk_builds_without_ccache(tmp_path: Path) -> None:
     ]
     assert ["dev-java/openjdk", "no-ccache.conf"] in mapping
     assert 'FEATURES="-ccache"' in (portage / "env" / "no-ccache.conf").read_text(encoding="utf-8")
+    # F74: its javac server talks over loopback, which network-sandbox leaves
+    # down inside nspawn
+    assert ["dev-java/openjdk", "no-network-sandbox.conf"] in mapping
+    env = (portage / "env" / "no-network-sandbox.conf").read_text(encoding="utf-8")
+    assert 'FEATURES="-network-sandbox"' in env

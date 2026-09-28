@@ -24,6 +24,7 @@ from typing import Annotated
 import typer
 import yaml
 from rich.console import Console
+from rich.markup import escape
 from rich.prompt import Prompt
 from rich.table import Table
 
@@ -161,7 +162,7 @@ def recipe_show(
     try:
         resolved = _resolve(arch, flavor, init)
     except (config.UnknownAxisError, RecipeChainError) as err:
-        _err_console.print(f"[bold red]erro:[/bold red] {err}")
+        _err_console.print(f"[bold red]erro:[/bold red] {escape(str(err))}")
         raise typer.Exit(1) from err
 
     if output_format is OutputFormat.yaml:
@@ -178,7 +179,7 @@ def recipe_validate(arch: str, flavor: str, init: str) -> None:
     try:
         _resolve(arch, flavor, init)
     except (config.UnknownAxisError, RecipeChainError) as err:
-        _err_console.print(f"[bold red]inválida:[/bold red] {err}")
+        _err_console.print(f"[bold red]inválida:[/bold red] {escape(str(err))}")
         raise typer.Exit(1) from err
     typer.echo(f"válida: {arch} × {flavor} × {init}")
 
@@ -252,8 +253,8 @@ def pretend(
         report = pretend_resolve(arch, flavor, init, download=not no_download, keep=keep)
     except (SeedError, ResolveError, config.UnknownAxisError, RecipeChainError) as err:
         if isinstance(err, ResolveError) and err.raw_output:
-            _err_console.print(err.raw_output)
-        _err_console.print(f"[bold red]erro:[/bold red] {err}")
+            _err_console.print(err.raw_output, markup=False, highlight=False)
+        _err_console.print(f"[bold red]erro:[/bold red] {escape(str(err))}")
         raise typer.Exit(1) from err
 
     if output_format is OutputFormat.json:
@@ -392,9 +393,9 @@ def _on_failure(phase: str, err: Exception) -> FailureDecision:
     """
     failing = getattr(err, "phase", None) or phase
     output = getattr(err, "output", "")
-    _err_console.print(f"[bold red]falha na fase[/bold red] {failing}: {err}")
+    _err_console.print(f"[bold red]falha na fase[/bold red] {failing}: {escape(str(err))}")
     if output:
-        _err_console.print(output)
+        _err_console.print(output, markup=False, highlight=False)
     choice = _prompt_choice("retry/abort", ["r", "a"], "a")
     if choice == "r":
         return FailureDecision.RETRY
@@ -491,13 +492,13 @@ def factory(
     try:
         resolved = _resolve(arch, flavor, init)
     except (config.UnknownAxisError, RecipeChainError) as err:
-        _err_console.print(f"[bold red]erro:[/bold red] {err}")
+        _err_console.print(f"[bold red]erro:[/bold red] {escape(str(err))}")
         raise typer.Exit(1) from err
 
     try:
         pkgdir = pkgdir_opt if pkgdir_opt is not None else _generation_pkgdir(arch, init)
     except SeedError as err:
-        _err_console.print(f"[bold red]erro:[/bold red] {err}")
+        _err_console.print(f"[bold red]erro:[/bold red] {escape(str(err))}")
         raise typer.Exit(1) from err
 
     if stop_after is not None and stop_after not in resolved.stages:
@@ -592,16 +593,19 @@ def _run_factory_oneshot(
             )
     except FactoryError as err:
         if err.phase:
-            _err_console.print(f"[bold red]falha na fase[/bold red] {err.phase}: {err}")
+            _err_console.print(
+                f"[bold red]falha na fase[/bold red] "
+                f"{escape(str(err.phase))}: {escape(str(err))}"
+            )
         else:
-            _err_console.print(f"[bold red]erro:[/bold red] {err}")
+            _err_console.print(f"[bold red]erro:[/bold red] {escape(str(err))}")
         if err.output:
-            _err_console.print(err.output)
+            _err_console.print(err.output, markup=False, highlight=False)
         raise typer.Exit(1) from err
     except (SeedError, ResolveError, config.UnknownAxisError, RecipeChainError) as err:
         if isinstance(err, ResolveError) and err.raw_output:
-            _err_console.print(err.raw_output)
-        _err_console.print(f"[bold red]erro:[/bold red] {err}")
+            _err_console.print(err.raw_output, markup=False, highlight=False)
+        _err_console.print(f"[bold red]erro:[/bold red] {escape(str(err))}")
         raise typer.Exit(1) from err
 
     if output_format is OutputFormat.json:
@@ -659,20 +663,23 @@ def _run_factory_stepwise(
             reset, force_resume = _resolve_stale_state(err)
             continue
         except ValueError as err:
-            _err_console.print(f"[bold red]erro:[/bold red] {err}")
+            _err_console.print(f"[bold red]erro:[/bold red] {escape(str(err))}")
             raise typer.Exit(1) from err
         except FactoryError as err:
             if err.phase:
-                _err_console.print(f"[bold red]falha na fase[/bold red] {err.phase}: {err}")
+                _err_console.print(
+                    f"[bold red]falha na fase[/bold red] "
+                    f"{escape(str(err.phase))}: {escape(str(err))}"
+                )
             else:
-                _err_console.print(f"[bold red]erro:[/bold red] {err}")
+                _err_console.print(f"[bold red]erro:[/bold red] {escape(str(err))}")
             if err.output:
-                _err_console.print(err.output)
+                _err_console.print(err.output, markup=False, highlight=False)
             raise typer.Exit(1) from err
         except (SeedError, ResolveError, config.UnknownAxisError, RecipeChainError) as err:
             if isinstance(err, ResolveError) and err.raw_output:
-                _err_console.print(err.raw_output)
-            _err_console.print(f"[bold red]erro:[/bold red] {err}")
+                _err_console.print(err.raw_output, markup=False, highlight=False)
+            _err_console.print(f"[bold red]erro:[/bold red] {escape(str(err))}")
             raise typer.Exit(1) from err
 
     if output_format is OutputFormat.json:
@@ -715,7 +722,7 @@ def _resolve_stale_state(err: StaleStateError) -> tuple[bool, bool]:
     (recomeça do zero); ``proceed`` → ``(False, True)`` (retoma assim mesmo). O
     chamador re-invoca :meth:`Factory.build_stepwise` com as flags devolvidas.
     """
-    _err_console.print(f"[bold yellow]estado obsoleto:[/bold yellow] {err}")
+    _err_console.print(f"[bold yellow]estado obsoleto:[/bold yellow] {escape(str(err))}")
     if not _stdin_isatty():
         _err_console.print(
             "[bold red]erro:[/bold red] estado de build obsoleto; rode com --reset "
@@ -792,13 +799,13 @@ def assemble(
     try:
         resolved = _resolve(arch, flavor, init)
     except (config.UnknownAxisError, RecipeChainError) as err:
-        _err_console.print(f"[bold red]erro:[/bold red] {err}")
+        _err_console.print(f"[bold red]erro:[/bold red] {escape(str(err))}")
         raise typer.Exit(1) from err
 
     try:
         binhost = binhost_opt if binhost_opt is not None else _generation_pkgdir(arch, init)
     except SeedError as err:
-        _err_console.print(f"[bold red]erro:[/bold red] {err}")
+        _err_console.print(f"[bold red]erro:[/bold red] {escape(str(err))}")
         raise typer.Exit(1) from err
     iso_path = output if output is not None else Path(f"bentoo-{flavor}-{init}-{arch}.iso")
 
@@ -808,15 +815,15 @@ def assemble(
         )
     except (AssemblerError, ImageError, SeedError, ResolveError) as err:
         if isinstance(err, ResolveError) and err.raw_output:
-            _err_console.print(err.raw_output)
-        _err_console.print(f"[bold red]erro:[/bold red] {err}")
+            _err_console.print(err.raw_output, markup=False, highlight=False)
+        _err_console.print(f"[bold red]erro:[/bold red] {escape(str(err))}")
         raise typer.Exit(1) from err
     except subprocess.CalledProcessError as err:
         _err_console.print(
             f"[bold red]falha de emerge/dracut na ISO[/bold red] (exit {err.returncode})"
         )
         if err.stderr:
-            _err_console.print(err.stderr)
+            _err_console.print(err.stderr, markup=False, highlight=False)
         raise typer.Exit(1) from err
 
     if output_format is OutputFormat.json:
