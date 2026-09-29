@@ -113,15 +113,23 @@ def _kernel_version(rootfs: Path) -> str:
 
 
 def _locate_kernel(rootfs: Path, kver: str) -> Path:
-    """Localiza o ``vmlinuz`` do kernel ``kver`` em ``${rootfs}/boot/`` (OVERVIEW §7).
+    """Localiza o ``vmlinuz`` do kernel ``kver`` no rootfs (OVERVIEW §7).
 
-    Tenta ``boot/vmlinuz-<kver>`` (convenção dist-kernel) e, se ausente, qualquer
-    ``boot/vmlinuz*``; levanta :class:`AssemblerError` se não achar imagem alguma.
+    Tenta, em ordem: ``boot/vmlinuz-<kver>`` (convenção dist-kernel);
+    ``usr/lib/modules/<kver>/vmlinuz``, where kernel-install keeps the image --
+    the only place it is when installkernel[uki] (the base's SYSTEMD="boot uki
+    ukify") writes a UKI to ``boot/EFI/Linux`` instead of ``boot/vmlinuz``; and
+    qualquer ``boot/vmlinuz*``. Levanta :class:`AssemblerError` se não achar.
+    The modules entry is a relative symlink into ``usr/src``; it must resolve
+    inside the rootfs, never to the host.
     """
     boot = rootfs / "boot"
     candidate = boot / f"vmlinuz-{kver}"
     if candidate.is_file():
         return candidate
+    modules = rootfs / "usr" / "lib" / "modules" / kver / "vmlinuz"
+    if modules.is_file() and modules.resolve().is_relative_to(rootfs.resolve()):
+        return modules
     globbed = sorted(boot.glob("vmlinuz*")) if boot.is_dir() else []
     if not globbed:
         raise AssemblerError(f"nenhum vmlinuz encontrado em {boot} (kernel não instalado?)")
@@ -200,6 +208,9 @@ class Assembler:
 
         pointer = load_pointer(recipe.init, seeds_dir=config.seeds_dir())
         tarball = fetch_stage3(pointer, cache_dir=config.cache_dir(), download=download)
+        # a fresh stage3 into a fresh directory: a failed --keep run leaves its
+        # rootfs, and extracting over it would inherit what that run left
+        shutil.rmtree(rootfs, ignore_errors=True)
         extract_stage3(tarball, rootfs)
 
         apply_rootfs(rootfs, recipe, variants_dir=config.variants_dir())
@@ -212,7 +223,14 @@ class Assembler:
 
         keep_rootfs = keep
         try:
-            with Container(rootfs, ephemeral=False, binds=binds_ro, binds_rw=binds_rw) as container:
+            with Container(
+                rootfs,
+                ephemeral=False,
+                binds=binds_ro,
+                binds_rw=binds_rw,
+                # installing ~1800 binpkgs takes a while: stream it, like the factory
+                log=config.scratch_dir() / "logs" / f"assemble-{key}.log",
+            ) as container:
                 container.run(iso_emerge_argv(recipe))
                 # The stage3 under the ISO keeps what the closure does not reach:
                 # its own gcc and binutils slots, bootstrap leftovers. Measured on

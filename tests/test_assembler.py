@@ -213,7 +213,9 @@ class _FakeContainer:
         ephemeral: bool,
         binds: list[tuple[Path, Path]],
         binds_rw: list[tuple[Path, Path]],
+        log: Path | None = None,
     ) -> None:
+        self.log = log
         self.rootfs = rootfs
         self.binds = binds
         self.binds_rw = binds_rw
@@ -460,3 +462,23 @@ def test_install_sets_raises_when_declared_set_is_missing(
 
     with pytest.raises(ResolveError, match="ausente"):
         _install_sets(tmp_path / "rootfs", _recipe(sets=("nao-existe",)))
+
+
+def test_locate_kernel_finds_the_image_of_a_uki_install(tmp_path: Path) -> None:
+    """installkernel[uki] (the base's SYSTEMD="boot uki ukify") puts a UKI in
+    /boot/EFI/Linux and NO /boot/vmlinuz. The kernel image is still where
+    kernel-install keeps it: usr/lib/modules/<kver>/vmlinuz, a relative symlink
+    to the dist-kernel's bzImage -- the pipeline's kde image, 2026-09-29."""
+    kver = "7.2.6-gentoo-dist"
+    (tmp_path / "boot" / "EFI" / "Linux").mkdir(parents=True)
+    (tmp_path / "boot" / "EFI" / "Linux" / f"x-{kver}.efi").write_bytes(b"UKI")
+    bz = tmp_path / "usr" / "src" / f"linux-{kver}" / "arch" / "x86" / "boot" / "bzImage"
+    bz.parent.mkdir(parents=True)
+    bz.write_bytes(b"KERNEL")
+    mods = tmp_path / "usr" / "lib" / "modules" / kver
+    mods.mkdir(parents=True)
+    (mods / "vmlinuz").symlink_to(f"../../../src/linux-{kver}/arch/x86/boot/bzImage")
+
+    found = _locate_kernel(tmp_path, kver)
+    assert found == mods / "vmlinuz"
+    assert found.read_bytes() == b"KERNEL"
