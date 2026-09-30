@@ -31,6 +31,11 @@ def _emerge(*atoms: str) -> list[str]:
     return ["env", _FEATURES, "emerge", "--oneshot", *atoms]
 
 
+# ccache is built with buildpkg on: no later stage rebuilds it, and the ISO
+# installs @devel from binpkgs only (2026-09-29).
+_CCACHE = ["env", "FEATURES=-ccache", "emerge", "--oneshot", "dev-util/ccache"]
+
+
 _CHOST = "x86_64-pc-linux-gnu"
 
 
@@ -44,6 +49,9 @@ class FakeContainer:
             "sys-devel/binutils": lambda: self._slot("binutils", f"{_CHOST}-2.45"),
             "sys-devel/gcc": lambda: self._slot("gcc", f"{_CHOST}-15"),
         }
+
+    def check_generation(self) -> None:
+        self.calls.append(["<check-generation>"])
 
     def _slot(self, kind: str, name: str) -> None:
         (self.rootfs / "etc/env.d" / kind / name).write_text("", encoding="utf-8")
@@ -99,7 +107,7 @@ def test_emerge_argv_is_oneshot_with_the_flows_environment() -> None:
 
 def test_run_bootstrap_runs_the_lab_sequence_and_selects_the_new_slots(stage3: Path) -> None:
     c = FakeContainer(stage3)
-    result = run_bootstrap(c)
+    result = run_bootstrap(c, on_generation=c.check_generation)
 
     assert result.binutils == f"{_CHOST}-2.45"
     assert result.gcc == f"{_CHOST}-15"
@@ -116,11 +124,11 @@ def test_run_bootstrap_runs_the_lab_sequence_and_selects_the_new_slots(stage3: P
         ["dev-build/libtool"],
         ["sys-libs/glibc"],
         ["@preserved-rebuild"],
-        ["dev-util/ccache"],
     ]
     assert c.calls[:2] == [["locale-gen"], ["eselect", "locale", "set", "en_US.UTF-8"]]
     assert result.steps == (
-        "locale", "binutils", "gcc", "libtool", "glibc", "preserved", "ccache", "world",
+        "locale", "binutils", "gcc", "libtool", "glibc", "preserved", "generation", "ccache",
+        "world",
     )
 
 
@@ -147,7 +155,7 @@ def test_run_bootstrap_fails_when_the_world_file_is_not_empty(stage3: Path) -> N
         "dev-util/ccache\n", encoding="utf-8"
     )
     with pytest.raises(BootstrapError, match="1 world entries: dev-util/ccache"):
-        run_bootstrap(c)
+        run_bootstrap(c, on_generation=c.check_generation)
 
 
 def test_run_bootstrap_wraps_a_failed_command_with_step_and_transcript(stage3: Path) -> None:
@@ -164,7 +172,7 @@ def test_the_flow_reproduces_the_whole_command_sequence(stage3: Path) -> None:
     """Every command, in order: what bootstrap.py ran before its steps moved
     into variants/flow.yaml (and what the lab's step0-5 + P scripts ran)."""
     c = FakeContainer(stage3)
-    run_bootstrap(c)
+    run_bootstrap(c, on_generation=c.check_generation)
     assert c.calls == [
         ["locale-gen"],
         ["eselect", "locale", "set", "en_US.UTF-8"],
@@ -180,8 +188,77 @@ def test_the_flow_reproduces_the_whole_command_sequence(stage3: Path) -> None:
         _emerge("sys-libs/glibc"),
         ["locale", "-a"],
         _emerge("@preserved-rebuild"),
-        _emerge("dev-util/ccache"),
+        # the fingerprint is checked once the toolchain is final, and before the
+        # first step that writes a binpkg
+        ["<check-generation>"],
+        _CCACHE,
     ]
+
+
+def test_check_generation_without_a_check_to_run_fails_before_ccache(stage3: Path) -> None:
+    c = FakeContainer(stage3)
+    with pytest.raises(BootstrapError, match="no fingerprint check") as err:
+        run_bootstrap(c)
+    assert err.value.phase == "bootstrap:generation"
+    assert _CCACHE not in c.calls
+
+
+def test_a_failed_generation_check_stops_the_bootstrap_before_any_binpkg(stage3: Path) -> None:
+    c = FakeContainer(stage3)
+
+    def mismatch() -> None:
+        raise RuntimeError("PKGDIR belongs to another generation")
+
+    with pytest.raises(RuntimeError, match="another generation"):
+        run_bootstrap(c, on_generation=mismatch)
+    assert _CCACHE not in c.calls
+
+
+def test_a_steps_env_goes_over_the_phases_key_by_key(tmp_path: Path) -> None:
+    (tmp_path / "flow.yaml").write_text(
+        """
+bootstrap:
+  env: {FEATURES: "-buildpkg -ccache", USE: "-doc"}
+  steps:
+    - {name: g, do: check-generation}
+    - {name: c, do: emerge, atoms: [dev-util/ccache], env: {FEATURES: "-ccache"}}
+stages:
+  emerge: {options: [], rebuild: [], update: []}
+  settle: {options: []}
+  steps:
+    - {name: a, do: apply-config}
+    - {name: w, do: write-cuts}
+    - {name: e, do: emerge-stage}
+    - {name: s, do: settle}
+    - {name: f, do: snapshot}
+""",
+        encoding="utf-8",
+    )
+    flow = load_flow(tmp_path).bootstrap
+    step = flow.steps[1]
+    assert flow.step_env(step) == {"FEATURES": "-ccache", "USE": "-doc"}  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    "steps",
+    [
+        # buildpkg on before the fingerprint is known: the binpkg could land in
+        # another generation's PKGDIR (D26)
+        "    - {name: c, do: emerge, atoms: [x/y], env: {FEATURES: \"-ccache\"}}\n"
+        "    - {name: g, do: check-generation}\n",
+        "    - {name: g, do: check-generation}\n    - {name: h, do: check-generation}\n",
+    ],
+)
+def test_the_flow_refuses_binpkgs_before_the_generation_check(
+    tmp_path: Path, steps: str
+) -> None:
+    from shidashi.flow import FlowError
+
+    (tmp_path / "flow.yaml").write_text(
+        "bootstrap:\n  env: {FEATURES: \"-buildpkg\"}\n  steps:\n" + steps, encoding="utf-8"
+    )
+    with pytest.raises(FlowError, match="check-generation"):
+        load_flow(tmp_path)
 
 
 def test_the_flow_refuses_an_unknown_step_kind(tmp_path: Path) -> None:

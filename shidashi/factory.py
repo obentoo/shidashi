@@ -186,14 +186,25 @@ def bootstrap_fork_point_path(
 
 
 def _bootstrap(
-    container: Container, recipe: ResolvedRecipe, *, snapshot: str, fork_points_dir: Path
+    container: Container,
+    recipe: ResolvedRecipe,
+    *,
+    pkgdir: Path,
+    snapshot: str,
+    fork_points_dir: Path,
 ) -> BootstrapResult:
     """Run the toolchain bootstrap and checkpoint it (BOOTSTRAP-PROCESS §5, items 1-2).
 
     The checkpoint is what a failed base build restores to -- not the raw stage3,
-    which would redo the ~15 min of toolchain first.
+    which would redo the ~15 min of toolchain first. The bootstrap's
+    ``check-generation`` step runs the fingerprint check as soon as the toolchain
+    is final, before the steps that write binpkgs (ccache and its dependencies,
+    which no later stage rebuilds).
     """
-    result = run_bootstrap(container)
+    rootfs = container.rootfs
+    result = run_bootstrap(
+        container, on_generation=lambda: check_or_record(pkgdir, fingerprint(rootfs, recipe))
+    )
     dest = bootstrap_fork_point_path(recipe, snapshot=snapshot, fork_points_dir=fork_points_dir)
     dest.parent.mkdir(parents=True, exist_ok=True)
     snapshot_fork_point(container.rootfs, dest)
@@ -465,7 +476,11 @@ class Factory:
             ) as container:
                 if not bootstrapped:
                     bootstrap = _bootstrap(
-                        container, recipe, snapshot=snapshot, fork_points_dir=fork_points_dir
+                        container,
+                        recipe,
+                        pkgdir=self.pkgdir,
+                        snapshot=snapshot,
+                        fork_points_dir=fork_points_dir,
                     )
                 # before any emerge can reuse a binpkg (D26)
                 check_or_record(self.pkgdir, fingerprint(rootfs, recipe))
@@ -719,7 +734,11 @@ class Factory:
             ) as container:
             if needs_bootstrap:
                 bootstrap = _bootstrap(
-                    container, recipe, snapshot=snapshot, fork_points_dir=fork_points_dir
+                    container,
+                    recipe,
+                    pkgdir=self.pkgdir,
+                    snapshot=snapshot,
+                    fork_points_dir=fork_points_dir,
                 )
                 if seeded is not None:
                     state.save_state(state_path, seeded.model_copy(update={"bootstrap_done": True}))

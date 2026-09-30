@@ -43,9 +43,19 @@ bootstrap:
     # 5 -- whatever still links against a replaced library.
     - {name: preserved, do: emerge, atoms: ["@preserved-rebuild"]}
 
-    # P -- the ccache binary, while FEATURES still says -ccache: Portage refuses
-    #      FEATURES=ccache without it, and the base turns it on next.
-    - {name: ccache, do: emerge, atoms: [dev-util/ccache]}
+    # G -- the toolchain is final: record or verify the generation fingerprint
+    #      of the PKGDIR (D26) before anything below writes a binpkg into it.
+    - {name: generation, do: check-generation}
+
+    # P -- the ccache binary, while FEATURES still says -ccache (the base turns
+    #      it on next). Unlike the toolchain it is built WITH buildpkg: it is
+    #      built by the final toolchain, and no later stage rebuilds it -- the
+    #      base's --emptytree does not reach it, and @devel finds it installed.
+    #      Without its binpkgs (and its deps') the ISO cannot install @devel.
+    - name: ccache
+      do: emerge
+      atoms: [dev-util/ccache]
+      env: {FEATURES: "-ccache"}
 
     # Every step above is --oneshot: anything in the world file would be rebuilt
     # by the base and shipped.

@@ -9,8 +9,12 @@ order; editing it changes the process without touching Python.
 Step kinds of the bootstrap phase:
 
 - ``locale``: generate the locales of ``/etc/locale.gen``, select one BY NAME;
-- ``emerge``: ``emerge --oneshot <atoms>`` with the phase's ``env``; with
-  ``keep_locales: true`` the step fails if ``locale -a`` shrinks;
+- ``emerge``: ``emerge --oneshot <atoms>`` with the phase's ``env`` and the
+  step's own ``env`` over it; with ``keep_locales: true`` the step fails if
+  ``locale -a`` shrinks;
+- ``check-generation``: record or verify the generation fingerprint of the
+  PKGDIR (D26) as soon as the toolchain is final. A step whose ``FEATURES``
+  lacks ``-buildpkg`` writes binpkgs, so it must come after this one;
 - ``select-toolchain``: switch ``binutils`` or ``gcc`` to its newest installed
   slot, by name (F8, F9);
 - ``assert-world-empty``: fail if anything entered the world file.
@@ -59,6 +63,8 @@ class EmergeStep(_Step):
     do: Literal["emerge"]
     atoms: tuple[str, ...] = Field(min_length=1)
     keep_locales: bool = False
+    #: Over the phase's ``env``, key by key.
+    env: dict[str, str] = {}
 
 
 class SelectToolchainStep(_Step):
@@ -70,10 +76,20 @@ class AssertWorldEmptyStep(_Step):
     do: Literal["assert-world-empty"]
 
 
+class CheckGenerationStep(_Step):
+    do: Literal["check-generation"]
+
+
 BootstrapStep = Annotated[
-    LocaleStep | EmergeStep | SelectToolchainStep | AssertWorldEmptyStep,
+    LocaleStep | EmergeStep | SelectToolchainStep | AssertWorldEmptyStep | CheckGenerationStep,
     Field(discriminator="do"),
 ]
+
+
+def writes_binpkgs(env: dict[str, str]) -> bool:
+    """Whether an emerge under ``env`` writes binpkgs: the base make.conf turns
+    ``buildpkg`` on, and only ``FEATURES=-buildpkg`` turns it off. Pure."""
+    return "-buildpkg" not in env.get("FEATURES", "").split()
 
 
 class BootstrapFlow(BaseModel):
@@ -84,6 +100,28 @@ class BootstrapFlow(BaseModel):
     #: systemd-nspawn does not pass the host's environment in.
     env: dict[str, str] = {}
     steps: tuple[BootstrapStep, ...] = Field(min_length=1)
+
+    def step_env(self, step: EmergeStep) -> dict[str, str]:
+        """The environment of one emerge step: the phase's, then the step's."""
+        return {**self.env, **step.env}
+
+    @model_validator(mode="after")
+    def _binpkgs_after_generation(self) -> BootstrapFlow:
+        # A binpkg written before the fingerprint check could land in a PKGDIR
+        # of another generation, which Portage would then reuse unchecked (D26).
+        checked = False
+        for step in self.steps:
+            if isinstance(step, CheckGenerationStep):
+                if checked:
+                    raise ValueError("bootstrap needs `check-generation` at most once")
+                checked = True
+            elif isinstance(step, EmergeStep) and writes_binpkgs(self.step_env(step)):
+                if not checked:
+                    raise ValueError(
+                        f"bootstrap step {step.name!r} writes binpkgs (FEATURES lacks "
+                        "-buildpkg) before `check-generation`"
+                    )
+        return self
 
 
 class _StageStep(BaseModel):

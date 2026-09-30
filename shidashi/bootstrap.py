@@ -4,7 +4,7 @@ A stage3 ships the toolchain it was built with. Before the base stage rebuilds
 everything with ``--emptytree``, the bootstrap brings that toolchain to the
 pinned tree's versions, in dependency order, switching to each new one BY NAME.
 The steps -- locale, headers + binutils, gcc, libtool, glibc, preserved-rebuild,
-ccache, and the empty-world check -- and their order are in
+the generation check, ccache, and the empty-world check -- and their order are in
 ``variants/flow.yaml`` (BOOTSTRAP-PROCESS.md §1); this module executes the step
 kinds :mod:`shidashi.flow` defines.
 
@@ -14,7 +14,7 @@ with a fake; the real one is :class:`shidashi.container.Container`.
 
 import re
 import subprocess
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Protocol
 
@@ -24,6 +24,7 @@ from shidashi.container import CommandResult
 from shidashi.flow import (
     AssertWorldEmptyStep,
     BootstrapFlow,
+    CheckGenerationStep,
     EmergeStep,
     LocaleStep,
     SelectToolchainStep,
@@ -152,11 +153,18 @@ def _count_locales(log: _Log, step: str) -> int:
     return len([line for line in log.run(step, ["locale", "-a"]).splitlines() if line.strip()])
 
 
-def run_bootstrap(container: _Runner, flow: BootstrapFlow | None = None) -> BootstrapResult:
+def run_bootstrap(
+    container: _Runner,
+    flow: BootstrapFlow | None = None,
+    *,
+    on_generation: Callable[[], object] | None = None,
+) -> BootstrapResult:
     """Run the bootstrap steps of ``variants/flow.yaml`` over a fresh stage3. PRIVILEGED.
 
     ``flow`` defaults to the repository's (:func:`shidashi.flow.load_flow`). The
     layered ``make.conf`` and the layers' ``rootfs/`` must already be in place.
+    ``on_generation`` runs at the ``check-generation`` step -- the factory's
+    fingerprint check (D26); a flow with that step and no callback fails there.
     Raises :class:`BootstrapError` naming the step (``bootstrap:<name>``) on the
     first failure, with the transcript so far.
     """
@@ -184,7 +192,7 @@ def run_bootstrap(container: _Runner, flow: BootstrapFlow | None = None) -> Boot
         elif isinstance(step, EmergeStep):
             if step.keep_locales:
                 before = _count_locales(log, step.name)
-            log.run(step.name, emerge_argv(*step.atoms, env=flow.env))
+            log.run(step.name, emerge_argv(*step.atoms, env=flow.step_env(step)))
             if step.keep_locales:
                 after = _count_locales(log, step.name)
                 if after < before:
@@ -197,6 +205,11 @@ def run_bootstrap(container: _Runner, flow: BootstrapFlow | None = None) -> Boot
             log.run(step.name, [f"{step.tool}-config", profile])
             log.run(step.name, ["env-update"])
             selected[step.tool] = profile
+        elif isinstance(step, CheckGenerationStep):
+            if on_generation is None:
+                raise log.fail(step.name, "check-generation has no fingerprint check to run")
+            log.parts.append(f"### [{step.name}] generation fingerprint\n")
+            on_generation()
         elif isinstance(step, AssertWorldEmptyStep):
             leftover = world_entries(rootfs)
             if leftover:
