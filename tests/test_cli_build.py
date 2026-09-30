@@ -92,3 +92,24 @@ def test_build_refuses_desktop_with_a_reason(lab: list[str]) -> None:
     result = runner.invoke(app, ["build", "v3", "systemd", "--images", "desktop"])
     assert result.exit_code == 1 and "shared trunk" in result.output
     assert lab == []
+
+
+def test_boot_test_gates_the_build(
+    lab: list[str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from shidashi import vm
+
+    booted: list[str] = []
+
+    def boot_test(iso: Path, **_k: object) -> dict[str, object]:
+        booted.append(iso.name)
+        ok = "minimal" in iso.name
+        return {"passed": ok, "firmwares": {"uefi": {"checks": [
+            {"check": "os-release", "passed": ok}]}}}
+
+    monkeypatch.setattr(vm, "boot_test", boot_test)
+    result = runner.invoke(
+        app, ["build", "v3", "systemd", "--images", "minimal,kde", "--boot-test"]
+    )
+    assert booted == ["bentoo-x-minimal.iso", "bentoo-x-kde.iso"]
+    assert result.exit_code == 1 and "failed its boot test: uefi: os-release" in result.output

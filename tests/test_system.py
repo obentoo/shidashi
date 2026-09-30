@@ -10,7 +10,8 @@ from shidashi import config, system
 from shidashi.container import CommandResult
 
 _UNITS = ("NetworkManager.service", "systemd-timesyncd.service", "plasmalogin.service",
-          "systemd-networkd.service", "sshd.service", "systemd-homed.service")
+          "systemd-resolved.service", "systemd-networkd.service", "sshd.service",
+          "systemd-homed.service")
 
 
 def _image(tmp_path: Path) -> Path:
@@ -32,6 +33,8 @@ def _image(tmp_path: Path) -> Path:
     (etc / "hosts").write_text("127.0.0.1\tlocalhost\n")
     (etc / "machine-id").write_text("0123456789abcdef0123456789abcdef\n")
     (etc / "resolv.conf").write_text("nameserver 8.8.8.8\n")
+    (root / "usr/lib/os-release").write_text("NAME='Gentoo'\n")
+    (etc / "os-release").symlink_to("../usr/lib/os-release")  # baselayout's
     return root
 
 
@@ -108,6 +111,9 @@ def _configure(tmp_path: Path, cfg: system.SystemConfig) -> tuple[_Image, dict[s
     image = _Image(_image(tmp_path))
     done = system.apply_system(image, cfg, init="systemd")
     done.update(system.apply_live(image, cfg, init="systemd", hasher=lambda p: "$6$salt$h"))
+    # nspawn rewrites resolv.conf at every command: the build does this last
+    (image.rootfs / "etc/resolv.conf").write_text("nameserver 8.8.8.8\n")
+    done.update(system.finalize(image.rootfs, cfg, init="systemd"))
     return image, done
 
 
@@ -120,7 +126,8 @@ def test_apply_then_verify_leaves_nothing_missing(tmp_path: Path) -> None:
     assert "127.0.1.1\tbentoo" in (etc / "hosts").read_text()
     assert str((etc / "localtime").readlink()) == "../usr/share/zoneinfo/UTC"
     assert (etc / "vconsole.conf").read_text() == "KEYMAP=us\n"
-    assert "8.8.8.8" not in (etc / "resolv.conf").read_text()  # the build host's DNS
+    # the build host's DNS gone; names resolve through resolved, fed by NetworkManager
+    assert str((etc / "resolv.conf").readlink()) == "../run/systemd/resolve/stub-resolv.conf"
     assert (etc / "sudoers.d/10-wheel").read_text() == "%wheel ALL=(ALL:ALL) ALL\n"
     assert (etc / "sudoers.d/10-wheel").stat().st_mode & 0o777 == 0o440
     assert (etc / "machine-id").read_text() == ""
@@ -184,3 +191,63 @@ def test_a_broken_system_yaml_fails_loading(tmp_path: Path) -> None:
     recipe = config.load_recipe("v3", "minimal", "systemd")
     with pytest.raises(system.ConfigurationError):
         system.load_system_config(recipe, variants_dir=tmp_path)
+
+
+def test_os_release_names_bentoo_in_etc_and_leaves_baselayouts_file(tmp_path: Path) -> None:
+    """KDE's Welcome Center said "Welcome to the Gentoo operating system"."""
+    cfg = _kde()
+    image = _Image(_image(tmp_path))
+    system.apply_system(image, cfg, init="systemd",
+                        build={"VERSION_ID": "2026.09.30", "VARIANT": "Kde", "VARIANT_ID": "kde"})
+    release = image.rootfs / "etc/os-release"
+    assert not release.is_symlink()
+    text = release.read_text()
+    assert 'NAME="Bentoo"' in text and 'ID_LIKE="gentoo"' in text
+    assert 'VARIANT="KDE Plasma"' in text  # the flavor's own name wins
+    assert 'VERSION_ID="2026.09.30"' in text and 'VARIANT_ID="kde"' in text
+    assert (image.rootfs / "usr/lib/os-release").read_text() == "NAME='Gentoo'\n"
+
+
+def test_verify_notices_an_image_that_calls_itself_gentoo(tmp_path: Path) -> None:
+    cfg = _kde()
+    image, _ = _configure(tmp_path, cfg)
+    (image.rootfs / "etc/os-release").write_text("NAME=Gentoo\n")
+    assert system.verify(image.rootfs, cfg, init="systemd", live=True) == [
+        "/etc/os-release does not name the system Bentoo"]
+
+
+def test_render_os_release_escapes_like_a_shell() -> None:
+    cfg = _kde().model_copy(update={"os_release": {"NAME": 'A "b" $c `d` \\e'}})
+    assert system.render_os_release(cfg, {}) == 'NAME="A \\"b\\" \\$c \\`d\\` \\\\e"\n'
+
+
+def test_the_systemd_layer_generates_ssh_host_keys_before_socket_activated_sshd() -> None:
+    """The first vsock SSH into the live ISO was closed at once: sshd@.service
+    never generates host keys and the image has none (2026-09-30)."""
+    units = config.variants_dir() / "init/systemd/rootfs/etc/systemd/system"
+    keygen = (units / "sshd-keygen.service").read_text()
+    assert "ExecStart=/usr/bin/ssh-keygen -A" in keygen and "Type=oneshot" in keygen
+    assert "Before=sshd.service sshd@.service" in keygen
+    dropin = (units / "sshd@.service.d/10-keygen.conf").read_text()
+    assert "Wants=sshd-keygen.service" in dropin and "After=sshd-keygen.service" in dropin
+
+
+def test_verify_catches_the_build_hosts_resolv_conf(tmp_path: Path) -> None:
+    """F81: set before the last container command, the image's resolv.conf was
+    overwritten by nspawn's copy of the host's -- and nothing checked it."""
+    cfg = _kde()
+    image, _ = _configure(tmp_path, cfg)
+    resolv = image.rootfs / "etc/resolv.conf"
+    resolv.unlink()
+    resolv.write_text("nameserver 8.8.8.8\n")
+    assert system.verify(image.rootfs, cfg, init="systemd", live=True) == [
+        "/etc/resolv.conf does not point at ../run/systemd/resolve/stub-resolv.conf"]
+
+
+def test_without_resolved_finalize_writes_the_stub(tmp_path: Path) -> None:
+    cfg = _kde()
+    root = _image(tmp_path)
+    (root / "usr/lib/systemd/system/systemd-resolved.service").unlink()
+    (root / "etc/resolv.conf").write_text("nameserver 8.8.8.8\n")
+    assert system.finalize(root, cfg, init="systemd") == {"resolv_conf": "stub, written at boot"}
+    assert "8.8.8.8" not in (root / "etc/resolv.conf").read_text()

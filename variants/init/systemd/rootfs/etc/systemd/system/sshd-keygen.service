@@ -1,0 +1,17 @@
+# Generate the SSH host keys before the first sshd starts (shidashi, variants/init/systemd).
+#
+# Gentoo's sshd.service runs `ssh-keygen -A` itself, but the per-connection
+# sshd@.service (socket activation: sshd.socket, and the AF_VSOCK socket that
+# systemd-ssh-generator binds inside a VM) does not -- and an image has no host
+# keys. Every connection was closed at once: found by the first vsock SSH into
+# the live ISO, 2026-09-30. Its stdout is the connection itself, so keys cannot
+# be generated from inside it; this oneshot runs before it instead.
+[Unit]
+Description=SSH host key generation
+Before=sshd.service sshd@.service
+ConditionPathExists=!/etc/ssh/ssh_host_ed25519_key
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/ssh-keygen -A
+RemainAfterExit=yes

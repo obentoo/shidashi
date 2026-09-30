@@ -35,7 +35,9 @@ def _system_config_stubbed(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     only has to happen, in its place in the order."""
     calls: list[str] = []
 
-    def apply_system(_c: object, _cfg: object, *, init: str) -> dict[str, object]:
+    def apply_system(
+        _c: object, _cfg: object, *, init: str, build: object = None
+    ) -> dict[str, object]:
         calls.append("system")
         return {}
 
@@ -379,7 +381,8 @@ def test_assemble_orchestrates_seed_emerge_dracut_squashfs_iso(
     # every step of the ISO is in the audit trail, in order, and the ISO with its hash
     assert [st["step"] for st in manifest["steps"]] == [
         "seed", "configure", "install", "settle", "depclean", "preserved-rebuild",
-        "system", "live", "verify-config", "initramfs", "sbom", "squashfs:zstd", "iso:zstd",
+        "system", "live", "initramfs", "finalize", "verify-config", "sbom", "squashfs:zstd",
+        "iso:zstd",
         "publish:zstd", "cleanup",
     ]
     assert all(st["status"] == "ok" for st in manifest["steps"])

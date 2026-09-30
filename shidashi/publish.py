@@ -124,6 +124,24 @@ def write_sbom(rootfs: Path, dest: Path) -> Path | None:
     return dest
 
 
+#: zstd level of the SBOM inside the medium. Measured on the kde SBOM (236 MiB,
+#: 2026-09-30): level 10 -> 32 MiB in 2 s, level 19 -> 28 MiB in 76 s.
+SBOM_ZSTD_LEVEL = 10
+
+
+def compress_sbom(src: Path, dest: Path, *, level: int = SBOM_ZSTD_LEVEL) -> Path:
+    """``src`` zstd-compressed into ``dest`` (streamed; stdlib ``compression.zstd``).
+
+    The medium carries the SBOM compressed -- uncompressed it cost 247 MB of the
+    ISO; the published copy beside the ISO stays plain, as the scanners read it.
+    """
+    from compression import zstd
+
+    with src.open("rb") as plain, zstd.open(dest, "wb", level=level) as packed:
+        shutil.copyfileobj(plain, packed, length=1 << 20)
+    return dest
+
+
 def tar_excludes(squashfs_patterns: Sequence[str]) -> list[str]:
     """The ISO's exclude patterns as tar ``--exclude`` options. Pure.
 

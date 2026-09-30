@@ -44,7 +44,7 @@ from shidashi.phases import (
 from shidashi.recipe import ResolvedRecipe
 from shidashi.resolve import apply_portage, apply_rootfs, bind_repos, install_sets
 from shidashi.seed import extract_stage3, fetch_stage3, load_pointer
-from shidashi.system import apply_live, apply_system, load_system_config, verify
+from shidashi.system import apply_live, apply_system, finalize, load_system_config, verify
 from shidashi.tree import pinned_repos
 
 __all__ = ["Assembler", "AssemblerError"]
@@ -400,7 +400,17 @@ class Assembler:
                          "@preserved-rebuild"]
                     )
                 with run.step("system") as step:
-                    step.add(**apply_system(container, system_cfg, init=recipe.init))
+                    version = f"{when:%Y.%m.%d}"
+                    build = {
+                        "VERSION": f"{version} ({recipe.flavor}, {recipe.init})",
+                        "VERSION_ID": version,
+                        "BUILD_ID": run.run_id or name,
+                        "IMAGE_ID": f"bentoo-{recipe.flavor}-{recipe.init}-{recipe.arch}",
+                        "IMAGE_VERSION": version,
+                        "VARIANT": recipe.flavor.title(),
+                        "VARIANT_ID": recipe.flavor,
+                    }
+                    step.add(**apply_system(container, system_cfg, init=recipe.init, build=build))
                 if stage4:
                     # the configured system, BEFORE the live user and autologin
                     with run.step("stage4") as step:
@@ -410,13 +420,6 @@ class Assembler:
                         run.artifact(tarball4, role="stage4")
                 with run.step("live") as step:
                     step.add(**apply_live(container, system_cfg, init=recipe.init))
-                with run.step("verify-config") as step:
-                    problems = verify(rootfs, system_cfg, init=recipe.init, live=True)
-                    step.add(problems=problems)
-                    if problems:
-                        raise AssemblerError(
-                            "the image's configuration did not apply: " + "; ".join(problems)
-                        )
                 with run.step("initramfs") as step:
                     kver = _kernel_version(rootfs)
                     initramfs = rootfs / "boot" / f"initramfs-{kver}.img"
@@ -424,6 +427,16 @@ class Assembler:
                     step.add(
                         kernel=kver,
                         initramfs_bytes=initramfs.stat().st_size if initramfs.is_file() else None,
+                    )
+            # after the LAST container command: nspawn rewrites resolv.conf (F81)
+            with run.step("finalize") as step:
+                step.add(**finalize(rootfs, system_cfg, init=recipe.init))
+            with run.step("verify-config") as step:
+                problems = verify(rootfs, system_cfg, init=recipe.init, live=True)
+                step.add(problems=problems)
+                if problems:
+                    raise AssemblerError(
+                        "the image's configuration did not apply: " + "; ".join(problems)
                     )
             packages = audit.harvest_packages(
                 rootfs, merges=_emerge_log_merges(rootfs, since=since), reused=reused
@@ -442,7 +455,12 @@ class Assembler:
                     sbom_file = publish.write_sbom(rootfs, output_dir / f"{name}.iso.spdx.json")
                     step.add(written=sbom_file is not None)
                     if sbom_file is not None:
-                        extra["bentoo/sbom.spdx.json"] = sbom_file
+                        # compressed on the medium (236 -> 32 MiB), plain beside it
+                        packed = publish.compress_sbom(
+                            sbom_file, rootfs.parent / f"{key}.spdx.json.zst"
+                        )
+                        extra["bentoo/sbom.spdx.json.zst"] = packed
+                        squashfs_files.append(packed)  # scratch, gone at cleanup
                         artifacts.append(sbom_file)
                         run.artifact(sbom_file, role="sbom", digest=False)
 

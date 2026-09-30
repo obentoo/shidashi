@@ -10,6 +10,10 @@ services:
     default:
       - display-manager       # /etc/conf.d/display-manager: DISPLAYMANAGER below
 
+# The variant's name in /etc/os-release (VARIANT_ID is the flavor).
+os_release:
+  VARIANT: KDE Plasma
+
 # OpenRC's display-manager service starts the one named here.
 display_manager:
   openrc: sddm

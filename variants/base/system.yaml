@@ -26,6 +26,21 @@ keymap: us
 # image (--timezone=auto): the first ISO shipped America/Sao_Paulo that way.
 timezone: UTC
 
+# /etc/os-release: who the system says it is (os-release(5)). Written as a real
+# file in /etc, which takes precedence over baselayout's /usr/lib/os-release and
+# which Portage's CONFIG_PROTECT keeps across updates. ID_LIKE keeps tools that
+# look for Gentoo working. The assembler adds the build's own fields: VERSION,
+# VERSION_ID, BUILD_ID, IMAGE_ID, IMAGE_VERSION, VARIANT, VARIANT_ID. The first
+# ISO said "Welcome to the Gentoo operating system" in KDE's Welcome Center.
+os_release:
+  NAME: Bentoo
+  ID: bentoo
+  ID_LIKE: gentoo
+  PRETTY_NAME: Bentoo Linux
+  HOME_URL: https://github.com/obentoo/bentoo
+  BUG_REPORT_URL: https://github.com/obentoo/bentoo/issues
+  ANSI_COLOR: "1;35"
+
 # Handbook › Finalizing › "wheel" group with sudo: /etc/sudoers.d/10-wheel.
 # Gentoo's sudoers-rs ships the rule commented and includes /etc/sudoers.d.
 sudo_wheel: true
@@ -47,10 +62,16 @@ services:
       - tuned.service               # power profiles (tuned-ppd serves KDE's applet)
       - tuned-ppd.service
       - fstrim.timer                # weekly TRIM on SSDs
+      # DNS. NetworkManager hands each network's DNS to resolved, found through
+      # /etc/resolv.conf -> the stub (shidashi.system.finalize). Without it,
+      # NetworkManager calls `resolvconf` -- here systemd's resolvectl shim,
+      # which needs resolved -- fails ("Failed to resolve interface
+      # NetworkManager"), and the image kept the build host's static
+      # nameserver: the first boot test found it (2026-09-30, F81).
+      - systemd-resolved.service
     disable:
       - systemd-networkd.service    # NetworkManager owns the network
       - systemd-networkd-wait-online.service
-      - systemd-resolved.service    # NetworkManager writes resolv.conf
       - systemd-homed.service       # Gentoo's preset enables it; nothing here uses it
       - sshd.service                # never listening by default on a live medium
   openrc:

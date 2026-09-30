@@ -52,6 +52,11 @@ from shidashi.world import StaleWorldError
 app = typer.Typer(no_args_is_help=True, help="Shidashi — catering de builds e ISOs do bentoo.")
 recipe_app = typer.Typer(no_args_is_help=True, help="Inspeciona e valida receitas resolvidas.")
 app.add_typer(recipe_app, name="recipe")
+vm_app = typer.Typer(
+    no_args_is_help=True,
+    help="Boot an ISO in a VM and drive it over SSH on vsock (no network, no screen).",
+)
+app.add_typer(vm_app, name="vm")
 
 _err_console = Console(stderr=True)
 
@@ -1005,6 +1010,11 @@ def build(
     no_download: Annotated[
         bool, typer.Option("--no-download", help="Cache only; never touch the network.")
     ] = False,
+    boot_test: Annotated[
+        bool,
+        typer.Option("--boot-test", help="Boot every ISO on BIOS and UEFI and check it "
+                     "(shidashi vm test); a failed check fails the build."),
+    ] = False,
     work_dir: Annotated[
         Path | None,
         typer.Option("--work-dir", help="Root of cache, scratch and runs."),
@@ -1057,6 +1067,21 @@ def build(
                             compressions=compressions, stage4=stage4, sbom=not no_sbom,
                         )
                     )
+            if boot_test:
+                from shidashi import vm
+
+                for target, result in zip(iso_targets, results, strict=True):
+                    with run.step(f"boot-test:{target}") as step:
+                        report = vm.boot_test(result.isos[0])
+                        step.add(passed=report["passed"])
+                        if not report["passed"]:
+                            failed = [f"{fw}: {c['check']}"
+                                      for fw, r in report["firmwares"].items()
+                                      for c in r["checks"] if not c["passed"]]
+                            raise AssemblerError(
+                                f"{result.isos[0].name} failed its boot test: "
+                                + "; ".join(failed)
+                            )
     except FactoryError as err:
         where = f" {escape(str(err.phase))}" if err.phase else ""
         _err_console.print(f"[bold red]falha na fase[/bold red]{where}: {escape(str(err))}")
@@ -1140,6 +1165,143 @@ def release(
     """Stub: publicação de release (não implementado na Fase 0) (R6.2)."""
     typer.echo(f"release: {_STUB_MSG}")
     raise typer.Exit(2)
+
+
+# --- vm: control and the automated boot test ------------------------------------------
+
+
+def _vm_error(err: Exception) -> typer.Exit:
+    _err_console.print(f"[bold red]erro:[/bold red] {escape(str(err))}")
+    return typer.Exit(1)
+
+
+@vm_app.command("start")
+def vm_start(
+    iso: Path,
+    uefi: Annotated[bool, typer.Option("--uefi", help="Boot with OVMF instead of BIOS.")] = False,
+    name: Annotated[str, typer.Option("--name", help="Session name.")] = "bentoo",
+    cid: Annotated[int, typer.Option("--cid", min=3, help="The guest's vsock CID.")] = 42,
+    memory: Annotated[str, typer.Option("--memory")] = "8G",
+    cpus: Annotated[int, typer.Option("--cpus", min=1)] = 8,
+    display: Annotated[
+        str, typer.Option("--display", help="none (headless) or sdl to watch it.")
+    ] = "none",
+    wait: Annotated[bool, typer.Option("--wait/--no-wait", help="Wait for SSH.")] = True,
+    work_dir: Annotated[Path | None, typer.Option("--work-dir")] = None,
+) -> None:
+    """Start ``iso`` in a VM reachable with `shidashi vm run`."""
+    from shidashi import vm
+
+    _apply_work_dir(work_dir)
+    spec = vm.VmSpec(iso=iso.resolve(), uefi=uefi, cid=cid, memory=memory, cpus=cpus,
+                     display=display)
+    session = vm.Session(spec, vm.session_dir(name))
+    try:
+        session.start()
+        if wait:
+            typer.echo(f"ssh up after {session.wait_ssh()} s (vsock/{cid})")
+    except vm.VmError as err:
+        raise _vm_error(err) from err
+
+
+@vm_app.command("run")
+def vm_run(
+    command: Annotated[list[str], typer.Argument(help="The command, run by the guest's shell.")],
+    name: Annotated[str, typer.Option("--name")] = "bentoo",
+    work_dir: Annotated[Path | None, typer.Option("--work-dir")] = None,
+) -> None:
+    """Run a command as root in the VM; its exit code becomes ours."""
+    from shidashi import vm
+
+    _apply_work_dir(work_dir)
+    try:
+        result = vm.load_session(name).run_command(" ".join(command))
+    except vm.VmError as err:
+        raise _vm_error(err) from err
+    sys.stdout.write(result.stdout)
+    sys.stderr.write(result.stderr)
+    raise typer.Exit(result.exit_code)
+
+
+@vm_app.command("screenshot")
+def vm_screenshot(
+    dest: Path,
+    name: Annotated[str, typer.Option("--name")] = "bentoo",
+    work_dir: Annotated[Path | None, typer.Option("--work-dir")] = None,
+) -> None:
+    """Save the VM's screen (PNG) -- for when looking is really needed."""
+    from shidashi import vm
+
+    _apply_work_dir(work_dir)
+    try:
+        typer.echo(str(vm.load_session(name).screenshot(dest)))
+    except (vm.VmError, OSError) as err:
+        raise _vm_error(err) from err
+
+
+@vm_app.command("stop")
+def vm_stop(
+    name: Annotated[str, typer.Option("--name")] = "bentoo",
+    work_dir: Annotated[Path | None, typer.Option("--work-dir")] = None,
+) -> None:
+    """Power the VM off."""
+    from shidashi import vm
+
+    _apply_work_dir(work_dir)
+    try:
+        vm.load_session(name).stop()
+    except vm.VmError as err:
+        raise _vm_error(err) from err
+
+
+@vm_app.command("test")
+def vm_test(
+    iso: Path,
+    firmware: Annotated[
+        str, typer.Option("--firmware", help="bios, uefi or both.")
+    ] = "both",
+    cid: Annotated[int, typer.Option("--cid", min=3)] = 42,
+    screenshots: Annotated[
+        Path | None, typer.Option("--screenshots", help="Also save a screenshot per boot here.")
+    ] = None,
+    work_dir: Annotated[Path | None, typer.Option("--work-dir")] = None,
+) -> None:
+    """The automated boot test: boot ``iso`` and check what its system.yaml declared.
+
+    Audited like a build (steps boot:<firmware> and check:<name>, the report
+    attached as boot-test.json). Exit 1 when any check fails.
+    """
+    from shidashi import vm
+
+    _apply_work_dir(work_dir)
+    if firmware not in ("bios", "uefi", "both"):
+        raise _vm_error(ValueError("--firmware is bios, uefi or both"))
+    firmwares = ("bios", "uefi") if firmware == "both" else (firmware,)
+    try:
+        info = vm.read_build_info(iso.resolve())
+        recipe = _resolve(info["arch"], info["flavor"], info["init"])
+        with _audited("vm-test", recipe, iso=str(iso.resolve()), firmwares=list(firmwares)):
+            report = vm.boot_test(iso.resolve(), firmwares=firmwares, cid=cid,
+                                  screenshots=screenshots)
+    except (vm.VmError, config.UnknownAxisError, RecipeChainError) as err:
+        raise _vm_error(err) from err
+
+    console = Console()
+    for name, result in report["firmwares"].items():
+        table = Table(title=f"boot test {name}: "
+                      f"{'PASSED' if result['passed'] else 'FAILED'} "
+                      f"(ssh after {result['ssh_after_s']} s)")
+        table.add_column("check")
+        table.add_column("result")
+        table.add_column("got")
+        for check in result["checks"]:
+            table.add_row(check["check"], "ok" if check["passed"] else "FAIL",
+                          escape(str(check["got"]))[:80])
+        for metric, value in result["metrics"].items():
+            table.add_row(f"[dim]{metric}[/dim]", "", escape(value)[:80])
+        console.print(table)
+    if not report["passed"]:
+        raise typer.Exit(1)
 
 
 if __name__ == "__main__":

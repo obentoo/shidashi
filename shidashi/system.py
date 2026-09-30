@@ -101,6 +101,8 @@ class SystemConfig(BaseModel):
     services: Services = Services()
     #: OpenRC's display-manager service starts the one named per init here.
     display_manager: dict[str, str] = {}
+    #: /etc/os-release's static fields; the build adds its own (render_os_release).
+    os_release: dict[str, str] = {}
     live: LiveConfig
 
 
@@ -176,13 +178,41 @@ def _set_hosts(rootfs: Path, hostname: str) -> None:
     _write(hosts, "\n".join(lines) + "\n")
 
 
-def apply_system(container: _Runner, cfg: SystemConfig, *, init: str) -> dict[str, Any]:
+def render_os_release(cfg: SystemConfig, build: Mapping[str, str]) -> str:
+    """/etc/os-release: the static fields of system.yaml, then the build's. Pure.
+
+    Values are double-quoted with ``\\``, ``"``, ``$`` and backquote escaped,
+    as os-release(5) asks of shell-compatible assignments.
+    """
+
+    def quote(value: str) -> str:
+        escaped = "".join("\\" + c if c in '\\"$`' else c for c in value)
+        return f'"{escaped}"'
+
+    fields = {**cfg.os_release, **{k: v for k, v in build.items() if k not in cfg.os_release}}
+    return "".join(f"{key}={quote(value)}\n" for key, value in fields.items())
+
+
+def apply_system(
+    container: _Runner,
+    cfg: SystemConfig,
+    *,
+    init: str,
+    build: Mapping[str, str] | None = None,
+) -> dict[str, Any]:
     """Configure the image as ``cfg`` says. PRIVILEGED (runs in the container).
 
-    Returns what it did, for the audit trail.
+    ``build`` holds the build's own os-release fields (version, build id,
+    variant). Returns what it did, for the audit trail.
     """
     rootfs = container.rootfs
     done: dict[str, Any] = {}
+
+    if cfg.os_release:
+        os_release = rootfs / "etc" / "os-release"
+        os_release.unlink(missing_ok=True)  # baselayout's symlink to /usr/lib
+        _write(os_release, render_os_release(cfg, build or {}))
+        done["os_release"] = cfg.os_release.get("PRETTY_NAME", cfg.os_release.get("NAME"))
 
     _write(rootfs / "etc" / "hostname", cfg.hostname + "\n")
     _set_hosts(rootfs, cfg.hostname)
@@ -199,13 +229,6 @@ def apply_system(container: _Runner, cfg: SystemConfig, *, init: str) -> dict[st
         _write(rootfs / "etc" / "vconsole.conf", f"KEYMAP={cfg.keymap}\n")
     else:
         _write(rootfs / "etc/conf.d/keymaps", f'keymap="{cfg.keymap}"\n')
-
-    # Copied from the build host by nspawn (--resolv-conf=copy-host): the network
-    # manager writes the real one at boot.
-    _write(
-        rootfs / "etc" / "resolv.conf",
-        "# Written at boot by the network manager (NetworkManager or dhcpcd).\n",
-    )
 
     if cfg.sudo_wheel:
         _write(rootfs / _SUDOERS_WHEEL, "%wheel ALL=(ALL:ALL) ALL\n", mode=0o440)
@@ -239,6 +262,36 @@ def apply_system(container: _Runner, cfg: SystemConfig, *, init: str) -> dict[st
                     added.append(f"{name}@{level}")
         done["enabled"] = added
     return done
+
+
+#: /etc/resolv.conf under systemd-resolved: its stub, which NetworkManager feeds.
+_RESOLVED_STUB = Path("../run/systemd/resolve/stub-resolv.conf")
+_RESOLV_STUB_TEXT = "# Written at boot by the network manager (NetworkManager or dhcpcd).\n"
+
+
+def uses_resolved(rootfs: Path, cfg: SystemConfig, *, init: str) -> bool:
+    """Whether the image resolves names through systemd-resolved. I/O."""
+    unit = "systemd-resolved.service"
+    return (init == "systemd" and unit in cfg.services.systemd.enable
+            and unit_exists(rootfs, unit))
+
+
+def finalize(rootfs: Path, cfg: SystemConfig, *, init: str) -> dict[str, Any]:
+    """The files the build's own container keeps rewriting. Host-side, AFTER the
+    last command in the container. I/O.
+
+    nspawn's ``--resolv-conf=copy-host`` (the build's fetches need DNS) writes
+    the BUILD HOST's resolv.conf into the rootfs at every command: set earlier,
+    the image's own was overwritten, and the first ISO with F80's fix still
+    shipped ``nameserver 8.8.8.8`` (F81).
+    """
+    resolv = rootfs / "etc" / "resolv.conf"
+    resolv.unlink(missing_ok=True)
+    if uses_resolved(rootfs, cfg, init=init):
+        resolv.symlink_to(_RESOLVED_STUB)
+        return {"resolv_conf": f"-> {_RESOLVED_STUB}"}
+    _write(resolv, _RESOLV_STUB_TEXT)
+    return {"resolv_conf": "stub, written at boot"}
 
 
 def hash_password(password: str) -> str:
@@ -349,6 +402,11 @@ def verify(rootfs: Path, cfg: SystemConfig, *, init: str, live: bool) -> list[st
             problems.append(what)
 
     etc = rootfs / "etc"
+    if cfg.os_release.get("NAME"):
+        release = etc / "os-release"
+        text = release.read_text() if release.is_file() else ""
+        check(f'NAME="{cfg.os_release["NAME"]}"' in text,
+              f"/etc/os-release does not name the system {cfg.os_release['NAME']}")
     hostname = (etc / "hostname").read_text().strip() if (etc / "hostname").is_file() else None
     check(hostname == cfg.hostname, f"/etc/hostname is {hostname!r}, not {cfg.hostname!r}")
     localtime = etc / "localtime"
@@ -361,6 +419,13 @@ def verify(rootfs: Path, cfg: SystemConfig, *, init: str, live: bool) -> list[st
           f"/etc/locale.conf does not set {cfg.locale}")
     if cfg.sudo_wheel:
         check((rootfs / _SUDOERS_WHEEL).is_file(), f"/{_SUDOERS_WHEEL} is missing")
+    resolv = etc / "resolv.conf"
+    if uses_resolved(rootfs, cfg, init=init):
+        check(resolv.is_symlink() and resolv.readlink() == _RESOLVED_STUB,
+              f"/etc/resolv.conf does not point at {_RESOLVED_STUB}")
+    else:
+        check(resolv.is_file() and resolv.read_text() == _RESOLV_STUB_TEXT,
+              "/etc/resolv.conf is not the stub (the build host's leaked in?)")
     if init == "systemd":
         vconsole = (etc / "vconsole.conf").read_text() if (etc / "vconsole.conf").is_file() else ""
         check(f"KEYMAP={cfg.keymap}" in vconsole, f"/etc/vconsole.conf lacks KEYMAP={cfg.keymap}")

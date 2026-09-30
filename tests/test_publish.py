@@ -107,3 +107,14 @@ def test_bundle_run_packs_the_trail(tmp_path: Path) -> None:
     names = subprocess.run(["tar", "--zstd", "-tf", str(dest)], capture_output=True, text=True,
                            check=True).stdout.split()
     assert "20260930T010000Z-abc/manifest.json" in names
+
+
+def test_the_sbom_is_compressed_on_the_medium_and_round_trips(tmp_path: Path) -> None:
+    from compression import zstd
+
+    src = tmp_path / "sbom.spdx.json"
+    src.write_text('{"spdxVersion": "SPDX-2.3", "packages": []}' * 1000)
+    dest = publish.compress_sbom(src, tmp_path / "sbom.spdx.json.zst")
+    assert dest.stat().st_size < src.stat().st_size / 10
+    assert zstd.decompress(dest.read_bytes()) == src.read_bytes()
+    assert publish.SBOM_ZSTD_LEVEL == 10
