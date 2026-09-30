@@ -25,6 +25,11 @@ shidashi = "shidashi.cli:app"
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[tool.uv]
+# Supply chain: never resolve a version uploaded less than 7 days ago -- enforced
+# here, not by hand. Install with `uv sync --frozen --extra dev` (uv.lock).
+exclude-newer = "7 days"
+
 [tool.hatch.build.targets.wheel]
 packages = ["shidashi"]
 
