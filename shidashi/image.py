@@ -69,7 +69,9 @@ def _run(argv: list[str]) -> None:
 _SQUASHFS_EXCLUDES = ("boot", "proc", "sys", "dev", "run", "var/cache/binpkgs")
 
 
-def _mksquashfs_argv(rootfs: Path, output: Path, *, compression: str, level: int) -> list[str]:
+def _mksquashfs_argv(
+    rootfs: Path, output: Path, *, compression: str, level: int, processors: int | None = None
+) -> list[str]:
     """Monta o argv do ``mksquashfs`` (OVERVIEW §7). **Pura**, sem efeitos.
 
     Forma: ``["mksquashfs", <rootfs>, <output>, "-comp", <compression>,
@@ -78,7 +80,10 @@ def _mksquashfs_argv(rootfs: Path, output: Path, *, compression: str, level: int
     anexa a um .squashfs preexistente), o nível de compressão é explícito
     (default 19, §7) e ``-e`` exclui voláteis + ``boot`` + o bind do binhost
     (ver :data:`_SQUASHFS_EXCLUDES`) — deve vir por último (consome o resto).
+    ``processors`` caps the compressor threads (``-processors N``); ``None``
+    leaves mksquashfs on every CPU.
     """
+    cap = ["-processors", str(processors)] if processors is not None else []
     return [
         "mksquashfs",
         str(rootfs),
@@ -89,13 +94,19 @@ def _mksquashfs_argv(rootfs: Path, output: Path, *, compression: str, level: int
         str(level),
         "-noappend",
         "-no-progress",
+        *cap,
         "-e",
         *_SQUASHFS_EXCLUDES,
     ]
 
 
 def make_squashfs(
-    rootfs: Path, output: Path, *, compression: str = "zstd", level: int = 19
+    rootfs: Path,
+    output: Path,
+    *,
+    compression: str = "zstd",
+    level: int = 19,
+    processors: int | None = None,
 ) -> Path:
     """Comprime ``rootfs`` num squashfs read-only e devolve ``output`` (OVERVIEW §7).
 
@@ -104,7 +115,11 @@ def make_squashfs(
     """
     _require_tool("mksquashfs")
     output.parent.mkdir(parents=True, exist_ok=True)
-    _run(_mksquashfs_argv(rootfs, output, compression=compression, level=level))
+    _run(
+        _mksquashfs_argv(
+            rootfs, output, compression=compression, level=level, processors=processors
+        )
+    )
     return output
 
 
@@ -127,12 +142,22 @@ def _grub_cfg(*, volume_id: str, timeout: int = 10) -> str:
 def _grub_mkrescue_argv(iso_root: Path, output: Path, *, volume_id: str) -> list[str]:
     """Monta o argv do ``grub-mkrescue`` → ISO híbrida (OVERVIEW §7). **Pura**.
 
-    Forma: ``["grub-mkrescue", "-o", <output>, <iso_root>, "--", "-volid",
-    <volume_id>]``. Tudo após ``--`` é repassado ao ``xorriso`` (backend do
-    ``grub-mkrescue``); ``-volid`` fixa o rótulo de volume que a cmdline do
-    :func:`_grub_cfg` referencia.
+    Forma: ``["grub-mkrescue", "-o", <output>, "-iso-level", "3", <iso_root>,
+    "--", "-volid", <volume_id>]``. Tudo após ``--`` é repassado ao ``xorriso``
+    (backend do ``grub-mkrescue``); ``-volid`` fixa o rótulo de volume que a
+    cmdline do :func:`_grub_cfg` referencia.
+
+    ``-iso-level 3`` lets a file exceed 4 GiB -- the squashfs of a desktop image
+    does (the kde rootfs is ~23 GB). It must come BEFORE ``iso_root``: grub-mkrescue
+    passes it to ``xorriso -as mkisofs`` ahead of the tree, while everything after
+    ``--`` reaches xorriso's native mode only after the files are grafted, too
+    late (measured 2026-09-30 with a 4200 MiB file: without it, "File exceeds size
+    limit of 4294967295 bytes"; with it, the file is whole in the ISO).
     """
-    return ["grub-mkrescue", "-o", str(output), str(iso_root), "--", "-volid", volume_id]
+    return [
+        "grub-mkrescue", "-o", str(output), "-iso-level", "3", str(iso_root),
+        "--", "-volid", volume_id,
+    ]
 
 
 def _stage_iso_tree(squashfs: Path, kernel: Path, initramfs: Path, iso_root: Path) -> None:

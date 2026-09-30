@@ -29,6 +29,9 @@ from shidashi import phases
 from shidashi.recipe import Phase, ResolvedRecipe
 from tests._pending import try_import
 
+# the binpkg check of a shipped stage extracts the stage3's vdb: stubbed here
+pytestmark = pytest.mark.usefixtures("no_stage3_vdb")
+
 UseBreak: Any = try_import("shidashi.recipe", "UseBreak")
 phase_target: Any = try_import("shidashi.phases", "phase_target")
 phase_emerge_argv: Any = try_import("shidashi.phases", "phase_emerge_argv")
@@ -342,8 +345,26 @@ def test_run_phases_settles_each_shipped_stage_and_snapshots_every_stage(
         ("desktop", "desktop"), ("flavor", "kde"), ("settle", "kde"),
     ]
     assert snaps == [f"v3-systemd-S-{s}.tar" for s in ("base", "minimal", "desktop", "kde")]
-    base, minimal, settle_minimal, desktop, *_ = container.emerge_calls
+    # kde's settle has no pending cut, so it runs no emerge
+    (base, minimal, settle_minimal, check_minimal, check_minimal_settle, desktop, _flavor,
+     check_kde, check_kde_settle) = container.emerge_calls
     assert base[:4] == ["emerge", "--verbose", "--usepkg", "--emptytree"]
+    # each shipped image is resolved as the assembler will -- against the
+    # stage3's vdb, under the chain's cuts, then the settle of the cut packages
+    root = "--root=/var/tmp/shidashi-iso-root"
+    pretend = [
+        "emerge", "--pretend", root, "--usepkgonly", "--binpkg-respect-use=y", "--emptytree",
+        "@system",
+    ]
+    settle_check = [
+        "emerge", "--pretend", root, "--usepkgonly", "--binpkg-respect-use=y", "--oneshot",
+        "--nodeps", "dev-lang/python",
+    ]
+    assert check_minimal == [*pretend, "@base", "@extra-system"]
+    assert check_kde == [*pretend, "@base", "@extra-system", "@gpu", "@kde"]
+    # the base's cut was settled at minimal, but a fresh stage3 meets its cycle
+    # again: every image replays it
+    assert check_minimal_settle == check_kde_settle == settle_check
     assert minimal[3:6] == desktop[3:6] == ["--update", "--deep", "--newuse"]
     # minimal's settle undoes the trunk cut, which rode the base phase
     assert settle_minimal[-1] == "dev-lang/python"
@@ -356,7 +377,10 @@ def test_run_phases_resumed_from_desktop_builds_only_the_flavor(
 ) -> None:
     results, container, snaps = _run_chain(tmp_path, monkeypatch, resume_at="desktop")
     assert [r.phase.name for r in results] == ["flavor", "settle"]
-    assert len(container.emerge_calls) == 1  # the settle has no pending cut to redo
+    # the settle has no pending cut to redo; the flavor's image is checked
+    flavor, check, check_settle = container.emerge_calls
+    assert "--pretend" not in flavor
+    assert "--emptytree" in check and "--nodeps" in check_settle
     assert snaps == ["v3-systemd-S-kde.tar"]
 
 
@@ -563,7 +587,8 @@ def test_the_steps_after_the_emerge_run_in_the_declared_order(
     steps = [s.model_dump() for s in phases.stages_flow().steps]
     settle = next(s for s in steps if s["do"] == "settle")
     snap = next(s for s in steps if s["do"] == "snapshot")
-    order = [s for s in steps if s["do"] not in ("settle", "snapshot")] + [snap, settle]
+    rest = [s for s in steps if s["do"] not in ("settle", "snapshot", "check-binpkgs")]
+    order = [*rest, snap, settle]
     edited = _flow_with(steps=order)
     monkeypatch.setattr(phases, "stages_flow", lambda: edited)
     events: list[str] = []
@@ -596,3 +621,103 @@ def test_the_flow_refuses_stage_steps_that_make_no_sense() -> None:
     emerge_first = sorted(steps, key=lambda s: s["do"] != "emerge-stage")
     with pytest.raises(ValidationError, match="must come before emerge-stage"):
         _flow_with(steps=emerge_first)
+
+
+def test_shipped_sets_are_those_of_the_stages_up_to_the_image() -> None:
+    recipe = _chain_recipe()
+    assert phases.shipped_sets(recipe, "minimal") == ("base", "extra-system")
+    assert phases.shipped_sets(recipe, "kde") == ("base", "extra-system", "gpu", "kde")
+    with pytest.raises(ValueError, match="gnome"):
+        phases.shipped_sets(recipe, "gnome")
+
+
+def test_the_binpkg_check_resolves_with_the_assemblers_own_options() -> None:
+    """The check and the ISO cannot drift apart: same options, same targets."""
+    from shidashi.assembler import iso_emerge_argv
+
+    recipe = _chain_recipe()
+    recipe = recipe.model_copy(update={"sets": phases.shipped_sets(recipe, "kde")})
+    check = phases.binpkg_check_argv(recipe, "kde", root="/r")
+    iso = iso_emerge_argv(recipe)
+    assert check[:3] == ["emerge", "--pretend", "--root=/r"]
+    assert [a for a in check if a not in ("--pretend", "--root=/r")] == [
+        a for a in iso if a != "--verbose"
+    ]
+
+
+def test_a_missing_binpkg_fails_the_stage_naming_the_package(tmp_path: Path) -> None:
+    """The first kde ISO stopped on ccache, installed by the bootstrap without a
+    binpkg (2026-09-29); the factory must stop on it instead."""
+    import subprocess
+
+    class _NoBinpkg(_RecordingContainer):
+        def run(self, argv: Any, **_k: Any) -> Any:
+            if "--pretend" in argv:
+                raise subprocess.CalledProcessError(
+                    1, argv, output="",
+                    stderr='emerge: there are no binary packages to satisfy "dev-util/ccache".\n',
+                )
+            return super().run(argv)
+
+    with pytest.raises(phases.FactoryError, match="no binpkg for dev-util/ccache") as err:
+        phases.check_binpkgs(_NoBinpkg(tmp_path), _chain_recipe(), "kde")  # type: ignore[arg-type]
+    assert err.value.phase == "kde:binpkgs"
+    assert "dev-util/ccache" in err.value.output
+
+
+def test_the_flow_refuses_a_binpkg_check_before_the_settle() -> None:
+    steps = [s.model_dump() for s in phases.stages_flow().steps]
+    check = next(s for s in steps if s["do"] == "check-binpkgs")
+    order = [check, *(s for s in steps if s is not check)]
+    with pytest.raises(ValueError, match="after settle"):
+        _flow_with(steps=order)
+
+
+def test_the_binpkg_check_replays_the_assemblers_two_passes(
+    tmp_path: Path, no_stage3_vdb: list[Path]
+) -> None:
+    """F76: against the stage3's vdb, under the cuts, then the settle -- and it
+    leaves nothing behind in the build rootfs (the fork point is already taken,
+    but a later stage builds on this rootfs)."""
+    cut_file = tmp_path / "etc/portage/package.use/zz-shidashi-use-break"
+    seen: list[tuple[list[str], str]] = []
+
+    class _Witness(_RecordingContainer):
+        def run(self, argv: Any, **_k: Any) -> Any:
+            seen.append((list(argv), cut_file.read_text() if cut_file.is_file() else ""))
+            return super().run(argv)
+
+    phases.check_binpkgs(_Witness(tmp_path), _chain_recipe(), "kde")  # type: ignore[arg-type]
+
+    assert no_stage3_vdb == [tmp_path / "var/tmp/shidashi-iso-root"]
+    (install, cuts_then), (settle, cuts_after) = seen
+    assert "--emptytree" in install and cuts_then == "dev-lang/python -bluetooth\n"
+    assert settle[-2:] == ["--nodeps", "dev-lang/python"] and cuts_after == ""
+    assert not cut_file.exists()
+    assert not (tmp_path / "var/tmp/shidashi-iso-root").exists()
+
+
+def test_a_cycle_with_no_cut_fails_the_stage_and_cleans_up(
+    tmp_path: Path, no_stage3_vdb: list[Path]
+) -> None:
+    import subprocess
+
+    class _Cycle(_RecordingContainer):
+        def run(self, argv: Any, **_k: Any) -> Any:
+            raise subprocess.CalledProcessError(
+                1, argv, output=" * Error: circular dependencies:\n", stderr=""
+            )
+
+    with pytest.raises(phases.FactoryError, match="cycle with no cut") as err:
+        phases.check_binpkgs(_Cycle(tmp_path), _chain_recipe(), "kde")  # type: ignore[arg-type]
+    assert err.value.phase == "kde:binpkgs"
+    assert not (tmp_path / "etc/portage/package.use/zz-shidashi-use-break").exists()
+    assert not (tmp_path / "var/tmp/shidashi-iso-root").exists()
+
+
+def test_image_cuts_cover_the_stages_up_to_the_image_or_the_whole_chain() -> None:
+    recipe = _chain_recipe()
+    trunk = UseBreak(atom="dev-lang/python", flag="bluetooth", enable=False)
+    assert phases.image_cuts(recipe, "base") == (trunk,)
+    assert phases.image_cuts(recipe, "kde") == (trunk,)
+    assert phases.image_cuts(recipe) == (trunk,)

@@ -25,7 +25,7 @@ from shidashi.assembler import (
     iso_emerge_argv,
 )
 from shidashi.image import ImageError
-from shidashi.recipe import ResolvedRecipe
+from shidashi.recipe import Phase, ResolvedRecipe, UseBreak
 from shidashi.resolve import ResolveError
 
 
@@ -84,6 +84,7 @@ def test_iso_emerge_argv_targets_system_plus_flavor_sets() -> None:
     assert iso_emerge_argv(_recipe(sets=("graphics", "kde"))) == [
         "emerge",
         "--usepkgonly",
+        "--binpkg-respect-use=y",
         "--emptytree",
         "--verbose",
         "@system",
@@ -92,11 +93,21 @@ def test_iso_emerge_argv_targets_system_plus_flavor_sets() -> None:
     ]
 
 
+def test_iso_emerge_argv_jobs_merges_binpkgs_in_parallel() -> None:
+    argv = iso_emerge_argv(_recipe(sets=("kde",)), jobs=8)
+    assert argv[:7] == [
+        "emerge", "--usepkgonly", "--binpkg-respect-use=y", "--emptytree", "--verbose",
+        "--jobs", "8",
+    ]
+    assert argv[-2:] == ["@system", "@kde"]
+
+
 def test_iso_emerge_argv_empty_sets_falls_back_to_world() -> None:
     # minimal não declara sets → @world (= @system + o que a base seedou), --emptytree.
     assert iso_emerge_argv(_recipe(sets=())) == [
         "emerge",
         "--usepkgonly",
+        "--binpkg-respect-use=y",
         "--emptytree",
         "--verbose",
         "@world",
@@ -232,8 +243,9 @@ class _FakeContainer:
         self.runs.append(argv)
 
 
+@pytest.mark.parametrize("jobs", [None, 6])
 def test_assemble_orchestrates_seed_emerge_dracut_squashfs_iso(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, jobs: int | None
 ) -> None:
     _FakeContainer.instances = []
     monkeypatch.setattr(os, "geteuid", lambda: 0)
@@ -251,6 +263,8 @@ def test_assemble_orchestrates_seed_emerge_dracut_squashfs_iso(
         boot.mkdir(parents=True)
         (boot / "vmlinuz-6.12.0-bentoo").write_bytes(b"K")
         (rootfs / "etc" / "portage").mkdir(parents=True)
+        # what the first emerge installs; the settle only redoes installed cuts
+        (rootfs / "var/db/pkg/media-video/pipewire-1.6.9").mkdir(parents=True)
 
     monkeypatch.setattr(asm, "extract_stage3", fake_extract)
 
@@ -263,9 +277,13 @@ def test_assemble_orchestrates_seed_emerge_dracut_squashfs_iso(
     monkeypatch.setattr(asm, "apply_rootfs", lambda *_a, **_k: ())
     monkeypatch.setattr(asm, "bind_repos", lambda d, **_k: [])
 
+    cuts_seen: list[str] = []
+
     class _OrchContainer(_FakeContainer):
         def run(self, argv: list[str], **kw: object) -> None:
             events.append(argv[0])
+            cut = self.rootfs / "etc/portage/package.use/zz-shidashi-use-break"
+            cuts_seen.append(cut.read_text() if cut.is_file() else "")
             super().run(argv, **kw)
 
     monkeypatch.setattr(asm, "Container", _OrchContainer)
@@ -273,8 +291,11 @@ def test_assemble_orchestrates_seed_emerge_dracut_squashfs_iso(
     sq_calls: list[tuple[Path, Path]] = []
     iso_calls: list[tuple[Path, Path, Path, Path]] = []
 
-    def fake_squashfs(rootfs: Path, output: Path) -> Path:
+    processors_seen: list[int | None] = []
+
+    def fake_squashfs(rootfs: Path, output: Path, *, processors: int | None = None) -> Path:
         sq_calls.append((rootfs, output))
+        processors_seen.append(processors)
         output.write_bytes(b"SQ")
         return output
 
@@ -290,8 +311,16 @@ def test_assemble_orchestrates_seed_emerge_dracut_squashfs_iso(
     out = tmp_path / "dist" / "bentoo.iso"
     # sets=() de propósito: este teste exercita a ORQUESTRAÇÃO do assemble, e
     # install_sets falharia alto num set declarado sem arquivo curado no tmp_path.
-    recipe = _recipe(sets=())
-    result = Assembler(recipe, tmp_path / "binhost" / "znver5").assemble(out)
+    recipe = _recipe(sets=()).model_copy(
+        update={
+            "phases": (
+                Phase(name="desktop", stage="desktop", use_break=(
+                    UseBreak(atom="media-video/pipewire", flag="ffmpeg"),
+                )),
+            )
+        }
+    )
+    result = Assembler(recipe, tmp_path / "binhost" / "znver5", jobs=jobs).assemble(out)
 
     assert result == out
     assert out.read_bytes() == b"ISO"
@@ -300,10 +329,20 @@ def test_assemble_orchestrates_seed_emerge_dracut_squashfs_iso(
     # ordem dentro do container: emerge --usepkgonly, then the stage3's leftovers
     # go (depclean + preserved-rebuild from binpkgs only), then dracut.
     inst = _FakeContainer.instances[0]
-    assert inst.runs[0] == iso_emerge_argv(recipe)
-    assert inst.runs[1] == ["emerge", "--depclean"]
-    assert inst.runs[2] == ["emerge", "--usepkgonly", "--oneshot", "@preserved-rebuild"]
-    assert inst.runs[3][0] == "dracut" and "dmsquash-live" in inst.runs[3]
+    parallel = ["--jobs", str(jobs)] if jobs else []
+    final = ["emerge", "--usepkgonly", "--binpkg-respect-use=y", "--oneshot", *parallel]
+    assert inst.runs[0] == iso_emerge_argv(recipe, jobs=jobs)
+    # F76: the image installs under the chain's cuts (the cut binpkg), then the
+    # cut package is settled from its final binpkg, with the cut file gone
+    assert cuts_seen[0] == "media-video/pipewire -ffmpeg\n"
+    assert inst.runs[1] == [*final, "media-video/pipewire"]
+    assert cuts_seen[1:] == ["", "", "", ""]
+    # binaries only: build deps do not keep the stage3's leftovers (F77)
+    assert inst.runs[2] == ["emerge", "--depclean", "--with-bdeps=n"]
+    assert inst.runs[3] == [*final, "@preserved-rebuild"]
+    # --jobs also caps mksquashfs; without it mksquashfs keeps every CPU
+    assert processors_seen == [jobs]
+    assert inst.runs[4][0] == "dracut" and "dmsquash-live" in inst.runs[4]
     # binhost montado RO no container (e nada RW) — fio condutor binhost_dir→Container.
     assert (tmp_path / "binhost" / "znver5", asm._BINHOST_DST) in inst.binds
     assert inst.binds_rw == []
@@ -373,7 +412,7 @@ def test_assemble_keeps_rootfs_on_squashfs_failure(
     monkeypatch.setattr(asm, "bind_repos", lambda d, **_k: [])
     monkeypatch.setattr(asm, "Container", _FakeContainer)  # run() é no-op (sucesso)
 
-    def boom_squashfs(rootfs: Path, output: Path) -> Path:
+    def boom_squashfs(rootfs: Path, output: Path, **_k: object) -> Path:
         raise ImageError("mksquashfs: disco cheio")
 
     monkeypatch.setattr(image, "make_squashfs", boom_squashfs)

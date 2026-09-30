@@ -785,6 +785,15 @@ def assemble(
             help="Raiz de trabalho: cache+scratch sob <DIR> (vence SHIDASHI_CACHE/_SCRATCH).",
         ),
     ] = None,
+    jobs: Annotated[
+        int | None,
+        typer.Option(
+            "--jobs",
+            min=1,
+            help="emerge --jobs N (binpkgs merged in parallel) and mksquashfs -processors N. "
+            "Default: emerge one package at a time, mksquashfs on every CPU.",
+        ),
+    ] = None,
 ) -> None:
     """Monta a ISO live da receita a partir do binhost (OVERVIEW §7).
 
@@ -810,7 +819,7 @@ def assemble(
     iso_path = output if output is not None else Path(f"bentoo-{flavor}-{init}-{arch}.iso")
 
     try:
-        produced = Assembler(resolved, binhost).assemble(
+        produced = Assembler(resolved, binhost, jobs=jobs).assemble(
             iso_path, download=not no_download, keep=keep
         )
     except (AssemblerError, ImageError, SeedError, ResolveError) as err:

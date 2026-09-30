@@ -29,7 +29,10 @@ by :mod:`shidashi.phases` in the declared order:
   ``@world`` and the stage's sets; its options are in ``stages.emerge``;
 - ``settle``: on a stage that ships, rebuild the cut packages with their final
   USE; its options are in ``stages.settle``;
-- ``snapshot``: the stage's fork point.
+- ``snapshot``: the stage's fork point;
+- ``check-binpkgs`` (optional): on a stage that ships, resolve the image the
+  way the assembler will (``--usepkgonly --emptytree``) with ``--pretend``, so
+  an installed package with no binpkg fails the factory, not the ISO.
 """
 
 from pathlib import Path
@@ -127,7 +130,9 @@ class BootstrapFlow(BaseModel):
 class _StageStep(BaseModel):
     model_config = _STRICT
     name: str
-    do: Literal["apply-config", "write-cuts", "emerge-stage", "settle", "snapshot"]
+    do: Literal[
+        "apply-config", "write-cuts", "emerge-stage", "settle", "snapshot", "check-binpkgs"
+    ]
 
 
 class StageEmerge(BaseModel):
@@ -168,6 +173,10 @@ class StagesFlow(BaseModel):
         at = kinds.index("emerge-stage")
         if kinds.index("apply-config") > at or kinds.index("write-cuts") > at:
             raise ValueError("apply-config and write-cuts must come before emerge-stage")
+        if kinds.count("check-binpkgs") > 1:
+            raise ValueError("stages.steps needs `check-binpkgs` at most once")
+        if "check-binpkgs" in kinds and kinds.index("check-binpkgs") < kinds.index("settle"):
+            raise ValueError("check-binpkgs must come after settle: it checks the settled image")
         return self
 
     def split(self) -> tuple[tuple[str, ...], tuple[str, ...]]:

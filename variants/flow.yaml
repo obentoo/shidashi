@@ -85,3 +85,8 @@ stages:
                                            # cuts pending since the last settle, on
                                            # the packages that are installed (F72)
     - {name: fork-point, do: snapshot}     # restored by later builds (D24)
+    - {name: binpkgs, do: check-binpkgs}   # only where the stage `ships`: resolve
+                                           # the image as the assembler will
+                                           # (--pretend --usepkgonly --emptytree);
+                                           # after the fork point, so a failure
+                                           # keeps the stage's work

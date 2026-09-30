@@ -24,6 +24,7 @@ não-zero) são embrulhadas em :class:`FactoryError`.
 import dataclasses
 import os
 import re
+import shutil
 import subprocess
 from collections.abc import Callable
 from enum import StrEnum
@@ -133,6 +134,154 @@ def phase_target(phase: Phase, recipe: ResolvedRecipe) -> tuple[str, ...]:
     return sets or phase.packages
 
 
+#: How the assembler installs an image: only binpkgs, and all of them -- the
+#: stage3's own packages included (OVERVIEW §7). ``--binpkg-respect-use=y``
+#: because --usepkgonly turns it OFF by default: emerge would then take any
+#: instance of a package whatever its USE -- the cut one or the settled one.
+#: The factory's binpkg check resolves with the same options, so the two
+#: cannot drift apart.
+ISO_EMERGE_OPTIONS = ("--usepkgonly", "--binpkg-respect-use=y", "--emptytree")
+
+#: The assembler's settle: the cut packages again, from their final binpkgs.
+ISO_SETTLE_OPTIONS = ("--usepkgonly", "--binpkg-respect-use=y", "--oneshot")
+
+#: Where the binpkg check puts the stage3's vdb inside the build rootfs: the
+#: ROOT its emerge resolves against, so it sees what the assembler sees.
+_CHECK_ROOT = Path("var/tmp/shidashi-iso-root")
+
+
+def image_targets(sets: tuple[str, ...]) -> tuple[str, ...]:
+    """The emerge targets of an image made of ``sets``. Pure.
+
+    ``@system`` plus the sets; ``@world`` when there are none (= ``@system`` +
+    what the base seeded).
+    """
+    return ("@system", *(f"@{name}" for name in sets)) if sets else ("@world",)
+
+
+def _stage_phases(recipe: ResolvedRecipe, stage: str) -> tuple[Phase, ...]:
+    """The recipe's stage phases up to and including ``stage``. Pure."""
+    chosen: list[Phase] = []
+    for phase in recipe.phases:
+        if not phase.stage:
+            continue
+        chosen.append(phase)
+        if phase.stage == stage:
+            return tuple(chosen)
+    raise ValueError(f"stage {stage!r} is not in the recipe's chain")
+
+
+def shipped_sets(recipe: ResolvedRecipe, stage: str) -> tuple[str, ...]:
+    """The sets of the image that ends at ``stage``: every stage's up to it. Pure.
+
+    For the recipe's last stage this is ``recipe.sets``, what the assembler
+    installs; for an earlier stage that ships (minimal, inside a flavor's
+    recipe) it is that smaller image.
+    """
+    sets: list[str] = []
+    for phase in _stage_phases(recipe, stage):
+        sets.extend(s for s in phase.sets if s not in sets)
+    return tuple(sets)
+
+
+def image_cuts(recipe: ResolvedRecipe, stage: str | None = None) -> tuple[UseBreak, ...]:
+    """Every cycle cut of the phases up to ``stage`` -- of the whole chain when
+    ``stage`` is ``None`` (the assembler's image). Pure.
+
+    The factory built each cut package twice -- cut in its stage, final in the
+    settle -- and both binpkgs stay in the PKGDIR. A fresh stage3 has none of
+    the cycle's packages installed, so the assembler meets every cycle again
+    (ffmpeg -> libsdl2 -> pipewire[ffmpeg] -> ffmpeg stopped the first kde ISO,
+    2026-09-29): it installs under the same cuts, then settles them.
+    """
+    cuts: list[UseBreak] = []
+    phases = recipe.phases if stage is None else _stage_phases(recipe, stage)
+    for phase in phases:
+        cuts.extend(c for c in phase.use_break if c not in cuts)
+    return tuple(cuts)
+
+
+def binpkg_check_argv(recipe: ResolvedRecipe, stage: str, *, root: str) -> list[str]:
+    """The ``emerge --pretend`` of the assembler's install, against ``root``. Pure."""
+    return [
+        "emerge", "--pretend", f"--root={root}", *ISO_EMERGE_OPTIONS,
+        *image_targets(shipped_sets(recipe, stage)),
+    ]
+
+
+def binpkg_settle_check_argv(atoms: tuple[str, ...], *, root: str) -> list[str]:
+    """The ``emerge --pretend`` of the assembler's settle. Pure.
+
+    ``--nodeps``: the question is only whether each cut package has a binpkg
+    with its final USE. Its dependencies were installed by the first pass,
+    which a pretend does not do -- resolving them here would meet the very
+    cycle the cut exists to avoid.
+    """
+    return ["emerge", "--pretend", f"--root={root}", *ISO_SETTLE_OPTIONS, "--nodeps", *atoms]
+
+
+def _extract_vdb(tarball: Path, dest: Path) -> None:
+    """Only ``var/db/pkg`` of a stage3 into ``dest`` (~6 s, ~50 MB). I/O."""
+    dest.mkdir(parents=True, exist_ok=True)
+    _tar(["-xpf", str(tarball), "-C", str(dest), "./var/db/pkg"])
+
+
+def _seed_tarball(recipe: ResolvedRecipe) -> Path:
+    """The cached stage3 the recipe's builds start from (never downloads)."""
+    from shidashi.seed import fetch_stage3, load_pointer
+
+    pointer = load_pointer(recipe.init, seeds_dir=config.seeds_dir())
+    return fetch_stage3(pointer, cache_dir=config.cache_dir(), download=False)
+
+
+def check_binpkgs(container: Container, recipe: ResolvedRecipe, stage: str) -> None:
+    """Fail when the image ending at ``stage`` cannot be installed from binpkgs.
+
+    PRIVILEGED. Replays the assembler's plan with ``--pretend``: the install
+    under the image's cuts, then the settle of the cut packages, against a ROOT
+    that holds only the stage3's vdb (what the assembler starts from).
+
+    It catches a package with no binpkg (ccache, from the bootstrap, F75) and a
+    binpkg whose USE no longer matches. It does NOT reliably catch a dependency
+    cycle (F76): the resolver here is the IMAGE's Portage, while the assembler
+    runs the STAGE3's. Measured on 2026-09-29: portage-3.0.82.2 orders the
+    ffmpeg -> libsdl2 -> pipewire cycle with no cut, 3.0.81.3 refuses it -- with
+    and without --root. A cycle is caught when this resolver also refuses it.
+    """
+    root = container.rootfs / _CHECK_ROOT
+    inside = "/" + _CHECK_ROOT.as_posix()
+    cuts = image_cuts(recipe, stage)
+    phase = f"{stage}:binpkgs"
+    try:
+        shutil.rmtree(root, ignore_errors=True)
+        _extract_vdb(_seed_tarball(recipe), root)
+        write_cuts(container.rootfs, cuts)
+        try:
+            container.run(binpkg_check_argv(recipe, stage, root=inside), check=True)
+            clear_use_break(container.rootfs)
+            atoms = tuple(sorted({c.atom for c in cuts}))
+            if atoms:
+                container.run(binpkg_settle_check_argv(atoms, root=inside), check=True)
+        except subprocess.CalledProcessError as exc:
+            output = (exc.output or "") + (exc.stderr or "")
+            missing = re.findall(r'no binary packages to satisfy "([^"]+)"', output)
+            if missing:
+                detail = f": no binpkg for {', '.join(missing)}"
+            elif "circular dependencies" in output:
+                detail = ": a dependency cycle with no cut (use_break) in the chain"
+            else:
+                detail = ""
+            raise FactoryError(
+                f"the {stage} image cannot be installed from binpkgs{detail}. The stage's "
+                "fork point is saved; fix it before assembling.",
+                phase=phase,
+                output=output,
+            ) from exc
+    finally:
+        clear_use_break(container.rootfs)
+        shutil.rmtree(root, ignore_errors=True)
+
+
 def stages_flow() -> StagesFlow:
     """The ``stages`` part of the flow in force (``variants/flow.yaml``)."""
     return active_flow(config.variants_dir()).stages
@@ -180,7 +329,12 @@ def use_break_lines(phase: Phase) -> tuple[str, ...]:
     sinal é ``""`` (habilita) quando ``enable`` é verdadeiro e ``"-"``
     (desabilita) caso contrário. Fase sem quebras → tupla vazia.
     """
-    return tuple(f"{ub.atom} {'' if ub.enable else '-'}{ub.flag}" for ub in phase.use_break)
+    return cut_lines(phase.use_break)
+
+
+def cut_lines(cuts: tuple[UseBreak, ...]) -> tuple[str, ...]:
+    """The ``package.use`` lines of ``cuts``. Pure."""
+    return tuple(f"{ub.atom} {'' if ub.enable else '-'}{ub.flag}" for ub in cuts)
 
 
 def write_use_break(rootfs: Path, phase: Phase) -> Path | None:
@@ -191,7 +345,12 @@ def write_use_break(rootfs: Path, phase: Phase) -> Path | None:
     diretórios-pai) e devolve o caminho escrito. Quando a fase não tem quebras,
     nada é escrito e devolve-se ``None``. Apenas I/O de filesystem — sem root.
     """
-    lines = use_break_lines(phase)
+    return write_cuts(rootfs, phase.use_break)
+
+
+def write_cuts(rootfs: Path, cuts: tuple[UseBreak, ...]) -> Path | None:
+    """Write ``cuts`` as the transient ``package.use`` file; ``None`` when empty. I/O."""
+    lines = cut_lines(cuts)
     if not lines:
         return None
     target = rootfs.joinpath(*_USE_BREAK_FILE)
@@ -733,6 +892,8 @@ def run_phases(
                         recipe, phase.stage, snapshot=snapshot, fork_points_dir=fork_points_dir
                     ),
                 )
+            elif kind == "check-binpkgs" and phase.ships:
+                check_binpkgs(container, recipe, phase.stage)
         if stop_after is not None and phase.stage == stop_after:
             break
     return tuple(results)
@@ -912,6 +1073,8 @@ def run_phases_stepwise(
                         fork_points_dir=fork_points_dir,
                     ),
                 )
+            elif kind == "check-binpkgs" and phase.ships:
+                check_binpkgs(container, recipe, phase.stage)
         run.persist()
 
         if _checkpoint_decision(on_checkpoint, container, phase.name, diff) is (

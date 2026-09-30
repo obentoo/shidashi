@@ -24,6 +24,15 @@ from pathlib import Path
 
 from shidashi import config, image
 from shidashi.container import Container
+from shidashi.phases import (
+    ISO_EMERGE_OPTIONS,
+    ISO_SETTLE_OPTIONS,
+    clear_use_break,
+    image_cuts,
+    image_targets,
+    is_installed,
+    write_cuts,
+)
 from shidashi.recipe import ResolvedRecipe
 from shidashi.resolve import apply_portage, apply_rootfs, bind_repos, install_sets
 from shidashi.seed import extract_stage3, fetch_stage3, load_pointer
@@ -62,7 +71,32 @@ def _require_root() -> None:
         )
 
 
-def iso_emerge_argv(recipe: ResolvedRecipe) -> list[str]:
+#: The stage3's leftovers out of the image. ``--with-bdeps=n``: an ISO carries
+#: binaries only, like the ``--usepkgonly`` install that ignores build deps.
+#: With the default (y), depclean keeps the stage3's build-only packages (perl
+#: modules, autotools, docbook) as "required", finds their perl-5.42 gone
+#: (the image has 5.44) and refuses to remove anything -- the third kde ISO,
+#: 2026-09-30. Measured on that rootfs: required 1458 (= the image), 82 removed,
+#: gcc-15.3.0 and binutils-2.46.1 among them; gcc-16.2.0 and binutils-2.47 kept.
+ISO_DEPCLEAN_ARGV = ["emerge", "--depclean", "--with-bdeps=n"]
+
+
+def _jobs_args(jobs: int | None) -> list[str]:
+    """``--jobs N`` for emerge, or nothing. Pure.
+
+    Nothing compiles here, so MAKEOPTS does not matter: what a job buys is
+    unpacking and merging several binpkgs at once (the base turns on
+    ``parallel-install``). Without it emerge merges one package at a time.
+    """
+    return ["--jobs", str(jobs)] if jobs is not None else []
+
+
+def iso_settle_argv(atoms: tuple[str, ...], *, jobs: int | None = None) -> list[str]:
+    """The settle of the cut packages: their final binpkgs. Pure."""
+    return ["emerge", *ISO_SETTLE_OPTIONS, *_jobs_args(jobs), *atoms]
+
+
+def iso_emerge_argv(recipe: ResolvedRecipe, *, jobs: int | None = None) -> list[str]:
     """Monta o argv do ``emerge --usepkgonly`` da ISO (OVERVIEW §7/§18.6/§9.3). **Pura**.
 
     Forma: ``["emerge", "--usepkgonly", "--emptytree", "--verbose", *alvos]``.
@@ -79,9 +113,10 @@ def iso_emerge_argv(recipe: ResolvedRecipe) -> list[str]:
     receita não declara sets recai-se em ``@world`` (= ``@system`` + o que a base
     seedou).
     """
-    sets = tuple(f"@{name}" for name in recipe.sets)
-    targets = ("@system", *sets) if sets else ("@world",)
-    return ["emerge", "--usepkgonly", "--emptytree", "--verbose", *targets]
+    return [
+        "emerge", *ISO_EMERGE_OPTIONS, "--verbose", *_jobs_args(jobs),
+        *image_targets(recipe.sets),
+    ]
 
 
 def _dracut_argv(kver: str, initramfs: Path) -> list[str]:
@@ -171,9 +206,14 @@ class Assembler:
     arch) de onde puxar os binpkgs finais via ``--usepkgonly``.
     """
 
-    def __init__(self, recipe: ResolvedRecipe, binhost_dir: Path) -> None:
+    def __init__(
+        self, recipe: ResolvedRecipe, binhost_dir: Path, *, jobs: int | None = None
+    ) -> None:
         self.recipe = recipe
         self.binhost_dir = binhost_dir
+        #: emerge --jobs and mksquashfs -processors; None = emerge serial,
+        #: mksquashfs on every CPU.
+        self.jobs = jobs
 
     def assemble(self, output: Path, *, download: bool = True, keep: bool = False) -> Path:
         """Produz a ISO live em ``output`` e devolve o caminho gerado (OVERVIEW §7).
@@ -216,6 +256,10 @@ class Assembler:
         apply_rootfs(rootfs, recipe, variants_dir=config.variants_dir())
         apply_portage(rootfs, recipe, variants_dir=config.variants_dir())
         _install_sets(rootfs, recipe)
+        # the chain's cycle cuts, as the factory built under them: a fresh stage3
+        # meets every cycle again, and the cut binpkgs are in the PKGDIR
+        cuts = image_cuts(recipe)
+        write_cuts(rootfs, cuts)
 
         binds_ro, binds_rw = _build_binds(
             self.binhost_dir, rootfs / "etc" / "portage" / "repos.conf", repos=repos
@@ -231,21 +275,29 @@ class Assembler:
                 # installing ~1800 binpkgs takes a while: stream it, like the factory
                 log=config.scratch_dir() / "logs" / f"assemble-{key}.log",
             ) as container:
-                container.run(iso_emerge_argv(recipe))
+                container.run(iso_emerge_argv(recipe, jobs=self.jobs))
+                # the settle: the cut packages again, from their final binpkgs
+                clear_use_break(rootfs)
+                settle = tuple(sorted({c.atom for c in cuts if is_installed(rootfs, c.atom)}))
+                if settle:
+                    container.run(iso_settle_argv(settle, jobs=self.jobs))
                 # The stage3 under the ISO keeps what the closure does not reach:
                 # its own gcc and binutils slots, bootstrap leftovers. Measured on
                 # the pipeline's minimal (2026-09-27): gcc-15.3.0, binutils-2.46.1,
                 # autoconf-2.72-r7, rust-bin -- none needed by the image. The sets
                 # are in world_sets, so depclean keeps everything the recipe asks.
-                container.run(["emerge", "--depclean"])
-                container.run(["emerge", "--usepkgonly", "--oneshot", "@preserved-rebuild"])
+                container.run(ISO_DEPCLEAN_ARGV)
+                container.run(
+                    ["emerge", *ISO_SETTLE_OPTIONS, *_jobs_args(self.jobs),
+                     "@preserved-rebuild"]
+                )
                 kver = _kernel_version(rootfs)
                 initramfs = rootfs / "boot" / f"initramfs-{kver}.img"
                 container.run(_dracut_argv(kver, Path("/boot") / initramfs.name))
 
             kernel = _locate_kernel(rootfs, kver)
             squashfs = rootfs.parent / f"{key}.squashfs"
-            image.make_squashfs(rootfs, squashfs)
+            image.make_squashfs(rootfs, squashfs, processors=self.jobs)
             iso = image.build_iso(squashfs, output, kernel=kernel, initramfs=initramfs)
         except BaseException:
             keep_rootfs = True  # preserva o rootfs para depuração em falha

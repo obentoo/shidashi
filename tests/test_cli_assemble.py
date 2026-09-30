@@ -41,18 +41,21 @@ def variants_tree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 class _FakeInstance:
-    def __init__(self, assemble_fn: Any, recipe: object, binhost: Path) -> None:
+    def __init__(
+        self, assemble_fn: Any, recipe: object, binhost: Path, jobs: int | None = None
+    ) -> None:
         self._assemble_fn = assemble_fn
         self.recipe = recipe
         self.binhost = binhost
+        self.jobs = jobs
 
     def assemble(self, output: Path, **kwargs: object) -> Any:
         return self._assemble_fn(output, **kwargs)
 
 
 def _fake_assembler(assemble_fn: Any, sink: dict[str, Any] | None = None) -> Any:
-    def _ctor(recipe: object, binhost: Path) -> _FakeInstance:
-        inst = _FakeInstance(assemble_fn, recipe, binhost)
+    def _ctor(recipe: object, binhost: Path, *, jobs: int | None = None) -> _FakeInstance:
+        inst = _FakeInstance(assemble_fn, recipe, binhost, jobs)
         if sink is not None:
             sink["instance"] = inst
         return inst
@@ -222,3 +225,28 @@ def test_assemble_is_not_a_stub(monkeypatch: pytest.MonkeyPatch, variants_tree: 
     result = runner.invoke(app, ["assemble", "v3", "minimal", "systemd"])
     assert result.exit_code == 0
     assert "Fase 0" not in result.stdout
+
+
+def test_assemble_jobs_reaches_the_assembler(
+    monkeypatch: pytest.MonkeyPatch, variants_tree: Path
+) -> None:
+    sink: dict[str, Any] = {}
+    monkeypatch.setattr(cli, "Assembler", _fake_assembler(lambda o, **_k: o, sink), raising=False)
+    result = runner.invoke(app, ["assemble", "v3", "minimal", "systemd", "--jobs", "8"])
+    assert result.exit_code == 0, result.stdout
+    assert sink["instance"].jobs == 8
+
+
+def test_assemble_without_jobs_leaves_the_defaults(
+    monkeypatch: pytest.MonkeyPatch, variants_tree: Path
+) -> None:
+    sink: dict[str, Any] = {}
+    monkeypatch.setattr(cli, "Assembler", _fake_assembler(lambda o, **_k: o, sink), raising=False)
+    result = runner.invoke(app, ["assemble", "v3", "minimal", "systemd"])
+    assert result.exit_code == 0, result.stdout
+    assert sink["instance"].jobs is None
+
+
+def test_assemble_refuses_zero_jobs(variants_tree: Path) -> None:
+    result = runner.invoke(app, ["assemble", "v3", "minimal", "systemd", "--jobs", "0"])
+    assert result.exit_code != 0

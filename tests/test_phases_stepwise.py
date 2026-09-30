@@ -35,6 +35,9 @@ from shidashi import phases
 from shidashi.recipe import Phase, ResolvedRecipe, UseBreak
 from tests._pending import try_import
 
+# the binpkg check of a shipped stage extracts the stage3's vdb: stubbed here
+pytestmark = pytest.mark.usefixtures("no_stage3_vdb")
+
 checkpoint_sequence: Any = try_import("shidashi.phases", "checkpoint_sequence")
 plan_phase_run: Any = try_import("shidashi.phases", "plan_phase_run")
 parse_emerge_plan: Any = try_import("shidashi.phases", "parse_emerge_plan")
@@ -403,7 +406,8 @@ def test_stepwise_settles_each_shipped_stage_right_after_it(
         ("desktop", "desktop"), ("flavor", "kde"), ("settle", "kde"),
     ]
     # the first settle redoes the trunk cut; the second has nothing pending
-    settles = [c for c in container.emerge_calls if "--oneshot" in c]
+    # (not the binpkg check's --pretend replay of the assembler's settle)
+    settles = [c for c in container.emerge_calls if "--oneshot" in c and "--pretend" not in c]
     assert settles == [["emerge", "--verbose", "--newuse", "--oneshot", "dev-lang/python"]]
 
 

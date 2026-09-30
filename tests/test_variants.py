@@ -40,6 +40,9 @@ from shidashi.recipe import (
 )
 from shidashi.resolve import apply_portage, kit_index
 
+# the binpkg check of a shipped stage extracts the stage3's vdb: stubbed here
+pytestmark = pytest.mark.usefixtures("no_stage3_vdb")
+
 # Raiz do repo = pai de tests/; o variants/ real vive em <raiz>/variants.
 _VARIANTS_DIR = Path(__file__).resolve().parent.parent / "variants"
 
@@ -618,7 +621,10 @@ def test_the_kde_layer_is_not_in_force_until_the_kde_stage(
     phases.run_phases(
         witness, recipe, emptytree=True, snapshot="S", fork_points_dir=tmp_path  # type: ignore[arg-type]
     )
-    stage_emerges = [s for s in witness.seen if "--oneshot" not in s[0]]
+    # not the settles (--oneshot) nor the binpkg checks (--pretend)
+    stage_emerges = [
+        s for s in witness.seen if "--oneshot" not in s[0] and "--pretend" not in s[0]
+    ]
     assert len(stage_emerges) == 4  # base, minimal, desktop, flavor
     # make.conf is REWRITTEN per stage, package.use only ever ADDS -- check both:
     # a kde package.use file present while the base builds is the regression

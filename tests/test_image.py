@@ -50,6 +50,15 @@ def test_mksquashfs_argv_form_and_defaults() -> None:
     ]
 
 
+def test_mksquashfs_argv_processors_caps_the_threads_before_the_excludes() -> None:
+    argv = _mksquashfs_argv(
+        Path("/r"), Path("/o.sq"), compression="zstd", level=19, processors=4
+    )
+    at = argv.index("-processors")
+    assert argv[at + 1] == "4"
+    assert at < argv.index("-e")  # -e consumes the rest of the argv
+
+
 def test_mksquashfs_argv_excludes_boot_and_volatile_dirs() -> None:
     # boot (kernel+initramfs vão no boot/ da ISO, não na raiz live) + voláteis.
     argv = _mksquashfs_argv(Path("/r"), Path("/o.sq"), compression="zstd", level=19)
@@ -62,7 +71,17 @@ def test_mksquashfs_argv_excludes_boot_and_volatile_dirs() -> None:
 
 def test_grub_mkrescue_argv_passes_volid_after_separator() -> None:
     argv = _grub_mkrescue_argv(Path("/iso"), Path("/out.iso"), volume_id="BENTOO")
-    assert argv == ["grub-mkrescue", "-o", "/out.iso", "/iso", "--", "-volid", "BENTOO"]
+    assert argv == [
+        "grub-mkrescue", "-o", "/out.iso", "-iso-level", "3", "/iso", "--", "-volid", "BENTOO"
+    ]
+
+
+def test_grub_mkrescue_argv_allows_files_over_4gib_before_the_tree() -> None:
+    """The squashfs of a desktop image exceeds 4 GiB; after "--" the option would
+    reach xorriso only once the tree is grafted, and it refuses the file."""
+    argv = _grub_mkrescue_argv(Path("/iso"), Path("/out.iso"), volume_id="BENTOO")
+    assert argv.index("-iso-level") < argv.index("/iso") < argv.index("--")
+    assert argv[argv.index("-iso-level") + 1] == "3"
 
 
 def test_grub_cfg_references_liveos_and_volume() -> None:
@@ -154,7 +173,7 @@ def test_build_iso_stages_tree_and_invokes_grub(
 
     def fake_run(argv: list[str], **kw: object) -> subprocess.CompletedProcess[str]:
         # a árvore temporária do ISO deve existir no momento do grub-mkrescue.
-        iso_root = Path(argv[3])
+        iso_root = Path(argv[argv.index("--") - 1])  # the tree comes right before "--"
         assert (iso_root / "LiveOS" / "squashfs.img").is_file()
         seen.append(argv)
         return _ok()
