@@ -20,10 +20,12 @@ from typing import Protocol
 
 import pydantic
 
+from shidashi import audit
 from shidashi.container import CommandResult
 from shidashi.flow import (
     AssertWorldEmptyStep,
     BootstrapFlow,
+    BootstrapStep,
     CheckGenerationStep,
     EmergeStep,
     LocaleStep,
@@ -153,6 +155,58 @@ def _count_locales(log: _Log, step: str) -> int:
     return len([line for line in log.run(step, ["locale", "-a"]).splitlines() if line.strip()])
 
 
+def _run_step(
+    step: BootstrapStep,
+    flow: BootstrapFlow,
+    log: _Log,
+    rootfs: Path,
+    selected: dict[str, str],
+    names: list[str],
+    on_generation: Callable[[], object] | None,
+    counts: dict[str, int],
+) -> None:
+    """One step of the bootstrap flow (see :func:`run_bootstrap`)."""
+    if step.name not in names:
+        names.append(step.name)
+    if isinstance(step, LocaleStep):
+        # checked before anything runs: eselect by a name that locale-gen
+        # never generated fails far from the cause
+        if step.locale not in active_locales(rootfs):
+            raise log.fail(step.name, f"{step.locale} is not active in /{_LOCALE_GEN}")
+        log.run(step.name, ["locale-gen"])
+        log.run(step.name, ["eselect", "locale", "set", step.locale])
+        log.run(step.name, ["env-update"])
+    elif isinstance(step, EmergeStep):
+        if step.keep_locales:
+            counts["before"] = _count_locales(log, step.name)
+        log.run(step.name, emerge_argv(*step.atoms, env=flow.step_env(step)))
+        if step.keep_locales:
+            counts["after"] = _count_locales(log, step.name)
+            before, after = counts["before"], counts["after"]
+            if after < before:
+                raise log.fail(
+                    step.name,
+                    f"{' '.join(step.atoms)} lost locales: locale -a went {before} -> {after}",
+                )
+    elif isinstance(step, SelectToolchainStep):
+        profile = newest_profile(rootfs / _ENV_D / step.tool)
+        log.run(step.name, [f"{step.tool}-config", profile])
+        log.run(step.name, ["env-update"])
+        selected[step.tool] = profile
+    elif isinstance(step, CheckGenerationStep):
+        if on_generation is None:
+            raise log.fail(step.name, "check-generation has no fingerprint check to run")
+        log.parts.append(f"### [{step.name}] generation fingerprint\n")
+        on_generation()
+    elif isinstance(step, AssertWorldEmptyStep):
+        leftover = world_entries(rootfs)
+        if leftover:
+            raise log.fail(
+                step.name,
+                f"the bootstrap left {len(leftover)} world entries: {' '.join(leftover)}",
+            )
+
+
 def run_bootstrap(
     container: _Runner,
     flow: BootstrapFlow | None = None,
@@ -175,48 +229,13 @@ def run_bootstrap(
     rootfs = container.rootfs
     log = _Log(container)
     selected: dict[str, str] = {}
-    before = after = 0
+    counts: dict[str, int] = {}
     names: list[str] = []
 
     for step in flow.steps:
-        if step.name not in names:
-            names.append(step.name)
-        if isinstance(step, LocaleStep):
-            # checked before anything runs: eselect by a name that locale-gen
-            # never generated fails far from the cause
-            if step.locale not in active_locales(rootfs):
-                raise log.fail(step.name, f"{step.locale} is not active in /{_LOCALE_GEN}")
-            log.run(step.name, ["locale-gen"])
-            log.run(step.name, ["eselect", "locale", "set", step.locale])
-            log.run(step.name, ["env-update"])
-        elif isinstance(step, EmergeStep):
-            if step.keep_locales:
-                before = _count_locales(log, step.name)
-            log.run(step.name, emerge_argv(*step.atoms, env=flow.step_env(step)))
-            if step.keep_locales:
-                after = _count_locales(log, step.name)
-                if after < before:
-                    raise log.fail(
-                        step.name,
-                        f"{' '.join(step.atoms)} lost locales: locale -a went {before} -> {after}",
-                    )
-        elif isinstance(step, SelectToolchainStep):
-            profile = newest_profile(rootfs / _ENV_D / step.tool)
-            log.run(step.name, [f"{step.tool}-config", profile])
-            log.run(step.name, ["env-update"])
-            selected[step.tool] = profile
-        elif isinstance(step, CheckGenerationStep):
-            if on_generation is None:
-                raise log.fail(step.name, "check-generation has no fingerprint check to run")
-            log.parts.append(f"### [{step.name}] generation fingerprint\n")
-            on_generation()
-        elif isinstance(step, AssertWorldEmptyStep):
-            leftover = world_entries(rootfs)
-            if leftover:
-                raise log.fail(
-                    step.name,
-                    f"the bootstrap left {len(leftover)} world entries: {' '.join(leftover)}",
-                )
+        with audit.current().step(step.name, do=step.do):
+            _run_step(step, flow, log, rootfs, selected, names, on_generation, counts)
+    before, after = counts.get("before", 0), counts.get("after", 0)
 
     return BootstrapResult(
         steps=tuple(names),

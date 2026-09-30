@@ -1,0 +1,34 @@
+# variants/base/iso-exclude — what the live squashfs leaves out of the image's rootfs.
+#
+# Passed to `mksquashfs -wildcards -ef`: one pattern per line, relative to the
+# rootfs, `*` never crossing a `/`. `dir/*` drops the directory's CONTENT and
+# keeps the directory itself -- the mount points the booted system needs (the
+# first ISO dropped /dev, /proc, /sys and /run whole). Measured on 2026-09-30
+# with a test tree: `dev/*` keeps /dev empty, `var/log/*.log` keeps the log
+# directories services expect, `lost+found` goes whole.
+
+# The kernel and initramfs sit in the ISO's own boot/ (image.py), not in the root.
+boot/*
+
+# Pseudo filesystems and runtime state: mounted or created at boot.
+dev/*
+proc/*
+sys/*
+run/*
+tmp/*
+mnt/*
+var/tmp/*
+
+# The build's caches: the binhost bind mount, distfiles, Portage's own caches.
+var/cache/binpkgs/*
+var/cache/distfiles/*
+var/cache/edb/*
+
+# The build's logs (the run's audit trail keeps them), not the image's.
+var/log/*.log
+var/log/portage/*
+
+# Shell history and filesystem leftovers.
+root/.bash_history
+root/.lesshst
+lost+found

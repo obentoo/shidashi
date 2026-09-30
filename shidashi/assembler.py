@@ -17,12 +17,19 @@ execução real (nspawn + emerge + dracut + mksquashfs + grub-mkrescue) exige ro
 e é exercida pelos testes host-gated.
 """
 
+import datetime
+import json
 import os
+import re
 import shutil
-from collections.abc import Mapping
+import subprocess
+import time
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
-from shidashi import config, image
+from pydantic import BaseModel, ConfigDict
+
+from shidashi import audit, config, image, publish, world
 from shidashi.container import Container
 from shidashi.phases import (
     ISO_EMERGE_OPTIONS,
@@ -31,11 +38,13 @@ from shidashi.phases import (
     image_cuts,
     image_targets,
     is_installed,
+    parse_reused_atoms,
     write_cuts,
 )
 from shidashi.recipe import ResolvedRecipe
 from shidashi.resolve import apply_portage, apply_rootfs, bind_repos, install_sets
 from shidashi.seed import extract_stage3, fetch_stage3, load_pointer
+from shidashi.system import apply_live, apply_system, load_system_config, verify
 from shidashi.tree import pinned_repos
 
 __all__ = ["Assembler", "AssemblerError"]
@@ -79,6 +88,33 @@ def _require_root() -> None:
 #: 2026-09-30. Measured on that rootfs: required 1458 (= the image), 82 removed,
 #: gcc-15.3.0 and binutils-2.46.1 among them; gcc-16.2.0 and binutils-2.47 kept.
 ISO_DEPCLEAN_ARGV = ["emerge", "--depclean", "--with-bdeps=n"]
+
+
+def _depclean_count(output: str) -> int | None:
+    """How many packages depclean removed ("Number removed: N"), if it says. Pure."""
+    match = re.search(r"Number removed:\s+(\d+)", output)
+    return int(match.group(1)) if match else None
+
+
+def _emerge_log_merges(rootfs: Path, *, since: int) -> dict[str, dict[str, int]]:
+    """This run's merges in the image's own emerge.log (empty if there is none)."""
+    log = rootfs / "var" / "log" / "emerge.log"
+    try:
+        text = log.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return {}
+    return audit.parse_emerge_log(text, since=since)
+
+
+def _tree_bytes(path: Path) -> int:
+    """Apparent size of a tree (``du -sb``), for the compression ratio; 0 if unknown."""
+    try:
+        done = subprocess.run(
+            ["du", "-sxb", str(path)], capture_output=True, text=True, check=True
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return 0
+    return int(done.stdout.split()[0])
 
 
 def _jobs_args(jobs: int | None) -> list[str]:
@@ -199,12 +235,51 @@ def _install_sets(rootfs: Path, recipe: ResolvedRecipe) -> None:
     install_sets(rootfs, recipe)
 
 
-class Assembler:
-    """Monta a ISO de uma receita resolvida a partir do binhost (OVERVIEW §7).
+class AssembleResult(BaseModel):
+    """What an assemble produced: the ISOs and every artifact beside them."""
 
-    Recebe a receita já resolvida e o ``binhost_dir`` (publish-pool host-side da
-    arch) de onde puxar os binpkgs finais via ``--usepkgonly``.
-    """
+    model_config = ConfigDict(frozen=True)
+    name: str
+    isos: tuple[Path, ...]
+    artifacts: tuple[Path, ...]
+
+
+#: The squashfs exclude list (see the file's own comments).
+ISO_EXCLUDE = Path("base") / "iso-exclude"
+
+
+def build_info(
+    recipe: ResolvedRecipe,
+    *,
+    name: str,
+    build_id: str,
+    kernel: str,
+    compression: str,
+    volume: str,
+    packages: int,
+    world_atoms: int,
+    stage3: Mapping[str, object],
+) -> dict[str, object]:
+    """``bentoo/build.json`` on the medium: what this image is and what made it. Pure."""
+    return {
+        "name": name,
+        "build_id": build_id,
+        "flavor": recipe.flavor,
+        "init": recipe.init,
+        "arch": recipe.arch,
+        "profile": recipe.profile,
+        "kernel": kernel,
+        "compression": compression,
+        "volume": volume,
+        "packages": packages,
+        "world": world_atoms,
+        "stage3": dict(stage3),
+        "repository": audit.repo_state(),
+    }
+
+
+class Assembler:
+    """Assembles the ISO of a resolved recipe from the generation's binpkgs (OVERVIEW §7)."""
 
     def __init__(
         self, recipe: ResolvedRecipe, binhost_dir: Path, *, jobs: int | None = None
@@ -215,55 +290,82 @@ class Assembler:
         #: mksquashfs on every CPU.
         self.jobs = jobs
 
-    def assemble(self, output: Path, *, download: bool = True, keep: bool = False) -> Path:
-        """Produz a ISO live em ``output`` e devolve o caminho gerado (OVERVIEW §7).
+    def assemble(
+        self,
+        output_dir: Path,
+        *,
+        download: bool = True,
+        keep: bool = False,
+        compressions: Sequence[str] = ("zstd",),
+        stage4: bool = False,
+        sbom: bool = True,
+        now: datetime.datetime | None = None,
+    ) -> AssembleResult:
+        """Build the live ISO(s) of the recipe into ``output_dir``. PRIVILEGED.
 
-        Ordem:
-
-        1. **Guarda de root** (:func:`_require_root`) — antes de qualquer trabalho.
-        2. Resolve o pointer do stage3 (``load_pointer``), faz seed fresco da base
-           genérica (``fetch_stage3`` + ``extract_stage3``) num rootfs de scratch.
-           A microarquitetura entra pelos binpkgs do binhost, não pela base.
-        3. ``apply_portage`` (os MESMOS layers da Factory → USE final idêntica,
-           §18.6) + :func:`_install_sets`.
-        4. Abre um :class:`Container` não-efêmero (repos + binhost RO) e roda o
-           ``emerge --usepkgonly --emptytree`` de :func:`iso_emerge_argv` (puxa
-           TUDO do binhost arch-native, incl. ``@system`` — §7/§9.3) seguido do
-           ``dracut`` de :func:`_dracut_argv`.
-        5. Localiza kernel + initramfs (:func:`_kernel_version`/:func:`_locate_kernel`),
-           comprime o rootfs (:func:`shidashi.image.make_squashfs`) e monta a ISO
-           (:func:`shidashi.image.build_iso`).
-        6. Em sucesso e sem ``keep``, remove o rootfs de scratch e o squashfs
-           intermediário (já copiado para a ISO); em falha ou ``keep``, preserva-os
-           para depuração.
+        In order, each an audited step: seed a fresh stage3; configure it (layers,
+        sets, cuts, world, system.yaml validated); install everything from binpkgs
+        under the cuts, then settle them; depclean; preserved-rebuild; configure
+        the system (Handbook), make the optional stage4, add the live layer and
+        verify both; the initramfs; the SBOM; then per compression profile the
+        squashfs, the ISO and its published artifacts (DIGESTS, SHA256SUMS,
+        package list, contents). On success without ``keep`` the scratch rootfs
+        and squashfs go; on failure or ``keep`` they stay for debugging.
         """
         _require_root()
-
+        run = audit.current()
         recipe = self.recipe
-        repos = pinned_repos(
-            seeds_dir=config.seeds_dir(), cache_dir=config.cache_dir(), download=download
-        )
         key = f"{recipe.arch}-{recipe.flavor}-{recipe.init}"
         rootfs = config.scratch_dir() / "assemble" / key
+        when = now or datetime.datetime.now(datetime.UTC)
+        name = publish.release_name(recipe, when)
+        exclude_file = config.variants_dir() / ISO_EXCLUDE
+        for profile in compressions:
+            if profile not in image.COMPRESSION:
+                raise AssemblerError(f"unknown compression {profile!r}")
 
-        pointer = load_pointer(recipe.init, seeds_dir=config.seeds_dir())
-        tarball = fetch_stage3(pointer, cache_dir=config.cache_dir(), download=download)
-        # a fresh stage3 into a fresh directory: a failed --keep run leaves its
-        # rootfs, and extracting over it would inherit what that run left
-        shutil.rmtree(rootfs, ignore_errors=True)
-        extract_stage3(tarball, rootfs)
+        with run.step("seed") as step:
+            repos = pinned_repos(
+                seeds_dir=config.seeds_dir(), cache_dir=config.cache_dir(), download=download
+            )
+            pointer = load_pointer(recipe.init, seeds_dir=config.seeds_dir())
+            tarball = fetch_stage3(pointer, cache_dir=config.cache_dir(), download=download)
+            # a fresh stage3 into a fresh directory: a failed --keep run leaves its
+            # rootfs, and extracting over it would inherit what that run left
+            shutil.rmtree(rootfs, ignore_errors=True)
+            extract_stage3(tarball, rootfs)
+            step.add(stage3=tarball.name, stage3_sha512=pointer.sha512, rootfs=str(rootfs))
 
-        apply_rootfs(rootfs, recipe, variants_dir=config.variants_dir())
-        apply_portage(rootfs, recipe, variants_dir=config.variants_dir())
-        _install_sets(rootfs, recipe)
-        # the chain's cycle cuts, as the factory built under them: a fresh stage3
-        # meets every cycle again, and the cut binpkgs are in the PKGDIR
-        cuts = image_cuts(recipe)
-        write_cuts(rootfs, cuts)
+        with run.step("configure") as step:
+            apply_rootfs(rootfs, recipe, variants_dir=config.variants_dir())
+            apply_portage(rootfs, recipe, variants_dir=config.variants_dir())
+            _install_sets(rootfs, recipe)
+            # the chain's cycle cuts, as the factory built under them: a fresh stage3
+            # meets every cycle again, and the cut binpkgs are in the PKGDIR
+            cuts = image_cuts(recipe)
+            write_cuts(rootfs, cuts)
+            # loaded (and validated) now: a broken system.yaml fails before the
+            # half-hour install, not after it
+            system_cfg = load_system_config(recipe, variants_dir=config.variants_dir())
+            # the flat package list, as committed in variants/<stage>/world.<init>
+            atoms = world.current_atoms(recipe, config.variants_dir())
+            world.write_to_image(rootfs, atoms)
+            run.attach("world", list(atoms))
+            step.add(
+                world=len(atoms),
+                system=system_cfg.model_dump(exclude={"live": {"password"}}),
+                layers=list(recipe.portage_layers),
+                sets=list(recipe.sets),
+                cuts=[f"{c.atom} {'' if c.enable else '-'}{c.flag}" for c in cuts],
+            )
 
         binds_ro, binds_rw = _build_binds(
             self.binhost_dir, rootfs / "etc" / "portage" / "repos.conf", repos=repos
         )
+        output_dir.mkdir(parents=True, exist_ok=True)
+        artifacts: list[Path] = []
+        isos: list[Path] = []
+        squashfs_files: list[Path] = []
 
         keep_rootfs = keep
         try:
@@ -275,35 +377,130 @@ class Assembler:
                 # installing ~1800 binpkgs takes a while: stream it, like the factory
                 log=config.scratch_dir() / "logs" / f"assemble-{key}.log",
             ) as container:
-                container.run(iso_emerge_argv(recipe, jobs=self.jobs))
-                # the settle: the cut packages again, from their final binpkgs
-                clear_use_break(rootfs)
-                settle = tuple(sorted({c.atom for c in cuts if is_installed(rootfs, c.atom)}))
-                if settle:
-                    container.run(iso_settle_argv(settle, jobs=self.jobs))
-                # The stage3 under the ISO keeps what the closure does not reach:
-                # its own gcc and binutils slots, bootstrap leftovers. Measured on
-                # the pipeline's minimal (2026-09-27): gcc-15.3.0, binutils-2.46.1,
-                # autoconf-2.72-r7, rust-bin -- none needed by the image. The sets
-                # are in world_sets, so depclean keeps everything the recipe asks.
-                container.run(ISO_DEPCLEAN_ARGV)
-                container.run(
-                    ["emerge", *ISO_SETTLE_OPTIONS, *_jobs_args(self.jobs),
-                     "@preserved-rebuild"]
-                )
-                kver = _kernel_version(rootfs)
-                initramfs = rootfs / "boot" / f"initramfs-{kver}.img"
-                container.run(_dracut_argv(kver, Path("/boot") / initramfs.name))
-
+                with run.step("install") as step:
+                    since = int(time.time())
+                    installed = container.run(iso_emerge_argv(recipe, jobs=self.jobs))
+                    reused = parse_reused_atoms(installed.stdout + installed.stderr)
+                    step.add(packages=len(reused))
+                with run.step("settle") as step:
+                    # the cut packages again, from their final binpkgs
+                    clear_use_break(rootfs)
+                    settle = tuple(sorted({c.atom for c in cuts if is_installed(rootfs, c.atom)}))
+                    if settle:
+                        container.run(iso_settle_argv(settle, jobs=self.jobs))
+                    step.add(atoms=list(settle))
+                with run.step("depclean") as step:
+                    # The stage3 under the ISO keeps what the closure does not reach:
+                    # its own gcc and binutils slots, bootstrap leftovers (F77).
+                    cleaned = container.run(ISO_DEPCLEAN_ARGV)
+                    step.add(removed=_depclean_count(cleaned.stdout + cleaned.stderr))
+                with run.step("preserved-rebuild"):
+                    container.run(
+                        ["emerge", *ISO_SETTLE_OPTIONS, *_jobs_args(self.jobs),
+                         "@preserved-rebuild"]
+                    )
+                with run.step("system") as step:
+                    step.add(**apply_system(container, system_cfg, init=recipe.init))
+                if stage4:
+                    # the configured system, BEFORE the live user and autologin
+                    with run.step("stage4") as step:
+                        tarball4 = output_dir / f"{name}.stage4.tar.xz"
+                        publish.make_stage4(rootfs, tarball4, exclude_file)
+                        artifacts.append(tarball4)
+                        run.artifact(tarball4, role="stage4")
+                with run.step("live") as step:
+                    step.add(**apply_live(container, system_cfg, init=recipe.init))
+                with run.step("verify-config") as step:
+                    problems = verify(rootfs, system_cfg, init=recipe.init, live=True)
+                    step.add(problems=problems)
+                    if problems:
+                        raise AssemblerError(
+                            "the image's configuration did not apply: " + "; ".join(problems)
+                        )
+                with run.step("initramfs") as step:
+                    kver = _kernel_version(rootfs)
+                    initramfs = rootfs / "boot" / f"initramfs-{kver}.img"
+                    container.run(_dracut_argv(kver, Path("/boot") / initramfs.name))
+                    step.add(
+                        kernel=kver,
+                        initramfs_bytes=initramfs.stat().st_size if initramfs.is_file() else None,
+                    )
+            packages = audit.harvest_packages(
+                rootfs, merges=_emerge_log_merges(rootfs, since=since), reused=reused
+            )
+            run.attach("packages", packages)
             kernel = _locate_kernel(rootfs, kver)
-            squashfs = rootfs.parent / f"{key}.squashfs"
-            image.make_squashfs(rootfs, squashfs, processors=self.jobs)
-            iso = image.build_iso(squashfs, output, kernel=kernel, initramfs=initramfs)
+
+            extra: dict[str, str | Path] = {
+                "bentoo/world": "".join(f"{a}\n" for a in atoms),
+                "bentoo/packages.txt": "".join(
+                    f"{a}\n" for a in sorted(str(p["atom"]) for p in packages)
+                ),
+            }
+            if sbom:
+                with run.step("sbom") as step:
+                    sbom_file = publish.write_sbom(rootfs, output_dir / f"{name}.iso.spdx.json")
+                    step.add(written=sbom_file is not None)
+                    if sbom_file is not None:
+                        extra["bentoo/sbom.spdx.json"] = sbom_file
+                        artifacts.append(sbom_file)
+                        run.artifact(sbom_file, role="sbom", digest=False)
+
+            volume = image.volume_id(recipe.flavor)
+            packages_file = publish.write_packages(output_dir / f"{name}.iso.packages", packages)
+            artifacts.append(packages_file)
+            rootfs_bytes = _tree_bytes(rootfs)
+            sums: dict[str, str] = {}
+            for profile in compressions:
+                suffix = "" if profile == "zstd" else f"-{profile}"
+                squashfs = rootfs.parent / f"{key}.{profile}.squashfs"
+                squashfs_files.append(squashfs)
+                with run.step(f"squashfs:{profile}") as step:
+                    image.make_squashfs(rootfs, squashfs, compression=profile,
+                                        exclude_file=exclude_file, processors=self.jobs)
+                    squashed = squashfs.stat().st_size
+                    step.add(rootfs_bytes=rootfs_bytes, squashfs_bytes=squashed)
+                    if squashed:
+                        run.metric(f"squashfs.{profile}.ratio", round(rootfs_bytes / squashed, 3))
+                iso = output_dir / f"{name}{suffix}.iso"
+                info = build_info(
+                    recipe, name=f"{name}{suffix}", build_id=run.run_id or name, kernel=kver,
+                    compression=profile, volume=volume, packages=len(packages),
+                    world_atoms=len(atoms), stage3=pointer.model_dump(mode="json"),
+                )
+                with run.step(f"iso:{profile}") as step:
+                    image.build_iso(
+                        squashfs, iso, kernel=kernel, initramfs=initramfs, volume=volume,
+                        title=publish.title(recipe, when), build_id=run.run_id or name,
+                        text_target="multi-user.target" if recipe.init == "systemd" else None,
+                        extra={
+                            **extra,
+                            "bentoo/version": f"{name}{suffix}\n",
+                            "bentoo/build.json": json.dumps(info, indent=1, default=str) + "\n",
+                        },
+                    )
+                    step.add(iso_bytes=iso.stat().st_size if iso.is_file() else None)
+                with run.step(f"publish:{profile}"):
+                    digests, sha256 = publish.write_digests(iso)
+                    contents = publish.write_contents(
+                        squashfs, output_dir / f"{name}{suffix}.iso.contents.gz"
+                    )
+                    sums[iso.name] = sha256
+                    artifacts += [digests, contents]
+                    isos.append(iso)
+                run.artifact(iso, role=f"iso:{profile}")
+            for extra_file in (packages_file, *artifacts):
+                if extra_file.is_file() and extra_file.name not in sums:
+                    sums[extra_file.name] = publish.sha256_of(extra_file)
+            artifacts.append(publish.update_sha256sums(output_dir, sums))
+            artifacts.append(publish.write_latest(output_dir, key, isos[0]))
         except BaseException:
             keep_rootfs = True  # preserva o rootfs para depuração em falha
             raise
 
         if not keep_rootfs:
-            shutil.rmtree(rootfs, ignore_errors=True)
-            squashfs.unlink(missing_ok=True)  # intermediário já copiado para a ISO
-        return iso
+            with run.step("cleanup"):
+                shutil.rmtree(rootfs, ignore_errors=True)
+                for squashfs in squashfs_files:
+                    squashfs.unlink(missing_ok=True)  # already copied into the ISO
+        return AssembleResult(name=name, isos=tuple(isos), artifacts=tuple(artifacts))

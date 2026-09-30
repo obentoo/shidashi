@@ -1,20 +1,19 @@
-"""Testes de shidashi.image — squashfs + live medium da ISO (OVERVIEW §7, Fase 1).
+"""Tests of shidashi.image -- the live squashfs and the ISO's layout (OVERVIEW §7).
 
-No idioma de tests/test_container.py: os construtores de argv e o ``grub.cfg`` são
-**puros** (testados sem root nem ferramentas), o staging da árvore do ISO é I/O de
-arquivo puro (tmp), e as execuções (``make_squashfs``/``build_iso``) são exercidas
-com ``shutil.which`` e ``subprocess.run`` monkeypatchados — sem invocar
-``mksquashfs``/``grub-mkrescue`` reais (host-gated).
+The argv builders and grub.cfg are pure (no root, no tools); staging the ISO tree
+is plain file I/O in tmp; the runners are exercised with ``shutil.which`` and
+``subprocess.run`` monkeypatched -- no real mksquashfs or grub-mkrescue.
 """
 
+import hashlib
 import shutil
 import subprocess
 from pathlib import Path
 
 import pytest
 
-import shidashi.image as img
 from shidashi.image import (
+    COMPRESSION,
     VOLUME_ID,
     ImageError,
     _grub_cfg,
@@ -23,97 +22,114 @@ from shidashi.image import (
     _stage_iso_tree,
     build_iso,
     make_squashfs,
+    volume_id,
 )
 
-# --- construtores de argv (PUROS) --------------------------------------------
+# --- argv builders (pure) --------------------------------------------------------
 
 
-def test_mksquashfs_argv_form_and_defaults() -> None:
-    argv = _mksquashfs_argv(Path("/r"), Path("/o.sq"), compression="zstd", level=19)
+def test_mksquashfs_argv_default_is_zstd_19_with_1m_blocks() -> None:
+    """The faster live session: 1M blocks gave -5.7% at the same speed (2026-09-30)."""
+    argv = _mksquashfs_argv(Path("/r"), Path("/o.sq"))
     assert argv == [
-        "mksquashfs",
-        "/r",
-        "/o.sq",
-        "-comp",
-        "zstd",
-        "-Xcompression-level",
-        "19",
-        "-noappend",
-        "-no-progress",
-        "-e",
-        "boot",
-        "proc",
-        "sys",
-        "dev",
-        "run",
-        "var/cache/binpkgs",
+        "mksquashfs", "/r", "/o.sq", "-comp", "zstd", "-Xcompression-level", "19", "-b", "1M",
+        "-noappend", "-no-progress",
     ]
 
 
-def test_mksquashfs_argv_processors_caps_the_threads_before_the_excludes() -> None:
-    argv = _mksquashfs_argv(
-        Path("/r"), Path("/o.sq"), compression="zstd", level=19, processors=4
-    )
-    at = argv.index("-processors")
-    assert argv[at + 1] == "4"
-    assert at < argv.index("-e")  # -e consumes the rest of the argv
+def test_mksquashfs_argv_xz_profile_is_archs_smaller_one() -> None:
+    argv = _mksquashfs_argv(Path("/r"), Path("/o.sq"), compression="xz")
+    assert argv[3:9] == ["-comp", "xz", "-b", "1M", "-Xbcj", "x86"]
+    assert set(COMPRESSION) == {"zstd", "xz"}
 
 
-def test_mksquashfs_argv_excludes_boot_and_volatile_dirs() -> None:
-    # boot (kernel+initramfs vão no boot/ da ISO, não na raiz live) + voláteis.
-    argv = _mksquashfs_argv(Path("/r"), Path("/o.sq"), compression="zstd", level=19)
-    sep = argv.index("-e")
-    excludes = argv[sep + 1 :]
-    assert "boot" in excludes
-    for volatile in ("proc", "sys", "dev", "run"):
-        assert volatile in excludes
+def test_mksquashfs_argv_reads_the_exclude_list_with_wildcards() -> None:
+    """``dir/*`` keeps the directory -- the mount points the first ISO dropped."""
+    argv = _mksquashfs_argv(Path("/r"), Path("/o.sq"), exclude_file=Path("/x"), processors=4)
+    assert argv[-5:] == ["-processors", "4", "-wildcards", "-ef", "/x"]
+
+
+def test_mksquashfs_argv_refuses_an_unknown_profile() -> None:
+    with pytest.raises(ImageError, match="lz4"):
+        _mksquashfs_argv(Path("/r"), Path("/o.sq"), compression="lz4")
+
+
+def test_the_repository_exclude_list_keeps_mount_points() -> None:
+    from shidashi import config
+
+    lines = (config.variants_dir() / "base" / "iso-exclude").read_text().splitlines()
+    patterns = [ln for ln in lines if ln and not ln.startswith("#")]
+    for mount in ("dev", "proc", "sys", "run", "tmp", "boot"):
+        assert f"{mount}/*" in patterns and mount not in patterns
+    assert "var/log/*.log" in patterns and "var/cache/binpkgs/*" in patterns
 
 
 def test_grub_mkrescue_argv_passes_volid_after_separator() -> None:
-    argv = _grub_mkrescue_argv(Path("/iso"), Path("/out.iso"), volume_id="BENTOO")
+    argv = _grub_mkrescue_argv(Path("/iso"), Path("/out.iso"), volume_id="BENTOO_KDE")
     assert argv == [
-        "grub-mkrescue", "-o", "/out.iso", "-iso-level", "3", "/iso", "--", "-volid", "BENTOO"
+        "grub-mkrescue", "-o", "/out.iso", "-iso-level", "3", "/iso", "--", "-volid", "BENTOO_KDE"
     ]
 
 
 def test_grub_mkrescue_argv_allows_files_over_4gib_before_the_tree() -> None:
     """The squashfs of a desktop image exceeds 4 GiB; after "--" the option would
-    reach xorriso only once the tree is grafted, and it refuses the file."""
-    argv = _grub_mkrescue_argv(Path("/iso"), Path("/out.iso"), volume_id="BENTOO")
+    reach xorriso only once the tree is grafted, and it refuses the file (F78)."""
+    argv = _grub_mkrescue_argv(Path("/iso"), Path("/out.iso"), volume_id="B")
     assert argv.index("-iso-level") < argv.index("/iso") < argv.index("--")
-    assert argv[argv.index("-iso-level") + 1] == "3"
 
 
-def test_grub_cfg_references_liveos_and_volume() -> None:
-    cfg = _grub_cfg(volume_id="BENTOO")
-    # cmdline do dmsquash-live precisa do CDLABEL + rd.live.image e dos artefatos.
-    assert "root=live:CDLABEL=BENTOO" in cfg
-    assert "rd.live.image" in cfg
-    assert "/boot/vmlinuz" in cfg
-    assert "/boot/initramfs.img" in cfg
-    assert "set timeout=10" in cfg  # default público do menu
+def test_volume_id_is_per_flavor_and_iso9660_safe() -> None:
+    assert volume_id("kde") == "BENTOO_KDE"
+    assert volume_id("wm-sway") == "BENTOO_WM_SWAY"
+    assert len(volume_id("x" * 40)) == 32
+    assert VOLUME_ID == "BENTOO"
 
 
-# --- staging da árvore do ISO (I/O puro) -------------------------------------
+def test_grub_cfg_offers_the_entries_the_major_distributions_do() -> None:
+    cfg = _grub_cfg(volume="BENTOO_KDE", title="Bentoo KDE", text_target="multi-user.target")
+    assert cfg.count("root=live:CDLABEL=BENTOO_KDE rd.live.image") == 4
+    for entry in ("Bentoo KDE", "(safe graphics)", "(copy to RAM)", "(text console)",
+                  "UEFI firmware settings", "Reboot", "Power off"):
+        assert entry in cfg
+    assert "nomodeset" in cfg and "rd.live.ram=1" in cfg
+    assert "systemd.unit=multi-user.target" in cfg
+    assert "initrd /boot/initramfs.img" in cfg
 
 
-def test_stage_iso_tree_lays_out_live_medium(tmp_path: Path) -> None:
-    squashfs = tmp_path / "rootfs.squashfs"
-    kernel = tmp_path / "vmlinuz-1.2.3"
-    initramfs = tmp_path / "initramfs-1.2.3.img"
-    for p, data in ((squashfs, b"SQ"), (kernel, b"K"), (initramfs, b"I")):
-        p.write_bytes(data)
-    iso_root = tmp_path / "iso"
-
-    _stage_iso_tree(squashfs, kernel, initramfs, iso_root)
-
-    assert (iso_root / "LiveOS" / "squashfs.img").read_bytes() == b"SQ"
-    assert (iso_root / "boot" / "vmlinuz").read_bytes() == b"K"
-    assert (iso_root / "boot" / "initramfs.img").read_bytes() == b"I"
-    assert f"CDLABEL={VOLUME_ID}" in (iso_root / "boot" / "grub" / "grub.cfg").read_text()
+def test_grub_cfg_without_a_text_target_has_no_console_entry() -> None:
+    cfg = _grub_cfg(volume="B", title="T", text_target=None)
+    assert "(text console)" not in cfg
 
 
-# --- make_squashfs (execução monkeypatchada) ---------------------------------
+# --- the ISO tree (file I/O) -----------------------------------------------------
+
+
+def test_stage_iso_tree_lays_out_the_medium_and_its_metadata(tmp_path: Path) -> None:
+    squashfs, kernel, initramfs = (tmp_path / n for n in ("r.sq", "vmlinuz", "initrd"))
+    squashfs.write_bytes(b"SQ")
+    kernel.write_bytes(b"K")
+    initramfs.write_bytes(b"I")
+    sbom = tmp_path / "sbom.json"
+    sbom.write_text("{}")
+    root = tmp_path / "iso"
+    _stage_iso_tree(
+        root, squashfs=squashfs, kernel=kernel, initramfs=initramfs, volume="BENTOO_KDE",
+        title="Bentoo KDE", build_id="20260930T0100Z-abc", text_target=None,
+        extra={"bentoo/version": "bentoo-x\n", "bentoo/sbom.spdx.json": sbom},
+    )
+    assert (root / "LiveOS/squashfs.img").read_bytes() == b"SQ"
+    assert (root / "LiveOS/squashfs.img.sha512").read_text() == (
+        f"{hashlib.sha512(b'SQ').hexdigest()}  squashfs.img\n")
+    assert (root / "boot/vmlinuz").read_bytes() == b"K"
+    assert (root / "boot/initramfs.img").read_bytes() == b"I"
+    assert "BENTOO_KDE" in (root / "boot/grub/grub.cfg").read_text()
+    assert (root / ".disk/info").read_text() == "Bentoo KDE (20260930T0100Z-abc)\n"
+    assert (root / ".disk/id").read_text() == "20260930T0100Z-abc\n"
+    assert (root / "bentoo/version").read_text() == "bentoo-x\n"
+    assert (root / "bentoo/sbom.spdx.json").read_text() == "{}"
+
+
+# --- runners (monkeypatched) -----------------------------------------------------
 
 
 def test_make_squashfs_invokes_tool_and_returns_output(
@@ -122,18 +138,15 @@ def test_make_squashfs_invokes_tool_and_returns_output(
     monkeypatch.setattr(shutil, "which", lambda _: "/usr/bin/mksquashfs")
     calls: list[list[str]] = []
 
-    def record(argv: list[str], **kw: object) -> subprocess.CompletedProcess[str]:
+    def record(argv: list[str], **_k: object) -> subprocess.CompletedProcess[str]:
         calls.append(argv)
         return _ok()
 
     monkeypatch.setattr(subprocess, "run", record)
     out = tmp_path / "nested" / "rootfs.squashfs"
-
-    result = make_squashfs(tmp_path / "rootfs", out)
-
-    assert result == out
-    assert out.parent.is_dir()  # diretório-pai criado
-    assert calls == [_mksquashfs_argv(tmp_path / "rootfs", out, compression="zstd", level=19)]
+    assert make_squashfs(tmp_path / "rootfs", out, compression="xz") == out
+    assert out.parent.is_dir()
+    assert calls == [_mksquashfs_argv(tmp_path / "rootfs", out, compression="xz")]
 
 
 def test_make_squashfs_missing_tool_raises(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -151,41 +164,37 @@ def test_make_squashfs_nonzero_wraps_in_image_error(
         raise subprocess.CalledProcessError(1, argv, stderr="disk full")
 
     monkeypatch.setattr(subprocess, "run", boom)
-    with pytest.raises(ImageError, match="mksquashfs"):
+    with pytest.raises(ImageError, match="disk full"):
         make_squashfs(tmp_path / "r", tmp_path / "o.sq")
 
 
-# --- build_iso (execução monkeypatchada) -------------------------------------
-
-
-def test_build_iso_stages_tree_and_invokes_grub(
+def test_build_iso_stages_beside_the_output_not_in_tmp(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """/tmp is a tmpfs here: the first ISOs copied the 8 GB squashfs into RAM."""
     monkeypatch.setattr(shutil, "which", lambda _: "/usr/bin/grub-mkrescue")
-    squashfs = tmp_path / "r.squashfs"
-    kernel = tmp_path / "vmlinuz-1"
-    initramfs = tmp_path / "initramfs-1.img"
+    squashfs, kernel, initramfs = (tmp_path / n for n in ("r.sq", "vmlinuz-1", "initramfs-1"))
     for p in (squashfs, kernel, initramfs):
         p.write_bytes(b"x")
     out = tmp_path / "dist" / "bentoo.iso"
-
     seen: list[list[str]] = []
+    real_run = subprocess.run
 
     def fake_run(argv: list[str], **kw: object) -> subprocess.CompletedProcess[str]:
-        # a árvore temporária do ISO deve existir no momento do grub-mkrescue.
-        iso_root = Path(argv[argv.index("--") - 1])  # the tree comes right before "--"
+        if argv[0] == "cp":
+            return real_run(argv, check=True, capture_output=True, text=True)
+        iso_root = Path(argv[argv.index("--") - 1])
         assert (iso_root / "LiveOS" / "squashfs.img").is_file()
+        assert iso_root.parent == out.parent  # the same filesystem as the ISO
         seen.append(argv)
         return _ok()
 
     monkeypatch.setattr(subprocess, "run", fake_run)
-    result = build_iso(squashfs, out, kernel=kernel, initramfs=initramfs)
-
+    result = build_iso(squashfs, out, kernel=kernel, initramfs=initramfs, volume="BENTOO_KDE")
     assert result == out
-    assert out.parent.is_dir()
-    assert len(seen) == 1 and seen[0][0] == "grub-mkrescue"
     assert seen[0][:3] == ["grub-mkrescue", "-o", str(out)]
-    assert seen[0][-3:] == ["--", "-volid", VOLUME_ID]
+    assert seen[0][-3:] == ["--", "-volid", "BENTOO_KDE"]
+    assert not any(p.name.startswith(".shidashi-iso-") for p in out.parent.iterdir())
 
 
 def test_build_iso_missing_tool_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -198,9 +207,3 @@ def test_build_iso_missing_tool_raises(tmp_path: Path, monkeypatch: pytest.Monke
 
 def _ok() -> subprocess.CompletedProcess[str]:
     return subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
-
-
-# NB: a execução REAL (mksquashfs/grub-mkrescue/xorriso de verdade) é host-gated
-# (exige as ferramentas instaladas + um rootfs com kernel); fica para o smoke-test
-# de boot da Fase 1 (QEMU), não para o unit off-host.
-assert img is not None  # módulo importa sem acionar portage_api (R9.1)

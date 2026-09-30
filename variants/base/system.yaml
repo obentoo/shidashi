@@ -1,0 +1,64 @@
+# variants/base/system.yaml — how every image is CONFIGURED, beyond the packages it has.
+#
+# The Handbook's "Configuring the system", "Installing tools" and "Finalizing"
+# chapters as data (https://wiki.gentoo.org/wiki/Handbook:AMD64). The first ISO
+# booted to a text login nobody could use: the pipeline installed packages and
+# configured nothing -- no service enabled, no hostname, no account (F79).
+#
+# Applied by the assembler to the image's rootfs, checked right after (a missing
+# link or file fails the build), and recorded in the run's audit trail. Every
+# layer of a recipe may carry a system.yaml: scalars override the earlier layer,
+# lists add to it (a flavor adds its display manager to the base's services).
+
+# Handbook › System › Hostname. /etc/hostname, plus the name in /etc/hosts.
+hostname: bentoo
+
+# Handbook › Base › Locale: `eselect locale set` (writes /etc/locale.conf and
+# env.d). Must be one of the generated locales of base/rootfs/etc/locale.gen.
+locale: en_US.UTF-8
+
+# Handbook › System › Init configuration: the console keymap
+# (/etc/vconsole.conf under systemd, /etc/conf.d/keymaps under OpenRC).
+keymap: us
+
+# Handbook › Base › Timezone. UTC on the medium; the installer sets the user's.
+# Explicit because systemd-nspawn otherwise copies the BUILD HOST's zone into the
+# image (--timezone=auto): the first ISO shipped America/Sao_Paulo that way.
+timezone: UTC
+
+# Handbook › Finalizing › "wheel" group with sudo: /etc/sudoers.d/10-wheel.
+# Gentoo's sudoers-rs ships the rule commented and includes /etc/sudoers.d.
+sudo_wheel: true
+
+# Handbook › System › Init configuration (`systemctl preset-all`) and Tools
+# (time sync, cron). Units a package does not install are skipped, so the base
+# can name what only the desktop images carry.
+services:
+  systemd:
+    # Written to /etc/systemd/system-preset/80-bentoo.preset, then preset-all:
+    # ahead of Gentoo's 90-systemd.preset and 99-default.preset (disable *).
+    enable:
+      - NetworkManager.service      # network; conflicts with networkd below
+      - systemd-timesyncd.service   # Tools › time synchronization
+      - bluetooth.service
+      - cups.socket                 # printing, started on demand
+      - cups.path
+      - avahi-daemon.service        # printer and service discovery
+      - tuned.service               # power profiles (tuned-ppd serves KDE's applet)
+      - tuned-ppd.service
+      - fstrim.timer                # weekly TRIM on SSDs
+    disable:
+      - systemd-networkd.service    # NetworkManager owns the network
+      - systemd-networkd-wait-online.service
+      - systemd-resolved.service    # NetworkManager writes resolv.conf
+      - systemd-homed.service       # Gentoo's preset enables it; nothing here uses it
+      - sshd.service                # never listening by default on a live medium
+  openrc:
+    # `rc-update add <service> default`. Not yet exercised: no OpenRC image is
+    # built so far.
+    default:
+      - dbus
+      - NetworkManager
+      - bluetooth
+      - cupsd
+      - avahi-daemon

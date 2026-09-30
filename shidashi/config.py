@@ -22,6 +22,7 @@ _SCRATCH_ENV = "SHIDASHI_SCRATCH"
 _CACHE_ENV = "SHIDASHI_CACHE"
 _SEEDS_ENV = "SHIDASHI_SEEDS_DIR"
 _CATALYST_ENV = "SHIDASHI_CATALYST_DIR"
+_RUNS_ENV = "SHIDASHI_RUNS"
 
 
 class UnknownAxisError(Exception):
@@ -169,6 +170,19 @@ def cache_dir() -> Path:
     if override:
         return Path(override)
     return Path("/var/cache/shidashi")
+
+
+def runs_dir() -> Path:
+    """Where each run's audit trail lives (:mod:`shidashi.audit`): one directory per run.
+
+    Honors ``SHIDASHI_RUNS`` (read on every call); default ``/var/log/shidashi/runs``.
+    Kept apart from scratch and cache, which are wiped or reused: an audit trail
+    outlives the builds it describes.
+    """
+    override = os.environ.get(_RUNS_ENV)
+    if override:
+        return Path(override)
+    return Path("/var/log/shidashi/runs")
 
 
 def seeds_dir() -> Path:

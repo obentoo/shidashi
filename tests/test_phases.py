@@ -721,3 +721,25 @@ def test_image_cuts_cover_the_stages_up_to_the_image_or_the_whole_chain() -> Non
     assert phases.image_cuts(recipe, "base") == (trunk,)
     assert phases.image_cuts(recipe, "kde") == (trunk,)
     assert phases.image_cuts(recipe) == (trunk,)
+
+
+def test_every_stage_and_step_is_in_the_audit_trail(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The mandatory audit trail: one step per stage, one per step of the stage in
+    flow.yaml's order, and each stage's packages attached."""
+    from shidashi import audit
+
+    with audit.run(tmp_path / "runs", command="factory", argv=[]) as trail:
+        _run_chain(tmp_path, monkeypatch)
+    manifest = audit.build_manifest(audit.read_events(trail.path / "events.jsonl"))
+    steps = [s["step"] for s in manifest["steps"]]
+    assert steps[:4] == [
+        "stage:base/apply-config", "stage:base/write-cuts", "stage:base/emerge-stage",
+        "stage:base/fork-point",
+    ]
+    assert "stage:minimal/settle" in steps and "stage:minimal/check-binpkgs" in steps
+    assert steps[-1] == "stage:kde"
+    emerge = next(s for s in manifest["steps"] if s["step"] == "stage:base/emerge-stage")
+    assert emerge["argv"][:4] == ["emerge", "--verbose", "--usepkg", "--emptytree"]
+    assert {"packages-base.json", "packages-kde.json"} <= set(manifest["attachments"])

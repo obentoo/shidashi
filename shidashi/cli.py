@@ -13,10 +13,12 @@ amigável e convertidos em ``typer.Exit(1)`` — nenhum traceback escapa ao
 usuário.
 """
 
+import contextlib
 import json
 import os
 import subprocess
 import sys
+from collections.abc import Generator
 from enum import StrEnum
 from pathlib import Path
 from typing import Annotated
@@ -28,8 +30,8 @@ from rich.markup import escape
 from rich.prompt import Prompt
 from rich.table import Table
 
-from shidashi import config
-from shidashi.assembler import Assembler, AssemblerError
+from shidashi import audit, config, publish
+from shidashi.assembler import Assembler, AssemblerError, AssembleResult
 from shidashi.factory import (
     CheckpointDecision,
     Factory,
@@ -44,6 +46,8 @@ from shidashi.recipe import RecipeChainError, ResolvedRecipe
 from shidashi.resolve import PretendReport, ResolveError, pretend_resolve
 from shidashi.seed import SeedError, load_pointer
 from shidashi.state import PhaseDiff
+from shidashi.system import ConfigurationError
+from shidashi.world import StaleWorldError
 
 app = typer.Typer(no_args_is_help=True, help="Shidashi — catering de builds e ISOs do bentoo.")
 recipe_app = typer.Typer(no_args_is_help=True, help="Inspeciona e valida receitas resolvidas.")
@@ -87,7 +91,8 @@ def _apply_work_dir(work_dir: Path | None) -> None:
     """Aponta cache e scratch sob um único ``--work-dir`` (precedência sobre env).
 
     Quando ``work_dir`` é dado, deriva ``cache → <work_dir>/cache`` e
-    ``scratch → <work_dir>/scratch`` setando ``SHIDASHI_CACHE``/``SHIDASHI_SCRATCH`` no
+    ``scratch → <work_dir>/scratch`` e ``runs → <work_dir>/runs`` setando
+    ``SHIDASHI_CACHE``/``SHIDASHI_SCRATCH``/``SHIDASHI_RUNS`` no
     ambiente do processo. :mod:`shidashi.config` lê essas variáveis a cada chamada,
     então toda a árvore de caminhos (binpkgs, stage3, state, fork-points, rootfs
     de build) passa a viver sob ``work_dir`` — sem alterar a lógica de paths. A
@@ -98,6 +103,7 @@ def _apply_work_dir(work_dir: Path | None) -> None:
         return
     os.environ["SHIDASHI_CACHE"] = str(work_dir / "cache")
     os.environ["SHIDASHI_SCRATCH"] = str(work_dir / "scratch")
+    os.environ["SHIDASHI_RUNS"] = str(work_dir / "runs")
 
 
 def _resolve(arch: str, flavor: str, init: str) -> ResolvedRecipe:
@@ -261,6 +267,61 @@ def pretend(
         typer.echo(report.model_dump_json(indent=2))
     else:
         _render_report_pretty(report)
+
+
+def _pin_inputs(init: str) -> dict[str, object]:
+    """The pins a run builds from: stage3, ::gentoo snapshot, overlays (never raises)."""
+    from shidashi.tree import load_overlay_pins, load_tree_pin
+
+    inputs: dict[str, object] = {}
+    seeds = config.seeds_dir()
+    for name, load in (
+        ("stage3", lambda: load_pointer(init, seeds_dir=seeds).model_dump(mode="json")),
+        ("gentoo_tree", lambda: load_tree_pin(seeds).model_dump(mode="json")),
+        ("overlays", lambda: [p.model_dump(mode="json") for p in load_overlay_pins(seeds)]),
+    ):
+        try:
+            inputs[name] = load()
+        except Exception as err:  # a missing pin is itself worth recording
+            inputs[name] = {"error": f"{type(err).__name__}: {err}"}
+    return inputs
+
+
+@contextlib.contextmanager
+def _audited(
+    command: str, resolved: ResolvedRecipe, **inputs: object
+) -> Generator[audit.Recorder]:
+    """Run the block as an audited run (:mod:`shidashi.audit`) and say where it went.
+
+    The trail records the whole recipe, the pins and ``inputs``, then every step
+    and command. If the runs directory cannot be written (not root, read-only),
+    the run goes on unaudited with a visible warning instead of failing before
+    the real checks (such as the root guard) could explain why.
+    """
+    all_inputs = {"recipe": resolved.model_dump(mode="json"), **_pin_inputs(resolved.init)}
+    all_inputs.update(inputs)
+    try:
+        cm = audit.run(
+            config.runs_dir(),
+            command=command,
+            argv=sys.argv,
+            inputs=all_inputs,
+            disk=config.scratch_dir(),
+        )
+        recorder = cm.__enter__()
+    except OSError as err:
+        _err_console.print(f"[yellow]aviso:[/yellow] audit trail disabled: {escape(str(err))}")
+        yield audit.current()
+        return
+    try:
+        yield recorder
+    except BaseException:
+        if not cm.__exit__(*sys.exc_info()):
+            raise
+    else:
+        cm.__exit__(None, None, None)
+    finally:
+        _err_console.print(f"audit: {recorder.path}")
 
 
 def _generation_pkgdir(arch: str, init: str) -> Path:
@@ -584,13 +645,15 @@ def _run_factory_oneshot(
     With ``update`` it runs :meth:`Factory.update` instead of a build (D26).
     """
     try:
-        factory_obj = Factory(resolved, pkgdir)
-        if update:
-            result = factory_obj.update(download=download, keep=keep)
-        else:
-            result = factory_obj.build(
-                emptytree=emptytree, download=download, keep=keep, stop_after=stop_after
-            )
+        with _audited("factory", resolved, pkgdir=str(pkgdir), update=update,
+                      emptytree=emptytree, stop_after=stop_after):
+            factory_obj = Factory(resolved, pkgdir)
+            if update:
+                result = factory_obj.update(download=download, keep=keep)
+            else:
+                result = factory_obj.build(
+                    emptytree=emptytree, download=download, keep=keep, stop_after=stop_after
+                )
     except FactoryError as err:
         if err.phase:
             _err_console.print(
@@ -647,17 +710,19 @@ def _run_factory_stepwise(
     # amigável (R3.3/R1.5) — nunca um traceback.
     while True:
         try:
-            result = _invoke_stepwise(
-                factory_obj,
-                until=until,
-                interactive=step,
-                emptytree=emptytree,
-                download=download,
-                reset=reset,
-                force_resume=force_resume,
-                on_checkpoint=on_checkpoint,
-                on_failure=on_failure,
-            )
+            with _audited("factory-stepwise", resolved, pkgdir=str(pkgdir), until=until,
+                          reset=reset, force_resume=force_resume):
+                result = _invoke_stepwise(
+                    factory_obj,
+                    until=until,
+                    interactive=step,
+                    emptytree=emptytree,
+                    download=download,
+                    reset=reset,
+                    force_resume=force_resume,
+                    on_checkpoint=on_checkpoint,
+                    on_failure=on_failure,
+                )
             break
         except StaleStateError as err:
             reset, force_resume = _resolve_stale_state(err)
@@ -739,13 +804,16 @@ def _resolve_stale_state(err: StaleStateError) -> tuple[bool, bool]:
 _STUB_MSG = "não implementado na Fase 0"
 
 
-def _render_assemble_pretty(iso: Path, arch: str, flavor: str, init: str) -> None:
-    """Renderiza o resultado do ``assemble`` como tabela ``rich`` (significativo num TTY)."""
+def _render_assemble_pretty(result: AssembleResult, arch: str, flavor: str, init: str) -> None:
+    """The ``assemble`` result as a ``rich`` table: the ISOs, then every artifact."""
     console = Console()
-    table = Table(title=f"ISO {arch} × {flavor} × {init}")
+    table = Table(title=f"ISO {arch} × {flavor} × {init} -- {result.name}")
     table.add_column("campo", style="bold cyan")
     table.add_column("valor")
-    table.add_row("iso", str(iso))
+    for iso in result.isos:
+        table.add_row("iso", str(iso))
+    for artifact in result.artifacts:
+        table.add_row("artifact", str(artifact))
     console.print(table)
 
 
@@ -758,14 +826,31 @@ def assemble(
         OutputFormat,
         typer.Option("--format", help="Formato de saída: pretty (default) ou json."),
     ] = OutputFormat.pretty,
-    output: Annotated[
-        Path | None,
+    output_dir: Annotated[
+        Path,
         typer.Option(
-            "--output",
+            "--output-dir",
             "-o",
-            help="Caminho da ISO de saída (default: bentoo-<flavor>-<init>-<arch>.iso).",
+            help="Directory of the ISO(s) and their artifacts "
+            "(bentoo-<date>-<flavor>-<init>-<arch>.iso, .DIGESTS, SHA256SUMS...).",
         ),
-    ] = None,
+    ] = Path("."),
+    compression: Annotated[
+        str,
+        typer.Option(
+            "--compression",
+            help="zstd (default: the faster live session), xz (the smaller download), "
+            "or both (two ISOs).",
+        ),
+    ] = "zstd",
+    stage4: Annotated[
+        bool,
+        typer.Option("--stage4", help="Also publish the configured system as a stage4 "
+                     "tarball (tar.xz, xz -9e), made before the live user is added."),
+    ] = False,
+    no_sbom: Annotated[
+        bool, typer.Option("--no-sbom", help="Do not generate the SBOM (syft).")
+    ] = False,
     binhost_opt: Annotated[
         Path | None,
         typer.Option(
@@ -816,13 +901,27 @@ def assemble(
     except SeedError as err:
         _err_console.print(f"[bold red]erro:[/bold red] {escape(str(err))}")
         raise typer.Exit(1) from err
-    iso_path = output if output is not None else Path(f"bentoo-{flavor}-{init}-{arch}.iso")
+    if compression not in ("zstd", "xz", "both"):
+        _err_console.print("[bold red]erro:[/bold red] --compression is zstd, xz or both")
+        raise typer.Exit(1)
+    compressions = ("zstd", "xz") if compression == "both" else (compression,)
 
     try:
-        produced = Assembler(resolved, binhost, jobs=jobs).assemble(
-            iso_path, download=not no_download, keep=keep
-        )
-    except (AssemblerError, ImageError, SeedError, ResolveError) as err:
+        with _audited("assemble", resolved, binhost=str(binhost), output_dir=str(output_dir),
+                      jobs=jobs, keep=keep, compressions=list(compressions), stage4=stage4,
+                      sbom=not no_sbom) as trail:
+            produced = Assembler(resolved, binhost, jobs=jobs).assemble(
+                output_dir, download=not no_download, keep=keep, compressions=compressions,
+                stage4=stage4, sbom=not no_sbom,
+            )
+        # the trail is complete only once the run closed: publish it beside the ISO
+        if trail.root is not None:
+            bundle = publish.bundle_run(trail.root, output_dir / f"{produced.name}.build.tar.zst")
+            publish.update_sha256sums(output_dir, {bundle.name: publish.sha256_of(bundle)})
+            produced = produced.model_copy(update={"artifacts": (*produced.artifacts, bundle)})
+    except (
+        AssemblerError, ImageError, SeedError, ResolveError, ConfigurationError, StaleWorldError
+    ) as err:
         if isinstance(err, ResolveError) and err.raw_output:
             _err_console.print(err.raw_output, markup=False, highlight=False)
         _err_console.print(f"[bold red]erro:[/bold red] {escape(str(err))}")
@@ -839,7 +938,9 @@ def assemble(
         typer.echo(
             json.dumps(
                 {
-                    "iso": str(produced),
+                    "name": produced.name,
+                    "isos": [str(p) for p in produced.isos],
+                    "artifacts": [str(p) for p in produced.artifacts],
                     "arch": arch,
                     "flavor": flavor,
                     "init": init,
@@ -850,6 +951,181 @@ def assemble(
         )
     else:
         _render_assemble_pretty(produced, arch, flavor, init)
+
+
+def plan_tree(images: list[str]) -> tuple[list[str], list[str]]:
+    """Which images the factory builds, and which become ISOs, in chain order. Pure.
+
+    The build is a tree rooted at (arch, init, generation): bootstrap → base →
+    minimal, and minimal → desktop → each flavor. A flavor's chain builds and
+    settles minimal on its way (minimal ships), so minimal needs a factory run of
+    its own only when no flavor is asked for; the second flavor starts from the
+    first one's desktop fork point.
+    """
+    order = config.target_names()
+    unknown = [i for i in images if i not in order]
+    if unknown:
+        hint = ""
+        if "desktop" in unknown:
+            hint = " (desktop is the flavors' shared trunk, not an image)"
+        raise typer.BadParameter(
+            f"unknown image(s) {', '.join(unknown)}{hint}; images: {', '.join(order)}"
+        )
+    isos = [i for i in order if i in images]
+    flavors = [i for i in isos if i != "minimal"]
+    return (flavors or ["minimal"]), isos
+
+
+@app.command("build")
+def build(
+    arch: str,
+    init: str,
+    images: Annotated[
+        str,
+        typer.Option("--images", help="Comma-separated images (minimal, kde, gnome...) or all."),
+    ] = "all",
+    output_dir: Annotated[
+        Path, typer.Option("--output-dir", "-o", help="Directory of the ISOs and artifacts.")
+    ] = Path("."),
+    compression: Annotated[
+        str, typer.Option("--compression", help="zstd, xz or both (two ISOs per image).")
+    ] = "zstd",
+    stage4: Annotated[bool, typer.Option("--stage4", help="Also a stage4 per image.")] = False,
+    no_sbom: Annotated[bool, typer.Option("--no-sbom", help="No SBOM (syft).")] = False,
+    skip_factory: Annotated[
+        bool,
+        typer.Option("--skip-factory", help="Assemble from the binpkgs already built."),
+    ] = False,
+    jobs: Annotated[
+        int | None,
+        typer.Option("--jobs", min=1, help="MAKEOPTS -jN in the factory; emerge --jobs N and "
+                     "mksquashfs -processors N in the assemble."),
+    ] = None,
+    keep: Annotated[bool, typer.Option("--keep", help="Keep the build rootfs.")] = False,
+    no_download: Annotated[
+        bool, typer.Option("--no-download", help="Cache only; never touch the network.")
+    ] = False,
+    work_dir: Annotated[
+        Path | None,
+        typer.Option("--work-dir", help="Root of cache, scratch and runs."),
+    ] = None,
+) -> None:
+    """Build a tree of images in one audited run: the factory, then every ISO.
+
+    ``shidashi build v3 systemd --images minimal,kde,gnome`` builds the trunk once,
+    each flavor from the desktop fork point, then assembles the three ISOs --
+    with one audit trail covering all of it (steps factory:<image>, assemble:<image>).
+    """
+    _apply_work_dir(work_dir)
+    if jobs is not None:
+        os.environ["SHIDASHI_JOBS"] = str(jobs)
+    if compression not in ("zstd", "xz", "both"):
+        _err_console.print("[bold red]erro:[/bold red] --compression is zstd, xz or both")
+        raise typer.Exit(1)
+    compressions = ("zstd", "xz") if compression == "both" else (compression,)
+    wanted = config.target_names() if images == "all" else [
+        i.strip() for i in images.split(",") if i.strip()
+    ]
+    try:
+        factory_targets, iso_targets = plan_tree(wanted)
+        recipes = {t: _resolve(arch, t, init) for t in {*factory_targets, *iso_targets}}
+        pkgdir = _generation_pkgdir(arch, init)
+    except (typer.BadParameter, config.UnknownAxisError, RecipeChainError, SeedError) as err:
+        _err_console.print(f"[bold red]erro:[/bold red] {escape(str(err))}")
+        raise typer.Exit(1) from err
+
+    results: list[AssembleResult] = []
+    try:
+        with _audited(
+            "build", recipes[iso_targets[-1]], images=iso_targets,
+            factory=[] if skip_factory else factory_targets, pkgdir=str(pkgdir),
+            output_dir=str(output_dir), compressions=list(compressions), stage4=stage4,
+            jobs=jobs,
+        ) as trail:
+            run = audit.current()
+            if not skip_factory:
+                for target in factory_targets:
+                    with run.step(f"factory:{target}"):
+                        Factory(recipes[target], pkgdir).build(
+                            emptytree=True, download=not no_download, keep=keep
+                        )
+            for target in iso_targets:
+                with run.step(f"assemble:{target}"):
+                    results.append(
+                        Assembler(recipes[target], pkgdir, jobs=jobs).assemble(
+                            output_dir, download=not no_download, keep=keep,
+                            compressions=compressions, stage4=stage4, sbom=not no_sbom,
+                        )
+                    )
+    except FactoryError as err:
+        where = f" {escape(str(err.phase))}" if err.phase else ""
+        _err_console.print(f"[bold red]falha na fase[/bold red]{where}: {escape(str(err))}")
+        if err.output:
+            _err_console.print(err.output, markup=False, highlight=False)
+        raise typer.Exit(1) from err
+    except (
+        AssemblerError, ImageError, SeedError, ResolveError, ConfigurationError, StaleWorldError
+    ) as err:
+        _err_console.print(f"[bold red]erro:[/bold red] {escape(str(err))}")
+        raise typer.Exit(1) from err
+    except subprocess.CalledProcessError as err:
+        _err_console.print(f"[bold red]falha de emerge/dracut[/bold red] (exit {err.returncode})")
+        raise typer.Exit(1) from err
+
+    if trail.root is not None:
+        bundle = publish.bundle_run(trail.root, output_dir / f"{trail.run_id}.build.tar.zst")
+        publish.update_sha256sums(output_dir, {bundle.name: publish.sha256_of(bundle)})
+    for target, result in zip(iso_targets, results, strict=True):
+        _render_assemble_pretty(result, arch, target, init)
+
+
+def _world_recipes() -> list[ResolvedRecipe]:
+    """One recipe per image and init. Sets do not depend on the arch, so the
+    first one stands for all (the test suite checks that they agree)."""
+    arch = config.available_names("arch")[0]
+    return [
+        config.load_recipe(arch, target, init)
+        for target in config.target_names()
+        for init in config.available_names("init")
+    ]
+
+
+@app.command("world")
+def world(
+    check: Annotated[
+        bool,
+        typer.Option("--check", help="Do not write: exit 1 if any world file is stale."),
+    ] = False,
+) -> None:
+    """Write (or check) every image's world file, variants/<stage>/world.<init>.
+
+    The flat list of packages each image asks for, generated from the kits: the
+    other end of the set composition. Run it after changing a kit or a stage's
+    sets, and commit the diff with the change.
+    """
+    from shidashi import world as world_mod
+
+    stale: list[str] = []
+    for recipe in _world_recipes():
+        path = world_mod.world_file(recipe, config.variants_dir())
+        text = world_mod.render(recipe)
+        current = path.read_text(encoding="utf-8") if path.is_file() else None
+        rel = path.relative_to(config.variants_dir().parent)
+        if current == text:
+            typer.echo(f"ok      {rel}")
+            continue
+        if check:
+            stale.append(str(rel))
+            typer.echo(f"stale   {rel}")
+        else:
+            path.write_text(text, encoding="utf-8")
+            typer.echo(f"written {rel} ({len(world_mod.read(path))} packages)")
+    if stale:
+        _err_console.print(
+            f"[bold red]erro:[/bold red] {len(stale)} world file(s) out of date; "
+            "run `shidashi world` and commit the result"
+        )
+        raise typer.Exit(1)
 
 
 @app.command("release")

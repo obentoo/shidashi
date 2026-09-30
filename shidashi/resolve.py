@@ -141,17 +141,27 @@ def install_sets(rootfs: Path, recipe: ResolvedRecipe) -> None:
     """
     dest_dir = rootfs / "etc" / "portage" / "sets"
     dest_dir.mkdir(parents=True, exist_ok=True)
+    for name, lines in set_closure(recipe).items():
+        (dest_dir / name).write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def set_closure(recipe: ResolvedRecipe) -> dict[str, list[str]]:
+    """Every set ``recipe`` installs -- its own and each ``@ref`` they reach -- with
+    the lines it is written with (``exclude:`` applied). I/O (reads the kits).
+
+    Shared by :func:`install_sets`, which writes them, and :func:`world_atoms`,
+    which flattens them: what the image asks for and what its world lists cannot
+    drift apart.
+    """
     kits = config.kits_dir()
     index = kit_index(kits)
     excluded = frozenset(recipe.exclude)
-
+    closure: dict[str, list[str]] = {}
     pending = list(recipe.sets)
-    seen: set[str] = set()
     while pending:
         name = pending.pop(0)
-        if name in seen:
+        if name in closure:
             continue
-        seen.add(name)
         src = index.get(name)
         if src is None:
             raise ResolveError(
@@ -169,7 +179,25 @@ def install_sets(rootfs: Path, recipe: ResolvedRecipe) -> None:
         if dropped:
             kept.insert(0, f"# shidashi: excluded by flavor/{recipe.flavor}: "
                            + " ".join(sorted(dropped)))
-        (dest_dir / name).write_text("\n".join(kept) + "\n", encoding="utf-8")
+        closure[name] = kept
+    return closure
+
+
+def world_atoms(recipe: ResolvedRecipe) -> tuple[str, ...]:
+    """The packages the image ASKS for: every atom of its set closure, sorted. I/O.
+
+    The other end of the composition (kits -> a stage's sets -> this list): what
+    ``/var/lib/portage/world`` holds on the image and ``variants/<stage>/world.<init>``
+    in the repository. Explicit choices only -- the ~1300 dependencies stay out,
+    or depclean could never remove one that became an orphan.
+    """
+    atoms: set[str] = set()
+    for lines in set_closure(recipe).values():
+        for line in lines:
+            token = line.split("#", 1)[0].split()
+            if token and not token[0].startswith("@"):
+                atoms.add(token[0])
+    return tuple(sorted(atoms))
 
 
 def apply_portage(

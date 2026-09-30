@@ -37,6 +37,12 @@ def variants_tree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return root
 
 
+@pytest.fixture(autouse=True)
+def _in_tmp(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The default --output-dir is the current directory: never the repository's."""
+    monkeypatch.chdir(tmp_path)
+
+
 # --- fake Assembler -----------------------------------------------------------
 
 
@@ -50,7 +56,12 @@ class _FakeInstance:
         self.jobs = jobs
 
     def assemble(self, output: Path, **kwargs: object) -> Any:
-        return self._assemble_fn(output, **kwargs)
+        from shidashi.assembler import AssembleResult
+
+        produced = self._assemble_fn(output, **kwargs)
+        if isinstance(produced, Path):  # the tests name the ISO; the CLI gets a result
+            return AssembleResult(name=produced.stem, isos=(produced,), artifacts=())
+        return produced
 
 
 def _fake_assembler(assemble_fn: Any, sink: dict[str, Any] | None = None) -> Any:
@@ -102,7 +113,7 @@ def test_assemble_json_shape(monkeypatch: pytest.MonkeyPatch, variants_tree: Pat
     result = runner.invoke(app, ["assemble", "v3", "minimal", "systemd", "--format", "json"])
     assert result.exit_code == 0, result.stdout
     data = json.loads(result.stdout)
-    assert data["iso"] == "/dist/x.iso"
+    assert data["isos"] == ["/dist/x.iso"] and data["name"] == "x"
     assert data["arch"] == "v3"
     assert data["flavor"] == "minimal"
     assert data["init"] == "systemd"
@@ -131,14 +142,21 @@ def test_assemble_passes_output_and_flags(
             "minimal",
             "systemd",
             "-o",
-            "/tmp/custom.iso",
+            "/tmp/out",
             "--no-download",
             "--keep",
+            "--compression",
+            "both",
+            "--stage4",
+            "--no-sbom",
         ],
     )
     assert result.exit_code == 0, result.stdout
-    assert captured["output"] == Path("/tmp/custom.iso")
-    assert captured["kwargs"] == {"download": False, "keep": True}
+    assert captured["output"] == Path("/tmp/out")
+    assert captured["kwargs"] == {
+        "download": False, "keep": True, "compressions": ("zstd", "xz"), "stage4": True,
+        "sbom": False,
+    }
 
 
 def test_assemble_default_output_name(monkeypatch: pytest.MonkeyPatch, variants_tree: Path) -> None:
@@ -151,7 +169,8 @@ def test_assemble_default_output_name(monkeypatch: pytest.MonkeyPatch, variants_
     )
     result = runner.invoke(app, ["assemble", "v3", "minimal", "systemd"])
     assert result.exit_code == 0, result.stdout
-    assert captured["output"] == Path("bentoo-minimal-systemd-v3.iso")
+    # the directory; the ISO is named bentoo-<date>-minimal-systemd-v3.iso inside it
+    assert captured["output"] == Path(".")
 
 
 def test_assemble_binhost_default_is_per_arch_and_generation(
@@ -250,3 +269,36 @@ def test_assemble_without_jobs_leaves_the_defaults(
 def test_assemble_refuses_zero_jobs(variants_tree: Path) -> None:
     result = runner.invoke(app, ["assemble", "v3", "minimal", "systemd", "--jobs", "0"])
     assert result.exit_code != 0
+
+
+def test_assemble_writes_an_audit_trail_with_the_recipe_and_pins(
+    monkeypatch: pytest.MonkeyPatch, variants_tree: Path, tmp_path: Path
+) -> None:
+    import json
+
+    runs = tmp_path / "runs"
+    monkeypatch.setenv("SHIDASHI_RUNS", str(runs))
+    iso = tmp_path / "out" / "bentoo-x.iso"
+    monkeypatch.setattr(cli, "Assembler", _fake_assembler(lambda o, **_k: iso), raising=False)
+    result = runner.invoke(
+        app, ["assemble", "v3", "minimal", "systemd", "--jobs", "4", "-o", str(iso.parent)]
+    )
+    assert result.exit_code == 0, result.stdout
+    (run_dir,) = runs.iterdir()
+    manifest = json.loads((run_dir / "manifest.json").read_text())
+    assert manifest["command"] == "assemble" and manifest["status"] == "ok"
+    inputs = manifest["inputs"]
+    assert inputs["recipe"]["flavor"] == "minimal" and inputs["jobs"] == 4
+    assert {"repository", "stage3", "gentoo_tree", "overlays"} <= set(inputs)
+    assert (run_dir / "report.md").is_file()
+    # the closed trail is published beside the ISO, and checksummed
+    bundle = iso.parent / "bentoo-x.build.tar.zst"
+    assert bundle.is_file()
+    assert "bentoo-x.build.tar.zst" in (iso.parent / "SHA256SUMS").read_text()
+    assert f"audit: {run_dir}" in result.output.replace("\n", "")
+
+
+def test_assemble_refuses_an_unknown_compression(variants_tree: Path) -> None:
+    result = runner.invoke(app, ["assemble", "v3", "minimal", "systemd", "--compression", "lz4"])
+    assert result.exit_code == 1
+    assert "zstd, xz or both" in result.output

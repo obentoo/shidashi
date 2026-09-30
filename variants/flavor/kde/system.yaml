@@ -1,0 +1,19 @@
+# variants/flavor/kde/system.yaml — KDE's additions to base/system.yaml.
+#
+# The display manager is per init (flavor/kde/recipe.yaml, init_sets):
+# plasma-login-manager under systemd, SDDM under OpenRC.
+services:
+  systemd:
+    enable:
+      - plasmalogin.service   # provides the display-manager.service alias
+  openrc:
+    default:
+      - display-manager       # /etc/conf.d/display-manager: DISPLAYMANAGER below
+
+# OpenRC's display-manager service starts the one named here.
+display_manager:
+  openrc: sddm
+
+live:
+  # The Wayland session the live user is logged into (usr/share/wayland-sessions).
+  session: plasma.desktop

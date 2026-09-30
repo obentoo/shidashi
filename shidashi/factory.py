@@ -17,12 +17,13 @@ testes possam monkeypatchá-los em ``shidashi.factory`` e :meth:`build` os obser
 
 import os
 import shutil
+import time
 from collections.abc import Mapping
 from pathlib import Path
 
 import pydantic
 
-from shidashi import config, isacheck, state
+from shidashi import audit, config, isacheck, state
 from shidashi.bootstrap import BootstrapResult, run_bootstrap
 from shidashi.catalyst import build_stage3_catalyst
 from shidashi.container import Container
@@ -34,6 +35,7 @@ from shidashi.phases import (
     FailureDecision,
     FailureHook,
     PhaseResult,
+    attach_packages,
     fork_point,
     latest_resumable,
     restore_fork_point,
@@ -431,6 +433,7 @@ class Factory:
            ``settle_pass`` e propaga.
         """
         _require_root()
+        run = audit.current()
 
         recipe = self.recipe
         rootfs = config.build_root() / f"{recipe.arch}-{recipe.flavor}-{recipe.init}"
@@ -438,23 +441,29 @@ class Factory:
         pointer = load_pointer(recipe.init, seeds_dir=config.seeds_dir())
         snapshot = pointer.snapshot
         fork_points_dir = config.fork_points_dir()
-        # first: a pin that is missing or inside the cooldown refuses the build
-        # before any seed is extracted (D26)
-        repos = pinned_repos(
-            seeds_dir=config.seeds_dir(), cache_dir=config.cache_dir(), download=download
-        )
-
-        resume_at, fork_point_path, fork_point_reused, bootstrapped = _seed_or_restore(
-            recipe,
-            rootfs,
-            pointer,
-            snapshot=snapshot,
-            fork_points_dir=fork_points_dir,
-            download=download,
-        )
-
-        entry = _entry_layers(recipe, done=_phases_through(recipe, resume_at))
-        _prepare_portage(rootfs, recipe, layers=entry)
+        with run.step("seed") as step:
+            # first: a pin that is missing or inside the cooldown refuses the build
+            # before any seed is extracted (D26)
+            repos = pinned_repos(
+                seeds_dir=config.seeds_dir(), cache_dir=config.cache_dir(), download=download
+            )
+            resume_at, fork_point_path, fork_point_reused, bootstrapped = _seed_or_restore(
+                recipe,
+                rootfs,
+                pointer,
+                snapshot=snapshot,
+                fork_points_dir=fork_points_dir,
+                download=download,
+            )
+            entry = _entry_layers(recipe, done=_phases_through(recipe, resume_at))
+            _prepare_portage(rootfs, recipe, layers=entry)
+            step.add(
+                resume_at=resume_at,
+                fork_point=str(fork_point_path) if fork_point_path else None,
+                fork_point_reused=fork_point_reused,
+                bootstrapped=bootstrapped,
+                layers=list(entry) if entry is not None else None,
+            )
 
         binds_ro, binds_rw = _build_binds(
             recipe,
@@ -475,24 +484,32 @@ class Factory:
                 log=config.build_log_path(recipe),
             ) as container:
                 if not bootstrapped:
-                    bootstrap = _bootstrap(
+                    with run.step("bootstrap") as step:
+                        bootstrap = _bootstrap(
+                            container,
+                            recipe,
+                            pkgdir=self.pkgdir,
+                            snapshot=snapshot,
+                            fork_points_dir=fork_points_dir,
+                        )
+                        step.add(binutils=bootstrap.binutils, gcc=bootstrap.gcc,
+                                 locales_before=bootstrap.locales_before,
+                                 locales_after=bootstrap.locales_after)
+                # before any emerge can reuse a binpkg (D26)
+                with run.step("generation") as step:
+                    generation_print = fingerprint(rootfs, recipe)
+                    recorded = check_or_record(self.pkgdir, generation_print)
+                    step.add(recorded=recorded, fingerprint=generation_print.model_dump())
+                with run.step("stages"):
+                    results = run_phases(
                         container,
                         recipe,
-                        pkgdir=self.pkgdir,
+                        emptytree=emptytree,
+                        resume_at=resume_at,
                         snapshot=snapshot,
                         fork_points_dir=fork_points_dir,
+                        stop_after=stop_after,
                     )
-                # before any emerge can reuse a binpkg (D26)
-                check_or_record(self.pkgdir, fingerprint(rootfs, recipe))
-                results = run_phases(
-                    container,
-                    recipe,
-                    emptytree=emptytree,
-                    resume_at=resume_at,
-                    snapshot=snapshot,
-                    fork_points_dir=fork_points_dir,
-                    stop_after=stop_after,
-                )
         except BaseException:
             keep_rootfs = True  # preserva o rootfs para depuração em falha (R8.4)
             raise
@@ -517,9 +534,15 @@ class Factory:
         # them, so test suites and ISO smoke tests have to happen elsewhere.
         # Failing here would discard hours of correct work over a fact about the
         # build machine.
-        unrunnable = tuple(
-            str(f.path.relative_to(rootfs)) for f in isacheck.check_rootfs(rootfs, recipe.arch)
-        )
+        with run.step("isa-check") as step:
+            unrunnable = tuple(
+                str(f.path.relative_to(rootfs))
+                for f in isacheck.check_rootfs(rootfs, recipe.arch)
+            )
+            step.add(unrunnable=len(unrunnable))
+        run.metric("packages.built", len(built_atoms))
+        run.metric("packages.reused", len(reused_atoms))
+        run.metric("packages.settled", len(settle_atoms))
 
         result = FactoryResult(
             pkgdir=self.pkgdir,
@@ -534,7 +557,8 @@ class Factory:
         )
 
         if not keep_rootfs:
-            shutil.rmtree(rootfs, ignore_errors=True)
+            with run.step("cleanup"):
+                shutil.rmtree(rootfs, ignore_errors=True)
         return result
 
     def update(self, *, download: bool = True, keep: bool = False) -> FactoryResult:
@@ -577,8 +601,10 @@ class Factory:
                 phase="update",
             )
 
-        _restore_into(image, rootfs)
-        _prepare_portage(rootfs, recipe)
+        run = audit.current()
+        with run.step("restore", fork_point=str(image)):
+            _restore_into(image, rootfs)
+            _prepare_portage(rootfs, recipe)
 
         binds_ro, binds_rw = _build_binds(
             recipe,
@@ -597,9 +623,15 @@ class Factory:
                 binds_rw=binds_rw,
                 log=config.build_log_path(recipe),
             ) as container:
-                check_or_record(self.pkgdir, fingerprint(rootfs, recipe))
-                result = run_update(container, recipe)
-                snapshot_fork_point(rootfs, image)
+                with run.step("generation"):
+                    check_or_record(self.pkgdir, fingerprint(rootfs, recipe))
+                with run.step("update") as step:
+                    since = int(time.time())
+                    result = run_update(container, recipe)
+                    step.add(built=len(result.built_atoms))
+                    attach_packages(rootfs, "update", since=since, built=result.built_atoms)
+                with run.step("fork-point", path=str(image)):
+                    snapshot_fork_point(rootfs, image)
         except BaseException:
             keep_rootfs = True  # preserved for debugging, as in build()
             raise
@@ -732,18 +764,21 @@ class Factory:
                 binds_rw=binds_rw,
                 log=config.build_log_path(recipe),
             ) as container:
+            run = audit.current()
             if needs_bootstrap:
-                bootstrap = _bootstrap(
-                    container,
-                    recipe,
-                    pkgdir=self.pkgdir,
-                    snapshot=snapshot,
-                    fork_points_dir=fork_points_dir,
-                )
+                with run.step("bootstrap"):
+                    bootstrap = _bootstrap(
+                        container,
+                        recipe,
+                        pkgdir=self.pkgdir,
+                        snapshot=snapshot,
+                        fork_points_dir=fork_points_dir,
+                    )
                 if seeded is not None:
                     state.save_state(state_path, seeded.model_copy(update={"bootstrap_done": True}))
             # before any emerge can reuse a binpkg (D26)
-            check_or_record(self.pkgdir, fingerprint(rootfs, recipe))
+            with run.step("generation"):
+                check_or_record(self.pkgdir, fingerprint(rootfs, recipe))
             results = run_phases_stepwise(
                 container,
                 recipe,

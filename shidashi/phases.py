@@ -26,13 +26,14 @@ import os
 import re
 import shutil
 import subprocess
-from collections.abc import Callable
+import time
+from collections.abc import Callable, Sequence
 from enum import StrEnum
 from pathlib import Path
 
 import pydantic
 
-from shidashi import config, state
+from shidashi import audit, config, state
 from shidashi.container import Container
 from shidashi.flow import StagesFlow, active_flow
 from shidashi.recipe import Phase, ResolvedRecipe, UseBreak
@@ -772,25 +773,64 @@ def run_phase(
     before, _after = flow.split()
     built: tuple[str, ...] = ()
     output = ""
+    run = audit.current()
     # the steps up to the emerge, in the order variants/flow.yaml declares them
     for kind in before:
-        if kind == "apply-config" and phase.layers:
-            # The configuration in force for THIS stage (D24). Layers only grow
-            # along the chain, so re-applying is additive.
-            apply_portage(
-                container.rootfs, recipe, variants_dir=config.variants_dir(), layers=phase.layers
-            )
-        elif kind == "write-cuts":
-            write_use_break(container.rootfs, phase)
-        elif kind == "emerge-stage":
-            argv = phase_emerge_argv(phase, recipe, emptytree=emptytree, flow=flow)
-            built, output = _run_emerge(container, argv, phase=phase.name)
+        with run.step(kind) as step:
+            if kind == "apply-config" and phase.layers:
+                # The configuration in force for THIS stage (D24). Layers only grow
+                # along the chain, so re-applying is additive.
+                apply_portage(
+                    container.rootfs, recipe, variants_dir=config.variants_dir(),
+                    layers=phase.layers,
+                )
+                step.add(layers=list(phase.layers))
+            elif kind == "write-cuts":
+                write_use_break(container.rootfs, phase)
+                step.add(cuts=list(use_break_lines(phase)))
+            elif kind == "emerge-stage":
+                argv = phase_emerge_argv(phase, recipe, emptytree=emptytree, flow=flow)
+                since = int(time.time())
+                built, output = _run_emerge(container, argv, phase=phase.name)
+                reused = parse_reused_atoms(output)
+                step.add(argv=argv, built=len(built), reused=len(reused))
+                attach_packages(
+                    container.rootfs, phase.stage or phase.name, since=since,
+                    built=built, reused=reused,
+                )
     return PhaseResult(
         phase=phase,
         built_atoms=built,
         snapshot=None,
         output=output,
         reused_atoms=parse_reused_atoms(output),
+    )
+
+
+def attach_packages(
+    rootfs: Path,
+    label: str,
+    *,
+    since: int,
+    built: Sequence[str] = (),
+    reused: Sequence[str] = (),
+) -> None:
+    """``packages-<label>.json``: the rootfs's packages after this emerge, with the
+    ones it merged marked built or binpkg and timed from emerge.log (audit)."""
+    run = audit.current()
+    if run.root is None:
+        return
+    try:
+        text = (rootfs / "var" / "log" / "emerge.log").read_text(
+            encoding="utf-8", errors="replace"
+        )
+    except OSError:
+        text = ""
+    run.attach(
+        f"packages-{label}",
+        audit.harvest_packages(
+            rootfs, merges=audit.parse_emerge_log(text, since=since), built=built, reused=reused
+        ),
     )
 
 
@@ -840,6 +880,26 @@ def settle_pass(
     return PhaseResult(phase=settle, built_atoms=built, snapshot=None, output=output)
 
 
+def _audited_settle(
+    container: Container, recipe: ResolvedRecipe, breaks: tuple[UseBreak, ...], stage: str
+) -> PhaseResult:
+    """:func:`settle_pass` as an audited step, with the atoms it rebuilt."""
+    with audit.current().step("settle", cuts=len(breaks)) as step:
+        result = settle_pass(container, recipe, breaks, stage=stage)
+        step.add(atoms=list(result.built_atoms))
+    return result
+
+
+def _audited_snapshot(rootfs: Path, dest: Path) -> None:
+    """:func:`snapshot_fork_point` as an audited step, with the tarball's size.
+
+    Size only: hashing a 25 GB fork point would add minutes to every stage.
+    """
+    with audit.current().step("fork-point", path=str(dest)) as step:
+        snapshot_fork_point(rootfs, dest)
+        step.add(size_bytes=dest.stat().st_size if dest.is_file() else None)
+
+
 def run_phases(
     container: Container,
     recipe: ResolvedRecipe,
@@ -878,22 +938,27 @@ def run_phases(
             if phase.name == resume_at:
                 skipping = False
             continue
-        results.append(run_phase(container, recipe, phase, emptytree=emptytree))
-        pending += phase.use_break
-        # the steps after the emerge, in the order variants/flow.yaml declares them
-        for kind in after:
-            if kind == "settle" and phase.ships:
-                results.append(settle_pass(container, recipe, pending, stage=phase.stage))
-                pending = ()
-            elif kind == "snapshot" and phase.stage:
-                snapshot_fork_point(
-                    container.rootfs,
-                    stage_fork_point_path(
-                        recipe, phase.stage, snapshot=snapshot, fork_points_dir=fork_points_dir
-                    ),
-                )
-            elif kind == "check-binpkgs" and phase.ships:
-                check_binpkgs(container, recipe, phase.stage)
+        with audit.current().step(
+            f"stage:{phase.stage or phase.name}", ships=phase.ships, sets=list(phase.sets)
+        ):
+            results.append(run_phase(container, recipe, phase, emptytree=emptytree))
+            pending += phase.use_break
+            # the steps after the emerge, in the order variants/flow.yaml declares them
+            for kind in after:
+                if kind == "settle" and phase.ships:
+                    results.append(_audited_settle(container, recipe, pending, phase.stage))
+                    pending = ()
+                elif kind == "snapshot" and phase.stage:
+                    _audited_snapshot(
+                        container.rootfs,
+                        stage_fork_point_path(
+                            recipe, phase.stage, snapshot=snapshot,
+                            fork_points_dir=fork_points_dir,
+                        ),
+                    )
+                elif kind == "check-binpkgs" and phase.ships:
+                    with audit.current().step("check-binpkgs"):
+                        check_binpkgs(container, recipe, phase.stage)
         if stop_after is not None and phase.stage == stop_after:
             break
     return tuple(results)
@@ -1062,11 +1127,11 @@ def run_phases_stepwise(
         for kind in after:
             if kind == "settle" and phase.ships:
                 results.append(
-                    settle_pass(container, recipe, run.accumulated_breaks, stage=phase.stage)
+                    _audited_settle(container, recipe, run.accumulated_breaks, phase.stage)
                 )
                 run.accumulated_breaks = ()
             elif kind == "snapshot":
-                snapshot_fork_point(
+                _audited_snapshot(
                     container.rootfs,
                     phase_snapshot_path(
                         recipe, snapshot=snapshot, phase=phase.name,
@@ -1074,7 +1139,8 @@ def run_phases_stepwise(
                     ),
                 )
             elif kind == "check-binpkgs" and phase.ships:
-                check_binpkgs(container, recipe, phase.stage)
+                with audit.current().step("check-binpkgs"):
+                    check_binpkgs(container, recipe, phase.stage)
         run.persist()
 
         if _checkpoint_decision(on_checkpoint, container, phase.name, diff) is (

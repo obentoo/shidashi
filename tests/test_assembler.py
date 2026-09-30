@@ -30,6 +30,34 @@ from shidashi.resolve import ResolveError
 
 
 @pytest.fixture(autouse=True)
+def _system_config_stubbed(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """The system/live configuration has its own tests (test_system.py); here it
+    only has to happen, in its place in the order."""
+    calls: list[str] = []
+
+    def apply_system(_c: object, _cfg: object, *, init: str) -> dict[str, object]:
+        calls.append("system")
+        return {}
+
+    def apply_live(_c: object, _cfg: object, *, init: str) -> dict[str, object]:
+        calls.append("live")
+        return {}
+
+    def verify(_r: object, _cfg: object, *, init: str, live: bool) -> list[str]:
+        calls.append("verify")
+        return []
+
+    # the world file's own tests are in test_world.py; these recipes are synthetic
+    from shidashi import world
+
+    monkeypatch.setattr(world, "current_atoms", lambda recipe, variants_dir: ("app-misc/a",))
+    monkeypatch.setattr(asm, "apply_system", apply_system)
+    monkeypatch.setattr(asm, "apply_live", apply_live)
+    monkeypatch.setattr(asm, "verify", verify)
+    return calls
+
+
+@pytest.fixture(autouse=True)
 def _no_tree_download(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """No unit test may fetch the real ::gentoo snapshot (49 MB, D26)."""
     tree = tmp_path / "pinned-gentoo"
@@ -239,8 +267,11 @@ class _FakeContainer:
     def __exit__(self, *exc: object) -> None:
         return None
 
-    def run(self, argv: list[str], **kw: object) -> None:
+    def run(self, argv: list[str], **kw: object) -> object:
+        from shidashi.container import CommandResult
+
         self.runs.append(argv)
+        return CommandResult(0, "", "")
 
 
 @pytest.mark.parametrize("jobs", [None, 6])
@@ -280,11 +311,11 @@ def test_assemble_orchestrates_seed_emerge_dracut_squashfs_iso(
     cuts_seen: list[str] = []
 
     class _OrchContainer(_FakeContainer):
-        def run(self, argv: list[str], **kw: object) -> None:
+        def run(self, argv: list[str], **kw: object) -> object:
             events.append(argv[0])
             cut = self.rootfs / "etc/portage/package.use/zz-shidashi-use-break"
             cuts_seen.append(cut.read_text() if cut.is_file() else "")
-            super().run(argv, **kw)
+            return super().run(argv, **kw)
 
     monkeypatch.setattr(asm, "Container", _OrchContainer)
 
@@ -293,22 +324,40 @@ def test_assemble_orchestrates_seed_emerge_dracut_squashfs_iso(
 
     processors_seen: list[int | None] = []
 
-    def fake_squashfs(rootfs: Path, output: Path, *, processors: int | None = None) -> Path:
+    iso_kwargs: list[dict[str, object]] = []
+    squash_kwargs: list[dict[str, object]] = []
+
+    def fake_squashfs(rootfs: Path, output: Path, **kw: object) -> Path:
         sq_calls.append((rootfs, output))
-        processors_seen.append(processors)
+        processors_seen.append(kw.get("processors"))  # type: ignore[arg-type]
+        squash_kwargs.append(kw)
         output.write_bytes(b"SQ")
         return output
 
-    def fake_iso(squashfs: Path, output: Path, *, kernel: Path, initramfs: Path) -> Path:
+    def fake_iso(squashfs: Path, output: Path, *, kernel: Path, initramfs: Path,
+                 **kw: object) -> Path:
         iso_calls.append((squashfs, output, kernel, initramfs))
+        iso_kwargs.append(kw)
         output.parent.mkdir(parents=True, exist_ok=True)  # o build_iso real faz isto
         output.write_bytes(b"ISO")
         return output
 
     monkeypatch.setattr(image, "make_squashfs", fake_squashfs)
     monkeypatch.setattr(image, "build_iso", fake_iso)
+    # the host tools of the artifacts (unsquashfs, syft) are publish.py's tests' concern
+    from shidashi import publish
 
-    out = tmp_path / "dist" / "bentoo.iso"
+    def fake_contents(squashfs: Path, dest: Path) -> Path:
+        dest.write_bytes(b"C")
+        return dest
+
+    monkeypatch.setattr(publish, "write_contents", fake_contents)
+    monkeypatch.setattr(publish, "write_sbom", lambda rootfs, dest: None)
+
+    import datetime
+
+    out_dir = tmp_path / "dist"
+    out = out_dir / "bentoo-2026.09.30-kde-systemd-znver5.iso"
     # sets=() de propósito: este teste exercita a ORQUESTRAÇÃO do assemble, e
     # install_sets falharia alto num set declarado sem arquivo curado no tmp_path.
     recipe = _recipe(sets=()).model_copy(
@@ -320,9 +369,39 @@ def test_assemble_orchestrates_seed_emerge_dracut_squashfs_iso(
             )
         }
     )
-    result = Assembler(recipe, tmp_path / "binhost" / "znver5", jobs=jobs).assemble(out)
+    from shidashi import audit
 
-    assert result == out
+    with audit.run(tmp_path / "runs", command="assemble", argv=[]) as trail:
+        result = Assembler(recipe, tmp_path / "binhost" / "znver5", jobs=jobs).assemble(
+            out_dir, now=datetime.datetime(2026, 9, 30, 1, 0, tzinfo=datetime.UTC)
+        )
+    manifest = audit.build_manifest(audit.read_events(trail.path / "events.jsonl"))
+    # every step of the ISO is in the audit trail, in order, and the ISO with its hash
+    assert [st["step"] for st in manifest["steps"]] == [
+        "seed", "configure", "install", "settle", "depclean", "preserved-rebuild",
+        "system", "live", "verify-config", "initramfs", "sbom", "squashfs:zstd", "iso:zstd",
+        "publish:zstd", "cleanup",
+    ]
+    assert all(st["status"] == "ok" for st in manifest["steps"])
+    assert manifest["artifacts"][0]["role"] == "iso:zstd"
+    assert manifest["artifacts"][0]["sha256"] == audit.sha256_file(out)
+    assert "packages" in [a.removesuffix(".json") for a in manifest["attachments"]]
+
+    assert result.isos == (out,) and result.name == "bentoo-2026.09.30-kde-systemd-znver5"
+    # beside the ISO, the published artifacts of the major distributions
+    names = {p.name for p in result.artifacts}
+    assert {out.name + ".DIGESTS", out.name + ".packages", out.name + ".contents.gz",
+            "SHA256SUMS", "latest-znver5-kde-systemd.txt"} <= names
+    sums = (out_dir / "SHA256SUMS").read_text()
+    assert f"{audit.sha256_file(out)}  {out.name}" in sums
+    # the medium carries its metadata; the squashfs its exclude list, zstd by default
+    extra = iso_kwargs[0]["extra"]
+    assert set(extra) >= {"bentoo/world", "bentoo/packages.txt", "bentoo/version",  # type: ignore[call-overload]
+                          "bentoo/build.json"}
+    assert iso_kwargs[0]["volume"] == "BENTOO_KDE"
+    assert iso_kwargs[0]["text_target"] == "multi-user.target"
+    assert squash_kwargs[0]["compression"] == "zstd"
+    assert str(squash_kwargs[0]["exclude_file"]).endswith("variants/base/iso-exclude")
     assert out.read_bytes() == b"ISO"
     # §18.6 — apply_portage estritamente ANTES do emerge (não só "foi chamado").
     assert events.index("apply_portage") < events.index("emerge")
@@ -353,7 +432,7 @@ def test_assemble_orchestrates_seed_emerge_dracut_squashfs_iso(
     # sucesso sem --keep → rootfs E squashfs intermediário removidos do scratch.
     assemble_dir = tmp_path / "scratch" / "assemble"
     assert not (assemble_dir / "znver5-kde-systemd").exists()
-    assert not (assemble_dir / "znver5-kde-systemd.squashfs").exists()
+    assert not (assemble_dir / "znver5-kde-systemd.zstd.squashfs").exists()
 
 
 def test_assemble_keeps_rootfs_on_emerge_failure(
@@ -521,3 +600,41 @@ def test_locate_kernel_finds_the_image_of_a_uki_install(tmp_path: Path) -> None:
     found = _locate_kernel(tmp_path, kver)
     assert found == mods / "vmlinuz"
     assert found.read_bytes() == b"KERNEL"
+
+
+def test_a_configuration_that_did_not_apply_fails_the_assemble_before_the_squashfs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F79: the first ISO shipped without a hostname, a service or an account and
+    nothing noticed. verify() naming anything fails the build, the rootfs kept."""
+    _FakeContainer.instances = []
+    monkeypatch.setattr(os, "geteuid", lambda: 0)
+    monkeypatch.setenv("SHIDASHI_SCRATCH", str(tmp_path / "scratch"))
+    monkeypatch.setenv("SHIDASHI_CACHE", str(tmp_path / "cache"))
+    monkeypatch.setattr(asm, "load_pointer", lambda init, *, seeds_dir: _pointer())
+    monkeypatch.setattr(
+        asm, "fetch_stage3", lambda pointer, *, cache_dir, download: tmp_path / "s.tar"
+    )
+
+    def fake_extract(tarball: Path, rootfs: Path) -> None:
+        (rootfs / "lib" / "modules" / "6.12.0").mkdir(parents=True)
+
+    monkeypatch.setattr(asm, "extract_stage3", fake_extract)
+    monkeypatch.setattr(asm, "apply_portage", lambda rootfs, recipe, *, variants_dir: None)
+    monkeypatch.setattr(asm, "bind_repos", lambda d, **_k: [])
+    monkeypatch.setattr(asm, "Container", _FakeContainer)
+    monkeypatch.setattr(
+        asm, "verify", lambda r, cfg, *, init, live: ["NetworkManager.service is not enabled"]
+    )
+    squashed: list[Path] = []
+
+    def make_squashfs(_rootfs: Path, output: Path, **_k: object) -> Path:
+        squashed.append(output)
+        return output
+
+    monkeypatch.setattr(image, "make_squashfs", make_squashfs)
+
+    with pytest.raises(AssemblerError, match="NetworkManager.service is not enabled"):
+        Assembler(_recipe(), tmp_path / "binhost").assemble(tmp_path / "out.iso")
+    assert squashed == []  # never packed
+    assert (tmp_path / "scratch" / "assemble" / "znver5-kde-systemd").exists()

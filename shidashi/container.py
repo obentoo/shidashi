@@ -10,9 +10,12 @@ root + ``systemd-nspawn`` e são exercidos pelos testes de integração host-gat
 import datetime
 import shutil
 import subprocess
+import time
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from types import TracebackType
+
+from shidashi import audit
 
 
 class CommandResult:
@@ -30,7 +33,10 @@ class CommandResult:
 #: The lab's validated nspawn line (start.sh). --resolv-conf=copy-host: fetches
 #: must not depend on whatever resolv.conf the stage3 ships. --register=no: not a
 #: --boot container, so there is nothing for systemd-machined to manage.
-_HOST_OPTIONS = ("--register=no", "--resolv-conf=copy-host")
+#: --timezone=off: nspawn's default (auto) writes the BUILD HOST's zone into the
+#: image -- the first ISO shipped America/Sao_Paulo that way (F79); the image's
+#: zone is system.yaml's, set by shidashi.system.
+_HOST_OPTIONS = ("--register=no", "--resolv-conf=copy-host", "--timezone=off")
 
 # Commands (not the interactive shell) add --console=pipe and get stdin from
 # /dev/null. nspawn's default console is INTERACTIVE when it is started from a
@@ -163,6 +169,7 @@ class Container:
         )
         if self.log is not None:
             return self._run_logged(cmd, argv, env=env, check=check)
+        start = time.monotonic()
         proc = subprocess.run(
             cmd,
             stdin=subprocess.DEVNULL,
@@ -171,6 +178,7 @@ class Container:
             env=dict(env) if env is not None else None,
             check=False,
         )
+        self._audit(argv, proc.returncode, start, (proc.stdout + proc.stderr).count("\n"))
         result = CommandResult(proc.returncode, proc.stdout, proc.stderr)
         if check and proc.returncode != 0:
             raise subprocess.CalledProcessError(
@@ -194,6 +202,7 @@ class Container:
         assert self.log is not None
         self.log.parent.mkdir(parents=True, exist_ok=True)
         lines: list[str] = []
+        start = time.monotonic()
         with self.log.open("a", encoding="utf-8") as out:
             stamp = datetime.datetime.now().isoformat(timespec="seconds")
             out.write(f"### {stamp} $ {' '.join(argv)}\n")
@@ -215,10 +224,22 @@ class Container:
                 returncode = proc.wait()
             stamp = datetime.datetime.now().isoformat(timespec="seconds")
             out.write(f"### {stamp} exit {returncode}\n")
+        self._audit(argv, returncode, start, len(lines))
         output = "".join(lines)
         if check and returncode != 0:
             raise subprocess.CalledProcessError(returncode, cmd, output=output, stderr="")
         return CommandResult(returncode, output, "")
+
+    def _audit(self, argv: Sequence[str], exit_code: int, start: float, lines: int) -> None:
+        """One ``command`` event in the run's audit trail (a no-op outside a run)."""
+        audit.current().command(
+            argv,
+            exit_code=exit_code,
+            duration_s=round(time.monotonic() - start, 3),
+            output_lines=lines,
+            rootfs=str(self.rootfs),
+            log=str(self.log) if self.log is not None else None,
+        )
 
     def shell(self) -> None:
         """Abre um shell interativo no rootfs *vivo* e devolve quando ele sai (R7.1/R7.3).
