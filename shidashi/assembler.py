@@ -162,8 +162,18 @@ def _dracut_argv(kver: str, initramfs: Path) -> list[str]:
     <initramfs>, <kver>]``. ``--add dmsquash-live`` embute o módulo que monta o
     squashfs como raiz overlay em RAM; ``--no-hostonly`` torna o initramfs
     genérico (a ISO precisa bootar em qualquer máquina, não só na de build).
+
+    ``--omit systemd-modules-load``: that dracut module copies the image's
+    modules-load.d into the initramfs but not the out-of-tree modules they name,
+    so every boot logged "Failed to find module 'vboxdrv'" (x3) from the initrd
+    while the real root loaded them fine (seen by the boot test, 2026-09-30).
+    The live boot's own modules (squashfs, overlay, isofs, loop) are loaded by
+    dmsquash-live, not through modules-load.d.
     """
-    return ["dracut", "--add", "dmsquash-live", "--no-hostonly", "--force", str(initramfs), kver]
+    return [
+        "dracut", "--add", "dmsquash-live", "--omit", "systemd-modules-load", "--no-hostonly",
+        "--force", str(initramfs), kver,
+    ]
 
 
 def _kernel_version(rootfs: Path) -> str:

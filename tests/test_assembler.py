@@ -150,6 +150,9 @@ def test_dracut_argv_adds_dmsquash_live() -> None:
         "dracut",
         "--add",
         "dmsquash-live",
+        # modules-load.d in the initrd named modules it does not carry (vboxdrv)
+        "--omit",
+        "systemd-modules-load",
         "--no-hostonly",
         "--force",
         "/boot/initramfs-6.12.0.img",
