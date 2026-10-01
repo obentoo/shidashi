@@ -121,15 +121,27 @@ def target_names() -> list[str]:
     return ["minimal", *available_names("flavor")]
 
 
-def load_recipe(arch: str, target: str, init: str) -> ResolvedRecipe:
+def stage_names() -> list[str]:
+    """Every stage of the chains, base first: the images plus ``base`` and
+    ``desktop``, the stages they grow from without being images themselves."""
+    from shidashi.recipe import CORE_STAGES
+
+    return [*CORE_STAGES, *available_names("flavor")]
+
+
+def load_recipe(
+    arch: str, target: str, init: str, *, any_stage: bool = False
+) -> ResolvedRecipe:
     """Load the whole chain for ``target`` and merge it with ``arch`` and ``init``.
 
     The one entry point for "give me the recipe of this image": CLI, lab sync
     and tests all go through it, so the chain is walked in exactly one place.
+    ``any_stage`` also accepts ``base`` and ``desktop``: stages, not images, so
+    only read-only views (``shidashi world desktop``) ask for them.
     """
     from shidashi.recipe import load_arch, load_base, load_chain, load_init, merge
 
-    if target not in target_names():
+    if target not in (stage_names() if any_stage else target_names()):
         raise UnknownAxisError("target", target, target_names())
     return merge(
         load_base(base_path()),

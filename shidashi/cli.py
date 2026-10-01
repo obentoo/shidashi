@@ -43,7 +43,7 @@ from shidashi.factory import (
 from shidashi.image import ImageError
 from shidashi.phases import phase_target
 from shidashi.recipe import RecipeChainError, ResolvedRecipe
-from shidashi.resolve import PretendReport, ResolveError, pretend_resolve
+from shidashi.resolve import KitView, PretendReport, ResolveError, pretend_resolve
 from shidashi.seed import SeedError, load_pointer
 from shidashi.state import PhaseDiff
 from shidashi.system import ConfigurationError
@@ -1117,8 +1117,69 @@ def _world_recipes() -> list[ResolvedRecipe]:
     ]
 
 
+def _echo_kit(by_name: dict[str, KitView], name: str, depth: int, printed: set[str]) -> None:
+    """One kit as a tree: its atoms, the atoms exclude: took out, then the kits it
+    includes, one level deeper. A kit already printed is only named."""
+    pad = "  " * depth
+    if name in printed:
+        typer.echo(f"{pad}@{name}  (listed above)")
+        return
+    printed.add(name)
+    kit = by_name[name]
+    typer.echo(f"{pad}@{name}")
+    for atom in kit.atoms:
+        typer.echo(f"{pad}  {atom}")
+    for atom in kit.dropped:
+        typer.echo(f"{pad}  {atom}  (excluded)")
+    for ref in kit.refs:
+        _echo_kit(by_name, ref, depth + 1, printed)
+
+
+def _show_world(target: str, inits: list[str]) -> None:
+    """Print each image's packages kit by kit, excluded atoms marked. Writes nothing."""
+    from shidashi.recipe import BASE_STAGE, RecipeFileError, load_init
+    from shidashi.resolve import ResolveError, kit_view
+
+    arch = config.available_names("arch")[0]
+    for i, init in enumerate(inits):
+        try:
+            recipe = config.load_recipe(arch, target, init, any_stage=True)
+            # the init's excludes cover whole images; a stage viewed alone may lack them
+            optional = (
+                frozenset(load_init(config.recipe_path("init", init)).exclude)
+                if target not in config.target_names()
+                else frozenset()
+            )
+            kits = kit_view(recipe, optional=optional)
+        except (ResolveError, RecipeFileError) as err:
+            _err_console.print(f"[bold red]erro:[/bold red] {err}")
+            raise typer.Exit(1) from err
+        if i:
+            typer.echo()
+        atoms = {a for kit in kits for a in kit.atoms}
+        dropped = {a for kit in kits for a in kit.dropped}
+        typer.echo(
+            f"{target}/{init}: {len(atoms)} packages from {len(kits)} kits, "
+            f"{len(dropped)} excluded ({' -> '.join(recipe.stages) or BASE_STAGE})"
+        )
+        by_name = {kit.name: kit for kit in kits}
+        printed: set[str] = set()
+        for name in recipe.sets:
+            if name not in printed:
+                typer.echo()
+                _echo_kit(by_name, name, 0, printed)
+
+
 @app.command("world")
 def world(
+    target: Annotated[
+        str | None,
+        typer.Argument(help="Print this image's (or stage's) packages instead of writing files."),
+    ] = None,
+    init: Annotated[
+        str | None,
+        typer.Argument(help="Only this init (default: every init)."),
+    ] = None,
     check: Annotated[
         bool,
         typer.Option("--check", help="Do not write: exit 1 if any world file is stale."),
@@ -1129,8 +1190,26 @@ def world(
     The flat list of packages each image asks for, generated from the kits: the
     other end of the set composition. Run it after changing a kit or a stage's
     sets, and commit the diff with the change.
+
+    With an image (``shidashi world kde systemd``) it writes nothing: it prints
+    that image's packages kit by kit, with the atoms ``exclude:`` takes out.
+    ``base`` and ``desktop`` are accepted too: the stages images grow from.
+    Dependencies are not listed -- only what the image asks for.
     """
     from shidashi import world as world_mod
+
+    if target is not None:
+        inits = config.available_names("init")
+        images = config.stage_names()
+        if target not in images or (init is not None and init not in inits):
+            _err_console.print(
+                f"[bold red]erro:[/bold red] unknown image {target}"
+                f"{'/' + init if init else ''}; images: {', '.join(images)}; "
+                f"inits: {', '.join(inits)}"
+            )
+            raise typer.Exit(1)
+        _show_world(target, [init] if init else inits)
+        return
 
     stale: list[str] = []
     for recipe in _world_recipes():

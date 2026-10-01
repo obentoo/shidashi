@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 type SeedSource = Literal["download", "catalyst"]  # fonte do stage3 semente (story 005)
 type UpdateMode = Literal["emptytree", "newuse"]
@@ -185,6 +185,22 @@ class RecipeSourceError(Exception):
     """
 
 
+class RecipeFileError(ValueError):
+    """A recipe.yaml that does not fit its model; the message names the file
+    and the field (``exclude.0``: an empty ``-`` item, say)."""
+
+
+def _model[M: BaseModel](model: type[M], path: Path) -> M:
+    """``model`` built from the YAML at ``path``, a failure naming the file. I/O."""
+    try:
+        return model(**_read_yaml(path))
+    except ValidationError as err:
+        problems = "; ".join(
+            f"{'.'.join(str(p) for p in e['loc'])}: {e['msg']}" for e in err.errors()
+        )
+        raise RecipeFileError(f"{path}: {problems}") from err
+
+
 class RecipeChainError(Exception):
     """A broken stage chain: an ``after:`` that loops, or a stage that starts
     one without being the base, or a file that declares another stage's name."""
@@ -288,7 +304,7 @@ def merge(
 
 
 def load_base(path: Path) -> BaseFragment:
-    return BaseFragment(**_read_yaml(path))
+    return _model(BaseFragment, path)
 
 
 #: recipe.yaml field -> make.conf variable. These four live in make.conf only.
@@ -353,7 +369,7 @@ def load_arch(path: Path) -> ArchFragment:
 
 
 def load_stage(path: Path) -> StageFragment:
-    return StageFragment(**_read_yaml(path))
+    return _model(StageFragment, path)
 
 
 def load_chain(target: str, locate: Callable[[str], Path]) -> tuple[StageFragment, ...]:
@@ -386,4 +402,4 @@ def load_chain(target: str, locate: Callable[[str], Path]) -> tuple[StageFragmen
 
 
 def load_init(path: Path) -> InitFragment:
-    return InitFragment(**_read_yaml(path))
+    return _model(InitFragment, path)

@@ -15,6 +15,7 @@ import configparser
 import os
 import shutil
 from collections.abc import Iterator, Mapping
+from dataclasses import dataclass
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
@@ -153,44 +154,83 @@ def set_closure(recipe: ResolvedRecipe) -> dict[str, list[str]]:
     which flattens them: what the image asks for and what its world lists cannot
     drift apart.
     """
+    closure: dict[str, list[str]] = {}
+    for kit in kit_view(recipe):
+        kept = list(kit.lines)
+        if kit.dropped:
+            kept.insert(0, f"# shidashi: excluded by flavor/{recipe.flavor}: "
+                           + " ".join(sorted(kit.dropped)))
+        closure[kit.name] = kept
+    return closure
+
+
+@dataclass(frozen=True)
+class KitView:
+    """One set of an image as the image gets it: what it keeps, what ``exclude:``
+    took out, and the ``@refs`` it pulls in."""
+
+    name: str
+    #: The set's lines, excluded atoms removed (comments and ``@refs`` kept).
+    lines: tuple[str, ...]
+    #: Atoms of this set that ``exclude:`` removed, in file order.
+    dropped: tuple[str, ...]
+    #: Sets this one references, without the ``@``.
+    refs: tuple[str, ...]
+
+    @property
+    def atoms(self) -> tuple[str, ...]:
+        """The package atoms this set keeps: no comments, no ``@refs``."""
+        tokens = (ln.split("#", 1)[0].split() for ln in self.lines)
+        return tuple(t[0] for t in tokens if t and not t[0].startswith("@"))
+
+
+def kit_view(recipe: ResolvedRecipe, *, optional: frozenset[str] = frozenset()) -> list[KitView]:
+    """Every set ``recipe`` installs, depth first: each set is followed by the
+    ``@refs`` it reaches, so ``@base`` reads with its kits under it. I/O (reads
+    the kits).
+
+    The one walk of the kits: :func:`set_closure` writes it, ``shidashi world
+    <image>`` prints it. ``optional`` excludes may match nothing: the init's,
+    when the base is viewed alone (ntp, say, comes in a minimal kit).
+    """
     kits = config.kits_dir()
     index = kit_index(kits)
     excluded = frozenset(recipe.exclude)
-    closure: dict[str, list[str]] = {}
+    seen: dict[str, KitView] = {}
     matched: set[str] = set()
     pending = list(recipe.sets)
     while pending:
         name = pending.pop(0)
-        if name in closure:
+        if name in seen:
             continue
         src = index.get(name)
         if src is None:
             raise ResolveError(
                 f"set {name!r} declarado na receita mas ausente da biblioteca {kits}"
             )
-        kept, dropped = [], []
+        kept: list[str] = []
+        dropped: list[str] = []
+        refs: list[str] = []
         for line in src.read_text(encoding="utf-8").splitlines():
             token = line.split("#", 1)[0].split()
             if token and token[0].startswith("@"):
-                pending.append(token[0][1:])
+                refs.append(token[0][1:])
             if token and token[0] in excluded:
                 dropped.append(token[0])
                 matched.add(token[0])
                 continue
             kept.append(line)
-        if dropped:
-            kept.insert(0, f"# shidashi: excluded by flavor/{recipe.flavor}: "
-                           + " ".join(sorted(dropped)))
-        closure[name] = kept
+        pending[0:0] = refs
+        seen[name] = KitView(name, tuple(kept), tuple(dropped), tuple(refs))
     # an exclude that matches nothing is a typo, or a package the chain never
     # had: silently ignored, it would leave in the image what it meant to take out
-    unmatched = sorted(excluded - matched)
+    unmatched = sorted(excluded - matched - optional)
     if unmatched:
         raise ResolveError(
             f"exclude: {', '.join(unmatched)} is in no set of the {recipe.flavor} chain "
             f"({', '.join(recipe.stages)}): a typo, or a package these stages never had"
         )
-    return closure
+    return list(seen.values())
 
 
 def world_atoms(recipe: ResolvedRecipe) -> tuple[str, ...]:

@@ -22,6 +22,7 @@ from shidashi.recipe import (
     BaseFragment,
     InitFragment,
     Phase,
+    RecipeFileError,
     RecipeSourceError,
     ResolvedRecipe,
     StageFragment,
@@ -296,7 +297,7 @@ def test_load_init(tmp_path: Path) -> None:
 def test_loader_rejects_unknown_key(tmp_path: Path) -> None:
     bad = {**VALID[BaseFragment], "unexpected": True}
     p = _write_yaml(tmp_path / "bad.yaml", bad)
-    with pytest.raises(ValidationError):
+    with pytest.raises(RecipeFileError, match=r"bad\.yaml: unexpected: Extra inputs"):
         load_base(p)
 
 

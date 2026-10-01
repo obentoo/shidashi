@@ -101,3 +101,106 @@ def test_the_init_layer_excludes_for_its_own_images_only() -> None:
     openrc = world_atoms(config.load_recipe("v3", "minimal", "openrc"))
     for atom in ("app-admin/metalog", "net-misc/ntp"):
         assert atom not in systemd and atom in openrc
+
+
+def test_world_with_an_image_prints_its_kits_and_writes_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`shidashi world kde systemd` is a read-only view: every kit with what it
+    keeps, the atoms exclude: takes out marked, and the world files untouched."""
+    import shutil
+
+    tree = tmp_path / "variants"
+    shutil.copytree(config.variants_dir(), tree)
+    monkeypatch.setenv("SHIDASHI_VARIANTS_DIR", str(tree))
+    world_file = tree / "minimal/world.systemd"
+    world_file.write_text("# edited by hand\n")
+    result = CliRunner().invoke(app, ["world", "minimal", "systemd"])
+    assert result.exit_code == 0, result.output
+    assert result.output.startswith("minimal/systemd: ")
+    assert "\n@base\n  @boot\n    sys-kernel/dracut" in result.output
+    assert "    app-admin/metalog  (excluded)" in result.output
+    assert "minimal/openrc" not in result.output
+    assert world_file.read_text() == "# edited by hand\n"  # nothing written
+
+
+def test_world_without_an_init_prints_every_init() -> None:
+    result = CliRunner().invoke(app, ["world", "minimal"])
+    assert result.exit_code == 0, result.output
+    assert "minimal/systemd: " in result.output and "minimal/openrc: " in result.output
+    # OpenRC keeps metalog: it is excluded only once, by the systemd image
+    assert result.output.count("    app-admin/metalog  (excluded)") == 1
+
+
+def test_world_names_an_unknown_image() -> None:
+    result = CliRunner().invoke(app, ["world", "kdee"])
+    assert result.exit_code == 1 and "unknown image kdee" in result.output
+
+
+def test_kit_view_atoms_match_the_world() -> None:
+    """The printed view and the world file come from the same walk."""
+    from shidashi.resolve import kit_view, world_atoms
+
+    recipe = config.load_recipe("v3", "kde", "systemd")
+    printed = {a for kit in kit_view(recipe) for a in kit.atoms}
+    assert tuple(sorted(printed)) == world_atoms(recipe)
+
+
+def test_world_shows_the_base_alone() -> None:
+    """The trunk every image grows from. init/systemd excludes ntp, which comes
+    in a minimal kit: for the base alone that exclude is simply not there yet."""
+    result = CliRunner().invoke(app, ["world", "base", "systemd"])
+    assert result.exit_code == 0, result.output
+    assert result.output.startswith("base/systemd: ")
+    assert "    app-admin/metalog  (excluded)" in result.output
+    assert "net-misc/ntp" not in result.output
+    assert "@kde" not in result.output and "@extra-system" not in result.output
+
+
+def test_the_base_is_still_not_an_image_to_build() -> None:
+    with pytest.raises(config.UnknownAxisError):
+        config.load_recipe("v3", "base", "systemd")
+
+
+def test_kits_are_listed_under_the_set_that_includes_them() -> None:
+    from shidashi.resolve import kit_view
+
+    names = [k.name for k in kit_view(config.load_recipe("v3", "kde", "systemd"))]
+    assert names[:3] == ["base", "boot", "fs"]
+
+
+def test_world_shows_the_desktop_stage() -> None:
+    """desktop is a stage every graphical image grows from, not an image itself."""
+    result = CliRunner().invoke(app, ["world", "desktop", "systemd"])
+    assert result.exit_code == 0, result.output
+    assert "(base -> minimal -> desktop)" in result.output.splitlines()[0]
+    assert "    sys-fs/fuse  (excluded)" in result.output
+    assert "@kde" not in result.output
+    with pytest.raises(config.UnknownAxisError):
+        config.load_recipe("v3", "desktop", "systemd")
+
+
+def test_a_malformed_recipe_names_its_file_and_field(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An empty `-` under exclude: used to end in a pydantic traceback that
+    named neither the file nor the line."""
+    import shutil
+
+    tree = tmp_path / "variants"
+    shutil.copytree(config.variants_dir(), tree)
+    monkeypatch.setenv("SHIDASHI_VARIANTS_DIR", str(tree))
+    recipe = tree / "desktop/recipe.yaml"
+    recipe.write_text(recipe.read_text() + "\nexclude:\n  -\n")
+    result = CliRunner().invoke(app, ["world", "desktop", "systemd"])
+    output = result.output.replace("\n", "")  # the console wraps long paths
+    assert result.exit_code == 1
+    assert "desktop/recipe.yaml: exclude.0: Input should be a valid string" in output
+
+
+def test_world_prints_kits_as_a_tree() -> None:
+    """An aggregator holds no atoms of its own: its kits print one level deeper,
+    not as siblings that make it look empty."""
+    out = CliRunner().invoke(app, ["world", "minimal", "systemd"]).output
+    assert "\n@extra-system\n  @net-tools\n    net-dns/bind" in out
+    assert "->" not in out.split("\n", 1)[1]  # no arrows below the header
