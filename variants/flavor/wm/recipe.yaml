@@ -14,3 +14,9 @@ sets:
   - extra-media
   - extra-dev
   - extra-virt
+# mako is catalog-only in @desktop-int (2026-10-01): kde and gnome bring their
+# own notification daemon (plasma-workspace, gnome-shell); a bare compositor
+# has none, and libnotify needs one -- without mako, virtual/notification-daemon
+# falls back to the X-only x11-misc/notification-daemon.
+include:
+  - gui-apps/mako

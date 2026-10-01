@@ -2,6 +2,6 @@
 #
 # LEAF set: a flat list of atoms (2026-09-09). See kits/core/base for the layering contract.
 
-net-p2p/bisq-bin
-net-p2p/qbittorrent
-net-p2p/syncthing
+#net-p2p/bisq-bin
+#net-p2p/qbittorrent
+#net-p2p/syncthing

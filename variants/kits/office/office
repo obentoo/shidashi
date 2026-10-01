@@ -1,0 +1,10 @@
+# variants/kits/office/office — office suites (2026-10-01: out of kits/desktops/kde,
+# which keeps only what belongs to the desktop itself).
+#
+# Toolkit-neutral as a choice; each flavor tunes the build through its own
+# package.use (kde: flavor/kde/portage/package.use/libreoffice).
+#
+# LEAF set: a flat list of atoms (2026-09-09). See kits/core/base for the layering contract.
+
+#app-office/libreoffice
+#app-office/onlyoffice-bin

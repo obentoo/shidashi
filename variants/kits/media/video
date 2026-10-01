@@ -1,8 +1,17 @@
-# variants/kits/media/video — playback, muxing and capture. media-video/vlc is NOT here -- vlc-4 is a
-# Qt6/KDE-Frameworks application, so it lives in flavor/kde/sets/kde
+# variants/kits/media/video — playback, muxing and capture. vlc is catalog-only here (see below).
 #
 # LEAF set: a flat list of atoms (2026-09-09). See kits/core/base for the layering contract.
 
-media-video/mkvtoolnix
+#media-video/mkvtoolnix
 media-video/mpv
-media-video/obs-studio
+#media-video/obs-studio
+
+# Media player. media-video/vlc is here rather than in `graphics` because vlc-4
+# is no longer toolkit-neutral: with [gui] (default, and vlc-4 is stable on
+# amd64) it builds against dev-qt/qtbase:6, qt5compat, qtdeclarative, qtsvg plus
+# kde-frameworks/kwindowsystem and qqc2-desktop-style. vlc-3 had no Qt at all --
+# this is upstream drift. Under KDE that stack is already present, so vlc costs
+# nothing; under gnome/wm/minimal it would drag the whole Qt6+KF6 layer in for one
+# player. `graphics` keeps media-video/mpv, which every flavor can afford
+# (measured 2026-09-08).
+#media-video/vlc

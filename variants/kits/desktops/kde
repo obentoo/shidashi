@@ -30,19 +30,5 @@ app-cdr/dolphin-plugins-mountiso
 sys-block/partitionmanager
 x11-themes/kvantum
 
-# Office (curated with KDE USE in plasma's package.use/libreoffice)
-app-office/libreoffice
-app-office/onlyoffice-bin
-
 # IRC client (Qt/KDE)
 net-irc/konversation
-
-# Media player. media-video/vlc is here rather than in `graphics` because vlc-4
-# is no longer toolkit-neutral: with [gui] (default, and vlc-4 is stable on
-# amd64) it builds against dev-qt/qtbase:6, qt5compat, qtdeclarative, qtsvg plus
-# kde-frameworks/kwindowsystem and qqc2-desktop-style. vlc-3 had no Qt at all --
-# this is upstream drift. Under KDE that stack is already present, so vlc costs
-# nothing; under gnome/wm/minimal it would drag the whole Qt6+KF6 layer in for one
-# player. `graphics` keeps media-video/mpv, which every flavor can afford
-# (measured 2026-09-08).
-media-video/vlc

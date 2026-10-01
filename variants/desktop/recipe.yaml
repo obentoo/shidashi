@@ -22,6 +22,7 @@ sets:
   - fonts
   - desktop-int
   - audio
+  - video
   - vpn
   - print
   - sandbox
@@ -40,3 +41,5 @@ use_break:
   - { atom: media-video/pipewire, flag: ffmpeg, enable: false }
 # No exclude of its own: gentoo-kernel and fuse (base) and bleachbit (minimal)
 # are excluded by earlier stages, whose exclude reaches every later one.
+include:
+  - sys-apps/bleachbit

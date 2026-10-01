@@ -4,5 +4,5 @@
 #
 # LEAF set: a flat list of atoms (2026-09-09). See kits/core/base for the layering contract.
 
-media-plugins/obs-pipewire-audio-capture
-media-sound/audacity
+#media-plugins/obs-pipewire-audio-capture
+#media-sound/audacity

@@ -11,6 +11,3 @@ ships: true
 sets:
   - gnome
   - extra-desktop
-  - extra-media
-  - extra-dev
-  - extra-virt

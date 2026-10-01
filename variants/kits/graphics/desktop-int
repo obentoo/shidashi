@@ -8,7 +8,7 @@
 # (plasma-workspace, gnome-shell) when their USE arrives (2026-09-26).
 
 dev-libs/libayatana-appindicator-glib
-gui-apps/mako
+#gui-apps/mako
 sys-apps/xdg-desktop-portal
 x11-misc/libinput-gestures
 x11-misc/xdg-user-dirs

@@ -24,6 +24,12 @@ Rules:
     (shidashi.resolve.kit_view) and `shidashi kits check` validates them.
     `exclude:` stays for per-image exceptions; excluding a catalog-only atom is
     an error. `shidashi world <image>` lists both, marked.
+  - A stage's `include:` puts back, from that stage on, an atom an earlier
+    stage excluded or a kit marks catalog-only. It becomes the stage's own set,
+    @include-<stage>, installed by that stage's phase only: the kit stays
+    filtered, so the shared fork points of earlier stages never get the atom.
+    Including what nothing took out, or including and excluding the same atom,
+    is an error. No kit may be named include-*.
   - This README is the only non-set file here; the index skips README and
     dotfiles.
 
@@ -35,6 +41,7 @@ Categories:
   internet/  web, comms, p2p, remote
   media/     audio, video, imaging
   dev/       devel, containers
+  office/    office suites
   virt/      virtualization
   groups/    the extra-* aggregators flavors choose from
   desktops/  one set per desktop flavor

@@ -15,9 +15,6 @@ ships: true
 sets:
   - kde
   - extra-desktop
-  - extra-media
-  - extra-dev
-  - extra-virt
 # The display manager depends on the init (2026-09-26, author's decision:
 # plasma-login-manager, Plasma's own and the current default). It needs systemd,
 # so openrc keeps SDDM. plasma-meta's own display-manager flag is off
