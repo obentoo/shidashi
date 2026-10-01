@@ -1,0 +1,15 @@
+# variants/kits/graphics/gpu-nvidia — the proprietary NVIDIA stack: what only an NVIDIA GPU with
+# its out-of-tree driver uses.
+#
+# Its own kit (2026-10-01) so the driver is a visible choice and not a side effect: before, nvidia-drivers
+# came in only as a dependency of sys-apps/hwloc[video_cards_nvidia] and gst-plugins-nvcodec. The live
+# ISO carries it (one ISO for every GPU); an install without an NVIDIA GPU drops these atoms through
+# the no-nvidia variant, whose binpkgs the factory publishes beside the default ones.
+#
+# media-libs/nv-codec-headers is NOT here: C headers to BUILD ffmpeg, mpv, obs-studio and
+# gst-plugins-nvcodec with NVENC, needing neither the GPU nor the driver -- a dependency, not a choice.
+#
+# LEAF set: a flat list of atoms (2026-09-09). See kits/core/base for the layering contract.
+
+x11-drivers/nvidia-drivers
+media-libs/nvidia-vaapi-driver

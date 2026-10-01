@@ -18,6 +18,7 @@ after: minimal
 # graphical session uses -- NetworkManager's VPN plugins, CUPS, flatpak.
 sets:
   - gpu
+  - gpu-nvidia
   - fonts
   - desktop-int
   - audio
@@ -37,8 +38,5 @@ sets:
 # flavor), which rebuilds pipewire with ffmpeg.
 use_break:
   - { atom: media-video/pipewire, flag: ffmpeg, enable: false }
-# gentoo-kernel (base) and bleachbit (minimal) are excluded by earlier stages,
-# whose exclude reaches every later one.
-exclude:
-  - sys-fs/fuse
-  - sys-fs/fuse:0
+# No exclude of its own: gentoo-kernel and fuse (base) and bleachbit (minimal)
+# are excluded by earlier stages, whose exclude reaches every later one.

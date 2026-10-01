@@ -17,7 +17,7 @@ app-portage/eix
 app-portage/genlop
 app-portage/gentoolkit
 app-portage/pycargoebuild
-dev-lang/rust
+dev-lang/rust-bin
 net-analyzer/netdata
 net-dns/bind
 net-dns/dnscrypt-proxy
@@ -42,8 +42,6 @@ sys-firmware/intel-microcode
 sys-fs/btrfs-progs
 sys-fs/dmraid
 sys-fs/exfatprogs
-sys-fs/fuse
-sys-fs/fuse:0
 sys-fs/lvm2
 sys-fs/mdadm
 sys-fs/ntfs3g

@@ -18,3 +18,4 @@ app-portage/pycargoebuild
 # symlinks, oniguruma); system-llvm on the trunk's llvm-22, bootstrapped from the
 # trunk's own rust-bin-1.98.1 -- no extra rust-bin, unlike F41's August numbers.
 dev-lang/rust
+dev-lang/rust-bin

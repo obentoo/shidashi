@@ -40,7 +40,7 @@ dev-java/openjdk
 dev-java/openjdk-bin
 dev-lang/go-bootstrap
 dev-lang/php
-dev-lang/rust
+dev-lang/rust-bin
 dev-libs/libayatana-appindicator-glib
 dev-python/pip
 dev-python/uv
@@ -71,7 +71,6 @@ media-fonts/unifont
 media-gfx/gimp
 media-gfx/graphviz
 media-gfx/inkscape
-media-libs/nv-codec-headers
 media-libs/nvidia-vaapi-driver
 media-plugins/obs-pipewire-audio-capture
 media-sound/audacity
@@ -141,6 +140,7 @@ sys-process/htop
 sys-process/iotop
 www-client/brave-browser
 x11-apps/mesa-progs
+x11-drivers/nvidia-drivers
 x11-misc/libinput-gestures
 x11-misc/vdpauinfo
 x11-misc/xdg-user-dirs
