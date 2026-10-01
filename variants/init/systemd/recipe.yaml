@@ -5,3 +5,6 @@
 # [systemd]` only restated it and never reached the build.
 init: systemd
 profile_suffix: systemd
+exclude:
+  - app-admin/metalog
+  - net-misc/ntp

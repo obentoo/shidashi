@@ -18,9 +18,6 @@ app-portage/eix
 app-portage/genlop
 app-portage/gentoolkit
 app-portage/pycargoebuild
-app-shells/starship
-app-shells/zsh
-app-shells/zsh-completions
 dev-lang/rust
 net-analyzer/netdata
 net-dns/bind
@@ -31,10 +28,8 @@ net-misc/r8168
 net-misc/telnet-bsd
 net-misc/whois
 net-vpn/wireguard-tools
-sys-apps/bleachbit
 sys-apps/earlyoom
 sys-apps/fwupd
-sys-apps/haveged
 sys-apps/irqbalance
 sys-apps/iucode_tool
 sys-apps/lm-sensors
@@ -56,8 +51,7 @@ sys-fs/mdadm
 sys-fs/ntfs3g
 sys-fs/squashfs-tools
 sys-kernel/dracut
-sys-kernel/gentoo-kernel
+sys-kernel/gentoo-kernel-bin
 sys-kernel/linux-firmware
 sys-process/htop
 sys-process/iotop
-virtual/dist-kernel

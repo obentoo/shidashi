@@ -19,3 +19,5 @@ after: base
 ships: true
 sets:
   - extra-system
+exclude:
+  - sys-apps/bleachbit

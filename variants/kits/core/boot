@@ -4,6 +4,6 @@
 
 sys-kernel/dracut
 sys-kernel/gentoo-kernel
+sys-kernel/gentoo-kernel-bin
 sys-kernel/linux-firmware
-virtual/dist-kernel
 sys-firmware/intel-microcode

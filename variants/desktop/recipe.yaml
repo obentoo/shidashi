@@ -37,3 +37,8 @@ sets:
 # flavor), which rebuilds pipewire with ffmpeg.
 use_break:
   - { atom: media-video/pipewire, flag: ffmpeg, enable: false }
+# gentoo-kernel (base) and bleachbit (minimal) are excluded by earlier stages,
+# whose exclude reaches every later one.
+exclude:
+  - sys-fs/fuse
+  - sys-fs/fuse:0

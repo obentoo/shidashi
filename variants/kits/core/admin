@@ -5,6 +5,5 @@
 app-admin/metalog
 app-admin/sudo-rs
 sys-apps/earlyoom
-sys-apps/haveged
 sys-apps/irqbalance
 sys-process/htop
