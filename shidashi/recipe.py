@@ -140,6 +140,12 @@ class InitFragment(BaseModel):
     init: str
     profile_suffix: str = ""  # token puro, SEM barra inicial
     phases_prepend: tuple[Phase, ...] = ()
+    #: Atoms left out of every image built with this init, on top of the stages'
+    #: own ``exclude``: what the other init does instead (metalog and ntp are
+    #: OpenRC's logger and clock; systemd has journald and timesyncd). Per-init
+    #: exclusion lives here, in the init layer -- the stages stay init-neutral
+    #: (author's decision, 2026-10-01). Validated like any exclude.
+    exclude: tuple[str, ...] = ()
 
 
 class ResolvedRecipe(BaseModel):
@@ -271,7 +277,9 @@ def merge(
         tier=arch.tier,
         runnable_on_build_host=arch.runnable_on_build_host,
         sets=_ordered_unique(tuple(s for st in chain for s in stage_sets[st.stage])),
-        exclude=_ordered_unique(tuple(a for st in chain for a in st.exclude)),
+        exclude=_ordered_unique(
+            (*(a for st in chain for a in st.exclude), *init.exclude)
+        ),
         phases=tuple(phases),
         portage_layers=(*head_layers, *stage_layers, init_layer),
         stages=tuple(st.stage for st in chain),

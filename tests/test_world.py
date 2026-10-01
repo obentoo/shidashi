@@ -90,3 +90,14 @@ def test_an_exclude_that_matches_nothing_fails_with_the_reason() -> None:
     typo = recipe.model_copy(update={"exclude": ("app-emulation/virtualbx",)})
     with pytest.raises(ResolveError, match="virtualbx is in no set of the minimal chain"):
         world_atoms(typo)
+
+
+def test_the_init_layer_excludes_for_its_own_images_only() -> None:
+    """metalog and ntp are OpenRC's logger and clock: systemd images leave them
+    out through init/systemd, and OpenRC images keep them."""
+    from shidashi.resolve import world_atoms
+
+    systemd = world_atoms(config.load_recipe("v3", "minimal", "systemd"))
+    openrc = world_atoms(config.load_recipe("v3", "minimal", "openrc"))
+    for atom in ("app-admin/metalog", "net-misc/ntp"):
+        assert atom not in systemd and atom in openrc
