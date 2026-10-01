@@ -42,7 +42,7 @@ from shidashi.factory import (
 )
 from shidashi.image import ImageError
 from shidashi.phases import phase_target
-from shidashi.recipe import RecipeChainError, ResolvedRecipe
+from shidashi.recipe import INCLUDE_SET_PREFIX, RecipeChainError, ResolvedRecipe
 from shidashi.resolve import KitView, PretendReport, ResolveError, pretend_resolve
 from shidashi.seed import SeedError, load_pointer
 from shidashi.state import PhaseDiff
@@ -1117,24 +1117,52 @@ def _world_recipes() -> list[ResolvedRecipe]:
     ]
 
 
-def _echo_kit(by_name: dict[str, KitView], name: str, depth: int, printed: set[str]) -> None:
+def _echo_kit(
+    by_name: dict[str, KitView],
+    name: str,
+    depth: int,
+    printed: set[str],
+    notes: dict[str, str] | None = None,
+) -> None:
     """One kit as a tree: its atoms, the atoms exclude: took out, then the kits it
-    includes, one level deeper. A kit already printed is only named."""
+    includes, one level deeper. A kit already printed is only named. ``notes``
+    says, per atom, which layer excluded it and which stage put it back."""
+    notes = notes or {}
     pad = "  " * depth
     if name in printed:
         typer.echo(f"{pad}@{name}  (listed above)")
         return
     printed.add(name)
     kit = by_name[name]
-    typer.echo(f"{pad}@{name}")
+    typer.echo(f"{pad}@{name}{'  (include:)' if kit.included else ''}")
     for atom in kit.atoms:
         typer.echo(f"{pad}  {atom}")
     for atom in kit.dropped:
-        typer.echo(f"{pad}  {atom}  (excluded)")
+        typer.echo(f"{pad}  {atom}  ({notes.get(atom, 'excluded')})")
     for entry in kit.catalog:
-        typer.echo(f"{pad}  {entry}  (catalog only)")
+        typer.echo(f"{pad}  {entry}  ({notes.get(entry, 'catalog only')})")
     for ref in kit.refs:
-        _echo_kit(by_name, ref, depth + 1, printed)
+        _echo_kit(by_name, ref, depth + 1, printed, notes)
+
+
+def _world_notes(recipe: ResolvedRecipe, kits: list[KitView]) -> dict[str, str]:
+    """The legend of each taken-out atom: ``excluded by minimal``, ``catalog only``,
+    plus ``; included by desktop`` when a later stage's include: puts it back. Pure."""
+    included_by = {
+        atom: name.removeprefix(INCLUDE_SET_PREFIX)
+        for name, atoms in recipe.includes.items()
+        for atom in atoms
+    }
+    notes: dict[str, str] = {}
+    for kit in kits:
+        for atom in kit.dropped:
+            notes[atom] = f"excluded by {recipe.exclude_origin.get(atom, '?')}"
+        for entry in kit.catalog:
+            notes[entry] = "catalog only"
+    for atom, stage in included_by.items():
+        if atom in notes:
+            notes[atom] += f"; included by {stage}"
+    return notes
 
 
 def _show_world(target: str, inits: list[str]) -> None:
@@ -1168,10 +1196,11 @@ def _show_world(target: str, inits: list[str]) -> None:
         )
         by_name = {kit.name: kit for kit in kits}
         printed: set[str] = set()
+        notes = _world_notes(recipe, kits)
         for name in recipe.sets:
             if name not in printed:
                 typer.echo()
-                _echo_kit(by_name, name, 0, printed)
+                _echo_kit(by_name, name, 0, printed, notes)
 
 
 @app.command("world")
@@ -1215,10 +1244,22 @@ def world(
         _show_world(target, [init] if init else inits)
         return
 
+    from shidashi.recipe import RecipeFileError
+    from shidashi.resolve import ResolveError
+
     stale: list[str] = []
-    for recipe in _world_recipes():
+    try:
+        recipes = _world_recipes()
+    except (RecipeFileError, RecipeChainError) as err:
+        _err_console.print(f"[bold red]erro:[/bold red] {err}")
+        raise typer.Exit(1) from err
+    for recipe in recipes:
         path = world_mod.world_file(recipe, config.variants_dir())
-        text = world_mod.render(recipe)
+        try:
+            text = world_mod.render(recipe)
+        except ResolveError as err:
+            _err_console.print(f"[bold red]erro:[/bold red] {recipe.flavor}/{recipe.init}: {err}")
+            raise typer.Exit(1) from err
         current = path.read_text(encoding="utf-8") if path.is_file() else None
         rel = path.relative_to(config.variants_dir().parent)
         if current == text:

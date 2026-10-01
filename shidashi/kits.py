@@ -82,4 +82,22 @@ def check(kits_dir: Path, repos: Mapping[str, Path]) -> list[str]:
         if not any((path / cp).is_dir() for path in candidates):
             where_looked = f"::{repo}" if repo else " or ".join(f"::{r}" for r in repos)
             problems.append(f"{where}: {token} -- no {cp} in {where_looked}")
+    problems.extend(_malformed_catalog_lines(kits_dir))
+    return problems
+
+
+def _malformed_catalog_lines(kits_dir: Path) -> list[str]:
+    """``#`` glued to text that is no atom: ``#www-client-firefox`` (the ``/``
+    lost). Prose has a space after ``#``, so such a line meant ``#atom`` -- and
+    without this check it would be a comment, silently left out of the
+    catalog. I/O."""
+    problems: list[str] = []
+    for name, path in sorted(kit_index(kits_dir).items()):
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            glued = len(line) > 1 and line[0] == "#" and not line[1].isspace()
+            if glued and line[1] != "#" and catalog_entry(line) is None:
+                problems.append(
+                    f"{name}:{number}: {line} is neither #category/package nor #@kit "
+                    "(prose needs a space after #)"
+                )
     return problems

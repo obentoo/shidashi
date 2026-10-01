@@ -66,20 +66,20 @@ def test_golden_v3_kde_systemd() -> None:
     assert r.profile == "default/linux/amd64/23.0/no-multilib/systemd"
     assert r.sets == (
         "base", "extra-system",
-        "gpu", "gpu-nvidia", "fonts", "desktop-int", "audio", "vpn", "print", "sandbox",
-        "kde", "extra-desktop", "extra-media", "extra-dev", "extra-virt", "kde-dm-plasma",
+        "gpu", "gpu-nvidia", "fonts", "desktop-int", "audio", "video", "vpn", "print",
+        "sandbox", "include-desktop",
+        "kde", "extra-desktop", "kde-dm-plasma",
     )
     assert _targets(r) == {
         "base": ("@world", "@base"),
         "minimal": ("@world", "@extra-system"),
         "desktop": (
-            "@world", "@gpu", "@gpu-nvidia", "@fonts", "@desktop-int", "@audio", "@vpn",
-            "@print", "@sandbox",
+            "@world", "@gpu", "@gpu-nvidia", "@fonts", "@desktop-int", "@audio", "@video",
+            "@vpn", "@print", "@sandbox", "@include-desktop",
         ),
         # init_sets: the display manager joins the flavor phase, per init
         "flavor": (
-            "@world", "@kde", "@extra-desktop", "@extra-media", "@extra-dev", "@extra-virt",
-            "@kde-dm-plasma",
+            "@world", "@kde", "@extra-desktop", "@kde-dm-plasma",
         ),
     }
     # minimal ships on its way to kde: the graphical stages start from it settled

@@ -23,7 +23,7 @@ from pydantic import BaseModel, ConfigDict
 
 from shidashi import config, seed
 from shidashi.container import CommandResult, Container
-from shidashi.recipe import ResolvedRecipe
+from shidashi.recipe import INCLUDE_SET_PREFIX, ResolvedRecipe
 
 _STRICT = ConfigDict(frozen=True, extra="forbid")
 
@@ -195,6 +195,8 @@ class KitView:
     refs: tuple[str, ...]
     #: Catalog-only atoms and ``@refs`` (``#atom``): in the binhost, in no image.
     catalog: tuple[str, ...] = ()
+    #: A stage's ``include:`` (``@include-<stage>``), not a kit of the library.
+    included: bool = False
 
     @property
     def atoms(self) -> tuple[str, ...]:
@@ -214,6 +216,11 @@ def kit_view(recipe: ResolvedRecipe, *, optional: frozenset[str] = frozenset()) 
     """
     kits = config.kits_dir()
     index = kit_index(kits)
+    clashing = sorted(n for n in index if n.startswith(INCLUDE_SET_PREFIX))
+    if clashing:
+        raise ResolveError(
+            f"kit {clashing[0]!r}: the {INCLUDE_SET_PREFIX}* names belong to stages' include:"
+        )
     excluded = frozenset(recipe.exclude)
     seen: dict[str, KitView] = {}
     matched: set[str] = set()
@@ -221,6 +228,10 @@ def kit_view(recipe: ResolvedRecipe, *, optional: frozenset[str] = frozenset()) 
     while pending:
         name = pending.pop(0)
         if name in seen:
+            continue
+        if name in recipe.includes:
+            atoms = recipe.includes[name]
+            seen[name] = KitView(name, atoms, (), (), included=True)
             continue
         src = index.get(name)
         if src is None:
@@ -259,6 +270,16 @@ def kit_view(recipe: ResolvedRecipe, *, optional: frozenset[str] = frozenset()) 
             f"exclude: {', '.join(unmatched)} is in no set of the {recipe.flavor} chain "
             f"({', '.join(recipe.stages)}): a typo, or a package these stages never had"
         )
+    # an include puts back what the chain took out; anything else is a typo, or
+    # a package that belongs in a kit (D25), not in a recipe
+    taken_out = {a for kit in seen.values() for a in (*kit.dropped, *kit.catalog)}
+    for name, atoms in recipe.includes.items():
+        stray = [a for a in atoms if a not in taken_out]
+        if stray:
+            raise ResolveError(
+                f"include: {', '.join(stray)} ({name}) is neither excluded by an earlier "
+                f"stage nor catalog-only (#atom) in a kit of the {recipe.flavor} chain"
+            )
     return list(seen.values())
 
 

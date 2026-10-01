@@ -76,9 +76,11 @@ def test_an_exclude_takes_the_package_out_of_the_world() -> None:
     from shidashi.resolve import world_atoms
 
     recipe = config.load_recipe("v3", "kde", "systemd")
-    excluded = recipe.model_copy(update={"exclude": ("app-emulation/virtualbox",)})
-    assert "app-emulation/virtualbox" in world_atoms(recipe)
-    assert "app-emulation/virtualbox" not in world_atoms(excluded)
+    excluded = recipe.model_copy(
+        update={"exclude": (*recipe.exclude, "kde-apps/konsole")}
+    )
+    assert "kde-apps/konsole" in world_atoms(recipe)
+    assert "kde-apps/konsole" not in world_atoms(excluded)
 
 
 def test_an_exclude_that_matches_nothing_fails_with_the_reason() -> None:
@@ -119,7 +121,7 @@ def test_world_with_an_image_prints_its_kits_and_writes_nothing(
     assert result.exit_code == 0, result.output
     assert result.output.startswith("minimal/systemd: ")
     assert "\n@base\n  @boot\n    sys-kernel/dracut" in result.output
-    assert "    app-admin/metalog  (excluded)" in result.output
+    assert "    app-admin/metalog  (excluded by init/systemd)" in result.output
     assert "minimal/openrc" not in result.output
     assert world_file.read_text() == "# edited by hand\n"  # nothing written
 
@@ -129,7 +131,7 @@ def test_world_without_an_init_prints_every_init() -> None:
     assert result.exit_code == 0, result.output
     assert "minimal/systemd: " in result.output and "minimal/openrc: " in result.output
     # OpenRC keeps metalog: it is excluded only once, by the systemd image
-    assert result.output.count("    app-admin/metalog  (excluded)") == 1
+    assert result.output.count("    app-admin/metalog  (excluded by init/systemd)") == 1
 
 
 def test_world_names_an_unknown_image() -> None:
@@ -152,7 +154,7 @@ def test_world_shows_the_base_alone() -> None:
     result = CliRunner().invoke(app, ["world", "base", "systemd"])
     assert result.exit_code == 0, result.output
     assert result.output.startswith("base/systemd: ")
-    assert "    app-admin/metalog  (excluded)" in result.output
+    assert "    app-admin/metalog  (excluded by init/systemd)" in result.output
     assert "net-misc/ntp" not in result.output
     assert "@kde" not in result.output and "@extra-system" not in result.output
 
@@ -174,7 +176,7 @@ def test_world_shows_the_desktop_stage() -> None:
     result = CliRunner().invoke(app, ["world", "desktop", "systemd"])
     assert result.exit_code == 0, result.output
     assert "(base -> minimal -> desktop)" in result.output.splitlines()[0]
-    assert "    sys-fs/fuse  (excluded)" in result.output
+    assert "    sys-fs/fuse  (excluded by base)" in result.output
     assert "@kde" not in result.output
     with pytest.raises(config.UnknownAxisError):
         config.load_recipe("v3", "desktop", "systemd")
@@ -289,3 +291,114 @@ def test_kits_check_validates_catalog_lines(tmp_path: Path) -> None:
     assert any("app-misc/tmuxx" in p for p in problems)
     assert any("@nokit names no kit" in p for p in problems)
     assert len(problems) == 2
+
+
+def _with_include(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stage: str, text: str) -> Path:
+    """A copy of variants/ where only ``stage`` has an include: -- ``text``."""
+    tree = _variants_copy(tmp_path, monkeypatch)
+    for recipe in (tree / "desktop/recipe.yaml", *tree.glob("flavor/*/recipe.yaml")):
+        lines = recipe.read_text().splitlines()
+        if "include:" in lines:  # drop the committed include: block
+            start = lines.index("include:")
+            end = start + 1
+            while end < len(lines) and lines[end].startswith("  - "):
+                end += 1
+            recipe.write_text("\n".join(lines[:start] + lines[end:]) + "\n")
+    path = tree / ("desktop" if stage == "desktop" else f"flavor/{stage}") / "recipe.yaml"
+    path.write_text(path.read_text() + text)
+    return tree
+
+
+def test_an_include_puts_an_earlier_exclude_back_from_its_own_stage_on(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """minimal excludes bleachbit; kde includes it. Only kde's phase installs it,
+    so the shared fork points of base, minimal and desktop never see it."""
+    from shidashi.resolve import world_atoms
+
+    _with_include(tmp_path, monkeypatch, "kde", "include:\n  - sys-apps/bleachbit\n")
+    kde = config.load_recipe("v3", "kde", "systemd")
+    assert kde.includes == {"include-kde": ("sys-apps/bleachbit",)}
+    phases = {p.stage: p.sets for p in kde.phases if p.stage}
+    assert "include-kde" in phases["kde"]
+    assert not any("include-kde" in phases[s] for s in ("base", "minimal", "desktop"))
+    assert "sys-apps/bleachbit" in world_atoms(kde)
+    assert "sys-apps/bleachbit" not in world_atoms(config.load_recipe("v3", "gnome", "systemd"))
+    assert "sys-apps/bleachbit" not in world_atoms(config.load_recipe("v3", "minimal", "systemd"))
+    out = CliRunner().invoke(app, ["world", "kde", "systemd"]).output
+    assert "\n@include-kde  (include:)\n  sys-apps/bleachbit\n" in out
+
+
+def test_an_include_brings_a_catalog_only_atom_into_an_image(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from shidashi.resolve import world_atoms
+
+    _with_include(tmp_path, monkeypatch, "kde", "include:\n  - dev-lang/rust\n")
+    assert "dev-lang/rust" in world_atoms(config.load_recipe("v3", "kde", "systemd"))
+
+
+def test_an_include_of_something_never_taken_out_is_an_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from shidashi.resolve import ResolveError, world_atoms
+
+    _with_include(tmp_path, monkeypatch, "kde", "include:\n  - app-editors/vim\n")
+    with pytest.raises(ResolveError, match="app-editors/vim .* is neither excluded"):
+        world_atoms(config.load_recipe("v3", "kde", "systemd"))
+
+
+def test_including_and_excluding_the_same_atom_is_a_contradiction(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from shidashi.recipe import RecipeChainError
+
+    _with_include(tmp_path, monkeypatch, "desktop",
+                  "include:\n  - sys-apps/bleachbit\nexclude:\n  - sys-apps/bleachbit\n")
+    with pytest.raises(RecipeChainError, match="both includes and excludes sys-apps/bleachbit"):
+        config.load_recipe("v3", "kde", "systemd")
+
+
+def test_the_legend_names_who_excluded_and_who_put_it_back(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`(excluded)` alone read as "the later stages lost it" when a later stage
+    had put it back: the legend names both layers."""
+    _with_include(tmp_path, monkeypatch, "desktop", "include:\n  - sys-apps/bleachbit\n")
+    kde = config.load_recipe("v3", "kde", "systemd")
+    assert kde.exclude_origin["app-admin/metalog"] == "init/systemd"
+    assert kde.exclude_origin["sys-apps/bleachbit"] == "minimal"
+    out = CliRunner().invoke(app, ["world", "kde", "systemd"]).output
+    assert "sys-apps/bleachbit  (excluded by minimal; included by desktop)" in out
+    assert "app-admin/metalog  (excluded by init/systemd)" in out
+    minimal = CliRunner().invoke(app, ["world", "minimal", "systemd"]).output
+    assert "sys-apps/bleachbit  (excluded by minimal)\n" in minimal
+
+
+def test_world_names_a_broken_exclude_without_a_traceback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tree = _variants_copy(tmp_path, monkeypatch)
+    base = tree / "base/recipe.yaml"
+    base.write_text(base.read_text().replace("exclude:\n", "exclude:\n  - app-misc/nothing-here\n"))
+    result = CliRunner().invoke(app, ["world", "--check"])
+    assert result.exit_code == 1
+    assert "exclude: app-misc/nothing-here is in no set" in result.output.replace("\n", " ")
+    assert "Traceback" not in result.output
+
+
+def test_kits_check_names_a_glued_comment_that_is_no_atom(tmp_path: Path) -> None:
+    """`#www-client-firefox` lost its `/`: a comment, so the catalog silently
+    lacked firefox. It is a problem, not prose."""
+    from shidashi import kits
+
+    lib = tmp_path / "kits" / "internet"
+    lib.mkdir(parents=True)
+    (lib / "web").write_text("# prose\n#\n##\n#www-client-firefox\n#www-client/firefox\n")
+    repo = tmp_path / "gentoo"
+    (repo / "www-client" / "firefox").mkdir(parents=True)
+    problems = kits.check(tmp_path / "kits", {"gentoo": repo})
+    assert problems == [
+        "web:4: #www-client-firefox is neither #category/package nor #@kit "
+        "(prose needs a space after #)"
+    ]

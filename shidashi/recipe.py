@@ -100,6 +100,12 @@ class StageFragment(BaseModel):
     ``init_sets`` maps an init to extra sets this stage installs only under it
     (kde's display manager: plasma-login-manager needs systemd, openrc gets
     sddm). They join ``sets`` on this stage's phase; other inits' are ignored.
+
+    ``include`` puts back, from this stage on, atoms an EARLIER stage excluded or
+    a kit marks catalog-only (``#atom``). They become the stage's own set,
+    ``@include-<stage>`` (:func:`include_set`), installed by this stage's phase
+    only: the kit stays filtered, so the shared fork points of the earlier
+    stages never see the atom.
     """
 
     model_config = _STRICT
@@ -108,6 +114,7 @@ class StageFragment(BaseModel):
     sets: tuple[str, ...] = ()
     init_sets: dict[str, tuple[str, ...]] = {}
     exclude: tuple[str, ...] = ()
+    include: tuple[str, ...] = ()
     update: UpdateMode = "newuse"
     ships: bool = False
     use_break: tuple[UseBreak, ...] = ()
@@ -164,6 +171,11 @@ class ResolvedRecipe(BaseModel):
     runnable_on_build_host: bool
     sets: tuple[str, ...]
     exclude: tuple[str, ...] = ()
+    #: Excluded atom -> the layer whose ``exclude:`` took it out first: a stage
+    #: (``minimal``) or the init (``init/systemd``).
+    exclude_origin: dict[str, str] = {}
+    #: ``@include-<stage>`` set name -> the atoms that stage's ``include:`` puts back.
+    includes: dict[str, tuple[str, ...]] = {}
     phases: tuple[Phase, ...]
     portage_layers: tuple[str, ...]
     #: The chain, base first: ``("base", "minimal", "desktop", "kde")``.
@@ -226,6 +238,26 @@ def _ordered_unique(items: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(seen)
 
 
+#: The set a stage's ``include:`` becomes. No kit may use the prefix.
+INCLUDE_SET_PREFIX = "include-"
+
+
+def _exclude_origin(chain: tuple[StageFragment, ...], init: InitFragment) -> dict[str, str]:
+    """Each excluded atom -> the first layer that excludes it, chain order then
+    the init. Pure."""
+    origin: dict[str, str] = {}
+    for layer, atoms in (*((st.stage, st.exclude) for st in chain),
+                         (f"init/{init.init}", init.exclude)):
+        for atom in atoms:
+            origin.setdefault(atom, layer)
+    return origin
+
+
+def include_set(stage: str) -> str:
+    """``@include-<stage>``: the set holding ``stage``'s ``include:``. Pure."""
+    return f"{INCLUDE_SET_PREFIX}{stage}"
+
+
 def merge(
     base: BaseFragment,
     arch: ArchFragment,
@@ -248,6 +280,9 @@ def merge(
       (:func:`stage_phase_name`), com os sets, os cortes e o modo do estágio.
     - **sets / exclude:** união ordenada-única sobre toda a cadeia; os sets de
       cada estágio incluem os do seu ``init_sets`` para ``init.init``.
+    - **include:** each stage's becomes ``@include-<stage>`` on its own phase.
+      An atom the same stage, a later one or the init excludes is a contradiction
+      and raises :class:`RecipeChainError`.
     """
     chain: tuple[StageFragment, ...] = (base, *stages)
     for prev, stage in zip(chain, chain[1:], strict=False):
@@ -266,6 +301,19 @@ def merge(
     ]
     stage_layers: list[str] = []
     stage_sets = {st.stage: (*st.sets, *st.init_sets.get(init.init, ())) for st in chain}
+    includes: dict[str, tuple[str, ...]] = {}
+    for i, st in enumerate(chain):
+        if not st.include:
+            continue
+        later_excludes = {a for later in chain[i:] for a in later.exclude} | set(init.exclude)
+        clash = sorted(set(st.include) & later_excludes)
+        if clash:
+            raise RecipeChainError(
+                f"stage {st.stage!r} both includes and excludes {', '.join(clash)} "
+                "(its own exclude:, a later stage's, or the init's)"
+            )
+        includes[include_set(st.stage)] = _ordered_unique(st.include)
+        stage_sets[st.stage] = (*stage_sets[st.stage], include_set(st.stage))
     for stage in chain:
         if stage.stage != BASE_STAGE:
             stage_layers.append(stage_layer(stage.stage))
@@ -296,6 +344,8 @@ def merge(
         exclude=_ordered_unique(
             (*(a for st in chain for a in st.exclude), *init.exclude)
         ),
+        exclude_origin=_exclude_origin(chain, init),
+        includes=includes,
         phases=tuple(phases),
         portage_layers=(*head_layers, *stage_layers, init_layer),
         stages=tuple(st.stage for st in chain),

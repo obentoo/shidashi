@@ -38,7 +38,7 @@ from shidashi.recipe import (
     load_init,
     load_stage,
 )
-from shidashi.resolve import apply_portage, kit_index
+from shidashi.resolve import apply_portage, catalog_entry, kit_index
 
 # the binpkg check of a shipped stage extracts the stage3's vdb: stubbed here
 pytestmark = pytest.mark.usefixtures("no_stage3_vdb")
@@ -523,7 +523,7 @@ def test_every_set_reference_resolves_to_a_shipped_file() -> None:
 @pytest.mark.parametrize("flavor", ["minimal", "kde", "gnome", "wm"])
 def test_every_declared_set_is_shipped(flavor: str) -> None:
     recipe = _recipe(flavor)
-    shipped = _shipped_sets()
+    shipped = set(_shipped_sets()) | set(recipe.includes)  # a stage's include: is its own set
     for name in recipe.sets:
         assert name in shipped, f"{flavor}: set {name!r} declarado mas não embarcado"
 
@@ -532,7 +532,7 @@ def test_every_declared_set_is_shipped(flavor: str) -> None:
 def test_every_phase_target_is_reachable(flavor: str) -> None:
     """Nenhuma fase pode apontar para um ``@set`` que não será instalado."""
     recipe = _recipe(flavor)
-    shipped = _shipped_sets()
+    shipped = set(_shipped_sets()) | set(recipe.includes)
     for phase in recipe.phases:
         for target in phase_target(phase, recipe):
             if not target.startswith("@") or target == "@world":
@@ -581,7 +581,19 @@ def test_no_orphan_sets() -> None:
             reachable.add(name)
             pending += refs(name)
 
-    orphans = set(files) - reachable - _INTENTIONALLY_UNREACHABLE
+    # A kit whose every line is catalog-only (#atom) is the binhost's on purpose
+    # (kits/README): no image is meant to reach it. One with plain atoms that
+    # nobody reaches is still a forgotten kit.
+    def binhost_only(name: str) -> bool:
+        lines = files[name].read_text(encoding="utf-8").splitlines()
+        entries = [ln for ln in lines if ln.strip() and not ln.startswith("# ")
+                   and ln.strip() != "#"]
+        return bool(entries) and all(catalog_entry(ln) is not None for ln in entries)
+
+    orphans = {
+        name for name in set(files) - reachable - _INTENTIONALLY_UNREACHABLE
+        if not binhost_only(name)
+    }
     assert not orphans, f"sets curados que ninguém instala: {sorted(orphans)}"
 
 
