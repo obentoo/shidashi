@@ -407,7 +407,9 @@ def test_assemble_orchestrates_seed_emerge_dracut_squashfs_iso(
     assert iso_kwargs[0]["volume"] == "BENTOO_KDE"
     assert iso_kwargs[0]["text_target"] == "multi-user.target"
     assert squash_kwargs[0]["compression"] == "zstd"
-    assert str(squash_kwargs[0]["exclude_file"]).endswith("variants/base/iso-exclude")
+    exclude_file = Path(str(squash_kwargs[0]["exclude_file"]))
+    assert exclude_file.name == "znver5-kde-systemd.squashfs-exclude"
+    assert "dev/*" in exclude_file.read_text().splitlines()  # livecd.yaml's squashfs_exclude
     assert out.read_bytes() == b"ISO"
     # §18.6 — apply_portage estritamente ANTES do emerge (não só "foi chamado").
     assert events.index("apply_portage") < events.index("emerge")

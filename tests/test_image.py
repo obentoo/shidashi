@@ -56,9 +56,9 @@ def test_mksquashfs_argv_refuses_an_unknown_profile() -> None:
 
 def test_the_repository_exclude_list_keeps_mount_points() -> None:
     from shidashi import config
+    from shidashi.system import load_livecd
 
-    lines = (config.variants_dir() / "base" / "iso-exclude").read_text().splitlines()
-    patterns = [ln for ln in lines if ln and not ln.startswith("#")]
+    patterns = load_livecd(config.variants_dir()).squashfs_exclude
     for mount in ("dev", "proc", "sys", "run", "tmp", "boot"):
         assert f"{mount}/*" in patterns and mount not in patterns
     assert "var/log/*.log" in patterns and "var/cache/binpkgs/*" in patterns

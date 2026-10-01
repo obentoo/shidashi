@@ -5,7 +5,7 @@ thin runners over them need the host tools and are exercised by host-gated tests
 
 * :func:`make_squashfs` packs the rootfs into a read-only squashfs, with a
   compression profile (:data:`COMPRESSION`) and the exclude list of
-  ``variants/base/iso-exclude``.
+  ``variants/livecd.yaml`` (``squashfs_exclude``).
 * :func:`build_iso` lays the medium out the way the major distributions do and
   makes a hybrid BIOS+UEFI ISO with ``grub-mkrescue`` (which drives xorriso)::
 

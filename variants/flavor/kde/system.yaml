@@ -17,7 +17,3 @@ os_release:
 # OpenRC's display-manager service starts the one named here.
 display_manager:
   openrc: sddm
-
-live:
-  # The Wayland session the live user is logged into (usr/share/wayland-sessions).
-  session: plasma.desktop

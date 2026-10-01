@@ -251,3 +251,34 @@ def test_without_resolved_finalize_writes_the_stub(tmp_path: Path) -> None:
     (root / "etc/resolv.conf").write_text("nameserver 8.8.8.8\n")
     assert system.finalize(root, cfg, init="systemd") == {"resolv_conf": "stub, written at boot"}
     assert "8.8.8.8" not in (root / "etc/resolv.conf").read_text()
+
+
+def test_the_live_medium_lives_in_livecd_yaml(tmp_path: Path) -> None:
+    """One file for what only the live does: the session per image comes from
+    `sessions:`, and a `live:` key in a layer's system.yaml is refused -- the
+    live configuration was spread over three files before (2026-10-01)."""
+    import shutil
+
+    livecd = system.load_livecd(config.variants_dir())
+    assert livecd.sessions == {"kde": "plasma.desktop"}
+    assert "dev/*" in livecd.squashfs_exclude
+    tree = tmp_path / "variants"
+    shutil.copytree(config.variants_dir(), tree)
+    kde = tree / "flavor/kde/system.yaml"
+    kde.write_text(kde.read_text() + "live:\n  session: plasma.desktop\n")
+    recipe = config.load_recipe("v3", "kde", "systemd")
+    with pytest.raises(system.ConfigurationError, match="`live:` belongs in livecd.yaml"):
+        system.load_system_config(recipe, variants_dir=tree)
+
+
+def test_the_init_layer_holds_the_services_and_merges_before_the_stages() -> None:
+    """The base is init-neutral; the init's services come right after it, so a
+    flavor's display manager is added after them."""
+    import yaml
+
+    base = yaml.safe_load((config.variants_dir() / "base/system.yaml").read_text())
+    assert "services" not in base
+    cfg = _kde()
+    assert cfg.services.systemd.enable[0] == "NetworkManager.service"
+    assert cfg.services.systemd.enable[-1] == "plasmalogin.service"
+    assert "dbus" not in cfg.services.openrc.default  # init/openrc is not in a systemd recipe

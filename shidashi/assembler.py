@@ -44,7 +44,14 @@ from shidashi.phases import (
 from shidashi.recipe import ResolvedRecipe
 from shidashi.resolve import apply_portage, apply_rootfs, bind_repos, install_sets
 from shidashi.seed import extract_stage3, fetch_stage3, load_pointer
-from shidashi.system import apply_live, apply_system, finalize, load_system_config, verify
+from shidashi.system import (
+    apply_live,
+    apply_system,
+    finalize,
+    load_livecd,
+    load_system_config,
+    verify,
+)
 from shidashi.tree import pinned_repos
 
 __all__ = ["Assembler", "AssemblerError"]
@@ -264,8 +271,12 @@ class AssembleResult(BaseModel):
     artifacts: tuple[Path, ...]
 
 
-#: The squashfs exclude list (see the file's own comments).
-ISO_EXCLUDE = Path("base") / "iso-exclude"
+def write_squashfs_exclude(patterns: tuple[str, ...], dest: Path) -> Path:
+    """``livecd.yaml``'s ``squashfs_exclude``, one pattern per line, for
+    ``mksquashfs -ef``. I/O."""
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text("".join(f"{p}\n" for p in patterns), encoding="utf-8")
+    return dest
 
 
 def build_info(
@@ -339,7 +350,11 @@ class Assembler:
         rootfs = config.scratch_dir() / "assemble" / key
         when = now or datetime.datetime.now(datetime.UTC)
         name = publish.release_name(recipe, when)
-        exclude_file = config.variants_dir() / ISO_EXCLUDE
+        # the squashfs and the stage4 leave out livecd.yaml's squashfs_exclude
+        exclude_file = write_squashfs_exclude(
+            load_livecd(config.variants_dir()).squashfs_exclude,
+            rootfs.parent / f"{key}.squashfs-exclude",
+        )
         for profile in compressions:
             if profile not in image.COMPRESSION:
                 raise AssemblerError(f"unknown compression {profile!r}")

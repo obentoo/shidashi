@@ -1,0 +1,33 @@
+# variants/init/systemd/system.yaml — the services every systemd image enables.
+#
+# Handbook › System › Init configuration (`systemctl preset-all`) and Tools
+# (time sync, cron). Units a package does not install are skipped, so this file
+# can name what only the desktop images carry. Moved out of base/system.yaml on
+# 2026-10-01: what depends on the init lives in the init layer. A flavor adds
+# its display manager (flavor/<f>/system.yaml).
+services:
+  systemd:
+    # Written to /etc/systemd/system-preset/80-bentoo.preset, then preset-all:
+    # ahead of Gentoo's 90-systemd.preset and 99-default.preset (disable *).
+    enable:
+      - NetworkManager.service      # network; conflicts with networkd below
+      - systemd-timesyncd.service   # Tools › time synchronization
+      - bluetooth.service
+      - cups.socket                 # printing, started on demand
+      - cups.path
+      - avahi-daemon.service        # printer and service discovery
+      - tuned.service               # power profiles (tuned-ppd serves KDE's applet)
+      - tuned-ppd.service
+      - fstrim.timer                # weekly TRIM on SSDs
+      # DNS. NetworkManager hands each network's DNS to resolved, found through
+      # /etc/resolv.conf -> the stub (shidashi.system.finalize). Without it,
+      # NetworkManager calls `resolvconf` -- here systemd's resolvectl shim,
+      # which needs resolved -- fails ("Failed to resolve interface
+      # NetworkManager"), and the image kept the build host's static
+      # nameserver: the first boot test found it (2026-09-30, F81).
+      - systemd-resolved.service
+    disable:
+      - systemd-networkd.service    # NetworkManager owns the network
+      - systemd-networkd-wait-online.service
+      - systemd-homed.service       # Gentoo's preset enables it; nothing here uses it
+      - sshd.service                # never listening by default on a live medium

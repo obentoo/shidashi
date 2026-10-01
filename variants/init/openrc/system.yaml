@@ -1,0 +1,15 @@
+# variants/init/openrc/system.yaml — the services every OpenRC image adds.
+#
+# Handbook › System › Init configuration (`rc-update add <service> default`).
+# Moved out of base/system.yaml on 2026-10-01: what depends on the init lives in
+# the init layer. A flavor adds its display manager (flavor/<f>/system.yaml).
+services:
+  openrc:
+    # `rc-update add <service> default`. Not yet exercised: no OpenRC image is
+    # built so far.
+    default:
+      - dbus
+      - NetworkManager
+      - bluetooth
+      - cupsd
+      - avahi-daemon

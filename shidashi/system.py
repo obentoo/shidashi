@@ -5,8 +5,8 @@ hostname, no account, a machine-id shared by every copy (F79). The pipeline had
 implemented the Handbook's package chapters and none of its configuration ones.
 This module is those chapters: ``variants/<layer>/system.yaml`` says what every
 image is (hostname, locale, keymap, timezone, sudo, services per init) and
-``variants/base/live.yaml`` what only the live medium adds (its user, autologin,
-an empty machine-id).
+``variants/livecd.yaml`` what only the live medium adds (its user, autologin,
+an empty machine-id, what its squashfs leaves out).
 
 Three steps, each audited by the caller:
 
@@ -34,7 +34,8 @@ from shidashi.recipe import ResolvedRecipe
 _STRICT = ConfigDict(frozen=True, extra="forbid")
 
 SYSTEM_FILE = "system.yaml"
-LIVE_FILE = "live.yaml"
+#: The live medium's file: top-level, like flow.yaml -- one live, no layers.
+LIVECD_FILE = "livecd.yaml"
 
 #: Display managers this module knows how to autologin, by systemd unit.
 _DM_BY_UNIT = {"plasmalogin.service": "plasmalogin", "sddm.service": "sddm"}
@@ -76,6 +77,24 @@ class Services(BaseModel):
     model_config = _STRICT
     systemd: SystemdServices = SystemdServices()
     openrc: OpenrcServices = OpenrcServices()
+
+
+class LivecdFile(BaseModel):
+    """``variants/livecd.yaml`` as written: the session per image, and the
+    squashfs exclude list beside the live user."""
+
+    model_config = _STRICT
+    user: str
+    password: str
+    full_name: str = ""
+    shell: str = "/bin/bash"
+    groups: tuple[str, ...] = ()
+    autologin: bool = True
+    #: Image (target) -> its graphical session; an image not listed has none.
+    sessions: dict[str, str] = {}
+    empty_machine_id: bool = True
+    #: ``mksquashfs -wildcards -ef`` patterns, relative to the rootfs.
+    squashfs_exclude: tuple[str, ...] = ()
 
 
 class LiveConfig(BaseModel):
@@ -130,16 +149,38 @@ def _read_yaml(path: Path) -> dict[str, Any]:
     return data
 
 
+def load_livecd(variants_dir: Path) -> LivecdFile:
+    """``variants/livecd.yaml``, validated. I/O."""
+    path = variants_dir / LIVECD_FILE
+    try:
+        return LivecdFile.model_validate(_read_yaml(path))
+    except ValueError as err:
+        raise ConfigurationError(f"{path}: {err}") from err
+
+
 def load_system_config(recipe: ResolvedRecipe, *, variants_dir: Path) -> SystemConfig:
-    """The merged system configuration of ``recipe``'s layers, in their order."""
-    merged: dict[str, Any] = {}
-    live = variants_dir / "base" / LIVE_FILE
-    if live.is_file():
-        merged["live"] = _read_yaml(live)
-    for layer in recipe.portage_layers:
+    """The merged system configuration of ``recipe``'s layers, with the live
+    medium's from ``variants/livecd.yaml``.
+
+    Order: the base, then the init, then the rest -- the init's file holds what
+    every image of that init enables, so a stage (kde's display manager) adds to
+    it and overrides it, the more specific layer last.
+    """
+    livecd = load_livecd(variants_dir)
+    live = livecd.model_dump(exclude={"sessions", "squashfs_exclude"})
+    merged: dict[str, Any] = {"live": {**live, "session": livecd.sessions.get(recipe.flavor)}}
+    init_layer = f"init/{recipe.init}"
+    head = [layer for layer in recipe.portage_layers if layer == "base"]
+    rest = [layer for layer in recipe.portage_layers if layer not in ("base", init_layer)]
+    for layer in (*head, init_layer, *rest):
         path = variants_dir / layer / SYSTEM_FILE
         if path.is_file():
-            merged = _merge(merged, _read_yaml(path))
+            data = _read_yaml(path)
+            if "live" in data:
+                raise ConfigurationError(
+                    f"{path}: `live:` belongs in {LIVECD_FILE} (the session: `sessions:`)"
+                )
+            merged = _merge(merged, data)
     try:
         return SystemConfig.model_validate(merged)
     except ValueError as err:

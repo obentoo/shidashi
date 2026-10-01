@@ -1,0 +1,85 @@
+# variants/livecd.yaml — what only the LIVE medium does, for every image.
+#
+# A top-level file like flow.yaml: one live medium, the same rules for every
+# image, no layers. The installed system is described by the layers'
+# system.yaml; this file adds what the live session needs on top of it, and an
+# installer undoes it (removes this user, generates a machine-id). Applied by
+# the assembler after the system configuration (shidashi.system).
+#
+# The author's decisions of 2026-09-30: user and password "bentoo", autologin.
+
+user: bentoo
+# The live medium's public password, documented like other live media's
+# (Redcore: redcore/redcore). Needed for sudo and the lock screen. Hashed with
+# SHA-512 when written to /etc/shadow; the clear text never reaches a log.
+password: bentoo
+full_name: Bentoo Live
+shell: /bin/bash
+
+# Supplementary groups, those that exist in the image (the rest are skipped):
+# wheel for sudo, the device groups a desktop session needs, and the service
+# groups that grant access without root (libvirt, docker, vboxusers...).
+groups:
+  - users
+  - wheel
+  - audio
+  - video
+  - input
+  - render
+  - cdrom
+  - usb
+  - plugdev
+  - lpadmin
+  - netdev
+  - kvm
+  - libvirt
+  - docker
+  - vboxusers
+  - pipewire
+
+# Log the live user in at boot: into the image's graphical session below, or,
+# for an image without one (minimal), on the console on tty1.
+autologin: true
+
+# The session the live user is logged into, per image: a file name under
+# /usr/share/wayland-sessions (or xsessions). The display manager that runs it
+# is the image's own (flavor/<f>/system.yaml).
+sessions:
+  kde: plasma.desktop
+
+# Empty /etc/machine-id: systemd then generates one per boot, so no two copies of
+# the ISO share an identity. The first ISO shipped a fixed one (F79).
+empty_machine_id: true
+
+# What the squashfs leaves out of the image's rootfs. The squashfs is the live
+# medium AND what an installer copies to disk, so these are things no system
+# should carry: mount points' content, the build's caches and logs, leftovers.
+#
+# Passed to `mksquashfs -wildcards -ef`: one pattern per entry, relative to the
+# rootfs, `*` never crossing a `/`. `dir/*` drops the directory's CONTENT and
+# keeps the directory itself -- the mount points the booted system needs (the
+# first ISO dropped /dev, /proc, /sys and /run whole). Measured on 2026-09-30
+# with a test tree: `dev/*` keeps /dev empty, `var/log/*.log` keeps the log
+# directories services expect, `lost+found` goes whole.
+squashfs_exclude:
+  # The kernel and initramfs sit in the ISO's own boot/ (image.py), not in the root.
+  - boot/*
+  # Pseudo filesystems and runtime state: mounted or created at boot.
+  - dev/*
+  - proc/*
+  - sys/*
+  - run/*
+  - tmp/*
+  - mnt/*
+  - var/tmp/*
+  # The build's caches: the binhost bind mount, distfiles, Portage's own caches.
+  - var/cache/binpkgs/*
+  - var/cache/distfiles/*
+  - var/cache/edb/*
+  # The build's logs (the run's audit trail keeps them), not the image's.
+  - var/log/*.log
+  - var/log/portage/*
+  # Shell history and filesystem leftovers.
+  - root/.bash_history
+  - root/.lesshst
+  - lost+found
