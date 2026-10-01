@@ -1,6 +1,6 @@
 """Shidashi's *pretend-resolve* pipeline (OVERVIEW §18) -- the heart of story 002.
 
-Overlays the recipe's portage layers + the host's repos onto a seeded rootfs,
+Overlays the recipe's portage layers + the pinned repos onto a seeded rootfs,
 runs ``emerge --pretend --emptytree @world`` inside a ``systemd-nspawn`` and
 parses the output into a :class:`PretendReport` (package list + cycle-break
 suggestions that feed the manual curation of ``use_break``, §18.7).
@@ -27,9 +27,8 @@ from shidashi.recipe import INCLUDE_SET_PREFIX, ResolvedRecipe
 
 _STRICT = ConfigDict(frozen=True, extra="forbid")
 
-# Root of the host's synced repos (bind-mounted RO in the container). A module
-# attribute so that tests can redirect it via monkeypatch.
-_HOST_REPOS_ROOT = Path("/var/db/repos")
+# Where the container finds its repos (the pinned trees are bound RO here).
+_REPOS_ROOT = Path("/var/db/repos")
 
 
 class ResolveError(Exception):
@@ -510,23 +509,19 @@ def _assemble_make_conf(parts: list[tuple[str, str]]) -> str:
 # --- repo binding (R3.2, R3.3, R6.3) -----------------------------------------
 
 
-def bind_repos(
-    repos_conf_dir: Path, *, overrides: Mapping[str, Path] | None = None
-) -> list[tuple[Path, Path]]:
-    """Produce RO host→container binds for every declared repo (R3.2/R3.3).
+def bind_repos(repos_conf_dir: Path, *, pinned: Mapping[str, Path]) -> list[tuple[Path, Path]]:
+    """Produce RO pin→container binds for every declared repo (R3.2/R3.3, D26).
 
     ``repos.conf`` is a **directory** (eselect-repo style): iterate its ``*.conf``
-    files and parse the ``[<name>]`` / ``location = …`` stanzas (stdlib
-    ``configparser``). For each declared repo, map the host's
-    ``_HOST_REPOS_ROOT/<name>`` to the same path in the container (RO). If the
-    host path does not exist, raise :class:`ResolveError` naming the repo and
-    suggesting ``emerge --sync``.
+    files and collect the ``[<name>]`` stanzas (stdlib ``configparser``). Each
+    declared repo is bound from its pin in ``pinned`` (the ::gentoo snapshot and
+    the overlays' commits, :func:`shidashi.tree.pinned_repos`) to
+    ``_REPOS_ROOT/<name>`` in the container.
 
-    ``overrides`` maps a repo name to the host directory to bind INSTEAD, at the
-    repo's usual container path -- the pinned ::gentoo snapshot (D26,
-    :mod:`shidashi.tree`) in place of the host's synced tree.
+    The host's own ``/var/db/repos`` is never read: a declared repo without a
+    pin raises :class:`ResolveError`, so a build does not depend on when (or
+    whether) the host synced, nor on the host being Gentoo.
     """
-    overrides = overrides or {}
     declared: list[str] = []
     for conf in sorted(repos_conf_dir.glob("*.conf")):
         parser = configparser.ConfigParser()
@@ -535,14 +530,15 @@ def bind_repos(
 
     pairs: list[tuple[Path, Path]] = []
     for name in declared:
-        container_path = _HOST_REPOS_ROOT / name
-        host_path = overrides.get(name, container_path)
-        if not host_path.is_dir():
+        if name not in pinned:
             raise ResolveError(
-                f"declared repo {name!r} missing at {host_path}; "
-                f"run 'emerge --sync' (or 'eselect repo enable {name}') on the host"
+                f"repo {name!r} is declared in repos.conf but not pinned; pin it in "
+                "seeds/overlays.toml (::gentoo is pinned by seeds/gentoo.toml)"
             )
-        pairs.append((host_path, container_path))
+        host_path = pinned[name]
+        if not host_path.is_dir():
+            raise ResolveError(f"pinned repo {name!r} missing at {host_path}")
+        pairs.append((host_path, _REPOS_ROOT / name))
     return pairs
 
 
@@ -677,7 +673,7 @@ def pretend_resolve(
     )
     apply_rootfs(rootfs, recipe, variants_dir=variants_dir)
     apply_portage(rootfs, recipe, variants_dir=variants_dir)
-    binds = bind_repos(rootfs / "etc" / "portage" / "repos.conf", overrides=repos)
+    binds = bind_repos(rootfs / "etc" / "portage" / "repos.conf", pinned=repos)
 
     with Container(rootfs, ephemeral=not keep, binds=binds) as container:
         result = run_pretend(container)

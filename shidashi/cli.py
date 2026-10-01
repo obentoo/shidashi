@@ -4,8 +4,7 @@ Exposes the root ``shidashi`` app with the ``recipe`` subgroup (``show``/``valid
 ``list``), the real commands ``pretend`` (resolution), ``factory`` (binpkg
 build) and ``assemble`` (ISO assembly) and the ``release`` stub (Phase 4). The
 ``recipe`` commands only resolve paths (``shidashi.config``), load and merge
-fragments (``shidashi.recipe``) and render -- without ever importing or
-invoking ``shidashi.portage_api``.
+fragments (``shidashi.recipe``) and render.
 
 Error mapping (R5.2/R6.3): ``UnknownAxisError`` (from ``config``) and
 ``RecipeChainError`` (from ``merge``/``load_chain``) are caught, shown as a friendly

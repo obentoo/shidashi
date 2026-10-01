@@ -5,8 +5,7 @@ implemented (stories 002/003 and Phase 1) and their tests live in the respective
 ``tests/test_*.py``; ``binhost`` remains a skeleton (Phase 2), with every body
 raising ``NotImplementedError``. Here we prove that:
 
-* every module imports without an exception (and the package stays import-safe — none
-  of them triggers ``shidashi.portage_api`` on import);
+* every module imports without an exception;
 * every entry point **still a skeleton** (``binhost``), when invoked,
   raises ``NotImplementedError`` — not ``pass``/``None``.
 
@@ -15,7 +14,6 @@ magic introspection, so that an oversight (a body with ``pass``) fails here.
 """
 
 import importlib
-import sys
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
@@ -39,14 +37,6 @@ _SKELETON_MODULES = (
 def test_skeleton_module_imports(module_name: str) -> None:
     module = importlib.import_module(module_name)
     assert module is not None
-
-
-def test_importing_skeletons_does_not_trigger_portage_api() -> None:
-    # remove portage_api and re-import every skeleton: none may pull it in (R9.1)
-    sys.modules.pop("shidashi.portage_api", None)
-    for name in _SKELETON_MODULES:
-        importlib.import_module(name)
-    assert "shidashi.portage_api" not in sys.modules
 
 
 # --- every public entry point raises NotImplementedError (R9.2/R9.3) --------

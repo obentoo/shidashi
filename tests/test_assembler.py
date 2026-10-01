@@ -213,7 +213,9 @@ def test_build_binds_binhost_ro_and_no_rw(monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.setattr(
         asm, "bind_repos", lambda d, **_k: [(Path("/h/repo"), Path("/var/db/repos/gentoo"))]
     )
-    binds_ro, binds_rw = _build_binds(Path("/bh/znver5"), Path("/rootfs/etc/portage/repos.conf"))
+    binds_ro, binds_rw = _build_binds(
+        Path("/bh/znver5"), Path("/rootfs/etc/portage/repos.conf"), repos={}
+    )
     assert binds_ro[0] == (Path("/h/repo"), Path("/var/db/repos/gentoo"))
     assert (Path("/bh/znver5"), asm._BINHOST_DST) in binds_ro  # binhost mounted RO
     assert binds_rw == []  # Assembler only reads (--usepkgonly): nothing RW

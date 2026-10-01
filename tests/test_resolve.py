@@ -5,11 +5,9 @@ UNIT (deterministic, non-Gentoo CI):
 * ``apply_portage`` overlays files layer by layer in a tmp dir, later layers
   overriding earlier ones; missing layer → ResolveError (R3.1);
 * ``bind_repos`` takes a ``repos.conf/`` DIRECTORY (eselect-repo style),
-  iterates its ``*.conf`` files, parses ``[<name>]`` / ``location = <path>`` stanzas
-  (stdlib ``configparser``), maps the ``location`` of each declared repo (under the
-  host's ``/var/db/repos/<name>``) to the same path in the container as an RO bind,
-  and raises ResolveError naming a missing repo (R3.2, R3.3, R6.3) — the host's
-  repos root is forced via ``tmp_path`` (we do not depend on the real host);
+  collects its ``[<name>]`` stanzas (stdlib ``configparser``) and binds each
+  declared repo from its pin to ``/var/db/repos/<name>`` in the container (RO),
+  raising ResolveError naming a repo without a pin (R3.2, R3.3, R6.3, D26);
 * ``parse_cycle_breaks`` extracts atom+flag+sign from captured emerge output,
   incl. the ``libsdl2 ↔ pipewire ↔ ffmpeg`` cycle (§18.2) (R5.2);
 * ``parse_packages`` extracts the list of resolved atoms from the
@@ -37,7 +35,6 @@ from pathlib import Path
 
 import pytest
 
-from shidashi import resolve
 from shidashi.recipe import ResolvedRecipe
 from shidashi.resolve import (
     CycleBreak,
@@ -277,80 +274,60 @@ def test_apply_portage_missing_layer_raises(tmp_path: Path) -> None:
         apply_portage(rootfs, _recipe(), variants_dir=variants)
 
 
-# --- bind_repos (R3.2, R3.3, R6.3) -------------------------------------------
+# --- bind_repos (R3.2, R3.3, R6.3, D26) -------------------------------------
 #
-# Refined contract: bind_repos takes a repos.conf/ DIRECTORY (eselect-repo
-# style). It iterates the *.conf files, parses [<name>] / location = <path> stanzas
-# (stdlib configparser) and, for each declared repo, requires its host location
-# to exist under /var/db/repos/<name>, mapping it RO to the same path in the
-# container. The host's repos root is forced to the tmp dir via monkeypatch.
+# bind_repos takes a repos.conf/ DIRECTORY (eselect-repo style), collects the
+# [<name>] stanzas and binds each declared repo from its PIN to
+# /var/db/repos/<name> in the container. The host's /var/db/repos is never read.
 
 _ESELECT_REPO_CONF = """\
 [gentoo]
-location = {root}/gentoo
+location = /var/db/repos/gentoo
 
 [bentoo]
-location = {root}/bentoo
+location = /var/db/repos/bentoo
 """
 
 
-def _write_repos_conf_dir(tmp_path: Path, host_repos: Path) -> Path:
+def _write_repos_conf_dir(tmp_path: Path) -> Path:
     """Create a repos.conf/ directory with a two-stanza eselect-repo.conf."""
     repos_conf_dir = tmp_path / "repos.conf"
     repos_conf_dir.mkdir()
-    (repos_conf_dir / "eselect-repo.conf").write_text(
-        _ESELECT_REPO_CONF.format(root=host_repos), encoding="utf-8"
-    )
+    (repos_conf_dir / "eselect-repo.conf").write_text(_ESELECT_REPO_CONF, encoding="utf-8")
     return repos_conf_dir
 
 
-def test_bind_repos_declares_ro_pairs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    host_repos = tmp_path / "var" / "db" / "repos"
-    (host_repos / "gentoo").mkdir(parents=True)
-    (host_repos / "bentoo").mkdir(parents=True)
-    # redirects the host's repos root to the tmp dir (we do not depend on the real host)
-    monkeypatch.setattr(resolve, "_HOST_REPOS_ROOT", host_repos, raising=False)
-
-    repos_conf_dir = _write_repos_conf_dir(tmp_path, host_repos)
-
-    pairs = bind_repos(repos_conf_dir)
-    srcs = {src for src, _dst in pairs}
-    assert host_repos / "gentoo" in srcs
-    assert host_repos / "bentoo" in srcs
-    # each pair maps the host location → the SAME path in the container
-    for src, dst in pairs:
-        assert dst == src
+def _pins(tmp_path: Path, *names: str) -> dict[str, Path]:
+    pins = {name: tmp_path / "cache" / "repos" / name for name in names}
+    for path in pins.values():
+        path.mkdir(parents=True)
+    return pins
 
 
-def test_bind_repos_missing_repo_raises_naming_it(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    host_repos = tmp_path / "var" / "db" / "repos"
-    (host_repos / "gentoo").mkdir(parents=True)  # bentoo declared but missing
-    monkeypatch.setattr(resolve, "_HOST_REPOS_ROOT", host_repos, raising=False)
+def test_bind_repos_binds_each_pin_at_the_repos_usual_path(tmp_path: Path) -> None:
+    pins = _pins(tmp_path, "gentoo", "bentoo")
 
-    repos_conf_dir = _write_repos_conf_dir(tmp_path, host_repos)
+    pairs = bind_repos(_write_repos_conf_dir(tmp_path), pinned=pins)
 
+    assert pairs == [
+        (pins["gentoo"], Path("/var/db/repos/gentoo")),
+        (pins["bentoo"], Path("/var/db/repos/bentoo")),
+    ]
+
+
+def test_bind_repos_unpinned_repo_raises_naming_it(tmp_path: Path) -> None:
+    # bentoo is declared but has no pin: refused, never taken from the host
     with pytest.raises(ResolveError) as excinfo:
-        bind_repos(repos_conf_dir)
+        bind_repos(_write_repos_conf_dir(tmp_path), pinned=_pins(tmp_path, "gentoo"))
     assert "bentoo" in str(excinfo.value)
+    assert "seeds/overlays.toml" in str(excinfo.value)
 
 
-def test_bind_repos_binds_an_override_at_the_repos_usual_path(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The pinned ::gentoo snapshot replaces the host's tree, at the path the
-    image's repos.conf expects; bentoo still comes from the host (D26)."""
-    host_repos = tmp_path / "var" / "db" / "repos"
-    (host_repos / "bentoo").mkdir(parents=True)  # no host gentoo needed at all
-    monkeypatch.setattr(resolve, "_HOST_REPOS_ROOT", host_repos, raising=False)
-    pinned = tmp_path / "cache" / "repos" / "gentoo-20260919"
-    pinned.mkdir(parents=True)
-
-    pairs = bind_repos(_write_repos_conf_dir(tmp_path, host_repos), overrides={"gentoo": pinned})
-
-    assert (pinned, host_repos / "gentoo") in pairs
-    assert (host_repos / "bentoo", host_repos / "bentoo") in pairs
+def test_bind_repos_missing_pin_dir_raises(tmp_path: Path) -> None:
+    pins = _pins(tmp_path, "gentoo")
+    pins["bentoo"] = tmp_path / "nowhere"
+    with pytest.raises(ResolveError, match="bentoo"):
+        bind_repos(_write_repos_conf_dir(tmp_path), pinned=pins)
 
 
 # --- parse_cycle_breaks (R5.2) — core of the §18.2 curation ------------------

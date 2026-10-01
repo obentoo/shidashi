@@ -13,8 +13,7 @@ dependencies = [
     "pyyaml>=6.0",
     "rich>=13.7",
 ]
-# NB: `portage` comes from the system (sys-apps/portage), not from pip.
-# Shidashi runs on a Gentoo host and uses `import portage` (see shidashi/portage_api.py).
+# NB: Portage is not a dependency: emerge runs inside the build containers.
 
 [project.optional-dependencies]
 dev = ["ruff>=0.5", "mypy>=1.10", "types-PyYAML", "pytest>=8"]

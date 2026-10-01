@@ -284,14 +284,13 @@ def _build_binds(
     recipe: ResolvedRecipe,
     *,
     pkgdir: Path,
+    repos: Mapping[str, Path],
     repos_conf_dir: Path | None = None,
-    repos: Mapping[str, Path] | None = None,
 ) -> tuple[list[tuple[Path, Path]], list[tuple[Path, Path]]]:
     """Build the container's RO (repos) and RW (PKGDIR/caches) binds (R6.2/R6.3/R7.2). Pure.
 
     - ``binds_ro`` = :func:`shidashi.resolve.bind_repos` over ``repos_conf_dir`` (the
-      resolved rootfs's ``repos.conf``; the host's synced repos stay RO,
-      the host's tree is never mutated).
+      resolved rootfs's ``repos.conf``; the pinned repos, bound RO).
     - ``binds_rw`` maps the *host-side* directories (under ``cache_dir()``) over the
       fixed targets of the container's ``make.conf``: ``pkgdir`` → ``/var/cache/binpkgs``,
       ``ccache_dir()`` → ``/var/cache/ccache``, ``sccache_dir()`` → ``/var/cache/sccache``,
@@ -301,9 +300,9 @@ def _build_binds(
     ``bind_repos``) trivial; :meth:`Factory.build` passes the rootfs's real
     ``repos.conf``. ``bind_repos`` is resolved via the module global (monkeypatchable).
     ``repos`` are the pinned repositories by name (D26: the ::gentoo snapshot
-    and the overlays' commits), bound in place of the host's clones.
+    and the overlays' commits); the host's own repos are never bound.
     """
-    binds_ro = bind_repos(repos_conf_dir if repos_conf_dir is not None else Path(), overrides=repos)
+    binds_ro = bind_repos(repos_conf_dir if repos_conf_dir is not None else Path(), pinned=repos)
     binds_rw: list[tuple[Path, Path]] = [
         (pkgdir, _PKGDIR_DST),
         (config.ccache_dir(), _CCACHE_DST),

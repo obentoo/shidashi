@@ -243,11 +243,11 @@ def _locate_kernel(rootfs: Path, kver: str) -> Path:
 
 
 def _build_binds(
-    binhost_dir: Path, repos_conf_dir: Path, *, repos: Mapping[str, Path] | None = None
+    binhost_dir: Path, repos_conf_dir: Path, *, repos: Mapping[str, Path]
 ) -> tuple[list[tuple[Path, Path]], list[tuple[Path, Path]]]:
     """Build the container's RO (repos + binhost) and RW (empty) binds. **Pure**.
 
-    The Assembler only READS — the host's synced repos (:func:`shidashi.resolve.bind_repos`)
+    The Assembler only READS — the pinned repos (:func:`shidashi.resolve.bind_repos`)
     and the per-arch binhost (mounted over :data:`_BINHOST_DST`) go in **read-only**
     (``--usepkgonly`` does not write to the PKGDIR). There are no RW binds: the rootfs is mutated
     in place by emerge/dracut, not through a bind. ``bind_repos`` is a module global
@@ -255,7 +255,7 @@ def _build_binds(
     binpkgs were built from (D26): assembling against other trees would ask
     the binhost for versions it does not have.
     """
-    binds_ro = bind_repos(repos_conf_dir, overrides=repos)
+    binds_ro = bind_repos(repos_conf_dir, pinned=repos)
     binds_ro.append((binhost_dir, _BINHOST_DST))
     return binds_ro, []
 

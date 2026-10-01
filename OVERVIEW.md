@@ -469,8 +469,7 @@ stages/                          # project root (this repo)
 │   ├── assembler.py             # ISO Assembler subsystem
 │   ├── phases.py                # phase execution + layer cache
 │   ├── binhost.py               # multi-instance management + index + signing
-│   ├── image.py                 # squashfs + dracut + ISO
-│   └── portage_api.py           # integration with `import portage`
+│   └── image.py                 # squashfs + dracut + ISO
 ├── variants/                    # composable axes (recipe + portage) + the set library
 │   ├── kits/                    # ALL the sets, by category (D25) — unique names
 │   │   ├── core/                #   base (aggregator) boot fs portage shell hardware admin archive network
@@ -654,7 +653,7 @@ The reference `make.conf` (already organized into named groups) maps directly:
 
 ### Phase 4 — Automation
 - [ ] Weekly CI matrix (cron Sunday 00:00) + publishing + checksums/GPG. *(scaffold gated with `if: false`; still missing a Gentoo runner + pointer file reading + a `release` command.)*
-- [x] Reproducible snapshot pin. *(stage3 in `seeds/stage3.toml`; `::gentoo` in `seeds/gentoo.toml` — signed daily snapshot, at least 7 days old (cooldown, D26), mounted in place of the host's tree in factory/assemble/pretend. The `::bentoo` overlay still follows the host.)*
+- [x] Reproducible snapshot pin. *(stage3 in `seeds/stage3.toml`; `::gentoo` in `seeds/gentoo.toml` — signed daily snapshot, at least 7 days old (cooldown, D26), the overlays by commit in `seeds/overlays.toml`; factory/assemble/pretend bind only these pins, never the host's `/var/db/repos`.)*
 
 ### Phase 5 — Operations (optional)
 - [ ] Release dashboard (FastAPI).

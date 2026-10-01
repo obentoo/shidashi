@@ -119,7 +119,7 @@ def test_build_binds_maps_caches_rw_and_repos_ro(
 
     build_binds: Any = try_import("shidashi.factory", "_build_binds")
     pkgdir = tmp_path / "cache" / "binpkgs" / "v3"
-    binds_ro, binds_rw = build_binds(_recipe(), pkgdir=pkgdir)
+    binds_ro, binds_rw = build_binds(_recipe(), pkgdir=pkgdir, repos={})
 
     # repos come from bind_repos (RO)
     assert repo_ro in binds_ro

@@ -334,7 +334,7 @@ def pinned_repos(
 ) -> dict[str, Path]:
     """Every pinned repository, by name: ``gentoo`` (cooldown enforced) and the overlays.
 
-    Bound in place of the host's clones by factory, assemble and pretend, so
+    The only repos factory, assemble and pretend bind (never the host's), so
     the binpkgs and the ISO come from the same ebuilds on both repositories.
     """
     repos = {
