@@ -1,0 +1,34 @@
+# Dependabot version updates (https://docs.github.com/code-security/dependabot).
+#
+# Two ecosystems: the GitHub Actions pinned by commit SHA in .github/workflows/
+# (Dependabot moves the SHA and the version comment together) and the Python
+# dependencies locked in uv.lock.
+#
+# cooldown: no update to a version published less than 7 days ago -- the same
+# rule pyproject.toml enforces for uv (`[tool.uv] exclude-newer = "7 days"`),
+# so a freshly published, possibly compromised release never lands here first.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: ci
+
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      python:
+        patterns: ["*"]
+    commit-message:
+      prefix: build
