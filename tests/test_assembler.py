@@ -7,13 +7,14 @@ is checked with a monkeypatched ``os.geteuid``, and the orchestration of
 monkeypatched — no real nspawn/emerge/dracut/mksquashfs (host-gated).
 """
 
+import json
 import os
 from pathlib import Path
 
 import pytest
 
 import shidashi.assembler as asm
-from shidashi import image
+from shidashi import image, toolbox
 from shidashi.assembler import (
     Assembler,
     AssemblerError,
@@ -65,6 +66,46 @@ def _no_tree_download(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     tree = tmp_path / "pinned-gentoo"
     tree.mkdir()
     monkeypatch.setattr(asm, "pinned_repos", lambda **_k: {"gentoo": tree})
+
+
+class _FakeTools:
+    """The toolbox, recorded: paths untranslated, every tool present."""
+
+    instances: list[_FakeTools] = []
+    VERSIONS = {"grub": "grub-mkrescue (GRUB) 2.12", "squashfs-tools": "mksquashfs version 4.6.1"}
+
+    def __init__(
+        self,
+        rootfs: Path,
+        *,
+        ro: dict[str, Path] | None = None,
+        rw: dict[str, Path] | None = None,
+        log: Path | None = None,
+    ) -> None:
+        self.rootfs, self.ro, self.rw = rootfs, ro or {}, rw or {}
+        _FakeTools.instances.append(self)
+
+    def path(self, host: Path) -> Path:
+        return host
+
+    def run(self, argv: list[str]) -> str:
+        return ""
+
+    def versions(self) -> dict[str, str]:
+        return dict(self.VERSIONS)
+
+
+@pytest.fixture(autouse=True)
+def _toolbox_stubbed(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    """A built toolbox for every assemble; extracting and running it is toolbox's tests'."""
+    _FakeTools.instances = []
+    tar = tmp_path / "fork-points" / "toolbox.tar"
+    tar.parent.mkdir(parents=True, exist_ok=True)
+    tar.write_bytes(b"T")
+    monkeypatch.setattr(toolbox, "tarball_path", lambda recipe, **_k: tar)
+    monkeypatch.setattr(toolbox, "ensure_rootfs", lambda tarball, rootfs: False)
+    monkeypatch.setattr(toolbox, "Toolbox", _FakeTools)
+    return tar
 
 
 def _recipe(
@@ -248,6 +289,29 @@ def test_assemble_requires_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
         Assembler(_recipe(), tmp_path / "binhost").assemble(tmp_path / "out.iso")
 
 
+def test_the_toolbox_is_not_an_image(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(os, "geteuid", lambda: 0)
+    recipe = _recipe().model_copy(update={"flavor": "toolbox"})
+    with pytest.raises(AssemblerError, match="not an image"):
+        Assembler(recipe, tmp_path / "binhost").assemble(tmp_path / "out")
+
+
+def test_a_missing_toolbox_fails_before_the_stage3_is_touched(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, _toolbox_stubbed: Path
+) -> None:
+    monkeypatch.setattr(os, "geteuid", lambda: 0)
+    monkeypatch.setenv("SHIDASHI_SCRATCH", str(tmp_path / "scratch"))
+    monkeypatch.setattr(asm, "load_pointer", lambda init, *, seeds_dir: _pointer())
+
+    def no_fetch(*_a: object, **_k: object) -> Path:
+        raise AssertionError("the stage3 must not be fetched without a toolbox")
+
+    monkeypatch.setattr(asm, "fetch_stage3", no_fetch)
+    _toolbox_stubbed.unlink()
+    with pytest.raises(AssemblerError, match="shidashi factory znver5 toolbox systemd"):
+        Assembler(_recipe(), tmp_path / "binhost").assemble(tmp_path / "out")
+
+
 # --- assemble() orchestration (everything monkeypatched) ---------------------
 
 
@@ -359,7 +423,7 @@ def test_assemble_orchestrates_seed_emerge_dracut_squashfs_iso(
     # the host tools of the artifacts (unsquashfs, syft) are publish.py's tests' concern
     from shidashi import publish
 
-    def fake_contents(squashfs: Path, dest: Path) -> Path:
+    def fake_contents(squashfs: Path, dest: Path, **_k: object) -> Path:
         dest.write_bytes(b"C")
         return dest
 
@@ -403,6 +467,7 @@ def test_assemble_orchestrates_seed_emerge_dracut_squashfs_iso(
         "initramfs",
         "finalize",
         "verify-config",
+        "toolbox",
         "sbom",
         "squashfs:zstd",
         "iso:zstd",
@@ -434,6 +499,13 @@ def test_assemble_orchestrates_seed_emerge_dracut_squashfs_iso(
         "bentoo/version",
         "bentoo/build.json",
     }
+    # the tools run in the toolbox: the image read-only, scratch and output writable
+    (tools,) = _FakeTools.instances
+    assert squash_kwargs[0]["tools"] is tools and iso_kwargs[0]["tools"] is tools
+    assert tools.ro == {"rootfs": tmp_path / "scratch" / "assemble" / "znver5-kde-systemd"}
+    assert tools.rw == {"scratch": tmp_path / "scratch" / "assemble", "out": out_dir}
+    build_json = json.loads(str(extra["bentoo/build.json"]))  # type: ignore[index]
+    assert build_json["toolbox"] == _FakeTools.VERSIONS
     assert iso_kwargs[0]["volume"] == "BENTOO_KDE"
     assert iso_kwargs[0]["text_target"] == "multi-user.target"
     assert squash_kwargs[0]["compression"] == "zstd"

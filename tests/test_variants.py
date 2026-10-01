@@ -595,7 +595,7 @@ def test_no_orphan_sets() -> None:
 
     reachable: set[str] = set()
     # Every init: a stage's init_sets reach a set only under their own init.
-    for flavor, init in itertools.product(("minimal", "kde", "gnome", "wm"), _INITS):
+    for flavor, init in itertools.product(("minimal", "kde", "gnome", "wm", "toolbox"), _INITS):
         recipe = _recipe(flavor, init)
         pending = list(recipe.sets)
         while pending:

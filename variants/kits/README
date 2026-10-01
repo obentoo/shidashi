@@ -35,6 +35,7 @@ Rules:
 
 Categories:
   core/      the universal core: @base and its leaves
+  tools/     the toolbox stage's ISO tools (no image installs them)
   system/    console kits: @extra-system and its leaves
   graphics/  graphical infrastructure: gpu, fonts, desktop integration
   services/  system services: vpn, print, sandbox

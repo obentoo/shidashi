@@ -1,13 +1,13 @@
 """Tests of shidashi.image -- the live squashfs and the ISO's layout (OVERVIEW §7).
 
 The argv builders and grub.cfg are pure (no root, no tools); staging the ISO tree
-is plain file I/O in tmp; the runners are exercised with ``shutil.which`` and
-``subprocess.run`` monkeypatched -- no real mksquashfs or grub-mkrescue.
+is plain file I/O in tmp; the runners are exercised through a fake
+:class:`~shidashi.toolbox.Tools` -- no real mksquashfs or grub-mkrescue.
 """
 
 import hashlib
-import shutil
 import subprocess
+from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
@@ -160,84 +160,73 @@ def test_stage_iso_tree_lays_out_the_medium_and_its_metadata(tmp_path: Path) -> 
     assert (root / "bentoo/sbom.spdx.json").read_text() == "{}"
 
 
-# --- runners (monkeypatched) -----------------------------------------------------
+# --- runners (through a fake Tools) ----------------------------------------------
 
 
-def test_make_squashfs_invokes_tool_and_returns_output(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(shutil, "which", lambda _: "/usr/bin/mksquashfs")
-    calls: list[list[str]] = []
+class _Tools:
+    """Records each command; the tools see ``/work/<path relative to root>``."""
 
-    def record(argv: list[str], **_k: object) -> subprocess.CompletedProcess[str]:
-        calls.append(argv)
-        return _ok()
+    def __init__(self, root: Path, *, fail: str | None = None) -> None:
+        self.root = root
+        self.fail = fail
+        self.calls: list[list[str]] = []
 
-    monkeypatch.setattr(subprocess, "run", record)
+    def path(self, host: Path) -> Path:
+        return Path("/work") / host.relative_to(self.root)
+
+    def run(self, argv: Sequence[str]) -> str:
+        if self.fail is not None:
+            raise subprocess.CalledProcessError(1, list(argv), output="", stderr=self.fail)
+        self.calls.append(list(argv))
+        return ""
+
+
+def test_make_squashfs_runs_in_the_tools_with_their_paths(tmp_path: Path) -> None:
+    tools = _Tools(tmp_path)
     out = tmp_path / "nested" / "rootfs.squashfs"
-    assert make_squashfs(tmp_path / "rootfs", out, compression="xz") == out
-    assert out.parent.is_dir()
-    assert calls == [_mksquashfs_argv(tmp_path / "rootfs", out, compression="xz")]
+    exclude = tmp_path / "exclude"
+    assert (
+        make_squashfs(tmp_path / "rootfs", out, tools=tools, compression="xz", exclude_file=exclude)
+        == out
+    )
+    assert out.parent.is_dir()  # created on the host side
+    assert tools.calls == [
+        _mksquashfs_argv(
+            Path("/work/rootfs"),
+            Path("/work/nested/rootfs.squashfs"),
+            compression="xz",
+            exclude_file=Path("/work/exclude"),
+        )
+    ]
 
 
-def test_make_squashfs_missing_tool_raises(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(shutil, "which", lambda _: None)
-    with pytest.raises(ImageError, match="mksquashfs"):
-        make_squashfs(Path("/r"), Path("/o.sq"))
-
-
-def test_make_squashfs_nonzero_wraps_in_image_error(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(shutil, "which", lambda _: "/usr/bin/mksquashfs")
-
-    def boom(argv: list[str], **kw: object) -> None:
-        raise subprocess.CalledProcessError(1, argv, stderr="disk full")
-
-    monkeypatch.setattr(subprocess, "run", boom)
+def test_make_squashfs_nonzero_wraps_in_image_error(tmp_path: Path) -> None:
     with pytest.raises(ImageError, match="disk full"):
-        make_squashfs(tmp_path / "r", tmp_path / "o.sq")
+        make_squashfs(tmp_path / "r", tmp_path / "o.sq", tools=_Tools(tmp_path, fail="disk full"))
 
 
-def test_build_iso_stages_beside_the_output_not_in_tmp(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_build_iso_stages_beside_the_output_not_in_tmp(tmp_path: Path) -> None:
     """/tmp is a tmpfs here: the first ISOs copied the 8 GB squashfs into RAM."""
-    monkeypatch.setattr(shutil, "which", lambda _: "/usr/bin/grub-mkrescue")
     squashfs, kernel, initramfs = (tmp_path / n for n in ("r.sq", "vmlinuz-1", "initramfs-1"))
     for p in (squashfs, kernel, initramfs):
         p.write_bytes(b"x")
     out = tmp_path / "dist" / "bentoo.iso"
-    seen: list[list[str]] = []
-    real_run = subprocess.run
 
-    def fake_run(argv: list[str], **kw: object) -> subprocess.CompletedProcess[str]:
-        if argv[0] == "cp":
-            return real_run(argv, check=True, capture_output=True, text=True)
-        iso_root = Path(argv[argv.index("--") - 1])
-        assert (iso_root / "LiveOS" / "squashfs.img").is_file()
-        assert iso_root.parent == out.parent  # the same filesystem as the ISO
-        seen.append(argv)
-        return _ok()
+    class _Staged(_Tools):
+        def run(self, argv: Sequence[str]) -> str:
+            iso_root = tmp_path / Path(argv[argv.index("--") - 1]).relative_to("/work")
+            assert (iso_root / "LiveOS" / "squashfs.img").is_file()
+            assert iso_root.parent == out.parent  # the same filesystem as the ISO
+            return super().run(argv)
 
-    monkeypatch.setattr(subprocess, "run", fake_run)
-    result = build_iso(squashfs, out, kernel=kernel, initramfs=initramfs, volume="BENTOO_KDE")
+    tools = _Staged(tmp_path)
+    result = build_iso(
+        squashfs, out, tools=tools, kernel=kernel, initramfs=initramfs, volume="BENTOO_KDE"
+    )
     assert result == out
-    assert seen[0][:3] == ["grub-mkrescue", "-o", str(out)]
-    assert seen[0][-3:] == ["--", "-volid", "BENTOO_KDE"]
+    assert tools.calls[0][:3] == ["grub-mkrescue", "-o", "/work/dist/bentoo.iso"]
+    assert tools.calls[0][-3:] == ["--", "-volid", "BENTOO_KDE"]
     assert not any(p.name.startswith(".shidashi-iso-") for p in out.parent.iterdir())
-
-
-def test_build_iso_missing_tool_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(shutil, "which", lambda _: None)
-    with pytest.raises(ImageError, match="grub-mkrescue"):
-        build_iso(
-            tmp_path / "r.sq", tmp_path / "o.iso", kernel=tmp_path / "k", initramfs=tmp_path / "i"
-        )
-
-
-def _ok() -> subprocess.CompletedProcess[str]:
-    return subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
 
 
 def test_grub_cfg_offers_the_open_nvidia_driver_only_when_asked() -> None:

@@ -1,0 +1,15 @@
+# variants/toolbox/recipe.yaml — the TOOLBOX stage: the rootfs the ISO tools run in.
+#
+# `shidashi assemble` does not run mksquashfs, grub-mkrescue or unsquashfs on the
+# host: it runs them in this stage's fork point, under systemd-nspawn
+# (shidashi/toolbox.py). So the ISO's bootloader comes from the generation it
+# boots, not from whatever GRUB the build host has, and the host needs none of
+# these tools -- one less reason for it to be Gentoo.
+#
+# Built by the factory like any stage (`shidashi factory <arch> toolbox <init>`,
+# and by `shidashi build` before the ISOs): base → toolbox. It is not an image:
+# it does not ship, has no world file and is never assembled.
+stage: toolbox
+after: base
+sets:
+  - toolbox

@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from shidashi import config, publish
+from shidashi.toolbox import HostTools
 
 _WHEN = datetime.datetime(2026, 9, 30, 1, 2, tzinfo=datetime.UTC)
 
@@ -60,7 +61,7 @@ def test_contents_lists_every_path_of_the_live_root(tmp_path: Path) -> None:
         check=True,
         capture_output=True,
     )
-    dest = publish.write_contents(sq, tmp_path / "c.gz")
+    dest = publish.write_contents(sq, tmp_path / "c.gz", tools=HostTools())
     with gzip.open(dest, "rt") as f:
         assert f.read().splitlines() == ["/", "/usr", "/usr/bin", "/usr/bin/sh"]
 

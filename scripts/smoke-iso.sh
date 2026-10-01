@@ -290,10 +290,12 @@ import sys
 from pathlib import Path
 
 from shidashi import image
+from shidashi.toolbox import HostTools
 
+# the host's tools on purpose: this smoke test boots the host's kernel too
 rootfs, squashfs, iso, kernel, initramfs = (Path(a) for a in sys.argv[1:6])
-image.make_squashfs(rootfs, squashfs)
-image.build_iso(squashfs, iso, kernel=kernel, initramfs=initramfs)
+image.make_squashfs(rootfs, squashfs, tools=HostTools())
+image.build_iso(squashfs, iso, tools=HostTools(), kernel=kernel, initramfs=initramfs)
 print(f"smoke-iso: ISO built via shidashi.image → {iso}", file=sys.stderr)
 PY
 ) || die "failed to build the ISO via shidashi.image"

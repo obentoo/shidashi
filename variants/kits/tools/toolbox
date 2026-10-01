@@ -1,0 +1,9 @@
+# variants/kits/tools/toolbox — the ISO tools, installed only in the toolbox stage
+#
+# LEAF set. shidashi assemble runs them in the toolbox container (shidashi/toolbox.py):
+# grub-mkrescue drives xorriso (libisoburn) and builds the EFI image with mtools.
+# mksquashfs and unsquashfs come with @base (kits/core/fs: sys-fs/squashfs-tools).
+
+sys-boot/grub
+dev-libs/libisoburn
+sys-fs/mtools

@@ -33,7 +33,11 @@ BASE_STAGE = "base"
 #: Stages that live at ``variants/<name>/`` and give their phase their own
 #: name. Every other stage is a flavor, at ``variants/flavor/<name>/``, and its
 #: phase is called ``flavor`` -- one phase name however many flavors exist.
-CORE_STAGES = ("base", "minimal", "desktop")
+#: ``toolbox`` branches off the base and is no image: the ISO tools run in it.
+CORE_STAGES = ("base", "minimal", "desktop", "toolbox")
+
+#: The stage the assembler runs mksquashfs and grub-mkrescue in (shidashi.toolbox).
+TOOLBOX_STAGE = "toolbox"
 
 
 def stage_layer(name: str) -> str:

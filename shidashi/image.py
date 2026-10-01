@@ -1,7 +1,8 @@
 """Image — the live squashfs and the ISO's layout (OVERVIEW §7).
 
 Command-line builders are **pure and inspectable** (testable without root); the
-thin runners over them need the host tools and are exercised by host-gated tests.
+thin runners over them run the tools through a :class:`~shidashi.toolbox.Tools`
+-- in production the toolbox container (:mod:`shidashi.toolbox`), never the host.
 
 * :func:`make_squashfs` packs the rootfs into a read-only squashfs, with a
   compression profile (:data:`COMPRESSION`) and the exclude list of
@@ -22,8 +23,12 @@ import hashlib
 import shutil
 import subprocess
 import tempfile
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from shidashi.toolbox import Tools
 
 __all__ = [
     "COMPRESSION",
@@ -75,18 +80,12 @@ def volume_id(flavor: str) -> str:
     return f"{VOLUME_ID}_{clean}"[:32]
 
 
-def _require_tool(tool: str) -> None:
-    if shutil.which(tool) is None:
-        raise ImageError(
-            f"{tool!r} is missing on the host; the ISO needs squashfs-tools, grub and xorriso"
-        )
-
-
-def _run(argv: list[str]) -> None:
+def _run(tools: Tools, argv: Sequence[str]) -> None:
     try:
-        subprocess.run(argv, check=True, capture_output=True, text=True)
+        tools.run(argv)
     except subprocess.CalledProcessError as err:
-        raise ImageError(f"command failed ({argv[0]}): {' '.join(argv)}\n{err.stderr}") from err
+        output = (err.output or "") + (err.stderr or "")
+        raise ImageError(f"command failed ({argv[0]}): {' '.join(argv)}\n{output}") from err
 
 
 def _mksquashfs_argv(
@@ -123,21 +122,22 @@ def make_squashfs(
     rootfs: Path,
     output: Path,
     *,
+    tools: Tools,
     compression: str = "zstd",
     exclude_file: Path | None = None,
     processors: int | None = None,
 ) -> Path:
-    """Pack ``rootfs`` into ``output`` and return it. Needs ``mksquashfs``."""
-    _require_tool("mksquashfs")
+    """Pack ``rootfs`` into ``output`` with ``tools``' ``mksquashfs``; return ``output``."""
     output.parent.mkdir(parents=True, exist_ok=True)
     _run(
+        tools,
         _mksquashfs_argv(
-            rootfs,
-            output,
+            tools.path(rootfs),
+            tools.path(output),
             compression=compression,
-            exclude_file=exclude_file,
+            exclude_file=tools.path(exclude_file) if exclude_file is not None else None,
             processors=processors,
-        )
+        ),
     )
     return output
 
@@ -289,6 +289,7 @@ def build_iso(
     squashfs: Path,
     output: Path,
     *,
+    tools: Tools,
     kernel: Path,
     initramfs: Path,
     volume: str = VOLUME_ID,
@@ -298,13 +299,12 @@ def build_iso(
     open_nvidia: bool = False,
     extra: Mapping[str, str | Path] | None = None,
 ) -> Path:
-    """Make the hybrid live ISO ``output`` and return it. Needs ``grub-mkrescue``.
+    """Make the hybrid live ISO ``output`` with ``tools``' ``grub-mkrescue``; return it.
 
     The medium's tree is staged beside ``output`` -- on the same filesystem, so
     the squashfs is reflinked, not copied into /tmp (a tmpfs: the first ISOs
-    copied 8 GB into RAM there).
+    copied 8 GB into RAM there) -- and so under the same toolbox mount.
     """
-    _require_tool("grub-mkrescue")
     output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=".shidashi-iso-", dir=output.parent) as tmp:
         iso_root = Path(tmp)
@@ -320,5 +320,5 @@ def build_iso(
             open_nvidia=open_nvidia,
             extra=extra or {},
         )
-        _run(_grub_mkrescue_argv(iso_root, output, volume_id=volume))
+        _run(tools, _grub_mkrescue_argv(tools.path(iso_root), tools.path(output), volume_id=volume))
     return output

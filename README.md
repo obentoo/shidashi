@@ -40,7 +40,7 @@ The full architecture is in **[OVERVIEW.md](OVERVIEW.md)**.
 | Boot test (`shidashi vm test`, BIOS + UEFI) | ✅ the `kde` and `minimal` ISOs pass |
 | Weekly releases (every Sunday, 00:00 UTC) | 🚧 planned: needs a self-hosted Gentoo runner |
 
-639 tests; lint, types and tests run on every push. The roadmap is in
+651 tests; lint, types and tests run on every push. The roadmap is in
 [OVERVIEW.md §17](OVERVIEW.md#17-development-roadmap).
 
 ## Model
@@ -69,6 +69,16 @@ own kits on top of the previous one and leaves a **fork point**, a snapshot the 
 resume from. The trunk (`base`, `minimal`, `desktop`) is built once per arch and init and is
 shared by every flavor.
 
+### Toolbox
+
+The ISO is made with Bentoo's own tools, not the host's. The `toolbox` stage
+([`variants/toolbox/`](variants/toolbox/recipe.yaml)) branches off the base with GRUB (BIOS +
+UEFI), squashfs-tools, xorriso and mtools; `shidashi assemble` runs `mksquashfs`,
+`grub-mkrescue` and `unsquashfs` in its fork point, under `systemd-nspawn`. The ISO's
+bootloader therefore comes from the same generation as the image, and its versions are
+recorded in the medium's `bentoo/build.json`. `shidashi build` builds the toolbox first; on
+its own, it is `shidashi factory <arch> toolbox <init>`.
+
 ### Kits
 
 [`variants/kits/`](variants/kits/README) is the library of **every package Bentoo builds**, by
@@ -94,8 +104,10 @@ pydantic, and the build steps run `emerge` inside the containers.
 
 - **To develop and run the tests:** Python ≥ 3.14 and [uv](https://docs.astral.sh/uv/). Any
   Linux works.
-- **To build images:** a **Gentoo host**, with root, plus `systemd-nspawn`, `mksquashfs`,
-  `grub-mkrescue` and `xorriso`. `shidashi vm` also needs QEMU/KVM.
+- **To build images:** a **Gentoo host**, with root, plus `systemd-nspawn`. The ISO tools
+  (`mksquashfs`, `grub-mkrescue`, `xorriso`) are not the host's: they run in the
+  **toolbox**, a Bentoo stage built by the factory (see below). `shidashi vm` needs QEMU/KVM
+  and `xorriso`.
 
 Portage itself runs inside the build containers; the host's Python does not need it.
 
@@ -121,6 +133,7 @@ shidashi recipe list                       # the arches, images and inits availa
 shidashi recipe show v3 kde systemd        # the resolved recipe of one image
 shidashi world kde systemd                 # its packages, kit by kit (nothing is written)
 
+sudo shidashi factory v3 toolbox systemd   # the toolbox the ISOs are made in
 sudo shidashi factory v3 kde systemd       # build the binpkgs, stage by stage
 sudo shidashi assemble v3 kde systemd      # assemble the live ISO from the binhost
 shidashi vm test bentoo-…-kde-systemd-v3.iso   # boot it and check what it declares

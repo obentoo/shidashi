@@ -261,10 +261,16 @@ built system, it opens a generation. The update ends with
 | Step | Tool | Notes |
 |---|---|---|
 | Rootfs seed | stage3 + `emerge --usepkgonly` | Pulls everything from the binhost; does not compile |
-| Compression | `mksquashfs` (zstd -19) | read-only rootfs |
+| Compression | `mksquashfs` (zstd -19), in the toolbox | read-only rootfs |
 | Live boot | **dracut** `dmsquash-live` module | overlayfs in RAM, the modern standard |
-| Bootloader | `grub-mkrescue` / `xorriso` | hybrid BIOS + UEFI ISO |
+| Bootloader | `grub-mkrescue` / `xorriso`, in the toolbox | hybrid BIOS + UEFI ISO |
 | Post-processing | SHA256 checksum + GPG signature | publishing |
+
+> The squashfs and ISO tools are not the host's: they run under `systemd-nspawn` in the
+> **toolbox**, the fork point of the `toolbox` stage (`base → toolbox`, `variants/toolbox/`),
+> built by the factory from the same generation as the image (`shidashi/toolbox.py`). The
+> ISO's GRUB is therefore pinned with everything else, and `bentoo/build.json` records the
+> tools' versions.
 
 > Note: the *installed* system may use dist-kernel + UKI (as in the reference `make.conf`), but the *live medium* uses classic dracut `dmsquash-live`.
 
@@ -469,7 +475,8 @@ stages/                          # project root (this repo)
 │   ├── assembler.py             # ISO Assembler subsystem
 │   ├── phases.py                # phase execution + layer cache
 │   ├── binhost.py               # multi-instance management + index + signing
-│   └── image.py                 # squashfs + dracut + ISO
+│   ├── image.py                 # squashfs + dracut + ISO
+│   └── toolbox.py               # the Bentoo rootfs the ISO tools run in
 ├── variants/                    # composable axes (recipe + portage) + the set library
 │   ├── kits/                    # ALL the sets, by category (D25) — unique names
 │   │   ├── core/                #   base (aggregator) boot fs portage shell hardware admin archive network

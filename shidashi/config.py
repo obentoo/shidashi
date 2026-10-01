@@ -94,7 +94,7 @@ def base_path() -> Path:
 def stage_path(name: str) -> Path:
     """The YAML of a stage (D24): where each kind of stage lives.
 
-    - ``base``, ``minimal``, ``desktop`` → ``variants/<name>/recipe.yaml``;
+    - ``base``, ``minimal``, ``desktop``, ``toolbox`` → ``variants/<name>/recipe.yaml``;
     - a flavor → ``variants/flavor/<name>/recipe.yaml``.
 
     Every stage is a ``recipe.yaml``, like every axis value: the place of a
@@ -102,10 +102,12 @@ def stage_path(name: str) -> Path:
 
     An unknown name raises :class:`UnknownAxisError` listing the targets.
     """
+    from shidashi.recipe import CORE_STAGES
+
     if name == "base":
         return base_path()
     core = variants_dir() / name / "recipe.yaml"
-    if name in ("minimal", "desktop") and core.is_file():
+    if name in CORE_STAGES and core.is_file():
         return core
     flavor = variants_dir() / "flavor" / name / "recipe.yaml"
     if flavor.is_file():
@@ -126,17 +128,25 @@ def stage_names() -> list[str]:
     return [*CORE_STAGES, *available_names("flavor")]
 
 
+def factory_names() -> list[str]:
+    """What ``shidashi factory`` builds: every image, plus the toolbox stage."""
+    from shidashi.recipe import TOOLBOX_STAGE
+
+    return [*target_names(), TOOLBOX_STAGE]
+
+
 def load_recipe(arch: str, target: str, init: str, *, any_stage: bool = False) -> ResolvedRecipe:
     """Load the whole chain for ``target`` and merge it with ``arch`` and ``init``.
 
     The one entry point for "give me the recipe of this image": CLI, lab sync
     and tests all go through it, so the chain is walked in exactly one place.
-    ``any_stage`` also accepts ``base`` and ``desktop``: stages, not images, so
-    only read-only views (``shidashi world desktop``) ask for them.
+    Accepts the images and the toolbox (:func:`factory_names`); ``any_stage``
+    also accepts ``base`` and ``desktop``: stages, not images, so only
+    read-only views (``shidashi world desktop``) ask for them.
     """
     from shidashi.recipe import load_arch, load_base, load_chain, load_init, merge
 
-    if target not in (stage_names() if any_stage else target_names()):
+    if target not in (stage_names() if any_stage else factory_names()):
         raise UnknownAxisError("target", target, target_names())
     return merge(
         load_base(base_path()),

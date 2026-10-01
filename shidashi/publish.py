@@ -22,9 +22,12 @@ import shutil
 import subprocess
 from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from shidashi.recipe import ResolvedRecipe
+
+if TYPE_CHECKING:
+    from shidashi.toolbox import Tools
 
 
 class PublishError(Exception):
@@ -91,18 +94,16 @@ def write_packages(dest: Path, packages: Iterable[Mapping[str, Any]]) -> Path:
     return dest
 
 
-def write_contents(squashfs: Path, dest: Path) -> Path:
+def write_contents(squashfs: Path, dest: Path, *, tools: Tools) -> Path:
     """Every path of the live root, directories included (``unsquashfs -l``;
-    ``-lc`` would list files only), gzipped. I/O."""
+    ``-lc`` would list files only), gzipped. ``unsquashfs`` is ``tools``'. I/O."""
     try:
-        done = subprocess.run(
-            ["unsquashfs", "-l", str(squashfs)], capture_output=True, text=True, check=True
-        )
+        listing = tools.run(["unsquashfs", "-l", str(tools.path(squashfs))])
     except (OSError, subprocess.CalledProcessError) as err:
         raise PublishError(f"unsquashfs -l {squashfs}: {err}") from err
     paths = [
         line.removeprefix("squashfs-root") or "/"
-        for line in done.stdout.splitlines()
+        for line in listing.splitlines()
         if line.startswith("squashfs-root")
     ]
     with gzip.open(dest, "wt", encoding="utf-8") as out:

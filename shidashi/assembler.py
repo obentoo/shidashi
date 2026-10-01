@@ -6,7 +6,8 @@ stage3, overlays the SAME portage layers as the Factory (so that the final
 resolved USE matches the one recorded in the binpkgs — OVERVIEW §18.6), pulls the
 flavor's slice from the binhost with ``emerge --usepkgonly`` (prebuilt binaries, no build order
 → immune to cycles, §18.6), generates the ``dmsquash-live`` initramfs with dracut, compresses
-the rootfs into a squashfs and produces the hybrid ISO (:mod:`shidashi.image`).
+the rootfs into a squashfs and produces the hybrid ISO (:mod:`shidashi.image`). The squashfs
+and ISO tools run in the toolbox stage's rootfs (:mod:`shidashi.toolbox`), not on the host.
 
 Immune to cycles: ``--usepkgonly`` installs prebuilt binaries and the multi-instance match
 picks the right instance per flavor by the final USE; all the cycle complexity
@@ -29,7 +30,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
 
-from shidashi import audit, config, image, publish, world
+from shidashi import audit, config, image, publish, toolbox, world
 from shidashi.container import Container
 from shidashi.phases import (
     ISO_EMERGE_OPTIONS,
@@ -41,7 +42,7 @@ from shidashi.phases import (
     parse_reused_atoms,
     write_cuts,
 )
-from shidashi.recipe import ResolvedRecipe
+from shidashi.recipe import TOOLBOX_STAGE, ResolvedRecipe
 from shidashi.resolve import apply_portage, apply_rootfs, bind_repos, install_sets
 from shidashi.seed import extract_stage3, fetch_stage3, load_pointer
 from shidashi.system import (
@@ -298,6 +299,7 @@ def build_info(
     packages: int,
     world_atoms: int,
     stage3: Mapping[str, object],
+    tools: Mapping[str, str],
 ) -> dict[str, object]:
     """``bentoo/build.json`` on the medium: what this image is and what made it. Pure."""
     return {
@@ -313,6 +315,8 @@ def build_info(
         "packages": packages,
         "world": world_atoms,
         "stage3": dict(stage3),
+        # the versions of what made the squashfs and the ISO (the toolbox's)
+        "toolbox": dict(tools),
         "repository": audit.repo_state(),
     }
 
@@ -354,6 +358,8 @@ class Assembler:
         _require_root()
         run = audit.current()
         recipe = self.recipe
+        if recipe.flavor == TOOLBOX_STAGE:
+            raise AssemblerError("the toolbox is a build stage, not an image: nothing to assemble")
         key = f"{recipe.arch}-{recipe.flavor}-{recipe.init}"
         rootfs = config.scratch_dir() / "assemble" / key
         when = now or datetime.datetime.now(datetime.UTC)
@@ -372,6 +378,15 @@ class Assembler:
                 seeds_dir=config.seeds_dir(), cache_dir=config.cache_dir(), download=download
             )
             pointer = load_pointer(recipe.init, seeds_dir=config.seeds_dir())
+            # checked now, not after the half-hour install that needs it
+            toolbox_tar = toolbox.tarball_path(
+                recipe, snapshot=pointer.snapshot, fork_points_dir=config.fork_points_dir()
+            )
+            if not toolbox_tar.is_file():
+                raise AssemblerError(
+                    f"no toolbox for {recipe.arch}/{recipe.init} at {toolbox_tar}; build it "
+                    f"first: shidashi factory {recipe.arch} {TOOLBOX_STAGE} {recipe.init}"
+                )
             tarball = fetch_stage3(pointer, cache_dir=config.cache_dir(), download=download)
             # a fresh stage3 into a fresh directory: a failed --keep run leaves its
             # rootfs, and extracting over it would inherit what that run left
@@ -491,6 +506,19 @@ class Assembler:
             run.attach("packages", packages)
             kernel = _locate_kernel(rootfs, kver)
 
+            with run.step("toolbox") as step:
+                toolbox_root = config.scratch_dir() / "toolbox" / f"{recipe.arch}-{recipe.init}"
+                extracted = toolbox.ensure_rootfs(toolbox_tar, toolbox_root)
+                # the image read-only; the scratch (squashfs, exclude list, SBOM)
+                # and the output directory (the ISO and its staging) writable
+                tools = toolbox.Toolbox(
+                    toolbox_root,
+                    ro={"rootfs": rootfs},
+                    rw={"scratch": rootfs.parent, "out": output_dir},
+                )
+                tool_versions = tools.versions()
+                step.add(tarball=toolbox_tar.name, extracted=extracted, **tool_versions)
+
             extra: dict[str, str | Path] = {
                 "bentoo/world": "".join(f"{a}\n" for a in atoms),
                 "bentoo/packages.txt": "".join(
@@ -524,6 +552,7 @@ class Assembler:
                     image.make_squashfs(
                         rootfs,
                         squashfs,
+                        tools=tools,
                         compression=profile,
                         exclude_file=exclude_file,
                         processors=self.jobs,
@@ -543,11 +572,13 @@ class Assembler:
                     packages=len(packages),
                     world_atoms=len(atoms),
                     stage3=pointer.model_dump(mode="json"),
+                    tools=tool_versions,
                 )
                 with run.step(f"iso:{profile}") as step:
                     image.build_iso(
                         squashfs,
                         iso,
+                        tools=tools,
                         kernel=kernel,
                         initramfs=initramfs,
                         volume=volume,
@@ -565,7 +596,7 @@ class Assembler:
                 with run.step(f"publish:{profile}"):
                     digests, sha256 = publish.write_digests(iso)
                     contents = publish.write_contents(
-                        squashfs, output_dir / f"{name}{suffix}.iso.contents.gz"
+                        squashfs, output_dir / f"{name}{suffix}.iso.contents.gz", tools=tools
                     )
                     sums[iso.name] = sha256
                     artifacts += [digests, contents]
