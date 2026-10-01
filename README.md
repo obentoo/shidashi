@@ -29,13 +29,6 @@ stage3 ─► bootstrap ─► base ─► minimal ─► desktop ─┬─► k
 binhost ─► assemble ─► live ISO (BIOS + UEFI) ─► vm test
 ```
 
-- **Shared trunk.** `base`, `minimal` and `desktop` are built once and reused by every image
-  of the same arch and init.
-- **Kits.** [`variants/kits/`](variants/kits/README) is the library of everything Bentoo
-  builds; each stage declares which kits its image installs. A line marked `#atom` is built for
-  the binhost but installed by no image.
-- **Audited.** Every run records its steps, the packages built or reused, and the result.
-
 The full architecture is in **[OVERVIEW.md](OVERVIEW.md)**.
 
 ## Status
@@ -50,10 +43,11 @@ The full architecture is in **[OVERVIEW.md](OVERVIEW.md)**.
 658 tests; lint, types and tests run on every push. The roadmap is in
 [OVERVIEW.md §17](OVERVIEW.md#17-development-roadmap).
 
-## Images
+## Model
 
-The images combine three axes, `arch × flavor × init`, all defined under
-[`variants/`](variants/):
+### Axes
+
+Every image is one combination of three axes, each defined under [`variants/`](variants/):
 
 | Axis | Values |
 |---|---|
@@ -61,8 +55,40 @@ The images combine three axes, `arch × flavor × init`, all defined under
 | **Arch** | `v3` (x86-64-v3, baseline) · `znver5` (Zen 5, tier 1) · `arrowlake` (tier 2, build-only) |
 | **Init** | `systemd` · `openrc` |
 
-The `::gentoo` snapshot and the overlays are pinned per release, so a build is reproducible
-from its inputs.
+### Two subsystems
+
+| Subsystem | Command | In | Out |
+|---|---|---|---|
+| **Package Factory** | `shidashi factory` | a verified stage3 | binpkgs in the binhost, a fork point per stage |
+| **ISO Assembler** | `shidashi assemble` | the binhost | a live ISO, installed only from binpkgs |
+
+### Stages and fork points
+
+An image is a chain of stages: `base → minimal → desktop → <flavor>`. Each stage installs its
+own kits on top of the previous one and leaves a **fork point**, a snapshot the next builds
+resume from. The trunk (`base`, `minimal`, `desktop`) is built once per arch and init and is
+shared by every flavor.
+
+### Kits
+
+[`variants/kits/`](variants/kits/README) is the library of **every package Bentoo builds**, by
+category. A stage declares which kits its image installs; a stage's `exclude:` and `include:`
+adjust that per image. A kit line marked `#atom` is built for the binhost but installed by no
+image, so the binhost can offer more than the ISOs ship.
+
+### Reproducible inputs
+
+- The `::gentoo` snapshot and the overlays are **pinned** per release: the snapshot by date,
+  and only once it is at least 7 days old; the overlays by commit.
+- A **generation** is everything built from one stage3 with one toolchain. Its fingerprint is
+  recorded in the binhost; if the toolchain changes, the build is refused instead of mixing
+  binpkgs from two toolchains, and a new generation starts from an empty binhost.
+- Every run is **audited**: its steps, the packages built or reused, and the result.
+
+### Why Python
+
+Portage *is* a Python library, so Shidashi speaks its language: recipes are validated with
+pydantic, and the build steps run `emerge` inside the containers.
 
 ## Requirements
 
