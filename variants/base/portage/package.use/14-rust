@@ -1,5 +1,5 @@
-# variants/base/portage/package.use/14-rust — Rust: the toolchain. dev-lang/rust is NOT in any set -- rust-bin is what
-# lands. The line records how to build it from source if that changes.
+# variants/base/portage/package.use/14-rust — Rust: the toolchain. Images ship rust-bin; dev-lang/rust
+# is catalog-only (kits/core/portage, `#dev-lang/rust`): these flags are how the binhost builds it.
 #
 # Numeric prefix: Portage reads this directory in sorted order and the LAST
 # file wins a conflict (measured 2026-09-13), so the number is precedence, not
@@ -14,7 +14,5 @@
 # Rust
 # No llvm_slot pin here any more: the global LLVM_SLOT is 22 and every current
 # dev-lang/rust declares LLVM_COMPAT=( 22 ), so the default already fits.
-# The atom itself is not in sets/bentoo-apps (see the note there); this line
-# records how to build it if it comes back.
 dev-lang/rust clippy llvm_targets_WebAssembly lto rustfmt rust-analyzer rust-src rust_sysroots_wasm system-llvm
 dev-lang/rust-bin clippy rustfmt

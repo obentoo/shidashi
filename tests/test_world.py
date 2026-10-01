@@ -204,3 +204,86 @@ def test_world_prints_kits_as_a_tree() -> None:
     out = CliRunner().invoke(app, ["world", "minimal", "systemd"]).output
     assert "\n@extra-system\n  @net-tools\n    net-dns/bind" in out
     assert "->" not in out.split("\n", 1)[1]  # no arrows below the header
+
+
+def _variants_copy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    import shutil
+
+    tree = tmp_path / "variants"
+    shutil.copytree(config.variants_dir(), tree)
+    monkeypatch.setenv("SHIDASHI_VARIANTS_DIR", str(tree))
+    return tree
+
+
+def test_a_catalog_line_is_in_the_kit_but_in_no_image(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The kits are the binhost's library: `#atom` keeps a line out of every
+    image without an exclude."""
+    from shidashi.resolve import kit_view, set_closure, world_atoms
+
+    tree = _variants_copy(tmp_path, monkeypatch)
+    kit = tree / "kits/core/shell"
+    prose = "# app-misc/screen is prose: a space after #\n"
+    kit.write_text(kit.read_text() + "#app-misc/tmux\n" + prose)
+    recipe = config.load_recipe("v3", "minimal", "systemd")
+    assert "app-misc/tmux" not in world_atoms(recipe)
+    shell = next(k for k in kit_view(recipe) if k.name == "shell")
+    assert shell.catalog == ("app-misc/tmux",)  # the spaced comment is not one
+    written = set_closure(recipe)["shell"]
+    assert not any(ln.startswith("app-misc/tmux") for ln in written)
+    assert "# shidashi: catalog only (binhost, not this image): app-misc/tmux" in written
+    out = CliRunner().invoke(app, ["world", "minimal", "systemd"]).output
+    assert "    app-misc/tmux  (catalog only)" in out
+
+
+def test_a_catalog_ref_keeps_the_whole_kit_out(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from shidashi.resolve import kit_view, world_atoms
+
+    tree = _variants_copy(tmp_path, monkeypatch)
+    kit = tree / "kits/core/base"
+    kit.write_text(kit.read_text().replace("@archive\n", "#@archive\n"))
+    archive = [ln for ln in (tree / "kits/core/archive").read_text().splitlines()
+               if ln and not ln.startswith("#")]
+    recipe = config.load_recipe("v3", "minimal", "systemd")
+    assert "archive" not in {k.name for k in kit_view(recipe)}
+    assert not set(archive) & set(world_atoms(recipe))
+
+
+def test_excluding_a_catalog_atom_is_an_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from shidashi.resolve import ResolveError, world_atoms
+
+    tree = _variants_copy(tmp_path, monkeypatch)
+    kit = tree / "kits/core/shell"
+    kit.write_text(kit.read_text().replace("app-editors/vim\n", "#app-editors/vim\n"))
+    recipe = config.load_recipe("v3", "minimal", "systemd")
+    redundant = recipe.model_copy(update={"exclude": ("app-editors/vim",)})
+    with pytest.raises(ResolveError, match="already catalog-only in kit 'shell'"):
+        world_atoms(redundant)
+
+
+def test_rust_is_catalog_only_and_images_ship_rust_bin() -> None:
+    from shidashi.resolve import world_atoms
+
+    for target in config.target_names():
+        atoms = world_atoms(config.load_recipe("v3", target, "systemd"))
+        assert "dev-lang/rust-bin" in atoms and "dev-lang/rust" not in atoms, target
+
+
+def test_kits_check_validates_catalog_lines(tmp_path: Path) -> None:
+    """A typo in a `#atom` line would otherwise pass: Portage never reads it."""
+    from shidashi import kits
+
+    lib = tmp_path / "kits" / "core"
+    lib.mkdir(parents=True)
+    (lib / "shell").write_text("# prose, skipped\n#app-misc/tmuxx\n#@nokit\n")
+    repo = tmp_path / "gentoo"
+    (repo / "app-misc" / "tmux").mkdir(parents=True)
+    problems = kits.check(tmp_path / "kits", {"gentoo": repo})
+    assert any("app-misc/tmuxx" in p for p in problems)
+    assert any("@nokit names no kit" in p for p in problems)
+    assert len(problems) == 2

@@ -13,6 +13,7 @@ via ``import portage``.
 
 import configparser
 import os
+import re
 import shutil
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
@@ -157,6 +158,9 @@ def set_closure(recipe: ResolvedRecipe) -> dict[str, list[str]]:
     closure: dict[str, list[str]] = {}
     for kit in kit_view(recipe):
         kept = list(kit.lines)
+        if kit.catalog:
+            kept.insert(0, "# shidashi: catalog only (binhost, not this image): "
+                           + " ".join(kit.catalog))
         if kit.dropped:
             kept.insert(0, f"# shidashi: excluded by flavor/{recipe.flavor}: "
                            + " ".join(sorted(kit.dropped)))
@@ -164,18 +168,33 @@ def set_closure(recipe: ResolvedRecipe) -> dict[str, list[str]]:
     return closure
 
 
+#: A catalog-only kit line: ``#`` glued to an atom or ``@ref`` -- ``#dev-lang/rust``,
+#: ``#@kde-apps``. The kits are the binhost's whole library; such a line is built for
+#: the binhost and installed by no image. A comment with a space (``# text``) is
+#: prose. On an ``@ref`` it keeps the whole referenced kit out of the images.
+CATALOG_LINE = re.compile(r"^#(@[\w.+-]+|[!<>=~]*[\w.+-]+/\S+)")
+
+
+def catalog_entry(line: str) -> str | None:
+    """The atom or ``@ref`` of a catalog-only line, else ``None``. Pure."""
+    match = CATALOG_LINE.match(line)
+    return match.group(1) if match else None
+
+
 @dataclass(frozen=True)
 class KitView:
     """One set of an image as the image gets it: what it keeps, what ``exclude:``
-    took out, and the ``@refs`` it pulls in."""
+    took out, what is catalog-only, and the ``@refs`` it pulls in."""
 
     name: str
     #: The set's lines, excluded atoms removed (comments and ``@refs`` kept).
     lines: tuple[str, ...]
     #: Atoms of this set that ``exclude:`` removed, in file order.
     dropped: tuple[str, ...]
-    #: Sets this one references, without the ``@``.
+    #: Sets this one references, without the ``@`` (catalog-only refs left out).
     refs: tuple[str, ...]
+    #: Catalog-only atoms and ``@refs`` (``#atom``): in the binhost, in no image.
+    catalog: tuple[str, ...] = ()
 
     @property
     def atoms(self) -> tuple[str, ...]:
@@ -211,7 +230,17 @@ def kit_view(recipe: ResolvedRecipe, *, optional: frozenset[str] = frozenset()) 
         kept: list[str] = []
         dropped: list[str] = []
         refs: list[str] = []
+        catalog: list[str] = []
         for line in src.read_text(encoding="utf-8").splitlines():
+            entry = catalog_entry(line)
+            if entry is not None:
+                if entry in excluded:
+                    raise ResolveError(
+                        f"exclude: {entry} is already catalog-only in kit {name!r} "
+                        f"(`#{entry}`): no image installs it, drop the exclude"
+                    )
+                catalog.append(entry)
+                continue
             token = line.split("#", 1)[0].split()
             if token and token[0].startswith("@"):
                 refs.append(token[0][1:])
@@ -221,7 +250,7 @@ def kit_view(recipe: ResolvedRecipe, *, optional: frozenset[str] = frozenset()) 
                 continue
             kept.append(line)
         pending[0:0] = refs
-        seen[name] = KitView(name, tuple(kept), tuple(dropped), tuple(refs))
+        seen[name] = KitView(name, tuple(kept), tuple(dropped), tuple(refs), tuple(catalog))
     # an exclude that matches nothing is a typo, or a package the chain never
     # had: silently ignored, it would leave in the image what it meant to take out
     unmatched = sorted(excluded - matched - optional)

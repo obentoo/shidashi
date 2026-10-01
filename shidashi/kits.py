@@ -14,7 +14,7 @@ from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-from shidashi.resolve import kit_index
+from shidashi.resolve import catalog_entry, kit_index
 
 #: Leading operators of a Portage atom (``>=``, ``~``, ``!!``...).
 _OPERATOR = re.compile(r"^(!!|!|>=|<=|=|~|<|>)")
@@ -51,10 +51,12 @@ def atom_parts(atom: str) -> tuple[str, str | None]:
 
 
 def iter_kits(kits_dir: Path) -> Iterator[tuple[str, int, str]]:
-    """Every token of every kit: ``(kit, line number, token)``. I/O."""
+    """Every token of every kit: ``(kit, line number, token)``, catalog-only lines
+    (``#atom``) included -- the binhost builds them, so they are checked too. I/O."""
     for name, path in sorted(kit_index(kits_dir).items()):
         for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-            token = line.split("#", 1)[0].split()
+            entry = catalog_entry(line)
+            token = [entry] if entry is not None else line.split("#", 1)[0].split()
             if token:
                 yield name, number, token[0]
 

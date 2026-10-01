@@ -1131,6 +1131,8 @@ def _echo_kit(by_name: dict[str, KitView], name: str, depth: int, printed: set[s
         typer.echo(f"{pad}  {atom}")
     for atom in kit.dropped:
         typer.echo(f"{pad}  {atom}  (excluded)")
+    for entry in kit.catalog:
+        typer.echo(f"{pad}  {entry}  (catalog only)")
     for ref in kit.refs:
         _echo_kit(by_name, ref, depth + 1, printed)
 
@@ -1158,9 +1160,11 @@ def _show_world(target: str, inits: list[str]) -> None:
             typer.echo()
         atoms = {a for kit in kits for a in kit.atoms}
         dropped = {a for kit in kits for a in kit.dropped}
+        catalog = {a for kit in kits for a in kit.catalog}
         typer.echo(
             f"{target}/{init}: {len(atoms)} packages from {len(kits)} kits, "
-            f"{len(dropped)} excluded ({' -> '.join(recipe.stages) or BASE_STAGE})"
+            f"{len(dropped)} excluded, {len(catalog)} catalog only "
+            f"({' -> '.join(recipe.stages) or BASE_STAGE})"
         )
         by_name = {kit.name: kit for kit in kits}
         printed: set[str] = set()

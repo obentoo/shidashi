@@ -13,6 +13,17 @@ Rules:
     tests/test_variants.py enforces it, and install_sets refuses a duplicate.
   - There is no same-name override between layers. A flavor tunes a set by
     declaring it, or by `exclude:`-ing atoms from it in its recipe.
+  - The kits are the binhost's library, not only the images' contents. A line
+    whose `#` is glued to an atom or @ref is built for the binhost and installed
+    by NO image:
+        #dev-lang/rust
+        #@kde-apps        (the whole kit)
+    A comment with a space (`# text`) is prose. To drop a package entirely,
+    delete its line: commenting it out WITHOUT a space puts it in the binhost.
+    shidashi drops the marked lines when it writes an image's sets
+    (shidashi.resolve.kit_view) and `shidashi kits check` validates them.
+    `exclude:` stays for per-image exceptions; excluding a catalog-only atom is
+    an error. `shidashi world <image>` lists both, marked.
   - This README is the only non-set file here; the index skips README and
     dotfiles.
 

@@ -38,4 +38,3 @@ exclude:
   - app-shells/zsh-completions
   - sys-fs/fuse
   - sys-fs/fuse:0
-  - dev-lang/rust
