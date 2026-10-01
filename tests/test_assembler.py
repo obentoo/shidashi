@@ -644,3 +644,14 @@ def test_a_configuration_that_did_not_apply_fails_the_assemble_before_the_squash
         Assembler(_recipe(), tmp_path / "binhost").assemble(tmp_path / "out.iso")
     assert squashed == []  # never packed
     assert (tmp_path / "scratch" / "assemble" / "znver5-kde-systemd").exists()
+
+
+def test_ships_nvidia_driver_reads_the_vdb(tmp_path: Path) -> None:
+    from shidashi.assembler import ships_nvidia_driver
+
+    assert not ships_nvidia_driver(tmp_path)
+    vdb = tmp_path / "var/db/pkg/x11-drivers"
+    (vdb / "nvidia-settings-595.10").mkdir(parents=True)
+    assert not ships_nvidia_driver(tmp_path)
+    (vdb / "nvidia-drivers-615.71.09").mkdir()
+    assert ships_nvidia_driver(tmp_path)

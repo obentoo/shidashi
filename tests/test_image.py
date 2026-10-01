@@ -207,3 +207,18 @@ def test_build_iso_missing_tool_raises(tmp_path: Path, monkeypatch: pytest.Monke
 
 def _ok() -> subprocess.CompletedProcess[str]:
     return subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+
+
+def test_grub_cfg_offers_the_open_nvidia_driver_only_when_asked() -> None:
+    """An image with nvidia-drivers blacklists nouveau; the entry brings it back
+    for the GPUs the proprietary driver dropped."""
+    from shidashi.image import OPEN_NVIDIA_ARGS
+
+    without = _grub_cfg(volume="B", title="T", text_target=None)
+    assert "open NVIDIA driver" not in without and "nouveau" not in without
+    cfg = _grub_cfg(volume="B", title="T", text_target=None, open_nvidia=True)
+    assert 'menuentry "T (open NVIDIA driver)"' in cfg
+    assert "modprobe.blacklist=nvidia,nvidia_drm,nvidia_modeset,nvidia_uvm" in OPEN_NVIDIA_ARGS
+    assert "rd.driver.pre=nouveau" in OPEN_NVIDIA_ARGS
+    assert cfg.index("(safe graphics)") < cfg.index("(open NVIDIA driver)")
+    assert cfg.startswith("set timeout=10\nset default=0")  # the proprietary boot stays first

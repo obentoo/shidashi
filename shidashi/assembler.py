@@ -176,6 +176,16 @@ def _dracut_argv(kver: str, initramfs: Path) -> list[str]:
     ]
 
 
+def ships_nvidia_driver(rootfs: Path) -> bool:
+    """Whether the image installed x11-drivers/nvidia-drivers (its vdb entry). I/O.
+
+    Decides the "open NVIDIA driver" boot entry: only that package blacklists
+    nouveau, so only its images need a way back to it.
+    """
+    vdb = rootfs / "var" / "db" / "pkg" / "x11-drivers"
+    return vdb.is_dir() and any(vdb.glob("nvidia-drivers-[0-9]*"))
+
+
 def _kernel_version(rootfs: Path) -> str:
     """Descobre a versão do kernel instalada via ``${rootfs}/lib/modules/`` (OVERVIEW §7).
 
@@ -501,6 +511,7 @@ class Assembler:
                         squashfs, iso, kernel=kernel, initramfs=initramfs, volume=volume,
                         title=publish.title(recipe, when), build_id=run.run_id or name,
                         text_target="multi-user.target" if recipe.init == "systemd" else None,
+                        open_nvidia=ships_nvidia_driver(rootfs),
                         extra={
                             **extra,
                             "bentoo/version": f"{name}{suffix}\n",

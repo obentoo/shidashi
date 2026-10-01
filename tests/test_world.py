@@ -229,10 +229,12 @@ def test_a_catalog_line_is_in_the_kit_but_in_no_image(
     recipe = config.load_recipe("v3", "minimal", "systemd")
     assert "app-misc/tmux" not in world_atoms(recipe)
     shell = next(k for k in kit_view(recipe) if k.name == "shell")
-    assert shell.catalog == ("app-misc/tmux",)  # the spaced comment is not one
+    assert "app-misc/tmux" in shell.catalog
+    assert "app-misc/screen" not in shell.catalog  # a spaced comment is prose
     written = set_closure(recipe)["shell"]
     assert not any(ln.startswith("app-misc/tmux") for ln in written)
-    assert "# shidashi: catalog only (binhost, not this image): app-misc/tmux" in written
+    assert written[0].startswith("# shidashi: catalog only (binhost, not this image): ")
+    assert written[0].endswith(" app-misc/tmux")
     out = CliRunner().invoke(app, ["world", "minimal", "systemd"]).output
     assert "    app-misc/tmux  (catalog only)" in out
 

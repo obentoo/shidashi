@@ -134,18 +134,40 @@ def _linux(volume: str, extra: str = "") -> str:
     return f"    linux /{_ISO_KERNEL} {args}\n    initrd /{_ISO_INITRD}\n"
 
 
-def _grub_cfg(*, volume: str, title: str, text_target: str | None, timeout: int = 10) -> str:
+#: The open-driver boot of an image that ships nvidia-drivers. That package's
+#: modprobe.d blacklists nouveau, so by default the proprietary driver takes the
+#: GPU -- and >=595 only drives Turing and newer, leaving Maxwell and Pascal with
+#: no driver at all. This keeps the proprietary modules out and loads nouveau
+#: explicitly in the initramfs (nouveau.ko is there; an explicit load ignores a
+#: blacklist, which only stops alias autoloading).
+OPEN_NVIDIA_ARGS = (
+    "modprobe.blacklist=nvidia,nvidia_drm,nvidia_modeset,nvidia_uvm rd.driver.pre=nouveau"
+)
+
+
+def _grub_cfg(
+    *,
+    volume: str,
+    title: str,
+    text_target: str | None,
+    open_nvidia: bool = False,
+    timeout: int = 10,
+) -> str:
     """The medium's boot menu. Pure.
 
     The entries the major distributions offer (Fedora, Ubuntu, Gentoo): the live
     session; safe graphics (``nomodeset``) for the GPU a driver cannot light up;
     copy to RAM (``rd.live.ram=1``) to free the USB stick; a text console
     (``text_target``, systemd's multi-user.target) to repair without a
-    desktop; the UEFI firmware settings; reboot and power off.
+    desktop; the UEFI firmware settings; reboot and power off. ``open_nvidia``
+    adds the nouveau boot for NVIDIA GPUs the proprietary driver dropped
+    (:data:`OPEN_NVIDIA_ARGS`).
     """
     entries = [
         (title, _linux(volume)),
         (f"{title} (safe graphics)", _linux(volume, "nomodeset")),
+        *([(f"{title} (open NVIDIA driver)", _linux(volume, OPEN_NVIDIA_ARGS))]
+          if open_nvidia else []),
         (f"{title} (copy to RAM)", _linux(volume, "rd.live.ram=1")),
     ]
     if text_target is not None:
@@ -198,6 +220,7 @@ def _stage_iso_tree(
     build_id: str,
     text_target: str | None,
     extra: Mapping[str, str | Path],
+    open_nvidia: bool = False,
 ) -> None:
     """Lay the medium out in ``iso_root`` (see the module's docstring). I/O only.
 
@@ -215,7 +238,8 @@ def _stage_iso_tree(
     _copy(kernel, iso_root / _ISO_KERNEL)
     _copy(initramfs, iso_root / _ISO_INITRD)
     (iso_root / "boot" / "grub" / "grub.cfg").write_text(
-        _grub_cfg(volume=volume, title=title, text_target=text_target), encoding="utf-8"
+        _grub_cfg(volume=volume, title=title, text_target=text_target, open_nvidia=open_nvidia),
+        encoding="utf-8",
     )
     (iso_root / ".disk" / "info").write_text(f"{title} ({build_id})\n", encoding="utf-8")
     (iso_root / ".disk" / "id").write_text(f"{build_id}\n", encoding="utf-8")
@@ -247,6 +271,7 @@ def build_iso(
     title: str = "Bentoo",
     build_id: str = "",
     text_target: str | None = None,
+    open_nvidia: bool = False,
     extra: Mapping[str, str | Path] | None = None,
 ) -> Path:
     """Make the hybrid live ISO ``output`` and return it. Needs ``grub-mkrescue``.
@@ -261,7 +286,8 @@ def build_iso(
         iso_root = Path(tmp)
         _stage_iso_tree(
             iso_root, squashfs=squashfs, kernel=kernel, initramfs=initramfs, volume=volume,
-            title=title, build_id=build_id, text_target=text_target, extra=extra or {},
+            title=title, build_id=build_id, text_target=text_target,
+            open_nvidia=open_nvidia, extra=extra or {},
         )
         _run(_grub_mkrescue_argv(iso_root, output, volume_id=volume))
     return output
