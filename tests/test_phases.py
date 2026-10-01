@@ -734,12 +734,120 @@ def test_every_stage_and_step_is_in_the_audit_trail(
         _run_chain(tmp_path, monkeypatch)
     manifest = audit.build_manifest(audit.read_events(trail.path / "events.jsonl"))
     steps = [s["step"] for s in manifest["steps"]]
-    assert steps[:4] == [
+    assert steps[:5] == [
         "stage:base/apply-config", "stage:base/write-cuts", "stage:base/emerge-stage",
-        "stage:base/fork-point",
+        "stage:base/module-rebuild", "stage:base/fork-point",
     ]
     assert "stage:minimal/settle" in steps and "stage:minimal/check-binpkgs" in steps
     assert steps[-1] == "stage:kde"
     emerge = next(s for s in manifest["steps"] if s["step"] == "stage:base/emerge-stage")
     assert emerge["argv"][:4] == ["emerge", "--verbose", "--usepkg", "--emptytree"]
     assert {"packages-base.json", "packages-kde.json"} <= set(manifest["attachments"])
+
+
+# --- module-rebuild (F83): modules for a kernel that is not installed ---------------
+
+
+def _kernel_rootfs(root: Path) -> Path:
+    """gentoo-kernel-bin installed; nvidia-drivers' modules from a binpkg built
+    for gentoo-kernel (the 2026-10-01 factory)."""
+    modules = root / "usr/lib/modules"
+    (modules / "7.2.6-gentoo-dist-bin").mkdir(parents=True)
+    (modules / "7.2.6-gentoo-dist-bin/vmlinuz").write_bytes(b"kernel")
+    (modules / "7.2.6-gentoo-dist/video").mkdir(parents=True)
+    (modules / "7.2.6-gentoo-dist/video/nvidia.ko").write_bytes(b"ko")
+    (modules / "7.2.6-gentoo-dist/modules.dep").write_text("")
+    vdb = root / "var/db/pkg"
+    (vdb / "x11-drivers/nvidia-drivers-615.71.09").mkdir(parents=True)
+    (vdb / "x11-drivers/nvidia-drivers-615.71.09/CONTENTS").write_text(
+        "dir /lib/modules/7.2.6-gentoo-dist\n"
+        "obj /lib/modules/7.2.6-gentoo-dist/video/nvidia.ko abc 1\n"
+    )
+    (vdb / "sys-kernel/gentoo-kernel-bin-7.2.6").mkdir(parents=True)
+    (vdb / "sys-kernel/gentoo-kernel-bin-7.2.6/CONTENTS").write_text(
+        "obj /usr/lib/modules/7.2.6-gentoo-dist-bin/vmlinuz abc 1\n"
+    )
+    return root
+
+
+class _RebuildContainer:
+    """Runs nothing: an emerge "rebuilds" nvidia-drivers against the -bin kernel
+    (its CONTENTS moves); rm removes the directory on the host path."""
+
+    def __init__(self, rootfs: Path, *, rebuild_moves: bool = True) -> None:
+        self.rootfs = rootfs
+        self.calls: list[list[str]] = []
+        self.rebuild_moves = rebuild_moves
+
+    def run(self, argv: Any, *, env: Any = None, check: bool = True) -> Any:
+        import shutil
+
+        from shidashi.container import CommandResult
+
+        self.calls.append(list(argv))
+        if argv[0] == "emerge" and self.rebuild_moves:
+            contents = self.rootfs / "var/db/pkg/x11-drivers/nvidia-drivers-615.71.09/CONTENTS"
+            contents.write_text("obj /lib/modules/7.2.6-gentoo-dist-bin/video/nvidia.ko d 2\n")
+        if argv[0] == "rm":
+            for path in argv[2:]:
+                shutil.rmtree(self.rootfs / path.lstrip("/"))
+        return CommandResult(0, "", "")
+
+
+def test_stale_module_dirs_are_the_ones_without_a_kernel(tmp_path: Path) -> None:
+    root = _kernel_rootfs(tmp_path)
+    assert phases.stale_module_dirs(root) == ("7.2.6-gentoo-dist",)
+    assert phases.module_owners(root, ("7.2.6-gentoo-dist",)) == (
+        "x11-drivers/nvidia-drivers-615.71.09",
+    )
+    assert phases.stale_module_dirs(tmp_path / "empty") == ()
+
+
+def test_no_kernel_installed_means_nothing_to_compare(tmp_path: Path) -> None:
+    (tmp_path / "usr/lib/modules/7.2.6-gentoo-dist").mkdir(parents=True)
+    assert phases.stale_module_dirs(tmp_path) == ()
+
+
+def test_module_rebuild_rebuilds_the_owners_from_source_and_drops_the_dir(
+    tmp_path: Path,
+) -> None:
+    root = _kernel_rootfs(tmp_path)
+    container = _RebuildContainer(root)
+    done = phases.module_rebuild(container, phase="desktop")  # type: ignore[arg-type]
+    assert done == {"stale": ["7.2.6-gentoo-dist"],
+                    "rebuilt": ["x11-drivers/nvidia-drivers-615.71.09"]}
+    assert container.calls[0] == [
+        "emerge", "--oneshot", "--verbose", "--usepkg=n", "=x11-drivers/nvidia-drivers-615.71.09"
+    ]
+    assert not (root / "usr/lib/modules/7.2.6-gentoo-dist").exists()
+    assert (root / "usr/lib/modules/7.2.6-gentoo-dist-bin/vmlinuz").exists()
+
+
+def test_module_rebuild_is_a_no_op_when_every_module_matches(tmp_path: Path) -> None:
+    root = _kernel_rootfs(tmp_path)
+    container = _RebuildContainer(root)
+    phases.module_rebuild(container, phase="desktop")  # type: ignore[arg-type]
+    container.calls.clear()
+    assert phases.module_rebuild(container, phase="kde") == {"stale": []}  # type: ignore[arg-type]
+    assert container.calls == []
+
+
+def test_module_rebuild_fails_when_the_rebuild_did_not_move_the_modules(tmp_path: Path) -> None:
+    root = _kernel_rootfs(tmp_path)
+    container = _RebuildContainer(root, rebuild_moves=False)
+    with pytest.raises(phases.FactoryError, match="still owned by x11-drivers/nvidia-drivers"):
+        phases.module_rebuild(container, phase="desktop")  # type: ignore[arg-type]
+    assert (root / "usr/lib/modules/7.2.6-gentoo-dist").exists()  # kept for diagnosis
+
+
+def test_the_flow_runs_module_rebuild_before_the_fork_point() -> None:
+    from shidashi.flow import StagesFlow
+
+    kinds = [s.do for s in phases.stages_flow().steps]
+    assert kinds.index("emerge-stage") < kinds.index("module-rebuild") < kinds.index("snapshot")
+    bad = phases.stages_flow().model_dump()
+    steps = [s for s in bad["steps"] if s["do"] != "module-rebuild"]
+    steps.append({"name": "modules", "do": "module-rebuild"})  # after snapshot
+    bad["steps"] = steps
+    with pytest.raises(ValueError, match="module-rebuild must come after emerge-stage"):
+        StagesFlow.model_validate(bad)

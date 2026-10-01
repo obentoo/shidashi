@@ -131,7 +131,8 @@ class _StageStep(BaseModel):
     model_config = _STRICT
     name: str
     do: Literal[
-        "apply-config", "write-cuts", "emerge-stage", "settle", "snapshot", "check-binpkgs"
+        "apply-config", "write-cuts", "emerge-stage", "module-rebuild", "settle", "snapshot",
+        "check-binpkgs",
     ]
 
 
@@ -173,6 +174,15 @@ class StagesFlow(BaseModel):
         at = kinds.index("emerge-stage")
         if kinds.index("apply-config") > at or kinds.index("write-cuts") > at:
             raise ValueError("apply-config and write-cuts must come before emerge-stage")
+        if kinds.count("module-rebuild") > 1:
+            raise ValueError("stages.steps needs `module-rebuild` at most once")
+        if "module-rebuild" in kinds and not (
+            at < kinds.index("module-rebuild") < kinds.index("snapshot")
+        ):
+            raise ValueError(
+                "module-rebuild must come after emerge-stage and before snapshot: "
+                "the fork point must not keep modules for a kernel that is gone"
+            )
         if kinds.count("check-binpkgs") > 1:
             raise ValueError("stages.steps needs `check-binpkgs` at most once")
         if "check-binpkgs" in kinds and kinds.index("check-binpkgs") < kinds.index("settle"):

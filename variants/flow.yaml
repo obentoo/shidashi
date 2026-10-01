@@ -81,6 +81,10 @@ stages:
     - {name: cuts, do: write-cuts}         # this stage's use_break → package.use
     - {name: emerge, do: emerge-stage}
     # after the emerge
+    - {name: modules, do: module-rebuild}  # out-of-tree modules built for a kernel
+                                           # that is not installed (a reused binpkg
+                                           # from before a kernel swap): rebuild
+                                           # their packages from source (F83)
     - {name: settle, do: settle}           # only where the stage `ships`: undo the
                                            # cuts pending since the last settle, on
                                            # the packages that are installed (F72)

@@ -750,6 +750,85 @@ def _run_emerge(
     return parse_built_atoms(raw_output), raw_output
 
 
+# --- module-rebuild (F83) --------------------------------------------------------
+#
+# A binpkg of an out-of-tree module (nvidia-drivers, r8168...) carries modules for
+# the kernel it was BUILT against. Portage reuses it while `virtual/dist-kernel`'s
+# subslot is unchanged -- and gentoo-kernel-7.2.6 and gentoo-kernel-bin-7.2.6 share
+# it, though their modules live in different directories (7.2.6-gentoo-dist vs
+# 7.2.6-gentoo-dist-bin). After the swap the image had its modules for a kernel it
+# did not have (2026-10-01). This step finds such directories and rebuilds their
+# owners from source, against the kernel actually installed.
+
+#: The rootfs's modules directory (``/lib`` is a symlink to ``usr/lib``).
+_MODULES = Path("usr") / "lib" / "modules"
+_VDB = Path("var") / "db" / "pkg"
+
+
+def stale_module_dirs(rootfs: Path) -> tuple[str, ...]:
+    """Kernel-version directories under /lib/modules with no kernel in them. I/O.
+
+    A kernel's directory holds its image (``vmlinuz``, where kernel-install and
+    the dist-kernels put it); one without is left by modules built for a kernel
+    that is not installed. ``()`` when no kernel is installed at all: nothing to
+    compare against yet.
+    """
+    root = rootfs / _MODULES
+    if not root.is_dir():
+        return ()
+    dirs = sorted(d for d in root.iterdir() if d.is_dir())
+    kernels = {d.name for d in dirs if (d / "vmlinuz").exists() or (d / "vmlinuz").is_symlink()}
+    if not kernels:
+        return ()
+    return tuple(d.name for d in dirs if d.name not in kernels)
+
+
+def module_owners(rootfs: Path, kernel_versions: Sequence[str]) -> tuple[str, ...]:
+    """The packages (``category/package-version``) that installed files under
+    those /lib/modules directories, read from the vdb's CONTENTS. I/O."""
+    if not kernel_versions:
+        return ()
+    prefixes = tuple(
+        f"{base}/modules/{kv}/" for kv in kernel_versions for base in ("/lib", "/usr/lib")
+    )
+    owners: set[str] = set()
+    vdb = rootfs / _VDB
+    for contents in sorted(vdb.glob("*/*/CONTENTS")):
+        for line in contents.read_text(encoding="utf-8", errors="replace").splitlines():
+            parts = line.split(" ", 1)
+            if len(parts) == 2 and parts[0] in ("obj", "sym") and parts[1].startswith(prefixes):
+                owners.add(f"{contents.parent.parent.name}/{contents.parent.name}")
+                break
+    return tuple(sorted(owners))
+
+
+def module_rebuild(container: Container, *, phase: str) -> dict[str, object]:
+    """Rebuild, from source, every package with modules for a kernel that is not
+    installed; drop the directories left empty of packages. PRIVILEGED.
+
+    Built WITH buildpkg: the new binpkg instance is the one later builds and the
+    assembler pick. Fails when a stale directory still has an owner afterwards.
+    """
+    rootfs = container.rootfs
+    stale = stale_module_dirs(rootfs)
+    if not stale:
+        return {"stale": []}
+    owners = module_owners(rootfs, stale)
+    if owners:
+        argv = ["emerge", "--oneshot", "--verbose", "--usepkg=n", *(f"={o}" for o in owners)]
+        _run_emerge(container, argv, phase=phase)
+    left = module_owners(rootfs, stale)
+    if left:
+        raise FactoryError(
+            f"modules for a kernel that is not installed ({', '.join(stale)}) are still "
+            f"owned by {', '.join(left)} after the rebuild",
+            phase=phase,
+        )
+    # what remains is depmod's output for a kernel that is gone: no package owns it
+    container.run(["rm", "-rf", *(f"/{_MODULES}/{kv}" for kv in stale)], check=True)
+    return {"stale": list(stale), "rebuilt": list(owners)}
+
+
 def run_phase(
     container: Container, recipe: ResolvedRecipe, phase: Phase, *, emptytree: bool
 ) -> PhaseResult:
@@ -945,7 +1024,10 @@ def run_phases(
             pending += phase.use_break
             # the steps after the emerge, in the order variants/flow.yaml declares them
             for kind in after:
-                if kind == "settle" and phase.ships:
+                if kind == "module-rebuild":
+                    with audit.current().step("module-rebuild") as step:
+                        step.add(**module_rebuild(container, phase=phase.name))
+                elif kind == "settle" and phase.ships:
                     results.append(_audited_settle(container, recipe, pending, phase.stage))
                     pending = ()
                 elif kind == "snapshot" and phase.stage:
@@ -1125,7 +1207,10 @@ def run_phases_stepwise(
 
         # the steps after the emerge, in the order variants/flow.yaml declares them
         for kind in after:
-            if kind == "settle" and phase.ships:
+            if kind == "module-rebuild":
+                with audit.current().step("module-rebuild") as step:
+                    step.add(**module_rebuild(container, phase=phase.name))
+            elif kind == "settle" and phase.ships:
                 results.append(
                     _audited_settle(container, recipe, run.accumulated_breaks, phase.stage)
                 )
