@@ -26,7 +26,7 @@ from typing import Any
 
 import pytest
 
-from shidashi import factory, phases
+from shidashi import config, factory, phases
 from shidashi.recipe import Phase, ResolvedRecipe, SeedSource
 from tests._pending import try_import
 
@@ -346,9 +346,12 @@ def _tarball_of(tmp_path: Path, name: str, marker: str) -> Path:
 
 def _no_fresh_seed(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     seeded: list[str] = []
-    monkeypatch.setattr(
-        factory, "_fresh_seed", lambda *a, **k: seeded.append("fresh") or "", raising=False
-    )
+
+    def fresh_seed(*_a: object, **_k: object) -> str:
+        seeded.append("fresh")
+        return ""
+
+    monkeypatch.setattr(factory, "_fresh_seed", fresh_seed, raising=False)
     return seeded
 
 
@@ -470,7 +473,7 @@ def test_update_refuses_a_pkgdir_without_a_generation(
 ) -> None:
     pkgdir = _update_env(monkeypatch, tmp_path)
     recipe = _staged_recipe().model_copy(update={"stages": ("base", "kde")})
-    fps = factory.config.fork_points_dir()
+    fps = config.fork_points_dir()
     fps.mkdir(parents=True)
     (tmp_path / "fp").mkdir()
     _tarball_of(tmp_path, "img", "kde image")
@@ -488,12 +491,12 @@ def test_seed_or_restore_wipes_a_leftover_rootfs_before_a_fresh_seed(
     (rootfs / "etc").mkdir(parents=True)
     (rootfs / "etc" / "leftover").write_text("from the failed run", encoding="utf-8")
     seen: list[bool] = []
-    monkeypatch.setattr(
-        factory,
-        "_fresh_seed",
-        lambda root, *a, **k: seen.append((root / "etc" / "leftover").exists()) or "",
-        raising=False,
-    )
+
+    def fresh_seed(root: Path, *_a: object, **_k: object) -> str:
+        seen.append((root / "etc" / "leftover").exists())
+        return ""
+
+    monkeypatch.setattr(factory, "_fresh_seed", fresh_seed, raising=False)
     (tmp_path / "fp").mkdir()
     factory._seed_or_restore(
         _staged_recipe(),

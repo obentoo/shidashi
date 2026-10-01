@@ -653,11 +653,11 @@ def test_the_kde_layer_is_not_in_force_until_the_kde_stage(
     recipe = _recipe("kde")
     witness = _MakeConfWitness(tmp_path / "rootfs")
     phases.run_phases(
-        witness,
+        witness,  # type: ignore[arg-type]
         recipe,
         emptytree=True,
         snapshot="S",
-        fork_points_dir=tmp_path,  # type: ignore[arg-type]
+        fork_points_dir=tmp_path,
     )
     # not the settles (--oneshot) nor the binpkg checks (--pretend)
     stage_emerges = [s for s in witness.seen if "--oneshot" not in s[0] and "--pretend" not in s[0]]

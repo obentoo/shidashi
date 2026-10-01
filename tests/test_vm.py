@@ -2,6 +2,7 @@
 
 import base64
 import json
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -188,9 +189,19 @@ def test_boot_test_reports_a_failed_check(tmp_path: Path, monkeypatch: pytest.Mo
     assert "os-release" in failed
 
 
+@pytest.mark.skipif(shutil.which("xorriso") is None, reason="needs xorriso (dev-libs/libisoburn)")
 def test_read_build_info_refuses_an_iso_without_one(tmp_path: Path) -> None:
     with pytest.raises(vm.VmError, match="build.json"):
         vm.read_build_info(tmp_path / "missing.iso")
+
+
+def test_read_build_info_names_a_missing_xorriso(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Without xorriso the user got a bare FileNotFoundError (found by `act`)."""
+    monkeypatch.setattr(shutil, "which", lambda _tool: None)
+    with pytest.raises(vm.VmError, match="xorriso is needed"):
+        vm.read_build_info(tmp_path / "any.iso")
 
 
 def test_load_session_needs_a_started_vm(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

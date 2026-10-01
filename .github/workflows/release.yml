@@ -2,8 +2,9 @@
 #
 # Dois gatilhos:
 #   * push / pull_request -> job `quality` (real): roda em runner padrao, sem
-#     Gentoo. Lint (ruff check) + format (ruff format --check) + tipos (mypy) +
-#     testes (pytest).
+#     Gentoo. Instala pelo uv.lock (--frozen); lint (ruff check) + format (ruff
+#     format --check) + tipos (mypy) + testes (pytest). Rode antes do push com
+#     `act -j quality`.
 #   * schedule (semanal)  -> job `weekly-release` (scaffold): a matriz
 #     arch x init x desktop. Gated com `if: false` porque precisa de um
 #     runner self-hosted Gentoo (OVERVIEW fase 4) — documenta a intencao sem
@@ -21,28 +22,37 @@ jobs:
   quality:
     name: quality (lint + types + tests)
     runs-on: ubuntu-latest
+    # read-only token: this job only checks out and runs the local gates
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python 3.14
-        uses: actions/setup-python@v5
+      # Actions pinned by commit SHA, never a mutable tag (the tag in the comment).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
+
+      - name: Set up uv and Python 3.14
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.12.21"
           python-version: "3.14"
 
-      - name: Install (editable + dev)
-        run: pip install -e .[dev]
+      # Frozen: exactly uv.lock, never a fresh resolution (pyproject's [tool.uv]
+      # also refuses any version younger than 7 days).
+      - name: Install (locked, with dev)
+        run: uv sync --frozen --extra dev
 
       - name: Ruff check
-        run: ruff check .
+        run: uv run --frozen ruff check .
 
       - name: Ruff format --check
-        run: ruff format --check .
+        run: uv run --frozen ruff format --check .
 
       - name: Mypy (strict)
-        run: mypy .
+        run: uv run --frozen mypy .
 
       - name: Pytest
-        run: pytest
+        run: uv run --frozen pytest
 
   weekly-release:
     name: weekly-release (scaffold — needs Gentoo runner)
@@ -58,8 +68,12 @@ jobs:
         arch: [v3, znver5, arrowlake]
         init: [systemd, openrc]
         desktop: [minimal, kde, gnome, wm]
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       # TODO(phase-4): seed stage3 -> shidashi factory -> shidashi assemble -> publicar
       #   o artefato da combinacao arch x desktop x init da matriz.
       - name: Placeholder

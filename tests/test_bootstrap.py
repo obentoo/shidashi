@@ -45,7 +45,7 @@ class FakeContainer:
         self.calls: list[list[str]] = []
         self.locales = ["C", "C.utf8", "POSIX", "en_US.utf8", "pt_BR.utf8"]
         self.fail_on: str | None = None
-        self.on_emerge: dict[str, Callable[[], None]] = {
+        self.on_emerge: dict[str, Callable[[], object]] = {
             "sys-devel/binutils": lambda: self._slot("binutils", f"{_CHOST}-2.45"),
             "sys-devel/gcc": lambda: self._slot("gcc", f"{_CHOST}-15"),
         }

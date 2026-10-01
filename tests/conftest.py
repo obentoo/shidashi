@@ -1,8 +1,16 @@
 """Shared fixtures."""
 
+import os
 from pathlib import Path
 
 import pytest
+
+# Typer decides at IMPORT time to force colored help when it sees one of these
+# (a CI runner sets GITHUB_ACTIONS): ANSI codes then split "--format" and the
+# help tests fail on the runner only (found by `act -j quality`). Cleared here,
+# before any test module imports typer.
+for _var in ("GITHUB_ACTIONS", "FORCE_COLOR", "PY_COLORS"):
+    os.environ.pop(_var, None)
 
 
 @pytest.fixture(autouse=True)

@@ -323,14 +323,17 @@ class _RecordingContainer:
 
 def _run_chain(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, **kw: Any) -> Any:
     snaps: list[str] = []
-    monkeypatch.setattr(
-        phases, "snapshot_fork_point", lambda _root, dest: snaps.append(dest.name) or dest
-    )
+
+    def snapshot(_root: Path, dest: Path) -> Path:
+        snaps.append(dest.name)
+        return dest
+
+    monkeypatch.setattr(phases, "snapshot_fork_point", snapshot)
     container = _RecordingContainer(tmp_path / "rootfs")
     # the settle only redoes cuts on INSTALLED packages: python is in the image
     (tmp_path / "rootfs" / "var/db/pkg/dev-lang/python-3.14.7").mkdir(parents=True)
     results = phases.run_phases(
-        container,
+        container,  # type: ignore[arg-type]
         _chain_recipe(),
         emptytree=True,
         snapshot="S",
@@ -644,7 +647,7 @@ def test_the_steps_after_the_emerge_run_in_the_declared_order(
     monkeypatch.setattr(phases, "settle_pass", _settle)
     container = _RecordingContainer(tmp_path / "rootfs")
     phases.run_phases(
-        container,
+        container,  # type: ignore[arg-type]
         _chain_recipe(),
         emptytree=True,
         snapshot="S",

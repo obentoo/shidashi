@@ -427,10 +427,10 @@ def test_assemble_orchestrates_seed_emerge_dracut_squashfs_iso(
     assert f"{audit.sha256_file(out)}  {out.name}" in sums
     # the medium carries its metadata; the squashfs its exclude list, zstd by default
     extra = iso_kwargs[0]["extra"]
-    assert set(extra) >= {
+    assert set(extra) >= {  # type: ignore[call-overload]
         "bentoo/world",
         "bentoo/packages.txt",
-        "bentoo/version",  # type: ignore[call-overload]
+        "bentoo/version",
         "bentoo/build.json",
     }
     assert iso_kwargs[0]["volume"] == "BENTOO_KDE"

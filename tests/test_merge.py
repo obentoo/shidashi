@@ -337,4 +337,4 @@ def test_stage_fragment_forbids_the_old_use_prefer() -> None:
     """use_prefer never reached the build; a YAML still carrying it must fail
     loudly instead of being ignored."""
     with pytest.raises(ValidationError):
-        StageFragment(stage="kde", after="desktop", use_prefer={"add": ["qt6"]})
+        StageFragment(stage="kde", after="desktop", use_prefer={"add": ["qt6"]})  # type: ignore[call-arg]

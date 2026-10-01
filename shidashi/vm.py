@@ -382,6 +382,8 @@ def load_session(name: str) -> Session:
 
 def read_build_info(iso: Path) -> dict[str, Any]:
     """The ISO's own ``bentoo/build.json`` (xorriso, no mount, no root). I/O."""
+    if shutil.which("xorriso") is None:
+        raise VmError("xorriso is needed to read the ISO's bentoo/build.json (dev-libs/libisoburn)")
     with tempfile.TemporaryDirectory() as tmp:
         dest = Path(tmp) / "build.json"
         done = subprocess.run(
