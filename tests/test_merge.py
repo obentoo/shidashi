@@ -25,7 +25,6 @@ from shidashi.recipe import (
     stage_layer,
     stage_phase_name,
 )
-from shidashi.state import recipe_hash
 
 # --- fragment builders -------------------------------------------------------
 
@@ -50,11 +49,7 @@ def make_arch(
     cpu_flags_x86: tuple[str, ...] = ("sse2", "avx"),
     runnable_on_build_host: bool = True,
     tier: int = 1,
-    seed_source: str | None = None,
 ) -> ArchFragment:
-    # an omitted seed_source (None) exercises the model's default; when given it
-    # is passed raw, so that invalid values ("metro") are left to pydantic.
-    extra: dict[str, Any] = {} if seed_source is None else {"seed_source": seed_source}
     return ArchFragment(
         arch=arch,
         common_flags=common_flags,
@@ -63,7 +58,6 @@ def make_arch(
         cpu_flags_x86=cpu_flags_x86,
         runnable_on_build_host=runnable_on_build_host,
         tier=tier,
-        **extra,
     )
 
 
@@ -135,35 +129,6 @@ def test_arch_knobs_copied_through() -> None:
     assert r.cpu_flags_x86 == ("sse2", "avx", "avx2")
     assert r.runnable_on_build_host is False
     assert r.tier == 2
-
-
-# --- seed_source (R1.1–R1.4, story 005) ---------------------------------------
-
-
-def test_seed_source_defaults_to_download() -> None:
-    # arch without seed_source -> default "download" propagated to the resolved recipe.
-    r = merge(make_base(), make_arch(), make_chain(), make_init())
-    assert r.seed_source == "download"
-
-
-def test_seed_source_catalyst_surfaces_on_resolved() -> None:
-    r = merge(make_base(), make_arch(seed_source="catalyst"), make_chain(), make_init())
-    assert r.seed_source == "catalyst"
-
-
-def test_seed_source_invalid_value_rejected() -> None:
-    # any value outside {download, catalyst} fails when the fragment is loaded.
-    with pytest.raises(ValidationError):
-        make_arch(seed_source="metro")
-
-
-def test_seed_source_changes_recipe_hash() -> None:
-    # including seed_source in the resolved recipe makes the recipe_hash sensitive
-    # to it, so that earlier persisted state is detected as stale (is_stale).
-    base, chain, init = make_base(), make_chain(), make_init()
-    h_download = recipe_hash(merge(base, make_arch(seed_source="download"), chain, init))
-    h_catalyst = recipe_hash(merge(base, make_arch(seed_source="catalyst"), chain, init))
-    assert h_download != h_catalyst
 
 
 # --- stages: names, layers, phases (D24) --------------------------------------

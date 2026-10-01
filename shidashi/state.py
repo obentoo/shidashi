@@ -85,9 +85,8 @@ class BuildState(BaseModel):
     snapshot: str
     recipe_hash: str
     seed_done: bool = False
-    # SHA-512 of the stage3 built locally by Catalyst (story 005); empty
-    # when the seed came from a download. Additive/defaulted: old JSON (without the
-    # field) still loads under extra="forbid".
+    # Unused since the Catalyst seed was removed; always empty. Kept only so
+    # older state files (which carry it) still load under extra="forbid".
     seed_sha512: str = ""
     #: The toolchain bootstrap ran over the seed (BOOTSTRAP-PROCESS §5). Additive
     #: and defaulted, like seed_sha512: older state files still load.

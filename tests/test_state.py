@@ -107,7 +107,7 @@ def test_build_state_defaults_and_collections_are_tuples() -> None:
     assert full.phase_diffs[0].phase == "rebuild"
 
 
-# --- seed_sha512 (R4.1/R4.2, story 005) -------------------------------------
+# --- seed_sha512: unused, kept so older state files load -------------------
 
 
 def test_build_state_seed_sha512_defaults_empty() -> None:

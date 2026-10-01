@@ -25,7 +25,6 @@ import pydantic
 
 from shidashi import audit, config, isacheck, state
 from shidashi.bootstrap import BootstrapResult, run_bootstrap
-from shidashi.catalyst import build_stage3_catalyst
 from shidashi.container import Container
 from shidashi.generation import FINGERPRINT_FILE, check_or_record, fingerprint
 from shidashi.phases import (
@@ -134,45 +133,18 @@ def _require_root() -> None:
         )
 
 
-def _fresh_seed(
-    rootfs: Path, pointer: Stage3Pointer, *, download: bool, recipe: ResolvedRecipe
-) -> str:
-    """Seed a **fresh** rootfs from the ``pointer``'s stage3 (R1.4/R8.2/R5.x).
+def _fresh_seed(rootfs: Path, pointer: Stage3Pointer, *, download: bool) -> None:
+    """Seed a **fresh** rootfs from the ``pointer``'s stage3 (R1.4/R8.2).
 
-    Returns the ``seed_sha512`` of the locally built stage3 — ``""`` when the
-    seed came from a download (story 005). Branches on ``recipe.seed_source``:
-
-    * ``download`` (default): :func:`shidashi.seed.fetch_stage3` (cache under
-      :func:`shidashi.config.cache_dir`) followed by :func:`shidashi.seed.extract_stage3`
-      (which already creates ``rootfs``). It is the EXACT body of the original fresh
-      branch — no extra ``rmtree``/``mkdir`` — so that the one-shot does not change (R8.2/R5.2).
-    * ``catalyst``: the downloaded/verified generic stage3 becomes the bootstrap
-      SEED of :func:`shidashi.catalyst.build_stage3_catalyst`, which produces a
-      stage3 with the target's ``-march`` (specs under ``catalyst_spec_dir``, output under
-      ``catalyst_dir``, ``portage_confdir`` = ``variants/arch/<arch>/portage``);
-      the produced tarball is extracted and its SHA-512 returned (R5.1/R4.1).
-      ``catalyst`` runs on the host — NEVER nested in the :class:`Container`/nspawn.
+    :func:`shidashi.seed.fetch_stage3` (cache under :func:`shidashi.config.cache_dir`)
+    followed by :func:`shidashi.seed.extract_stage3` (which already creates ``rootfs``).
 
     PRIVILEGED sub-step shared by the fresh path of
     :func:`_seed_or_restore` and by the "no state" case of :meth:`Factory.build_stepwise`;
-    ``fetch_stage3``/``extract_stage3``/``build_stage3_catalyst`` are module
-    globals (monkeypatchable in the tests).
+    ``fetch_stage3``/``extract_stage3`` are module globals (monkeypatchable in the tests).
     """
     tarball = fetch_stage3(pointer, cache_dir=config.cache_dir(), download=download)
-    if recipe.seed_source == "catalyst":
-        stage3, seed_sha512 = build_stage3_catalyst(
-            recipe,
-            tarball,
-            version_stamp=pointer.snapshot,
-            snapshot_treeish=pointer.snapshot,
-            confdir=config.variants_dir() / "arch" / recipe.arch / "portage",
-            scratch_dir=config.catalyst_spec_dir(recipe.arch),
-            output_dir=config.catalyst_dir(recipe.arch),
-        )
-        extract_stage3(stage3, rootfs)
-        return seed_sha512
     extract_stage3(tarball, rootfs)
-    return ""
 
 
 def bootstrap_fork_point_path(
@@ -259,7 +231,7 @@ def _seed_or_restore(
     # a fresh seed is a fresh ROOTFS: a failed --keep run leaves its tree behind,
     # and a stage3 extracted over it would inherit whatever that run broke
     shutil.rmtree(rootfs, ignore_errors=True)
-    _fresh_seed(rootfs, pointer, download=download, recipe=recipe)
+    _fresh_seed(rootfs, pointer, download=download)
     return None, fork_point_path, False, False
 
 
@@ -876,11 +848,9 @@ class Factory:
             )
             return self._seed_checkpoint(rootfs, recipe, on_checkpoint) if interactive else False
 
-        # Fresh seed, and persist the seed_done milestone. When
-        # seed_source=catalyst, _fresh_seed returns the sha512 of the locally built
-        # stage3, pinned in the BuildState (R4.1); empty on the download path.
+        # Fresh seed, and persist the seed_done milestone.
         shutil.rmtree(rootfs, ignore_errors=True)  # no state: nothing to keep
-        seed_sha512 = _fresh_seed(rootfs, pointer, download=download, recipe=recipe)
+        _fresh_seed(rootfs, pointer, download=download)
         state.save_state(
             state_path,
             state.BuildState(
@@ -890,7 +860,6 @@ class Factory:
                 snapshot=snapshot,
                 recipe_hash=recipe_hash,
                 seed_done=True,
-                seed_sha512=seed_sha512,
             ),
         )
         if interactive:

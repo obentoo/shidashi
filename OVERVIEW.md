@@ -13,7 +13,7 @@
 
 ### Pillars
 
-1. **Layering, not a seed chain** — by **default** it starts from a ready-made stage3 and does not recompile stage1→2→3; optionally (`seed_source: catalyst`) it generates the microarch seed chain via Catalyst (see §5.1).
+1. **Layering, not a seed chain** — it starts from a ready-made stage3 and does not recompile stage1→2→3 (see §5.1).
 2. **Two decoupled subsystems** — *Package Factory* (compiles) and *ISO Assembler* (assembles).
 3. **Composition along three axes** — `arch × flavor × init`, without combinatorial explosion.
 4. **Clean environments per flavor** — KDE/Qt and GNOME/GTK never coexist in the same build.
@@ -55,7 +55,7 @@
 - **Third-party extensibility**: "recipe is data" — anyone adds their own arch/init/desktop in YAML.
 
 ### Non-goals (explicitly out of scope)
-- By **default** (`seed_source: download`) it starts from a ready-made official stage3 and does **not** recompile the seed chain. **Optionally**, per arch (`seed_source: catalyst` in `recipe.yaml`), Shidashi *generates* a stage3 with the target's `-march` via **Catalyst** (recompiles stage1→2→3), using the already verified generic stage3 as the bootstrap seed — producing microarchitectures to order (仕出し). See §5.1.
+- It does **not** recompile the seed chain: it starts from a ready-made official stage3. See §5.1.
 - It is **not** a graphical installer (Calamares/etc. is a component *of the live medium*, not of the builder).
 - It does **not** pursue **bit-for-bit reproducibility** (byte-identical ISO) — only *input* reproducibility.
   Bit-for-bit on Gentoo (timestamps, build paths) would cost disproportionately; out of scope for now.
@@ -87,9 +87,9 @@
 stage3 (official) ──▶ [bentoo layer: config + packages] ──▶ bentoo stage4 ──▶ ISO
 ```
 
-Unlike Catalyst/Metro (which do `seed → stage1 → stage2 → stage3`), the bentoo-builder **by default starts from a ready-made stage3** and applies a layer. Conceptually close to **Calculate Linux** (`cl-builder`/`cl-image`), but without the coupling to the Calculate ecosystem.
+Unlike Catalyst/Metro (which do `seed → stage1 → stage2 → stage3`), the bentoo-builder **starts from a ready-made stage3** and applies a layer. Conceptually close to **Calculate Linux** (`cl-builder`/`cl-image`), but without the coupling to the Calculate ecosystem.
 
-**Optional per-arch seed source (story 005).** When an arch declares `seed_source: catalyst`, Shidashi inverts that premise *for that target*: it invokes **Catalyst** to produce a stage3 with the specific `-march` (`seed → stage1 → stage2 → stage3`), using the generic stage3 (already downloaded and verified by GPG+SHA-512) as the **bootstrap seed**. The `-march`/GOAMD64/CPU_FLAGS come in through Catalyst's `portage_confdir` — which reuses the existing `variants/arch/<arch>/portage/` — and not through `subarch` (which stays at the `amd64` baseline). The resulting stage3 is pinned by SHA-512 in the `BuildState` and continues down the same extraction → stage4 layer pipeline. The default (`download`) stays unchanged.
+**No Catalyst seed.** Building a per-microarch stage3 with Catalyst was tried and removed: the generic stage3 is only a seed, and the toolchain bootstrap and every stage recompile it with the arch's `-march` anyway, so Catalyst would rebuild what the pipeline already rebuilds.
 
 ### 5.2 The three axes of variation
 

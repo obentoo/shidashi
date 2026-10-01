@@ -21,7 +21,6 @@ _ENV_VAR = "SHIDASHI_VARIANTS_DIR"
 _SCRATCH_ENV = "SHIDASHI_SCRATCH"
 _CACHE_ENV = "SHIDASHI_CACHE"
 _SEEDS_ENV = "SHIDASHI_SEEDS_DIR"
-_CATALYST_ENV = "SHIDASHI_CATALYST_DIR"
 _RUNS_ENV = "SHIDASHI_RUNS"
 
 
@@ -233,29 +232,6 @@ def pkgdir(arch: str, generation: str | None = None) -> Path:
     """
     base = cache_dir() / "binpkgs" / arch
     return base / generation if generation is not None else base
-
-
-def catalyst_dir(arch: str) -> Path:
-    """Return the per-arch Catalyst storedir/output directory (story 005).
-
-    Partitioned by ``arch`` (like :func:`pkgdir`) so that stage3 tarballs of
-    different microarchitectures do not collide. Honors the dedicated
-    ``SHIDASHI_CATALYST_DIR`` override (read per call); when unset, uses
-    ``cache_dir()/catalyst`` -- thus inheriting the ``SHIDASHI_CACHE`` override.
-    """
-    override = os.environ.get(_CATALYST_ENV)
-    base = Path(override) if override else cache_dir() / "catalyst"
-    return base / arch
-
-
-def catalyst_spec_dir(arch: str) -> Path:
-    """Return the per-arch directory of ephemeral Catalyst specs (story 005).
-
-    The stage1/2/3 specs are regenerated on every build, so they live under
-    scratch: ``scratch_dir()/catalyst/<arch>``. Inherits the ``SHIDASHI_SCRATCH``
-    override (read per call) from :func:`scratch_dir`.
-    """
-    return scratch_dir() / "catalyst" / arch
 
 
 def ccache_dir() -> Path:

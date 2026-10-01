@@ -14,8 +14,6 @@ from shidashi.config import (
     available_names,
     axis_dir,
     base_path,
-    catalyst_dir,
-    catalyst_spec_dir,
     recipe_path,
     variants_dir,
 )
@@ -128,26 +126,3 @@ def test_recipe_path_unknown_name_raises_with_available(variants_tree: Path) -> 
     msg = str(excinfo.value)
     for name in _FIXTURE["flavor"]:
         assert name in msg
-
-
-# --- catalyst paths (R3.5, story 005) ----------------------------------------
-
-
-def test_catalyst_dir_is_arch_partitioned(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    # default under cache_dir()/catalyst/<arch>; partitioned per arch like pkgdir.
-    monkeypatch.delenv("SHIDASHI_CATALYST_DIR", raising=False)
-    monkeypatch.setenv("SHIDASHI_CACHE", str(tmp_path))
-    assert catalyst_dir("znver5") == tmp_path / "catalyst" / "znver5"
-    assert catalyst_dir("znver5") != catalyst_dir("v3")
-
-
-def test_catalyst_dir_honors_dedicated_override(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setenv("SHIDASHI_CATALYST_DIR", str(tmp_path / "cat"))
-    assert catalyst_dir("znver5") == tmp_path / "cat" / "znver5"
-
-
-def test_catalyst_spec_dir_under_scratch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("SHIDASHI_SCRATCH", str(tmp_path))
-    assert catalyst_spec_dir("znver5") == tmp_path / "catalyst" / "znver5"

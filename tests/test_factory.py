@@ -27,7 +27,7 @@ from typing import Any
 import pytest
 
 from shidashi import config, factory, phases
-from shidashi.recipe import Phase, ResolvedRecipe, SeedSource
+from shidashi.recipe import Phase, ResolvedRecipe
 from tests._pending import try_import
 
 Factory: Any = try_import("shidashi.factory", "Factory")
@@ -45,7 +45,6 @@ def _recipe(
     flavor: str = "kde",
     sets: tuple[str, ...] = ("base", "extra-system", "kde"),
     phases_: tuple[Phase, ...] = (),
-    seed_source: SeedSource = "download",
 ) -> ResolvedRecipe:
     return ResolvedRecipe(
         arch="v3",
@@ -61,7 +60,6 @@ def _recipe(
         sets=sets,
         phases=phases_,
         portage_layers=("base", "arch/v3", "flavor/kde", "init/systemd"),
-        seed_source=seed_source,
     )
 
 
@@ -234,95 +232,18 @@ def test_full_factory_build_v3_minimal_systemd() -> None:
     pytest.skip("privileged integration: requires a seeded Gentoo host (deferred Red)")
 
 
-# --- seed_source seam: download vs catalyst (R5.1–R5.3, R4.1; story 005) ------
+# --- fresh seed: fetch + extract the stage3 ------------------------------------
 
 
-def test_fresh_seed_download_branch_unchanged(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # R5.2 — seed_source=download: fetch+extract as before, catalyst never touched.
+def test_fresh_seed_fetches_then_extracts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     generic = tmp_path / "generic.tar.xz"
     extracted: dict[str, Any] = {}
     monkeypatch.setattr(factory, "fetch_stage3", lambda p, **k: generic, raising=False)
     monkeypatch.setattr(
         factory, "extract_stage3", lambda tb, rf: extracted.update(tarball=tb), raising=False
     )
-
-    def _no_catalyst(*_a: Any, **_k: Any) -> Any:
-        raise AssertionError("build_stage3_catalyst must not be called on download")
-
-    monkeypatch.setattr(factory, "build_stage3_catalyst", _no_catalyst, raising=False)
-    sha = factory._fresh_seed(
-        tmp_path / "rootfs", _pointer(), download=True, recipe=_recipe(seed_source="download")
-    )
-    assert sha == ""
+    factory._fresh_seed(tmp_path / "rootfs", _pointer(), download=True)
     assert extracted["tarball"] == generic
-
-
-def test_fresh_seed_catalyst_branch_builds_then_extracts(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # R5.1 — seed_source=catalyst: fetch (seed) → build → extract of the generated tarball.
-    order: list[str] = []
-    generic = tmp_path / "generic.tar.xz"
-    cat_tarball = tmp_path / "cat-stage3.tar.xz"
-
-    def _fetch(p: Any, **k: Any) -> Path:
-        order.append("fetch")
-        return generic
-
-    def _build(recipe: Any, seed: Any, **k: Any) -> tuple[Path, str]:
-        order.append("build")
-        assert seed == generic  # the seed that gets built is the generic stage3
-        return cat_tarball, "ab" * 64
-
-    monkeypatch.setattr(factory, "fetch_stage3", _fetch, raising=False)
-    monkeypatch.setattr(factory, "build_stage3_catalyst", _build, raising=False)
-    monkeypatch.setattr(
-        factory, "extract_stage3", lambda tb, rf: order.append(f"extract:{tb.name}"), raising=False
-    )
-    sha = factory._fresh_seed(
-        tmp_path / "rootfs", _pointer(), download=True, recipe=_recipe(seed_source="catalyst")
-    )
-    assert sha == "ab" * 64
-    assert order == ["fetch", "build", "extract:cat-stage3.tar.xz"]
-
-
-def test_stepwise_persists_catalyst_seed_sha512(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # R5.3/R4.1 — in the stepwise driver (no-state case), the sha of the built stage3 is
-    # persisted in the BuildState.
-    from shidashi import state
-
-    monkeypatch.setattr(
-        factory,
-        "_fresh_seed",
-        lambda rootfs, pointer, *, download, recipe: "cafe" * 32,
-        raising=False,
-    )
-    state_path = tmp_path / "state.json"
-    recipe = _recipe(seed_source="catalyst")
-    fac = Factory(recipe, tmp_path / "pkg")
-    stop = fac._seed_or_restore_stepwise(
-        recipe,
-        tmp_path / "rootfs",
-        _pointer(),
-        snapshot="SNAP",
-        recipe_hash="h",
-        fork_points_dir=tmp_path / "fp",
-        state_path=state_path,
-        completed=(),
-        seed_done=False,
-        interactive=False,
-        download=True,
-        on_checkpoint=None,
-    )
-    assert stop is False
-    saved = state.load_state(state_path)
-    assert saved is not None
-    assert saved.seed_sha512 == "cafe" * 32
-    assert saved.seed_done is True
 
 
 # --- toolchain bootstrap: where a build starts from (BOOTSTRAP-PROCESS §5) ------
@@ -347,9 +268,8 @@ def _tarball_of(tmp_path: Path, name: str, marker: str) -> Path:
 def _no_fresh_seed(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     seeded: list[str] = []
 
-    def fresh_seed(*_a: object, **_k: object) -> str:
+    def fresh_seed(*_a: object, **_k: object) -> None:
         seeded.append("fresh")
-        return ""
 
     monkeypatch.setattr(factory, "_fresh_seed", fresh_seed, raising=False)
     return seeded
@@ -492,9 +412,8 @@ def test_seed_or_restore_wipes_a_leftover_rootfs_before_a_fresh_seed(
     (rootfs / "etc" / "leftover").write_text("from the failed run", encoding="utf-8")
     seen: list[bool] = []
 
-    def fresh_seed(root: Path, *_a: object, **_k: object) -> str:
+    def fresh_seed(root: Path, *_a: object, **_k: object) -> None:
         seen.append((root / "etc" / "leftover").exists())
-        return ""
 
     monkeypatch.setattr(factory, "_fresh_seed", fresh_seed, raising=False)
     (tmp_path / "fp").mkdir()

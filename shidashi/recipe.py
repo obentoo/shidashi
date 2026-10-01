@@ -23,7 +23,6 @@ from typing import Any, Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, ValidationError
 
-type SeedSource = Literal["download", "catalyst"]  # source of the seed stage3 (story 005)
 type UpdateMode = Literal["emptytree", "newuse"]
 
 _STRICT = ConfigDict(frozen=True, extra="forbid")
@@ -139,10 +138,6 @@ class ArchFragment(BaseModel):
     cpu_flags_x86: tuple[str, ...]
     runnable_on_build_host: bool = False
     tier: int = 2
-    # source of the seed stage3 (story 005): "download" fetches the generic one
-    # (default, backward compatible); "catalyst" builds a stage3 with the target's
-    # -march via Catalyst.
-    seed_source: SeedSource = "download"
 
 
 class InitFragment(BaseModel):
@@ -183,9 +178,6 @@ class ResolvedRecipe(BaseModel):
     portage_layers: tuple[str, ...]
     #: The chain, base first: ``("base", "minimal", "desktop", "kde")``.
     stages: tuple[str, ...] = ()
-    # the "download" default keeps code that builds ResolvedRecipe directly
-    # backward compatible; merge() always fills it explicitly from the arch.
-    seed_source: SeedSource = "download"
 
 
 class RecipeSourceError(Exception):
@@ -353,7 +345,6 @@ def merge(
         phases=tuple(phases),
         portage_layers=(*head_layers, *stage_layers, init_layer),
         stages=tuple(st.stage for st in chain),
-        seed_source=arch.seed_source,
     )
 
 
@@ -392,7 +383,7 @@ def load_arch(path: Path) -> ArchFragment:
     """Load an arch fragment, taking the build knobs from its make.conf.
 
     ``recipe.yaml`` carries identity and policy (``arch``, ``tier``,
-    ``runnable_on_build_host``, ``seed_source``); the flags that decide how code
+    ``runnable_on_build_host``); the flags that decide how code
     is compiled come from ``portage/make.conf`` next to it, which is the file
     the build itself reads. Declaring either of the four in the YAML is an error
     rather than an override -- see :class:`RecipeSourceError`.

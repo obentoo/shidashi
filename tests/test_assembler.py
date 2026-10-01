@@ -90,7 +90,6 @@ def _recipe(
         exclude=exclude,
         phases=(),
         portage_layers=("base", "arch/znver5", "flavor/kde", "init/systemd"),
-        seed_source="download",
     )
 
 
