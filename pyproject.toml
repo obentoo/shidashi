@@ -4,7 +4,8 @@ version = "0.0.1"
 description = "Shidashi — catering de builds e ISOs do bentoo (Gentoo stage4) a partir de um stage3."
 readme = "README.md"
 requires-python = ">=3.14"
-license = { text = "GPL-2.0-or-later" }
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [{ name = "lucascs", email = "lucascs@protonmail.com" }]
 dependencies = [
     "pydantic>=2.10",   # wheels pydantic-core p/ CPython 3.14

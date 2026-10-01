@@ -56,4 +56,4 @@ shidashi release --all                    # orquestra a matriz inteira
 
 ## Licença
 
-GPL-2.0-or-later.
+MIT — veja [LICENSE](LICENSE).
