@@ -126,8 +126,13 @@ def test_iso_emerge_argv_targets_system_plus_flavor_sets() -> None:
 def test_iso_emerge_argv_jobs_merges_binpkgs_in_parallel() -> None:
     argv = iso_emerge_argv(_recipe(sets=("kde",)), jobs=8)
     assert argv[:7] == [
-        "emerge", "--usepkgonly", "--binpkg-respect-use=y", "--emptytree", "--verbose",
-        "--jobs", "8",
+        "emerge",
+        "--usepkgonly",
+        "--binpkg-respect-use=y",
+        "--emptytree",
+        "--verbose",
+        "--jobs",
+        "8",
     ]
     assert argv[-2:] == ["@system", "@kde"]
 
@@ -339,8 +344,9 @@ def test_assemble_orchestrates_seed_emerge_dracut_squashfs_iso(
         output.write_bytes(b"SQ")
         return output
 
-    def fake_iso(squashfs: Path, output: Path, *, kernel: Path, initramfs: Path,
-                 **kw: object) -> Path:
+    def fake_iso(
+        squashfs: Path, output: Path, *, kernel: Path, initramfs: Path, **kw: object
+    ) -> Path:
         iso_calls.append((squashfs, output, kernel, initramfs))
         iso_kwargs.append(kw)
         output.parent.mkdir(parents=True, exist_ok=True)  # o build_iso real faz isto
@@ -368,9 +374,11 @@ def test_assemble_orchestrates_seed_emerge_dracut_squashfs_iso(
     recipe = _recipe(sets=()).model_copy(
         update={
             "phases": (
-                Phase(name="desktop", stage="desktop", use_break=(
-                    UseBreak(atom="media-video/pipewire", flag="ffmpeg"),
-                )),
+                Phase(
+                    name="desktop",
+                    stage="desktop",
+                    use_break=(UseBreak(atom="media-video/pipewire", flag="ffmpeg"),),
+                ),
             )
         }
     )
@@ -383,10 +391,22 @@ def test_assemble_orchestrates_seed_emerge_dracut_squashfs_iso(
     manifest = audit.build_manifest(audit.read_events(trail.path / "events.jsonl"))
     # every step of the ISO is in the audit trail, in order, and the ISO with its hash
     assert [st["step"] for st in manifest["steps"]] == [
-        "seed", "configure", "install", "settle", "depclean", "preserved-rebuild",
-        "system", "live", "initramfs", "finalize", "verify-config", "sbom", "squashfs:zstd",
+        "seed",
+        "configure",
+        "install",
+        "settle",
+        "depclean",
+        "preserved-rebuild",
+        "system",
+        "live",
+        "initramfs",
+        "finalize",
+        "verify-config",
+        "sbom",
+        "squashfs:zstd",
         "iso:zstd",
-        "publish:zstd", "cleanup",
+        "publish:zstd",
+        "cleanup",
     ]
     assert all(st["status"] == "ok" for st in manifest["steps"])
     assert manifest["artifacts"][0]["role"] == "iso:zstd"
@@ -396,14 +416,23 @@ def test_assemble_orchestrates_seed_emerge_dracut_squashfs_iso(
     assert result.isos == (out,) and result.name == "bentoo-2026.09.30-kde-systemd-znver5"
     # beside the ISO, the published artifacts of the major distributions
     names = {p.name for p in result.artifacts}
-    assert {out.name + ".DIGESTS", out.name + ".packages", out.name + ".contents.gz",
-            "SHA256SUMS", "latest-znver5-kde-systemd.txt"} <= names
+    assert {
+        out.name + ".DIGESTS",
+        out.name + ".packages",
+        out.name + ".contents.gz",
+        "SHA256SUMS",
+        "latest-znver5-kde-systemd.txt",
+    } <= names
     sums = (out_dir / "SHA256SUMS").read_text()
     assert f"{audit.sha256_file(out)}  {out.name}" in sums
     # the medium carries its metadata; the squashfs its exclude list, zstd by default
     extra = iso_kwargs[0]["extra"]
-    assert set(extra) >= {"bentoo/world", "bentoo/packages.txt", "bentoo/version",  # type: ignore[call-overload]
-                          "bentoo/build.json"}
+    assert set(extra) >= {
+        "bentoo/world",
+        "bentoo/packages.txt",
+        "bentoo/version",  # type: ignore[call-overload]
+        "bentoo/build.json",
+    }
     assert iso_kwargs[0]["volume"] == "BENTOO_KDE"
     assert iso_kwargs[0]["text_target"] == "multi-user.target"
     assert squash_kwargs[0]["compression"] == "zstd"

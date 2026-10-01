@@ -14,10 +14,19 @@ from shidashi.update import ToolchainChangeError, run_update, toolchain_changes,
 
 def _recipe() -> ResolvedRecipe:
     return ResolvedRecipe(
-        arch="v3", flavor="kde", init="systemd",
+        arch="v3",
+        flavor="kde",
+        init="systemd",
         profile="default/linux/amd64/23.0/no-multilib/systemd",
-        common_flags="-O2", goamd64="v3", rustflags="", cpu_flags_x86=(), tier=1,
-        runnable_on_build_host=True, sets=("base", "kde"), phases=(), portage_layers=(),
+        common_flags="-O2",
+        goamd64="v3",
+        rustflags="",
+        cpu_flags_x86=(),
+        tier=1,
+        runnable_on_build_host=True,
+        sets=("base", "kde"),
+        phases=(),
+        portage_layers=(),
         stages=("base", "minimal", "desktop", "kde"),
     )
 
@@ -55,8 +64,16 @@ class FakeContainer:
 
 def test_update_argv_updates_world_and_the_images_sets_reusing_binpkgs() -> None:
     assert update_argv(_recipe()) == [
-        "emerge", "--verbose", "--usepkg", "--update", "--deep", "--newuse", "--changed-deps",
-        "@world", "@base", "@kde",
+        "emerge",
+        "--verbose",
+        "--usepkg",
+        "--update",
+        "--deep",
+        "--newuse",
+        "--changed-deps",
+        "@world",
+        "@base",
+        "@kde",
     ]
     assert "--pretend" in update_argv(_recipe(), pretend=True)
 
@@ -64,7 +81,8 @@ def test_update_argv_updates_world_and_the_images_sets_reusing_binpkgs() -> None
 def test_toolchain_changes_ignore_rebuilds_and_lookalike_names() -> None:
     assert toolchain_changes(parse_emerge_plan(_PLAN_OK)[0]) == ()
     assert toolchain_changes(parse_emerge_plan(_PLAN_GCC)[0]) == (
-        "sys-devel/gcc-16.2.0", "sys-libs/glibc-2.44",
+        "sys-devel/gcc-16.2.0",
+        "sys-libs/glibc-2.44",
     )
 
 
@@ -72,7 +90,9 @@ def test_run_update_plans_then_updates_then_rebuilds_preserved_libs() -> None:
     c = FakeContainer(_PLAN_OK)
     result = run_update(c, _recipe())  # type: ignore[arg-type]
     assert [("--pretend" in a, a[-1]) for a in c.calls] == [
-        (True, "@kde"), (False, "@kde"), (False, "@preserved-rebuild"),
+        (True, "@kde"),
+        (False, "@kde"),
+        (False, "@preserved-rebuild"),
     ]
     assert result.phase.name == "update"
     assert result.phase.stage == "kde"

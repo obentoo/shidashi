@@ -70,9 +70,9 @@ def installed_version(rootfs: Path, cp: str) -> str:
         return ""
     prefix = f"{name}-"
     versions = [
-        d.name[len(prefix):]
+        d.name[len(prefix) :]
         for d in vdb.iterdir()
-        if d.is_dir() and d.name.startswith(prefix) and d.name[len(prefix):][:1].isdigit()
+        if d.is_dir() and d.name.startswith(prefix) and d.name[len(prefix) :][:1].isdigit()
     ]
     return max(versions, key=natural_key) if versions else ""
 

@@ -95,7 +95,7 @@ def repo_state(repo: Path = _REPO) -> dict[str, Any]:
             done = subprocess.run(
                 ["git", "-C", str(repo), *args], capture_output=True, text=True, check=True
             )
-        except (OSError, subprocess.CalledProcessError):
+        except OSError, subprocess.CalledProcessError:
             return None
         return done.stdout.strip()
 

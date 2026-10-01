@@ -32,6 +32,7 @@ FactoryResult: Any = try_import("shidashi.factory", "FactoryResult")
 
 runner = CliRunner()
 
+
 @pytest.fixture
 def variants_tree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """The shared stage-format tree (tests/_variants_tree.py), pointed at by the env."""

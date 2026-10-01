@@ -398,12 +398,18 @@ def test_stepwise_settles_each_shipped_stage_right_after_it(
     container.rootfs = tmp_path  # the base's cut is really written, then removed
     (tmp_path / "var/db/pkg/dev-lang/python-3.14.7").mkdir(parents=True)  # installed
     results = _stepwise(
-        container, _recipe(phases_=chain), monkeypatch,
+        container,
+        _recipe(phases_=chain),
+        monkeypatch,
         on_checkpoint=lambda *_a: CheckpointDecision.CONTINUE,
     )
     assert [(r.phase.name, r.phase.stage) for r in results] == [
-        ("base", "base"), ("minimal", "minimal"), ("settle", "minimal"),
-        ("desktop", "desktop"), ("flavor", "kde"), ("settle", "kde"),
+        ("base", "base"),
+        ("minimal", "minimal"),
+        ("settle", "minimal"),
+        ("desktop", "desktop"),
+        ("flavor", "kde"),
+        ("settle", "kde"),
     ]
     # the first settle redoes the trunk cut; the second has nothing pending
     # (not the binpkg check's --pretend replay of the assembler's settle)

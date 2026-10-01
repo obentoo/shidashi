@@ -32,10 +32,16 @@ class ToolchainChangeError(FactoryError):
 def update_argv(recipe: ResolvedRecipe, *, pretend: bool = False) -> list[str]:
     """``emerge -uDN --changed-deps`` over @world and the image's sets. Pure."""
     return [
-        "emerge", "--verbose", "--usepkg",
-        "--update", "--deep", "--newuse", "--changed-deps",
+        "emerge",
+        "--verbose",
+        "--usepkg",
+        "--update",
+        "--deep",
+        "--newuse",
+        "--changed-deps",
         *(["--pretend"] if pretend else []),
-        "@world", *(f"@{name}" for name in recipe.sets),
+        "@world",
+        *(f"@{name}" for name in recipe.sets),
     ]
 
 

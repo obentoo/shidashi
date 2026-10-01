@@ -246,8 +246,10 @@ def _exclude_origin(chain: tuple[StageFragment, ...], init: InitFragment) -> dic
     """Each excluded atom -> the first layer that excludes it, chain order then
     the init. Pure."""
     origin: dict[str, str] = {}
-    for layer, atoms in (*((st.stage, st.exclude) for st in chain),
-                         (f"init/{init.init}", init.exclude)):
+    for layer, atoms in (
+        *((st.stage, st.exclude) for st in chain),
+        (f"init/{init.init}", init.exclude),
+    ):
         for atom in atoms:
             origin.setdefault(atom, layer)
     return origin
@@ -341,9 +343,7 @@ def merge(
         tier=arch.tier,
         runnable_on_build_host=arch.runnable_on_build_host,
         sets=_ordered_unique(tuple(s for st in chain for s in stage_sets[st.stage])),
-        exclude=_ordered_unique(
-            (*(a for st in chain for a in st.exclude), *init.exclude)
-        ),
+        exclude=_ordered_unique((*(a for st in chain for a in st.exclude), *init.exclude)),
         exclude_origin=_exclude_origin(chain, init),
         includes=includes,
         phases=tuple(phases),

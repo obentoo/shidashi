@@ -125,7 +125,7 @@ def render_quirks(quirks: tuple[Quirk, ...], *, source: str) -> dict[str, str]:
     mask_lines: list[str] = []
     for q in quirks:
         if q.features:
-            files[f"{ENV_PREFIX}{q.env_file[len('quirk-'):]}"] = (
+            files[f"{ENV_PREFIX}{q.env_file[len('quirk-') :]}"] = (
                 f"{header}# {q.atom} -- found: {q.found}\n{_comment(q.why)}\n"
                 f'FEATURES="{" ".join(q.features)}"\n'
             )

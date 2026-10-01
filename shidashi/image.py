@@ -108,8 +108,14 @@ def _mksquashfs_argv(
     cap = ["-processors", str(processors)] if processors is not None else []
     exclude = ["-wildcards", "-ef", str(exclude_file)] if exclude_file is not None else []
     return [
-        "mksquashfs", str(rootfs), str(output), *COMPRESSION[compression],
-        "-noappend", "-no-progress", *cap, *exclude,
+        "mksquashfs",
+        str(rootfs),
+        str(output),
+        *COMPRESSION[compression],
+        "-noappend",
+        "-no-progress",
+        *cap,
+        *exclude,
     ]
 
 
@@ -124,8 +130,15 @@ def make_squashfs(
     """Pack ``rootfs`` into ``output`` and return it. Needs ``mksquashfs``."""
     _require_tool("mksquashfs")
     output.parent.mkdir(parents=True, exist_ok=True)
-    _run(_mksquashfs_argv(rootfs, output, compression=compression,
-                          exclude_file=exclude_file, processors=processors))
+    _run(
+        _mksquashfs_argv(
+            rootfs,
+            output,
+            compression=compression,
+            exclude_file=exclude_file,
+            processors=processors,
+        )
+    )
     return output
 
 
@@ -166,8 +179,11 @@ def _grub_cfg(
     entries = [
         (title, _linux(volume)),
         (f"{title} (safe graphics)", _linux(volume, "nomodeset")),
-        *([(f"{title} (open NVIDIA driver)", _linux(volume, OPEN_NVIDIA_ARGS))]
-          if open_nvidia else []),
+        *(
+            [(f"{title} (open NVIDIA driver)", _linux(volume, OPEN_NVIDIA_ARGS))]
+            if open_nvidia
+            else []
+        ),
         (f"{title} (copy to RAM)", _linux(volume, "rd.live.ram=1")),
     ]
     if text_target is not None:
@@ -196,8 +212,15 @@ def _grub_mkrescue_argv(iso_root: Path, output: Path, *, volume_id: str) -> list
     the kernel command line looks for.
     """
     return [
-        "grub-mkrescue", "-o", str(output), "-iso-level", "3", str(iso_root),
-        "--", "-volid", volume_id,
+        "grub-mkrescue",
+        "-o",
+        str(output),
+        "-iso-level",
+        "3",
+        str(iso_root),
+        "--",
+        "-volid",
+        volume_id,
     ]
 
 
@@ -255,9 +278,10 @@ def _stage_iso_tree(
 def _copy(src: Path, dest: Path) -> None:
     """``cp --reflink=auto``: instant on btrfs, a plain copy elsewhere."""
     try:
-        subprocess.run(["cp", "--reflink=auto", "--", str(src), str(dest)], check=True,
-                       capture_output=True)
-    except (OSError, subprocess.CalledProcessError):
+        subprocess.run(
+            ["cp", "--reflink=auto", "--", str(src), str(dest)], check=True, capture_output=True
+        )
+    except OSError, subprocess.CalledProcessError:
         shutil.copy2(src, dest)
 
 
@@ -285,9 +309,16 @@ def build_iso(
     with tempfile.TemporaryDirectory(prefix=".shidashi-iso-", dir=output.parent) as tmp:
         iso_root = Path(tmp)
         _stage_iso_tree(
-            iso_root, squashfs=squashfs, kernel=kernel, initramfs=initramfs, volume=volume,
-            title=title, build_id=build_id, text_target=text_target,
-            open_nvidia=open_nvidia, extra=extra or {},
+            iso_root,
+            squashfs=squashfs,
+            kernel=kernel,
+            initramfs=initramfs,
+            volume=volume,
+            title=title,
+            build_id=build_id,
+            text_target=text_target,
+            open_nvidia=open_nvidia,
+            extra=extra or {},
         )
         _run(_grub_mkrescue_argv(iso_root, output, volume_id=volume))
     return output

@@ -358,8 +358,12 @@ def test_seed_or_restore_without_checkpoints_seeds_fresh_and_asks_for_bootstrap(
     seeded = _no_fresh_seed(monkeypatch)
     (tmp_path / "fp").mkdir()
     resume, _fp, reused, bootstrapped = factory._seed_or_restore(
-        _staged_recipe(), tmp_path / "rootfs", _pointer(),
-        snapshot="S", fork_points_dir=tmp_path / "fp", download=False,
+        _staged_recipe(),
+        tmp_path / "rootfs",
+        _pointer(),
+        snapshot="S",
+        fork_points_dir=tmp_path / "fp",
+        download=False,
     )
     assert (resume, reused, bootstrapped) == (None, False, False)
     assert seeded == ["fresh"]
@@ -377,7 +381,12 @@ def test_seed_or_restore_restores_the_bootstrap_checkpoint_instead_of_the_stage3
     rootfs = tmp_path / "rootfs"
 
     resume, _fp, reused, bootstrapped = factory._seed_or_restore(
-        recipe, rootfs, _pointer(), snapshot="S", fork_points_dir=tmp_path / "fp", download=False,
+        recipe,
+        rootfs,
+        _pointer(),
+        snapshot="S",
+        fork_points_dir=tmp_path / "fp",
+        download=False,
     )
     assert (resume, reused, bootstrapped) == (None, False, True)
     assert seeded == []
@@ -395,7 +404,12 @@ def test_seed_or_restore_prefers_a_stage_fork_point_over_the_bootstrap(
     rootfs = tmp_path / "rootfs"
 
     resume, _fp, reused, bootstrapped = factory._seed_or_restore(
-        recipe, rootfs, _pointer(), snapshot="S", fork_points_dir=tmp_path / "fp", download=False,
+        recipe,
+        rootfs,
+        _pointer(),
+        snapshot="S",
+        fork_points_dir=tmp_path / "fp",
+        download=False,
     )
     assert (resume, reused, bootstrapped) == ("base", True, True)
     assert (rootfs / "etc" / "marker").read_text(encoding="utf-8") == "base built"
@@ -475,13 +489,18 @@ def test_seed_or_restore_wipes_a_leftover_rootfs_before_a_fresh_seed(
     (rootfs / "etc" / "leftover").write_text("from the failed run", encoding="utf-8")
     seen: list[bool] = []
     monkeypatch.setattr(
-        factory, "_fresh_seed",
+        factory,
+        "_fresh_seed",
         lambda root, *a, **k: seen.append((root / "etc" / "leftover").exists()) or "",
         raising=False,
     )
     (tmp_path / "fp").mkdir()
     factory._seed_or_restore(
-        _staged_recipe(), rootfs, _pointer(),
-        snapshot="S", fork_points_dir=tmp_path / "fp", download=False,
+        _staged_recipe(),
+        rootfs,
+        _pointer(),
+        snapshot="S",
+        fork_points_dir=tmp_path / "fp",
+        download=False,
     )
     assert seen == [False]

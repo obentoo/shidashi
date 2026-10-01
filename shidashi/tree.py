@@ -121,12 +121,25 @@ def verify_detached(data: Path, signature: Path, *, keyring: Path = GENTOO_KEYRI
     try:
         subprocess.run(
             ["gpg", "--homedir", home, "--batch", "--quiet", "--import", str(keyring)],
-            capture_output=True, text=True, check=False,
+            capture_output=True,
+            text=True,
+            check=False,
         )
         result = subprocess.run(
-            ["gpg", "--homedir", home, "--batch", "--status-fd", "1",
-             "--verify", str(signature), str(data)],
-            capture_output=True, text=True, check=False,
+            [
+                "gpg",
+                "--homedir",
+                home,
+                "--batch",
+                "--status-fd",
+                "1",
+                "--verify",
+                str(signature),
+                str(data),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
         )
     finally:
         shutil.rmtree(home, ignore_errors=True)
@@ -160,9 +173,7 @@ def fetch_snapshot(
     if cached.is_file() and _sha512(cached) == pin.sha512:
         return cached
     if not download:
-        raise TreeError(
-            f"--no-download: ::gentoo snapshot {pin.filename} is not in {trees}"
-        )
+        raise TreeError(f"--no-download: ::gentoo snapshot {pin.filename} is not in {trees}")
     trees.mkdir(parents=True, exist_ok=True)
     tmp = Path(tempfile.mkdtemp(prefix="shidashi-tree-", dir=trees))
     try:
@@ -283,11 +294,10 @@ def ensure_overlay(pin: OverlayPin, *, cache_dir: Path, download: bool = True) -
     have = _git(["--git-dir", str(gitdir), "cat-file", "-e", f"{pin.commit}^{{commit}}"])
     if have.returncode != 0:
         if not download:
-            raise TreeError(
-                f"--no-download: {pin.name} commit {pin.commit} is not in {gitdir}"
-            )
-        fetched = _git(["--git-dir", str(gitdir), "fetch", "--quiet", "--depth", "1",
-                        pin.url, pin.commit])
+            raise TreeError(f"--no-download: {pin.name} commit {pin.commit} is not in {gitdir}")
+        fetched = _git(
+            ["--git-dir", str(gitdir), "fetch", "--quiet", "--depth", "1", pin.url, pin.commit]
+        )
         if fetched.returncode != 0:
             raise TreeError(
                 f"cannot fetch {pin.name} {pin.commit} from {pin.url}: {fetched.stderr.strip()}"
@@ -297,13 +307,16 @@ def ensure_overlay(pin: OverlayPin, *, cache_dir: Path, download: bool = True) -
     try:
         archive = subprocess.run(
             ["git", "--git-dir", str(gitdir), "archive", "--format=tar", pin.commit],
-            capture_output=True, check=False,
+            capture_output=True,
+            check=False,
         )
         if archive.returncode != 0:
             raise TreeError(f"git archive {pin.commit} failed: {archive.stderr.decode().strip()}")
         untar = subprocess.run(
             ["tar", "--extract", "--directory", str(tmp)],
-            input=archive.stdout, capture_output=True, check=False,
+            input=archive.stdout,
+            capture_output=True,
+            check=False,
         )
         if untar.returncode != 0:
             raise TreeError(f"extracting {pin.name} failed: {untar.stderr.decode().strip()}")
@@ -324,10 +337,11 @@ def pinned_repos(
     Bound in place of the host's clones by factory, assemble and pretend, so
     the binpkgs and the ISO come from the same ebuilds on both repositories.
     """
-    repos = {"gentoo": pinned_tree(
-        seeds_dir=seeds_dir, cache_dir=cache_dir, download=download, today=today
-    )}
+    repos = {
+        "gentoo": pinned_tree(
+            seeds_dir=seeds_dir, cache_dir=cache_dir, download=download, today=today
+        )
+    }
     for pin in load_overlay_pins(seeds_dir):
         repos[pin.name] = ensure_overlay(pin, cache_dir=cache_dir, download=download)
     return repos
-

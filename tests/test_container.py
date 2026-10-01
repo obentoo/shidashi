@@ -203,7 +203,8 @@ def test_run_with_a_log_streams_each_line_and_still_returns_the_output(
     import shidashi.container as container_mod
 
     monkeypatch.setattr(
-        container_mod, "_nspawn_argv",
+        container_mod,
+        "_nspawn_argv",
         lambda *_a, **_k: ["sh", "-c", "echo building; echo warned >&2; exit 0"],
     )
     log = tmp_path / "logs" / "v3-minimal-systemd.log"

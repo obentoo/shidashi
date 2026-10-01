@@ -70,9 +70,7 @@ class BootstrapResult(pydantic.BaseModel):
 def natural_key(name: str) -> tuple[tuple[int, int | str], ...]:
     """``sort -V``-like key: digit runs compare as numbers (``-9`` < ``-10``)."""
     return tuple(
-        (0, int(part)) if part.isdigit() else (1, part)
-        for part in re.split(r"(\d+)", name)
-        if part
+        (0, int(part)) if part.isdigit() else (1, part) for part in re.split(r"(\d+)", name) if part
     )
 
 
@@ -84,9 +82,7 @@ def newest_profile(env_dir: Path) -> str:
     whose indices shift between runs and whose output carries ANSI colour even
     when redirected.
     """
-    names = [
-        p.name for p in env_dir.iterdir() if p.is_file() and not p.name.startswith("config-")
-    ]
+    names = [p.name for p in env_dir.iterdir() if p.is_file() and not p.name.startswith("config-")]
     if not names:
         raise BootstrapError(f"no toolchain profile in {env_dir}", phase="bootstrap")
     return max(names, key=natural_key)
@@ -106,8 +102,9 @@ def world_entries(rootfs: Path) -> tuple[str, ...]:
     path = rootfs / _WORLD
     if not path.is_file():
         return ()
-    return tuple(line.strip() for line in path.read_text(encoding="utf-8").splitlines()
-                 if line.strip())
+    return tuple(
+        line.strip() for line in path.read_text(encoding="utf-8").splitlines() if line.strip()
+    )
 
 
 def active_locales(rootfs: Path) -> tuple[str, ...]:

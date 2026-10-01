@@ -129,9 +129,7 @@ def stage_names() -> list[str]:
     return [*CORE_STAGES, *available_names("flavor")]
 
 
-def load_recipe(
-    arch: str, target: str, init: str, *, any_stage: bool = False
-) -> ResolvedRecipe:
+def load_recipe(arch: str, target: str, init: str, *, any_stage: bool = False) -> ResolvedRecipe:
     """Load the whole chain for ``target`` and merge it with ``arch`` and ``init``.
 
     The one entry point for "give me the recipe of this image": CLI, lab sync

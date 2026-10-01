@@ -42,6 +42,7 @@ runner = CliRunner()
 
 # variants/ mínima reutilizada do estilo de test_cli.py -----------------------
 
+
 @pytest.fixture
 def variants_tree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """The shared stage-format tree (tests/_variants_tree.py), pointed at by the env."""
@@ -352,9 +353,7 @@ def test_factory_stop_after_reaches_the_one_shot_build(
         return _fake_result()
 
     monkeypatch.setattr(cli, "Factory", _fake_factory(_build), raising=False)
-    result = runner.invoke(
-        app, ["factory", "v3", "minimal", "systemd", "--stop-after", "base"]
-    )
+    result = runner.invoke(app, ["factory", "v3", "minimal", "systemd", "--stop-after", "base"])
     assert result.exit_code == 0, result.stdout
     assert seen["stop_after"] == "base"
 
@@ -363,9 +362,7 @@ def test_factory_stop_after_refuses_a_stage_not_in_the_chain(
     monkeypatch: pytest.MonkeyPatch, variants_tree: Path
 ) -> None:
     monkeypatch.setattr(cli, "Factory", _fake_factory(lambda **_k: _fake_result()), raising=False)
-    result = runner.invoke(
-        app, ["factory", "v3", "minimal", "systemd", "--stop-after", "desktop"]
-    )
+    result = runner.invoke(app, ["factory", "v3", "minimal", "systemd", "--stop-after", "desktop"])
     assert result.exit_code == 1
     assert "desktop" in result.output
 

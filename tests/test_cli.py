@@ -20,6 +20,7 @@ from tests._variants_tree import write_variants
 
 runner = CliRunner()
 
+
 @pytest.fixture
 def variants_tree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """The shared stage-format tree, with kde, openrc and a broken flavor."""

@@ -88,8 +88,12 @@ def _nspawn_argv(
     é idêntico ao da story 002 (R7.3 back-compat).
     """
     cmd: list[str] = [
-        "systemd-nspawn", "--directory", str(rootfs), *_HOST_OPTIONS,
-        "--console=pipe", "--as-pid2",
+        "systemd-nspawn",
+        "--directory",
+        str(rootfs),
+        *_HOST_OPTIONS,
+        "--console=pipe",
+        "--as-pid2",
     ]
     if ephemeral:
         cmd.append("--ephemeral")

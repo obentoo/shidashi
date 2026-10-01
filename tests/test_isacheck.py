@@ -56,15 +56,15 @@ def test_does_not_flag_evex_ifma_which_zen5_has() -> None:
 @pytest.mark.parametrize(
     "insn",
     [
-        "vpdpbssd %ymm2,%ymm1,%ymm0",       # AVX-VNNI-INT8
-        "vpdpwsud %ymm2,%ymm1,%ymm0",       # AVX-VNNI-INT16
-        "vbcstnebf162ps (%rax),%ymm0",      # AVX-NE-CONVERT
-        "vcvtneebf162ps (%rax),%ymm0",      # AVX-NE-CONVERT
-        "cmpbexadd %r12,%r13,(%rax)",       # CMPccXADD
-        "encodekey128 %eax,%eax",           # Key Locker
-        "aesenc128kl (%rax),%xmm0",         # Key Locker
-        "serialize",                        # SERIALIZE
-        "tpause %eax",                      # WAITPKG
+        "vpdpbssd %ymm2,%ymm1,%ymm0",  # AVX-VNNI-INT8
+        "vpdpwsud %ymm2,%ymm1,%ymm0",  # AVX-VNNI-INT16
+        "vbcstnebf162ps (%rax),%ymm0",  # AVX-NE-CONVERT
+        "vcvtneebf162ps (%rax),%ymm0",  # AVX-NE-CONVERT
+        "cmpbexadd %r12,%r13,(%rax)",  # CMPccXADD
+        "encodekey128 %eax,%eax",  # Key Locker
+        "aesenc128kl (%rax),%xmm0",  # Key Locker
+        "serialize",  # SERIALIZE
+        "tpause %eax",  # WAITPKG
     ],
 )
 def test_flags_each_arrowlake_only_family(insn: str) -> None:
@@ -74,9 +74,9 @@ def test_flags_each_arrowlake_only_family(insn: str) -> None:
 @pytest.mark.parametrize(
     "insn",
     [
-        "vpaddd %ymm2,%ymm1,%ymm0",         # plain AVX2, both CPUs have it
-        "vaesenc %ymm2,%ymm1,%ymm0",        # VAES, Zen 5 has it
-        "sha256rnds2 %xmm1,%xmm0",          # SHA-NI, Zen 5 has it
+        "vpaddd %ymm2,%ymm1,%ymm0",  # plain AVX2, both CPUs have it
+        "vaesenc %ymm2,%ymm1,%ymm0",  # VAES, Zen 5 has it
+        "sha256rnds2 %xmm1,%xmm0",  # SHA-NI, Zen 5 has it
         "mov %rax,%rbx",
     ],
 )

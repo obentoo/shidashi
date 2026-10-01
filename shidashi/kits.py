@@ -46,7 +46,7 @@ def atom_parts(atom: str) -> tuple[str, str | None]:
     rest = rest.split(":", 1)[0]
     operator = _OPERATOR.match(rest)
     if operator:
-        rest = _VERSION.sub("", rest[operator.end():]).rstrip("*")
+        rest = _VERSION.sub("", rest[operator.end() :]).rstrip("*")
     return rest, repo
 
 

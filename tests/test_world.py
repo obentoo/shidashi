@@ -27,10 +27,12 @@ def test_the_world_does_not_depend_on_the_arch() -> None:
 
 
 def test_kde_lists_its_display_manager_per_init_and_only_explicit_choices() -> None:
-    systemd = world.read(world.world_file(config.load_recipe("v3", "kde", "systemd"),
-                                          config.variants_dir()))
-    openrc = world.read(world.world_file(config.load_recipe("v3", "kde", "openrc"),
-                                         config.variants_dir()))
+    systemd = world.read(
+        world.world_file(config.load_recipe("v3", "kde", "systemd"), config.variants_dir())
+    )
+    openrc = world.read(
+        world.world_file(config.load_recipe("v3", "kde", "openrc"), config.variants_dir())
+    )
     assert "kde-plasma/plasma-login-manager" in systemd and "x11-misc/sddm" not in systemd
     assert "x11-misc/sddm" in openrc and "kde-plasma/plasma-login-manager" not in openrc
     assert list(systemd) == sorted(systemd)
@@ -76,9 +78,7 @@ def test_an_exclude_takes_the_package_out_of_the_world() -> None:
     from shidashi.resolve import world_atoms
 
     recipe = config.load_recipe("v3", "kde", "systemd")
-    excluded = recipe.model_copy(
-        update={"exclude": (*recipe.exclude, "kde-apps/konsole")}
-    )
+    excluded = recipe.model_copy(update={"exclude": (*recipe.exclude, "kde-apps/konsole")})
     assert "kde-apps/konsole" in world_atoms(recipe)
     assert "kde-apps/konsole" not in world_atoms(excluded)
 
@@ -249,8 +249,11 @@ def test_a_catalog_ref_keeps_the_whole_kit_out(
     tree = _variants_copy(tmp_path, monkeypatch)
     kit = tree / "kits/core/base"
     kit.write_text(kit.read_text().replace("@archive\n", "#@archive\n"))
-    archive = [ln for ln in (tree / "kits/core/archive").read_text().splitlines()
-               if ln and not ln.startswith("#")]
+    archive = [
+        ln
+        for ln in (tree / "kits/core/archive").read_text().splitlines()
+        if ln and not ln.startswith("#")
+    ]
     recipe = config.load_recipe("v3", "minimal", "systemd")
     assert "archive" not in {k.name for k in kit_view(recipe)}
     assert not set(archive) & set(world_atoms(recipe))
@@ -353,8 +356,12 @@ def test_including_and_excluding_the_same_atom_is_a_contradiction(
 ) -> None:
     from shidashi.recipe import RecipeChainError
 
-    _with_include(tmp_path, monkeypatch, "desktop",
-                  "include:\n  - sys-apps/bleachbit\nexclude:\n  - sys-apps/bleachbit\n")
+    _with_include(
+        tmp_path,
+        monkeypatch,
+        "desktop",
+        "include:\n  - sys-apps/bleachbit\nexclude:\n  - sys-apps/bleachbit\n",
+    )
     with pytest.raises(RecipeChainError, match="both includes and excludes sys-apps/bleachbit"):
         config.load_recipe("v3", "kde", "systemd")
 

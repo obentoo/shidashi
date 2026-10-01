@@ -166,7 +166,7 @@ def test_apply_portage_assembled_make_conf_gives_the_last_assignment(tmp_path: P
         check=True,
     )
     flags, use = out.stdout.split("|")
-    assert flags == "-march=x86-64-v3 -O2"          # arch venceu a base
+    assert flags == "-march=x86-64-v3 -O2"  # arch venceu a base
     assert sorted(use.split()) == ["a", "b", "systemd"]  # init SOMOU, não trocou
 
 
@@ -186,7 +186,9 @@ def test_apply_portage_jobs_override_is_the_last_makeopts(
     make_conf = rootfs / "etc" / "portage" / "make.conf"
     out = subprocess.run(
         ["bash", "-c", f'. "{make_conf}"; printf "%s" "$MAKEOPTS"'],
-        capture_output=True, text=True, check=True,
+        capture_output=True,
+        text=True,
+        check=True,
     )
     assert out.stdout == "-j16 -l16"
     assert "layer: runtime (SHIDASHI_JOBS)" in make_conf.read_text(encoding="utf-8")

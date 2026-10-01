@@ -65,21 +65,44 @@ def test_golden_v3_kde_systemd() -> None:
     assert r.stages == ("base", "minimal", "desktop", "kde")
     assert r.profile == "default/linux/amd64/23.0/no-multilib/systemd"
     assert r.sets == (
-        "base", "extra-system",
-        "gpu", "gpu-nvidia", "fonts", "desktop-int", "audio", "video", "vpn", "print",
-        "sandbox", "include-desktop",
-        "kde", "extra-desktop", "kde-dm-plasma",
+        "base",
+        "extra-system",
+        "gpu",
+        "gpu-nvidia",
+        "fonts",
+        "desktop-int",
+        "audio",
+        "video",
+        "vpn",
+        "print",
+        "sandbox",
+        "include-desktop",
+        "kde",
+        "extra-desktop",
+        "kde-dm-plasma",
     )
     assert _targets(r) == {
         "base": ("@world", "@base"),
         "minimal": ("@world", "@extra-system"),
         "desktop": (
-            "@world", "@gpu", "@gpu-nvidia", "@fonts", "@desktop-int", "@audio", "@video",
-            "@vpn", "@print", "@sandbox", "@include-desktop",
+            "@world",
+            "@gpu",
+            "@gpu-nvidia",
+            "@fonts",
+            "@desktop-int",
+            "@audio",
+            "@video",
+            "@vpn",
+            "@print",
+            "@sandbox",
+            "@include-desktop",
         ),
         # init_sets: the display manager joins the flavor phase, per init
         "flavor": (
-            "@world", "@kde", "@extra-desktop", "@kde-dm-plasma",
+            "@world",
+            "@kde",
+            "@extra-desktop",
+            "@kde-dm-plasma",
         ),
     }
     # minimal ships on its way to kde: the graphical stages start from it settled
@@ -87,5 +110,10 @@ def test_golden_v3_kde_systemd() -> None:
     # the configuration grows stage by stage; the graphical USE enters at desktop
     assert [p.layers[-2] for p in r.phases] == ["arch/v3", "minimal", "desktop", "flavor/kde"]
     assert r.portage_layers == (
-        "base", "arch/v3", "minimal", "desktop", "flavor/kde", "init/systemd",
+        "base",
+        "arch/v3",
+        "minimal",
+        "desktop",
+        "flavor/kde",
+        "init/systemd",
     )

@@ -205,7 +205,10 @@ def image_cuts(recipe: ResolvedRecipe, stage: str | None = None) -> tuple[UseBre
 def binpkg_check_argv(recipe: ResolvedRecipe, stage: str, *, root: str) -> list[str]:
     """The ``emerge --pretend`` of the assembler's install, against ``root``. Pure."""
     return [
-        "emerge", "--pretend", f"--root={root}", *ISO_EMERGE_OPTIONS,
+        "emerge",
+        "--pretend",
+        f"--root={root}",
+        *ISO_EMERGE_OPTIONS,
         *image_targets(shipped_sets(recipe, stage)),
     ]
 
@@ -860,7 +863,9 @@ def run_phase(
                 # The configuration in force for THIS stage (D24). Layers only grow
                 # along the chain, so re-applying is additive.
                 apply_portage(
-                    container.rootfs, recipe, variants_dir=config.variants_dir(),
+                    container.rootfs,
+                    recipe,
+                    variants_dir=config.variants_dir(),
                     layers=phase.layers,
                 )
                 step.add(layers=list(phase.layers))
@@ -874,8 +879,11 @@ def run_phase(
                 reused = parse_reused_atoms(output)
                 step.add(argv=argv, built=len(built), reused=len(reused))
                 attach_packages(
-                    container.rootfs, phase.stage or phase.name, since=since,
-                    built=built, reused=reused,
+                    container.rootfs,
+                    phase.stage or phase.name,
+                    since=since,
+                    built=built,
+                    reused=reused,
                 )
     return PhaseResult(
         phase=phase,
@@ -900,9 +908,7 @@ def attach_packages(
     if run.root is None:
         return
     try:
-        text = (rootfs / "var" / "log" / "emerge.log").read_text(
-            encoding="utf-8", errors="replace"
-        )
+        text = (rootfs / "var" / "log" / "emerge.log").read_text(encoding="utf-8", errors="replace")
     except OSError:
         text = ""
     run.attach(
@@ -925,7 +931,7 @@ def is_installed(rootfs: Path, cp: str) -> bool:
         return False
     prefix = f"{name}-"
     return any(
-        d.name.startswith(prefix) and d.name[len(prefix):][:1].isdigit() for d in vdb.iterdir()
+        d.name.startswith(prefix) and d.name[len(prefix) :][:1].isdigit() for d in vdb.iterdir()
     )
 
 
@@ -1034,7 +1040,9 @@ def run_phases(
                     _audited_snapshot(
                         container.rootfs,
                         stage_fork_point_path(
-                            recipe, phase.stage, snapshot=snapshot,
+                            recipe,
+                            phase.stage,
+                            snapshot=snapshot,
                             fork_points_dir=fork_points_dir,
                         ),
                     )
@@ -1219,7 +1227,9 @@ def run_phases_stepwise(
                 _audited_snapshot(
                     container.rootfs,
                     phase_snapshot_path(
-                        recipe, snapshot=snapshot, phase=phase.name,
+                        recipe,
+                        snapshot=snapshot,
+                        phase=phase.name,
                         fork_points_dir=fork_points_dir,
                     ),
                 )

@@ -127,7 +127,6 @@ def test_base_declares_only_trunk_cycle_breaks() -> None:
         assert not stage.use_break, f"{name} declares cuts of its own: {stage.use_break}"
 
 
-
 @pytest.mark.parametrize("flavor", ["minimal", "kde"])
 def test_the_trunk_phase_carries_no_cut(flavor: str) -> None:
     """Since D24 step 3b the trunk's cycles do not form (2026-09-27): the base
@@ -351,8 +350,10 @@ def test_no_variant_yaml_still_carries_use_prefer() -> None:
     live = [
         str(p.relative_to(_VARIANTS_DIR))
         for p in _VARIANTS_DIR.rglob("*.yaml")
-        if any(ln.startswith(("use_prefer:", "override_ok:"))
-               for ln in p.read_text(encoding="utf-8").splitlines())
+        if any(
+            ln.startswith(("use_prefer:", "override_ok:"))
+            for ln in p.read_text(encoding="utf-8").splitlines()
+        )
     ]
     assert live == []
 
@@ -402,11 +403,19 @@ def test_apply_portage_preserves_the_whole_base_make_conf(tmp_path: Path, flavor
     portage = _assemble(tmp_path, "v3", flavor, "systemd")
     text = (portage / "make.conf").read_text(encoding="utf-8")
     assert len(text.splitlines()) > 100
-    for var in ("FEATURES=", "PKGDIR=", "DISTDIR=", "LLVM_SLOT=", "PYTHON_TARGETS=",
-                "MAKEOPTS=", "L10N=", "ACCEPT_KEYWORDS="):
+    for var in (
+        "FEATURES=",
+        "PKGDIR=",
+        "DISTDIR=",
+        "LLVM_SLOT=",
+        "PYTHON_TARGETS=",
+        "MAKEOPTS=",
+        "L10N=",
+        "ACCEPT_KEYWORDS=",
+    ):
         assert var in text, f"{var} perdida na composição"
     # e os fragmentos posteriores continuam presentes
-    assert "CPU_FLAGS_X86=" in text          # arch/v3
+    assert "CPU_FLAGS_X86=" in text  # arch/v3
     assert 'SYSTEMD="boot uki ukify"' in text  # init/systemd
 
 
@@ -417,9 +426,11 @@ def test_apply_portage_keeps_both_package_use_system_files(tmp_path: Path) -> No
     # numeração (2026-09-13) a colisão nem é mais possível: nenhum layer usa o
     # nome `system` cru.
     portage = _assemble(tmp_path, "v3", "minimal", "systemd")
-    base_lines = (_VARIANTS_DIR / "base/portage/package.use/22-system").read_text(
-        encoding="utf-8"
-    ).splitlines()
+    base_lines = (
+        (_VARIANTS_DIR / "base/portage/package.use/22-system")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    )
     got = (portage / "package.use" / "22-system").read_text(encoding="utf-8").splitlines()
     assert len(got) == len(base_lines)
     assert "sys-apps/systemd boot ukify policykit" in (
@@ -431,11 +442,21 @@ def test_apply_portage_keeps_both_package_use_system_files(tmp_path: Path) -> No
     ("arch", "flavor", "init", "expect", "reject"),
     [
         # minimal is the console core: no graphical flag at all, and X forced off
-        ("v3", "minimal", "systemd", {"boot", "uki", "ukify", "-X"},
-         {"kde", "qt6", "wayland", "vulkan", "opengl", "X"}),
+        (
+            "v3",
+            "minimal",
+            "systemd",
+            {"boot", "uki", "ukify", "-X"},
+            {"kde", "qt6", "wayland", "vulkan", "opengl", "X"},
+        ),
         ("v3", "kde", "systemd", {"boot", "kde", "qt6", "plymouth", "wayland", "vulkan"}, {"X"}),
-        ("znver5", "kde", "openrc", {"kde", "qt6", "wayland", "elogind", "udev"},
-         {"boot", "uki", "ukify", "X"}),
+        (
+            "znver5",
+            "kde",
+            "openrc",
+            {"kde", "qt6", "wayland", "elogind", "udev"},
+            {"boot", "uki", "ukify", "X"},
+        ),
         ("v3", "gnome", "systemd", {"gtk", "gnome", "wayland"}, {"kde", "qt6", "X", "elogind"}),
     ],
 )
@@ -586,12 +607,14 @@ def test_no_orphan_sets() -> None:
     # nobody reaches is still a forgotten kit.
     def binhost_only(name: str) -> bool:
         lines = files[name].read_text(encoding="utf-8").splitlines()
-        entries = [ln for ln in lines if ln.strip() and not ln.startswith("# ")
-                   and ln.strip() != "#"]
+        entries = [
+            ln for ln in lines if ln.strip() and not ln.startswith("# ") and ln.strip() != "#"
+        ]
         return bool(entries) and all(catalog_entry(ln) is not None for ln in entries)
 
     orphans = {
-        name for name in set(files) - reachable - _INTENTIONALLY_UNREACHABLE
+        name
+        for name in set(files) - reachable - _INTENTIONALLY_UNREACHABLE
         if not binhost_only(name)
     }
     assert not orphans, f"sets curados que ninguém instala: {sorted(orphans)}"
@@ -630,12 +653,14 @@ def test_the_kde_layer_is_not_in_force_until_the_kde_stage(
     recipe = _recipe("kde")
     witness = _MakeConfWitness(tmp_path / "rootfs")
     phases.run_phases(
-        witness, recipe, emptytree=True, snapshot="S", fork_points_dir=tmp_path  # type: ignore[arg-type]
+        witness,
+        recipe,
+        emptytree=True,
+        snapshot="S",
+        fork_points_dir=tmp_path,  # type: ignore[arg-type]
     )
     # not the settles (--oneshot) nor the binpkg checks (--pretend)
-    stage_emerges = [
-        s for s in witness.seen if "--oneshot" not in s[0] and "--pretend" not in s[0]
-    ]
+    stage_emerges = [s for s in witness.seen if "--oneshot" not in s[0] and "--pretend" not in s[0]]
     assert len(stage_emerges) == 4  # base, minimal, desktop, flavor
     # make.conf is REWRITTEN per stage, package.use only ever ADDS -- check both:
     # a kde package.use file present while the base builds is the regression
@@ -656,7 +681,9 @@ def test_app_alternatives_alone_trade_collision_protect_for_protect_owned(
     portage = _assemble(tmp_path, "v3", "minimal", "systemd")
     out = subprocess.run(
         ["bash", "-c", f'. "{portage / "make.conf"}"; printf "%s" "$FEATURES"'],
-        capture_output=True, text=True, check=True,
+        capture_output=True,
+        text=True,
+        check=True,
     )
     assert "collision-protect" in out.stdout.split()
     mapping = [

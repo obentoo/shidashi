@@ -20,8 +20,7 @@ def test_plan_tree_builds_flavors_and_lets_their_chain_settle_minimal() -> None:
     # minimal ships inside kde's chain: no factory run of its own
     assert plan_tree(["kde", "minimal"]) == (["kde"], ["minimal", "kde"])
     # chain order, whatever the order asked
-    assert plan_tree(["wm", "gnome", "kde"]) == (
-        ["gnome", "kde", "wm"], ["gnome", "kde", "wm"])
+    assert plan_tree(["wm", "gnome", "kde"]) == (["gnome", "kde", "wm"], ["gnome", "kde", "wm"])
 
 
 def test_plan_tree_explains_that_desktop_is_not_an_image() -> None:
@@ -74,16 +73,17 @@ def test_build_runs_the_factory_then_every_iso_in_one_audited_run(
     manifest = json.loads((run_dir / "manifest.json").read_text())
     assert manifest["command"] == "build" and manifest["status"] == "ok"
     assert [s["step"] for s in manifest["steps"]] == [
-        "factory:kde", "assemble:minimal", "assemble:kde"]
+        "factory:kde",
+        "assemble:minimal",
+        "assemble:kde",
+    ]
     assert manifest["inputs"]["images"] == ["minimal", "kde"]
     bundle = tmp_path / f"{run_dir.name}.build.tar.zst"
     assert bundle.is_file() and bundle.name in (tmp_path / "SHA256SUMS").read_text()
 
 
 def test_skip_factory_assembles_from_what_is_built(lab: list[str]) -> None:
-    result = runner.invoke(
-        app, ["build", "v3", "systemd", "--images", "minimal", "--skip-factory"]
-    )
+    result = runner.invoke(app, ["build", "v3", "systemd", "--images", "minimal", "--skip-factory"])
     assert result.exit_code == 0, result.output
     assert lab == ["assemble:minimal:('zstd',)"]
 
@@ -104,8 +104,10 @@ def test_boot_test_gates_the_build(
     def boot_test(iso: Path, **_k: object) -> dict[str, object]:
         booted.append(iso.name)
         ok = "minimal" in iso.name
-        return {"passed": ok, "firmwares": {"uefi": {"checks": [
-            {"check": "os-release", "passed": ok}]}}}
+        return {
+            "passed": ok,
+            "firmwares": {"uefi": {"checks": [{"check": "os-release", "passed": ok}]}},
+        }
 
     monkeypatch.setattr(vm, "boot_test", boot_test)
     result = runner.invoke(

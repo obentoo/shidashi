@@ -159,11 +159,14 @@ def set_closure(recipe: ResolvedRecipe) -> dict[str, list[str]]:
     for kit in kit_view(recipe):
         kept = list(kit.lines)
         if kit.catalog:
-            kept.insert(0, "# shidashi: catalog only (binhost, not this image): "
-                           + " ".join(kit.catalog))
+            kept.insert(
+                0, "# shidashi: catalog only (binhost, not this image): " + " ".join(kit.catalog)
+            )
         if kit.dropped:
-            kept.insert(0, f"# shidashi: excluded by flavor/{recipe.flavor}: "
-                           + " ".join(sorted(kit.dropped)))
+            kept.insert(
+                0,
+                f"# shidashi: excluded by flavor/{recipe.flavor}: " + " ".join(sorted(kit.dropped)),
+            )
         closure[kit.name] = kept
     return closure
 
@@ -381,9 +384,7 @@ def apply_portage(
     if jobs is not None:
         make_conf_parts.append((f"runtime ({_JOBS_ENV})", f'MAKEOPTS="-j{jobs} -l{jobs}"\n'))
     if make_conf_parts:
-        (dest / _MAKE_CONF).write_text(
-            _assemble_make_conf(make_conf_parts), encoding="utf-8"
-        )
+        (dest / _MAKE_CONF).write_text(_assemble_make_conf(make_conf_parts), encoding="utf-8")
 
 
 def apply_rootfs(

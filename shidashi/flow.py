@@ -131,7 +131,12 @@ class _StageStep(BaseModel):
     model_config = _STRICT
     name: str
     do: Literal[
-        "apply-config", "write-cuts", "emerge-stage", "module-rebuild", "settle", "snapshot",
+        "apply-config",
+        "write-cuts",
+        "emerge-stage",
+        "module-rebuild",
+        "settle",
+        "snapshot",
         "check-binpkgs",
     ]
 

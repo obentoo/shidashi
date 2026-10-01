@@ -40,7 +40,8 @@ def test_sha256sums_update_their_own_lines_and_keep_the_others(tmp_path: Path) -
     (tmp_path / "SHA256SUMS").write_text("aaa  other.iso\nbbb  b.iso\n")
     publish.update_sha256sums(tmp_path, {"b.iso": "ccc", "b.iso.packages": "ddd"})
     assert (tmp_path / "SHA256SUMS").read_text() == (
-        "ccc  b.iso\nddd  b.iso.packages\naaa  other.iso\n")
+        "ccc  b.iso\nddd  b.iso.packages\naaa  other.iso\n"
+    )
 
 
 def test_packages_list_is_sorted_atoms(tmp_path: Path) -> None:
@@ -54,8 +55,11 @@ def test_contents_lists_every_path_of_the_live_root(tmp_path: Path) -> None:
     (root / "usr/bin").mkdir(parents=True)
     (root / "usr/bin/sh").write_text("x")
     sq = tmp_path / "r.sq"
-    subprocess.run(["mksquashfs", str(root), str(sq), "-quiet", "-no-progress"], check=True,
-                   capture_output=True)
+    subprocess.run(
+        ["mksquashfs", str(root), str(sq), "-quiet", "-no-progress"],
+        check=True,
+        capture_output=True,
+    )
     dest = publish.write_contents(sq, tmp_path / "c.gz")
     with gzip.open(dest, "rt") as f:
         assert f.read().splitlines() == ["/", "/usr", "/usr/bin", "/usr/bin/sh"]
@@ -84,8 +88,9 @@ def test_stage4_excludes_content_and_keeps_mount_points(tmp_path: Path) -> None:
     exclude = tmp_path / "ex"
     exclude.write_text("# comment\ndev/*\nvar/log/*.log\n")
     dest = publish.make_stage4(root, tmp_path / "s.tar.xz", exclude)
-    names = subprocess.run(["tar", "-tJf", str(dest)], capture_output=True, text=True,
-                           check=True).stdout.split()
+    names = subprocess.run(
+        ["tar", "-tJf", str(dest)], capture_output=True, text=True, check=True
+    ).stdout.split()
     assert "./dev/" in names and "./dev/null.fake" not in names and "./dev/pts/" not in names
     assert "./var/log/emerge.log" not in names and "./var/log/cups/access" in names
     assert "./usr/bin/sh" in names
@@ -104,8 +109,9 @@ def test_bundle_run_packs_the_trail(tmp_path: Path) -> None:
     run_dir.mkdir(parents=True)
     (run_dir / "manifest.json").write_text("{}")
     dest = publish.bundle_run(run_dir, tmp_path / "b.build.tar.zst")
-    names = subprocess.run(["tar", "--zstd", "-tf", str(dest)], capture_output=True, text=True,
-                           check=True).stdout.split()
+    names = subprocess.run(
+        ["tar", "--zstd", "-tf", str(dest)], capture_output=True, text=True, check=True
+    ).stdout.split()
     assert "20260930T010000Z-abc/manifest.json" in names
 
 

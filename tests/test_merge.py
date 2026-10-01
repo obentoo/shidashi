@@ -171,10 +171,15 @@ def test_seed_source_changes_recipe_hash() -> None:
 
 def test_core_stages_name_their_phase_and_layer_flavors_do_not() -> None:
     assert [stage_phase_name(s) for s in ("base", "minimal", "desktop", "kde")] == [
-        "base", "minimal", "desktop", "flavor",
+        "base",
+        "minimal",
+        "desktop",
+        "flavor",
     ]
     assert [stage_layer(s) for s in ("minimal", "desktop", "kde")] == [
-        "minimal", "desktop", "flavor/kde",
+        "minimal",
+        "desktop",
+        "flavor/kde",
     ]
 
 
@@ -193,7 +198,12 @@ def test_empty_chain_is_the_base_alone() -> None:
 def test_portage_layers_base_arch_each_stage_then_init() -> None:
     r = merge(make_base(), make_arch(arch="amd64"), make_chain(), make_init(init="systemd"))
     assert r.portage_layers == (
-        "base", "arch/amd64", "minimal", "desktop", "flavor/kde", "init/systemd",
+        "base",
+        "arch/amd64",
+        "minimal",
+        "desktop",
+        "flavor/kde",
+        "init/systemd",
     )
 
 
@@ -212,8 +222,11 @@ def test_one_phase_per_stage_with_its_mode_after_the_init_prepends() -> None:
     init = make_init(phases_prepend=(Phase(name="seat", packages=("sys-auth/seatd",)),))
     r = merge(make_base(), make_arch(), make_chain(), init)
     assert [(p.name, p.stage) for p in r.phases] == [
-        ("seat", ""), ("base", "base"), ("minimal", "minimal"),
-        ("desktop", "desktop"), ("flavor", "kde"),
+        ("seat", ""),
+        ("base", "base"),
+        ("minimal", "minimal"),
+        ("desktop", "desktop"),
+        ("flavor", "kde"),
     ]
     assert [p.name for p in r.phases if p.emptytree] == ["base"]
     assert [p.name for p in r.phases if p.ships] == ["minimal", "flavor"]
@@ -237,7 +250,9 @@ def test_init_sets_add_the_current_inits_sets_to_their_stage_only() -> None:
     chain = (
         make_stage("minimal", "base", sets=("extra-system",)),
         make_stage(
-            "kde", "minimal", sets=("kde",),
+            "kde",
+            "minimal",
+            sets=("kde",),
             init_sets={"systemd": ("kde-dm-plasma",), "openrc": ("kde-dm-sddm",)},
         ),
     )
@@ -280,11 +295,14 @@ def _write_stages(root: Path, stages: dict[str, str]) -> dict[str, Path]:
 
 
 def test_load_chain_walks_after_down_to_the_base(tmp_path: Path) -> None:
-    paths = _write_stages(tmp_path, {
-        "minimal": "stage: minimal\nafter: base\nships: true\n",
-        "desktop": "stage: desktop\nafter: minimal\n",
-        "kde": "stage: kde\nafter: desktop\nships: true\nsets: [kde]\n",
-    })
+    paths = _write_stages(
+        tmp_path,
+        {
+            "minimal": "stage: minimal\nafter: base\nships: true\n",
+            "desktop": "stage: desktop\nafter: minimal\n",
+            "kde": "stage: kde\nafter: desktop\nships: true\nsets: [kde]\n",
+        },
+    )
     chain = load_chain("kde", paths.__getitem__)
     assert [s.stage for s in chain] == ["minimal", "desktop", "kde"]
     assert load_chain("minimal", paths.__getitem__)[0].ships is True
@@ -298,10 +316,13 @@ def test_load_chain_refuses_a_stage_without_after(tmp_path: Path) -> None:
 
 
 def test_load_chain_refuses_a_loop(tmp_path: Path) -> None:
-    paths = _write_stages(tmp_path, {
-        "a": "stage: a\nafter: b\n",
-        "b": "stage: b\nafter: a\n",
-    })
+    paths = _write_stages(
+        tmp_path,
+        {
+            "a": "stage: a\nafter: b\n",
+            "b": "stage: b\nafter: a\n",
+        },
+    )
     with pytest.raises(RecipeChainError, match="loops"):
         load_chain("a", paths.__getitem__)
 

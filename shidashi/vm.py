@@ -52,9 +52,7 @@ _OVMF = (
 #: Generates SSH host keys before a per-connection sshd, for ISOs made before
 #: the image shipped sshd-keygen.service (2026-09-30). Harmless otherwise. Its
 #: output goes to /dev/null: sshd@'s stdout is the connection itself.
-_KEYGEN_DROPIN = (
-    '[Service]\nExecStartPre=+/bin/sh -c "/usr/bin/ssh-keygen -A >/dev/null 2>&1"\n'
-)
+_KEYGEN_DROPIN = '[Service]\nExecStartPre=+/bin/sh -c "/usr/bin/ssh-keygen -A >/dev/null 2>&1"\n'
 
 
 class VmError(Exception):
@@ -102,27 +100,51 @@ def qemu_argv(
     generic CPU. The ISO is attached read-only; the live root is an overlay in RAM.
     """
     argv = [
-        "qemu-system-x86_64", "-name", "bentoo-vm", "-enable-kvm", "-machine", "q35",
-        "-cpu", "host", "-smp", str(spec.cpus), "-m", spec.memory,
+        "qemu-system-x86_64",
+        "-name",
+        "bentoo-vm",
+        "-enable-kvm",
+        "-machine",
+        "q35",
+        "-cpu",
+        "host",
+        "-smp",
+        str(spec.cpus),
+        "-m",
+        spec.memory,
     ]
     if spec.uefi:
         if uefi_code is None or uefi_vars is None:
             raise VmError("UEFI needs the OVMF code and a copy of its variables")
         code, fmt = uefi_code
         argv += [
-            "-drive", f"if=pflash,format={fmt},readonly=on,file={code}",
-            "-drive", f"if=pflash,format={fmt},file={uefi_vars}",
+            "-drive",
+            f"if=pflash,format={fmt},readonly=on,file={code}",
+            "-drive",
+            f"if=pflash,format={fmt},file={uefi_vars}",
         ]
     argv += [
-        "-drive", f"file={spec.iso},media=cdrom,readonly=on", "-boot", "d",
-        "-vga", "virtio", "-display", spec.display,
-        "-device", f"vhost-vsock-pci,guest-cid={spec.cid}",
+        "-drive",
+        f"file={spec.iso},media=cdrom,readonly=on",
+        "-boot",
+        "d",
+        "-vga",
+        "virtio",
+        "-display",
+        spec.display,
+        "-device",
+        f"vhost-vsock-pci,guest-cid={spec.cid}",
         *_credential("ssh.authorized_keys.root", pubkey),
         *_credential("systemd.unit-dropin.sshd@.service", _KEYGEN_DROPIN),
-        "-qmp", f"unix:{qmp},server,nowait",
-        "-serial", f"file:{serial}",
-        "-nic", "user,model=virtio-net-pci",
-        "-daemonize", "-pidfile", str(pidfile),
+        "-qmp",
+        f"unix:{qmp},server,nowait",
+        "-serial",
+        f"file:{serial}",
+        "-nic",
+        "user,model=virtio-net-pci",
+        "-daemonize",
+        "-pidfile",
+        str(pidfile),
     ]
     return argv
 
@@ -134,11 +156,23 @@ def ssh_argv(key: Path, cid: int, command: str, *, timeout: int = 5) -> list[str
     checked (the transport is a local vsock, not a network).
     """
     return [
-        "ssh", "-i", str(key),
-        "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
-        "-o", "LogLevel=ERROR", "-o", f"ConnectTimeout={timeout}", "-o", "BatchMode=yes",
-        "-o", f"ProxyCommand={_SSH_PROXY} %h %p",
-        f"root@vsock/{cid}", command,
+        "ssh",
+        "-i",
+        str(key),
+        "-o",
+        "StrictHostKeyChecking=no",
+        "-o",
+        "UserKnownHostsFile=/dev/null",
+        "-o",
+        "LogLevel=ERROR",
+        "-o",
+        f"ConnectTimeout={timeout}",
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        f"ProxyCommand={_SSH_PROXY} %h %p",
+        f"root@vsock/{cid}",
+        command,
     ]
 
 
@@ -188,9 +222,23 @@ class Session:
         self.directory.mkdir(parents=True, exist_ok=True)
         for stale in (self.key, self.key.with_suffix(".pub"), self.qmp_socket, self.pidfile):
             stale.unlink(missing_ok=True)
-        self.runner(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C",
-                     f"shidashi-vm-{self.directory.name}", "-f", str(self.key)],
-                    check=True, capture_output=True, text=True)
+        self.runner(
+            [
+                "ssh-keygen",
+                "-q",
+                "-t",
+                "ed25519",
+                "-N",
+                "",
+                "-C",
+                f"shidashi-vm-{self.directory.name}",
+                "-f",
+                str(self.key),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
         uefi_vars = uefi_code = None
         if self.spec.uefi:
             code, template, fmt = ovmf()
@@ -198,34 +246,58 @@ class Session:
             shutil.copyfile(template, uefi_vars)
             uefi_code = (code, fmt)
         argv = qemu_argv(
-            self.spec, pubkey=self.key.with_suffix(".pub").read_text().strip(),
-            qmp=self.qmp_socket, serial=self.serial, pidfile=self.pidfile,
-            uefi_vars=uefi_vars, uefi_code=uefi_code,
+            self.spec,
+            pubkey=self.key.with_suffix(".pub").read_text().strip(),
+            qmp=self.qmp_socket,
+            serial=self.serial,
+            pidfile=self.pidfile,
+            uefi_vars=uefi_vars,
+            uefi_code=uefi_code,
         )
         done = self.runner(argv, capture_output=True, text=True)
         if done.returncode != 0:
             raise VmError(f"qemu failed to start: {done.stderr.strip()}")
         self.started = time.monotonic()
-        (self.directory / "session.json").write_text(json.dumps({
-            "iso": str(self.spec.iso), "uefi": self.spec.uefi, "cid": self.spec.cid,
-            "memory": self.spec.memory, "cpus": self.spec.cpus,
-        }))
-        audit.current().event("vm.start", iso=str(self.spec.iso), uefi=self.spec.uefi,
-                              cid=self.spec.cid)
+        (self.directory / "session.json").write_text(
+            json.dumps(
+                {
+                    "iso": str(self.spec.iso),
+                    "uefi": self.spec.uefi,
+                    "cid": self.spec.cid,
+                    "memory": self.spec.memory,
+                    "cpus": self.spec.cpus,
+                }
+            )
+        )
+        audit.current().event(
+            "vm.start", iso=str(self.spec.iso), uefi=self.spec.uefi, cid=self.spec.cid
+        )
 
     def run_command(self, command: str, *, timeout: int = 600) -> GuestResult:
         """Run ``command`` as root in the guest's shell; recorded in the audit trail."""
         start = time.monotonic()
         try:
-            done = self.runner(ssh_argv(self.key, self.spec.cid, command),
-                               capture_output=True, text=True, timeout=timeout)
-            result = GuestResult(command, done.returncode, done.stdout, done.stderr,
-                                 round(time.monotonic() - start, 3))
+            done = self.runner(
+                ssh_argv(self.key, self.spec.cid, command),
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+            result = GuestResult(
+                command,
+                done.returncode,
+                done.stdout,
+                done.stderr,
+                round(time.monotonic() - start, 3),
+            )
         except subprocess.TimeoutExpired:
             result = GuestResult(command, -1, "", "timeout", round(time.monotonic() - start, 3))
         audit.current().event(
-            "vm.command", command=command, exit_code=result.exit_code,
-            duration_s=result.duration_s, stdout=result.stdout[-4000:],
+            "vm.command",
+            command=command,
+            exit_code=result.exit_code,
+            duration_s=result.duration_s,
+            stdout=result.stdout[-4000:],
             stderr=result.stderr[-2000:],
         )
         return result
@@ -277,7 +349,7 @@ class Session:
         """Power off through QMP; kill the process if QEMU does not answer."""
         try:
             self.qmp("quit")
-        except (OSError, VmError, json.JSONDecodeError):
+        except OSError, VmError, json.JSONDecodeError:
             if self.pidfile.is_file():
                 with contextlib.suppress(ProcessLookupError, ValueError):
                     os.kill(int(self.pidfile.read_text().strip()), signal.SIGTERM)
@@ -295,8 +367,13 @@ def load_session(name: str) -> Session:
         data = json.loads((directory / "session.json").read_text())
     except (OSError, json.JSONDecodeError) as err:
         raise VmError(f"no VM session named {name!r}: run `shidashi vm start` first") from err
-    spec = VmSpec(iso=Path(data["iso"]), uefi=data["uefi"], cid=data["cid"],
-                  memory=data["memory"], cpus=data["cpus"])
+    spec = VmSpec(
+        iso=Path(data["iso"]),
+        uefi=data["uefi"],
+        cid=data["cid"],
+        memory=data["memory"],
+        cpus=data["cpus"],
+    )
     return Session(spec, directory)
 
 
@@ -308,8 +385,18 @@ def read_build_info(iso: Path) -> dict[str, Any]:
     with tempfile.TemporaryDirectory() as tmp:
         dest = Path(tmp) / "build.json"
         done = subprocess.run(
-            ["xorriso", "-osirrox", "on", "-indev", str(iso), "-extract", "/bentoo/build.json",
-             str(dest)], capture_output=True, text=True,
+            [
+                "xorriso",
+                "-osirrox",
+                "on",
+                "-indev",
+                str(iso),
+                "-extract",
+                "/bentoo/build.json",
+                str(dest),
+            ],
+            capture_output=True,
+            text=True,
         )
         if done.returncode != 0 or not dest.is_file():
             raise VmError(f"{iso} has no bentoo/build.json (built before 2026-09-30?)")
@@ -331,8 +418,10 @@ class Check:
 def _unit_state(unit: str) -> str:
     """``enabled``/``disabled``/... or ``not-installed``. An explicit ``if``:
     ``is-enabled`` exits 1 on a disabled unit, so ``a && b || c`` printed both."""
-    return (f"if systemctl list-unit-files {unit} --no-legend | grep -q .; "
-            f"then systemctl is-enabled {unit}; else echo not-installed; fi")
+    return (
+        f"if systemctl list-unit-files {unit} --no-legend | grep -q .; "
+        f"then systemctl is-enabled {unit}; else echo not-installed; fi"
+    )
 
 
 def boot_checks(cfg: SystemConfig, *, init: str) -> list[Check]:
@@ -347,28 +436,38 @@ def boot_checks(cfg: SystemConfig, *, init: str) -> list[Check]:
         Check("machine-id generated at boot", "cat /etc/machine-id", None, "machine-id"),
     ]
     if cfg.os_release.get("NAME"):
-        checks.append(Check("os-release", ". /etc/os-release && echo \"$NAME\"",
-                            cfg.os_release["NAME"]))
+        checks.append(
+            Check("os-release", '. /etc/os-release && echo "$NAME"', cfg.os_release["NAME"])
+        )
     if init == "systemd":
-        checks.append(Check("console keymap", "sed -n 's/^KEYMAP=//p' /etc/vconsole.conf",
-                            cfg.keymap))
-        checks += [Check(f"enabled: {u}", _unit_state(u), None, "enabled-or-absent")
-                   for u in cfg.services.systemd.enable]
-        checks += [Check(f"disabled: {u}", _unit_state(u), None, "disabled-or-absent")
-                   for u in cfg.services.systemd.disable]
+        checks.append(
+            Check("console keymap", "sed -n 's/^KEYMAP=//p' /etc/vconsole.conf", cfg.keymap)
+        )
+        checks += [
+            Check(f"enabled: {u}", _unit_state(u), None, "enabled-or-absent")
+            for u in cfg.services.systemd.enable
+        ]
+        checks += [
+            Check(f"disabled: {u}", _unit_state(u), None, "disabled-or-absent")
+            for u in cfg.services.systemd.disable
+        ]
     manager = display_manager(cfg, init=init)
     if manager is not None:
-        checks.append(Check("display manager running", "systemctl is-active display-manager",
-                            "active"))
+        checks.append(
+            Check("display manager running", "systemctl is-active display-manager", "active")
+        )
     if live.autologin:
         session_type = "wayland" if (live.session and manager) else "tty"
-        checks.append(Check(
-            f"{live.user} logged in automatically on seat0 ({session_type})",
-            "for s in $(loginctl list-sessions --no-legend | "
-            f"awk '$3==\"{live.user}\" && $4==\"seat0\" {{print $1}}'); "
-            "do loginctl show-session \"$s\" -p Type --value; done",
-            session_type, "contains",
-        ))
+        checks.append(
+            Check(
+                f"{live.user} logged in automatically on seat0 ({session_type})",
+                "for s in $(loginctl list-sessions --no-legend | "
+                f'awk \'$3=="{live.user}" && $4=="seat0" {{print $1}}\'); '
+                'do loginctl show-session "$s" -p Type --value; done',
+                session_type,
+                "contains",
+            )
+        )
     return checks
 
 
@@ -379,8 +478,7 @@ def judge(check: Check, stdout: str, exit_code: int) -> bool:
     if check.mode == "machine-id":
         return len(out) == 32 and all(c in "0123456789abcdef" for c in out)
     if check.mode == "enabled-or-absent":
-        return out in ("enabled", "enabled-runtime", "alias", "static", "indirect",
-                       "not-installed")
+        return out in ("enabled", "enabled-runtime", "alias", "static", "indirect", "not-installed")
     if check.mode == "disabled-or-absent":
         return out in ("disabled", "masked", "not-installed")
     if check.mode == "contains":
@@ -434,8 +532,14 @@ def boot_test(
                         passed = judge(check, done.stdout, done.exit_code)
                         got = done.stdout.strip()[:500]
                         check_step.add(passed=passed, got=got, expected=check.expect)
-                    results.append({"check": check.name, "passed": passed, "got": got,
-                                    "expected": check.expect})
+                    results.append(
+                        {
+                            "check": check.name,
+                            "passed": passed,
+                            "got": got,
+                            "expected": check.expect,
+                        }
+                    )
                 for name, command in METRICS.items():
                     metrics[name] = session.run_command(command).stdout.strip()
                 if screenshots is not None:
@@ -446,7 +550,9 @@ def boot_test(
             failed = [r["check"] for r in results if not r["passed"]]
             step.add(checks=len(results), failed=failed)
         report["firmwares"][firmware] = {
-            "ssh_after_s": ssh_after, "checks": results, "metrics": metrics,
+            "ssh_after_s": ssh_after,
+            "checks": results,
+            "metrics": metrics,
             "passed": not failed,
         }
     report["passed"] = all(f["passed"] for f in report["firmwares"].values())

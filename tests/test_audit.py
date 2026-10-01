@@ -35,7 +35,12 @@ def _run(tmp_path: Path, clock: _Clock | None = None) -> audit.Run:
 def test_redact_argv_masks_the_value_of_secret_looking_names() -> None:
     argv = ["env", "FEATURES=-ccache", "GITHUB_TOKEN=abc", "--password=x", "DB_PASS=y", "emerge"]
     assert audit.redact_argv(argv) == [
-        "env", "FEATURES=-ccache", "GITHUB_TOKEN=***", "--password=***", "DB_PASS=***", "emerge",
+        "env",
+        "FEATURES=-ccache",
+        "GITHUB_TOKEN=***",
+        "--password=***",
+        "DB_PASS=***",
+        "emerge",
     ]
 
 
@@ -96,10 +101,14 @@ def test_the_manifest_and_report_summarise_commands_artifacts_and_metrics(
     assert manifest["commands"] == {"count": 2, "failed": 1, "duration_s": 161.0}
     import hashlib
 
-    assert manifest["artifacts"] == [{
-        "path": str(iso), "role": "iso", "size_bytes": 3,
-        "sha256": hashlib.sha256(b"ISO").hexdigest(),
-    }]
+    assert manifest["artifacts"] == [
+        {
+            "path": str(iso),
+            "role": "iso",
+            "size_bytes": 3,
+            "sha256": hashlib.sha256(b"ISO").hexdigest(),
+        }
+    ]
     assert manifest["metrics"][0]["name"] == "squashfs.ratio"
     report = (tmp_path / "run1" / "report.md").read_text()
     assert "| `squashfs` | ok |" in report and "| iso | " in report
@@ -145,13 +154,15 @@ def test_run_makes_itself_current_and_closes_with_the_blocks_status(
 
 
 def test_parse_emerge_log_times_each_merge_inside_the_window() -> None:
-    log = "\n".join([
-        "1000:  >>> emerge (1 of 2) dev-libs/a-1.0 to /",
-        "1003:  ::: completed emerge (1 of 2) dev-libs/a-1.0 to /",
-        "1004:  >>> emerge (2 of 2) dev-libs/b-2.0 to /",
-        "2000:  >>> emerge (1 of 1) dev-libs/c-3.0 to /",
-        "2010:  ::: completed emerge (1 of 1) dev-libs/c-3.0 to /",
-    ])
+    log = "\n".join(
+        [
+            "1000:  >>> emerge (1 of 2) dev-libs/a-1.0 to /",
+            "1003:  ::: completed emerge (1 of 2) dev-libs/a-1.0 to /",
+            "1004:  >>> emerge (2 of 2) dev-libs/b-2.0 to /",
+            "2000:  >>> emerge (1 of 1) dev-libs/c-3.0 to /",
+            "2010:  ::: completed emerge (1 of 1) dev-libs/c-3.0 to /",
+        ]
+    )
     merges = audit.parse_emerge_log(log, since=900, until=1500)
     assert merges == {
         "dev-libs/a-1.0": {"started": 1000, "ended": 1003, "duration_s": 3},
@@ -163,8 +174,11 @@ def test_harvest_packages_reads_the_vdb_with_its_own_use_flags(tmp_path: Path) -
     entry = tmp_path / "var/db/pkg/media-video/pipewire-1.6.9"
     entry.mkdir(parents=True)
     for name, text in {
-        "SIZE": "4423680\n", "SLOT": "0/0.4\n", "repository": "gentoo\n",
-        "IUSE": "+ffmpeg bluetooth -doc\n", "USE": "amd64 bluetooth elibc_glibc ffmpeg\n",
+        "SIZE": "4423680\n",
+        "SLOT": "0/0.4\n",
+        "repository": "gentoo\n",
+        "IUSE": "+ffmpeg bluetooth -doc\n",
+        "USE": "amd64 bluetooth elibc_glibc ffmpeg\n",
     }.items():
         (entry / name).write_text(text)
     packages = audit.harvest_packages(
@@ -172,11 +186,17 @@ def test_harvest_packages_reads_the_vdb_with_its_own_use_flags(tmp_path: Path) -
         merges={"media-video/pipewire-1.6.9": {"started": 1, "ended": 5, "duration_s": 4}},
         reused=["media-video/pipewire-1.6.9"],
     )
-    assert packages == [{
-        "atom": "media-video/pipewire-1.6.9", "slot": "0/0.4", "repository": "gentoo",
-        "size_bytes": 4423680, "use": ["bluetooth", "ffmpeg"], "source": "binpkg",
-        "merge": {"started": 1, "ended": 5, "duration_s": 4},
-    }]
+    assert packages == [
+        {
+            "atom": "media-video/pipewire-1.6.9",
+            "slot": "0/0.4",
+            "repository": "gentoo",
+            "size_bytes": 4423680,
+            "use": ["bluetooth", "ffmpeg"],
+            "source": "binpkg",
+            "merge": {"started": 1, "ended": 5, "duration_s": 4},
+        }
+    ]
 
 
 def test_the_container_records_every_command_in_the_run(
@@ -191,9 +211,7 @@ def test_the_container_records_every_command_in_the_run(
     monkeypatch.setattr(audit, "repo_state", lambda: {})
     with audit.run(tmp_path, command="t", argv=[]) as r:
         Container(tmp_path / "rootfs").run(["emerge", "GITHUB_TOKEN=s"], check=False)
-    commands = [
-        e for e in audit.read_events(r.path / "events.jsonl") if e["kind"] == "command"
-    ]
+    commands = [e for e in audit.read_events(r.path / "events.jsonl") if e["kind"] == "command"]
     assert len(commands) == 1
     assert commands[0]["argv"] == ["emerge", "GITHUB_TOKEN=***"]
     assert commands[0]["exit_code"] == 3 and commands[0]["output_lines"] == 2

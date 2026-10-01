@@ -117,7 +117,9 @@ def write_sbom(rootfs: Path, dest: Path) -> Path | None:
     try:
         subprocess.run(
             ["syft", "scan", f"dir:{rootfs}", "--quiet", "-o", f"spdx-json={dest}"],
-            capture_output=True, text=True, check=True,
+            capture_output=True,
+            text=True,
+            check=True,
         )
     except subprocess.CalledProcessError as err:
         raise PublishError(f"syft {rootfs}: {err.stderr}") from err
@@ -163,17 +165,31 @@ def stage4_argv(rootfs: Path, dest: Path, patterns: Sequence[str]) -> list[str]:
     """``tar`` of the configured root, xattrs and ACLs kept, ``xz -9e`` on every
     CPU (the author's own stage4 recipe). Pure."""
     return [
-        "tar", "--create", "--file", str(dest), "--directory", str(rootfs),
-        "--xattrs", "--xattrs-include=*", "--acls", "--numeric-owner",
-        "--use-compress-program=xz -9e -T0", *tar_excludes(patterns), ".",
+        "tar",
+        "--create",
+        "--file",
+        str(dest),
+        "--directory",
+        str(rootfs),
+        "--xattrs",
+        "--xattrs-include=*",
+        "--acls",
+        "--numeric-owner",
+        "--use-compress-program=xz -9e -T0",
+        *tar_excludes(patterns),
+        ".",
     ]
 
 
 def make_stage4(rootfs: Path, dest: Path, exclude_file: Path) -> Path:
     """The stage4 tarball of ``rootfs``. I/O (long: xz -9e)."""
     try:
-        subprocess.run(stage4_argv(rootfs, dest, read_patterns(exclude_file)),
-                       capture_output=True, text=True, check=True)
+        subprocess.run(
+            stage4_argv(rootfs, dest, read_patterns(exclude_file)),
+            capture_output=True,
+            text=True,
+            check=True,
+        )
     except subprocess.CalledProcessError as err:
         dest.unlink(missing_ok=True)
         raise PublishError(f"stage4 {dest.name}: {err.stderr}") from err
@@ -197,9 +213,19 @@ def bundle_run(run_dir: Path, dest: Path) -> Path:
     dest.parent.mkdir(parents=True, exist_ok=True)
     try:
         subprocess.run(
-            ["tar", "--create", "--zstd", "--file", str(dest), "--directory", str(run_dir.parent),
-             run_dir.name],
-            capture_output=True, text=True, check=True,
+            [
+                "tar",
+                "--create",
+                "--zstd",
+                "--file",
+                str(dest),
+                "--directory",
+                str(run_dir.parent),
+                run_dir.name,
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
         )
     except (OSError, subprocess.CalledProcessError) as err:
         raise PublishError(f"bundling {run_dir}: {err}") from err

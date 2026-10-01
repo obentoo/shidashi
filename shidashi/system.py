@@ -287,7 +287,8 @@ def apply_system(
         done["enabled"] = [u for u in cfg.services.systemd.enable if unit_exists(rootfs, u)]
         done["disabled"] = disable
         done["skipped"] = [
-            u for u in (*cfg.services.systemd.enable, *cfg.services.systemd.disable)
+            u
+            for u in (*cfg.services.systemd.enable, *cfg.services.systemd.disable)
             if not unit_exists(rootfs, u)
         ]
     else:
@@ -295,8 +296,10 @@ def apply_system(
         if manager:
             _write(rootfs / "etc/conf.d/display-manager", f'DISPLAYMANAGER="{manager}"\n')
         added: list[str] = []
-        for level, names in (("boot", cfg.services.openrc.boot),
-                             ("default", cfg.services.openrc.default)):
+        for level, names in (
+            ("boot", cfg.services.openrc.boot),
+            ("default", cfg.services.openrc.default),
+        ):
             for name in names:
                 if (rootfs / "etc/init.d" / name).exists():
                     container.run(["rc-update", "add", name, level])
@@ -313,8 +316,7 @@ _RESOLV_STUB_TEXT = "# Written at boot by the network manager (NetworkManager or
 def uses_resolved(rootfs: Path, cfg: SystemConfig, *, init: str) -> bool:
     """Whether the image resolves names through systemd-resolved. I/O."""
     unit = "systemd-resolved.service"
-    return (init == "systemd" and unit in cfg.services.systemd.enable
-            and unit_exists(rootfs, unit))
+    return init == "systemd" and unit in cfg.services.systemd.enable and unit_exists(rootfs, unit)
 
 
 def finalize(rootfs: Path, cfg: SystemConfig, *, init: str) -> dict[str, Any]:
@@ -365,8 +367,7 @@ def _set_shadow_hash(rootfs: Path, user: str, hashed: str) -> None:
 def display_manager(cfg: SystemConfig, *, init: str) -> str | None:
     """The display manager the image starts under ``init``, if any. Pure."""
     if init == "systemd":
-        return next((_DM_BY_UNIT[u] for u in cfg.services.systemd.enable if u in _DM_BY_UNIT),
-                    None)
+        return next((_DM_BY_UNIT[u] for u in cfg.services.systemd.enable if u in _DM_BY_UNIT), None)
     return cfg.display_manager.get("openrc")
 
 
@@ -380,13 +381,26 @@ def apply_live(
     """Add what only the live medium has. PRIVILEGED. Returns what it did."""
     rootfs = container.rootfs
     live = cfg.live
-    existing = {line.split(":", 1)[0] for line in
-                (rootfs / "etc/group").read_text(encoding="utf-8").splitlines() if line}
+    existing = {
+        line.split(":", 1)[0]
+        for line in (rootfs / "etc/group").read_text(encoding="utf-8").splitlines()
+        if line
+    }
     groups = [g for g in live.groups if g in existing]
-    container.run([
-        "useradd", "--create-home", "--user-group", "--shell", live.shell,
-        "--comment", live.full_name, "--groups", ",".join(groups), live.user,
-    ])
+    container.run(
+        [
+            "useradd",
+            "--create-home",
+            "--user-group",
+            "--shell",
+            live.shell,
+            "--comment",
+            live.full_name,
+            "--groups",
+            ",".join(groups),
+            live.user,
+        ]
+    )
     _set_shadow_hash(rootfs, live.user, hasher(live.password))
     done: dict[str, Any] = {"user": live.user, "groups": groups}
 
@@ -407,8 +421,10 @@ def apply_live(
             )
             done["autologin"] = "console:tty1"
         else:
-            _write(rootfs / "etc/conf.d/agetty.tty1",
-                   f'agetty_options="--autologin {live.user} --noclear"\n')
+            _write(
+                rootfs / "etc/conf.d/agetty.tty1",
+                f'agetty_options="--autologin {live.user} --noclear"\n',
+            )
             done["autologin"] = "console:tty1"
 
     if live.empty_machine_id:
@@ -446,8 +462,10 @@ def verify(rootfs: Path, cfg: SystemConfig, *, init: str, live: bool) -> list[st
     if cfg.os_release.get("NAME"):
         release = etc / "os-release"
         text = release.read_text() if release.is_file() else ""
-        check(f'NAME="{cfg.os_release["NAME"]}"' in text,
-              f"/etc/os-release does not name the system {cfg.os_release['NAME']}")
+        check(
+            f'NAME="{cfg.os_release["NAME"]}"' in text,
+            f"/etc/os-release does not name the system {cfg.os_release['NAME']}",
+        )
     hostname = (etc / "hostname").read_text().strip() if (etc / "hostname").is_file() else None
     check(hostname == cfg.hostname, f"/etc/hostname is {hostname!r}, not {cfg.hostname!r}")
     localtime = etc / "localtime"
@@ -456,17 +474,23 @@ def verify(rootfs: Path, cfg: SystemConfig, *, init: str, live: bool) -> list[st
         f"/etc/localtime does not point at {cfg.timezone}",
     )
     locale = (etc / "locale.conf").read_text() if (etc / "locale.conf").is_file() else ""
-    check(normalize_locale(cfg.locale) in normalize_locale(locale),
-          f"/etc/locale.conf does not set {cfg.locale}")
+    check(
+        normalize_locale(cfg.locale) in normalize_locale(locale),
+        f"/etc/locale.conf does not set {cfg.locale}",
+    )
     if cfg.sudo_wheel:
         check((rootfs / _SUDOERS_WHEEL).is_file(), f"/{_SUDOERS_WHEEL} is missing")
     resolv = etc / "resolv.conf"
     if uses_resolved(rootfs, cfg, init=init):
-        check(resolv.is_symlink() and resolv.readlink() == _RESOLVED_STUB,
-              f"/etc/resolv.conf does not point at {_RESOLVED_STUB}")
+        check(
+            resolv.is_symlink() and resolv.readlink() == _RESOLVED_STUB,
+            f"/etc/resolv.conf does not point at {_RESOLVED_STUB}",
+        )
     else:
-        check(resolv.is_file() and resolv.read_text() == _RESOLV_STUB_TEXT,
-              "/etc/resolv.conf is not the stub (the build host's leaked in?)")
+        check(
+            resolv.is_file() and resolv.read_text() == _RESOLV_STUB_TEXT,
+            "/etc/resolv.conf is not the stub (the build host's leaked in?)",
+        )
     if init == "systemd":
         vconsole = (etc / "vconsole.conf").read_text() if (etc / "vconsole.conf").is_file() else ""
         check(f"KEYMAP={cfg.keymap}" in vconsole, f"/etc/vconsole.conf lacks KEYMAP={cfg.keymap}")
@@ -479,33 +503,46 @@ def verify(rootfs: Path, cfg: SystemConfig, *, init: str, live: bool) -> list[st
     else:
         for name in cfg.services.openrc.default:
             if (etc / "init.d" / name).exists():
-                check((etc / "runlevels/default" / name).exists(),
-                      f"{name} is not in the default runlevel")
+                check(
+                    (etc / "runlevels/default" / name).exists(),
+                    f"{name} is not in the default runlevel",
+                )
     if live:
         user = cfg.live.user
         passwd = (etc / "passwd").read_text() if (etc / "passwd").is_file() else ""
-        check(any(line.startswith(f"{user}:") for line in passwd.splitlines()),
-              f"live user {user} is not in /etc/passwd")
+        check(
+            any(line.startswith(f"{user}:") for line in passwd.splitlines()),
+            f"live user {user} is not in /etc/passwd",
+        )
         try:
             shadow = (etc / "shadow").read_text()
         except OSError:
             shadow = ""
-        entry = next((ln.split(":") for ln in shadow.splitlines() if ln.startswith(f"{user}:")),
-                     None)
-        check(entry is not None and entry[1].startswith("$6$"),
-              f"live user {user} has no SHA-512 password")
+        entry = next(
+            (ln.split(":") for ln in shadow.splitlines() if ln.startswith(f"{user}:")), None
+        )
+        check(
+            entry is not None and entry[1].startswith("$6$"),
+            f"live user {user} has no SHA-512 password",
+        )
         if cfg.live.empty_machine_id:
             machine_id = etc / "machine-id"
-            check(machine_id.is_file() and machine_id.stat().st_size == 0,
-                  "/etc/machine-id is not empty")
+            check(
+                machine_id.is_file() and machine_id.stat().st_size == 0,
+                "/etc/machine-id is not empty",
+            )
         if cfg.live.autologin:
             manager = display_manager(cfg, init=init)
             if cfg.live.session and manager in _DM_CONF_DIR:
                 conf = rootfs / _DM_CONF_DIR[manager] / _LIVE_AUTOLOGIN_NAME
-                check(conf.is_file() and f"User={user}" in conf.read_text(),
-                      f"{manager} autologin for {user} is missing")
+                check(
+                    conf.is_file() and f"User={user}" in conf.read_text(),
+                    f"{manager} autologin for {user} is missing",
+                )
                 session = rootfs / "usr/share/wayland-sessions" / cfg.live.session
                 xsession = rootfs / "usr/share/xsessions" / cfg.live.session
-                check(session.is_file() or xsession.is_file(),
-                      f"autologin session {cfg.live.session} is not installed")
+                check(
+                    session.is_file() or xsession.is_file(),
+                    f"autologin session {cfg.live.session} is not installed",
+                )
     return problems

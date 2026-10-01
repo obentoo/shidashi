@@ -42,7 +42,10 @@ def test_load_quirks_refuses_repeated_atoms_and_non_lists(tmp_path: Path) -> Non
 
 
 def test_render_quirks_writes_env_package_env_and_mask(tmp_path: Path) -> None:
-    quirks = load_quirks(_write(tmp_path, """
+    quirks = load_quirks(
+        _write(
+            tmp_path,
+            """
 - atom: dev-java/openjdk
   features: [-ccache, -network-sandbox]
   why: |
@@ -57,7 +60,9 @@ def test_render_quirks_writes_env_package_env_and_mask(tmp_path: Path) -> None:
   mask: true
   why: python 3.13
   found: 2026-09-27
-"""))
+""",
+        )
+    )
     files = render_quirks(quirks, source="variants/base/quirks.yaml")
 
     assert files[PACKAGE_ENV].splitlines()[1:] == [
@@ -70,13 +75,17 @@ def test_render_quirks_writes_env_package_env_and_mask(tmp_path: Path) -> None:
     assert env.rstrip().endswith('FEATURES="-ccache -network-sandbox"')
     assert files[PACKAGE_MASK].rstrip().endswith("sys-firmware/seabios")
     assert set(files) == {
-        PACKAGE_ENV, PACKAGE_MASK,
-        "env/quirk-dev-java_openjdk.conf", "env/quirk-app-alternatives.conf",
+        PACKAGE_ENV,
+        PACKAGE_MASK,
+        "env/quirk-dev-java_openjdk.conf",
+        "env/quirk-app-alternatives.conf",
     }
 
 
 def test_the_base_registry_loads() -> None:
     quirks = load_quirks(config.variants_dir() / "base" / "quirks.yaml")
     assert {q.atom for q in quirks} >= {
-        "dev-java/openjdk", "app-alternatives/*", "sys-firmware/seabios",
+        "dev-java/openjdk",
+        "app-alternatives/*",
+        "sys-firmware/seabios",
     }

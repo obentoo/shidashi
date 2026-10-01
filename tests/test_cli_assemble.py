@@ -26,6 +26,7 @@ from tests._variants_tree import write_variants
 
 runner = CliRunner()
 
+
 @pytest.fixture
 def variants_tree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """The shared stage-format tree (tests/_variants_tree.py), pointed at by the env."""
@@ -154,7 +155,10 @@ def test_assemble_passes_output_and_flags(
     assert result.exit_code == 0, result.stdout
     assert captured["output"] == Path("/tmp/out")
     assert captured["kwargs"] == {
-        "download": False, "keep": True, "compressions": ("zstd", "xz"), "stage4": True,
+        "download": False,
+        "keep": True,
+        "compressions": ("zstd", "xz"),
+        "stage4": True,
         "sbom": False,
     }
 

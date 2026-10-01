@@ -114,9 +114,7 @@ def test_run_bootstrap_runs_the_lab_sequence_and_selects_the_new_slots(stage3: P
     # the switch happens after the merge, by name
     assert ["binutils-config", f"{_CHOST}-2.45"] in c.calls
     assert ["gcc-config", f"{_CHOST}-15"] in c.calls
-    assert c.calls.index(_emerge("sys-devel/gcc")) < c.calls.index(
-        ["gcc-config", f"{_CHOST}-15"]
-    )
+    assert c.calls.index(_emerge("sys-devel/gcc")) < c.calls.index(["gcc-config", f"{_CHOST}-15"])
     emerged = [call[4:] for call in c.calls if call[:4] == _emerge()]
     assert emerged == [
         ["sys-kernel/linux-headers", "sys-devel/binutils"],
@@ -127,7 +125,14 @@ def test_run_bootstrap_runs_the_lab_sequence_and_selects_the_new_slots(stage3: P
     ]
     assert c.calls[:2] == [["locale-gen"], ["eselect", "locale", "set", "en_US.UTF-8"]]
     assert result.steps == (
-        "locale", "binutils", "gcc", "libtool", "glibc", "preserved", "generation", "ccache",
+        "locale",
+        "binutils",
+        "gcc",
+        "libtool",
+        "glibc",
+        "preserved",
+        "generation",
+        "ccache",
         "world",
     )
 
@@ -244,18 +249,16 @@ stages:
     [
         # buildpkg on before the fingerprint is known: the binpkg could land in
         # another generation's PKGDIR (D26)
-        "    - {name: c, do: emerge, atoms: [x/y], env: {FEATURES: \"-ccache\"}}\n"
+        '    - {name: c, do: emerge, atoms: [x/y], env: {FEATURES: "-ccache"}}\n'
         "    - {name: g, do: check-generation}\n",
         "    - {name: g, do: check-generation}\n    - {name: h, do: check-generation}\n",
     ],
 )
-def test_the_flow_refuses_binpkgs_before_the_generation_check(
-    tmp_path: Path, steps: str
-) -> None:
+def test_the_flow_refuses_binpkgs_before_the_generation_check(tmp_path: Path, steps: str) -> None:
     from shidashi.flow import FlowError
 
     (tmp_path / "flow.yaml").write_text(
-        "bootstrap:\n  env: {FEATURES: \"-buildpkg\"}\n  steps:\n" + steps, encoding="utf-8"
+        'bootstrap:\n  env: {FEATURES: "-buildpkg"}\n  steps:\n' + steps, encoding="utf-8"
     )
     with pytest.raises(FlowError, match="check-generation"):
         load_flow(tmp_path)

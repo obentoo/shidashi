@@ -150,6 +150,7 @@ def test_module_object_satisfies_require_portage_return(
 
 _runner = CliRunner()
 
+
 @pytest.fixture
 def variants_tree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """The shared stage-format tree (tests/_variants_tree.py), pointed at by the env."""
@@ -182,9 +183,7 @@ def test_recipe_cli_path_never_imports_portage_api(variants_tree: Path) -> None:
         resolved = recipe.merge(
             recipe.load_base(_BASE_PATH(variants_tree)),
             recipe.load_arch(_RECIPE_PATH(variants_tree, "arch", "v3")),
-            recipe.load_chain(
-                "minimal", lambda name: variants_tree / name / "recipe.yaml"
-            ),
+            recipe.load_chain("minimal", lambda name: variants_tree / name / "recipe.yaml"),
             recipe.load_init(_RECIPE_PATH(variants_tree, "init", "systemd")),
         )
         assert resolved.arch == "v3"

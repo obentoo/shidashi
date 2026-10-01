@@ -331,9 +331,7 @@ def _build_binds(
     ``repos`` are the pinned repositories by name (D26: the ::gentoo snapshot
     and the overlays' commits), bound in place of the host's clones.
     """
-    binds_ro = bind_repos(
-        repos_conf_dir if repos_conf_dir is not None else Path(), overrides=repos
-    )
+    binds_ro = bind_repos(repos_conf_dir if repos_conf_dir is not None else Path(), overrides=repos)
     binds_rw: list[tuple[Path, Path]] = [
         (pkgdir, _PKGDIR_DST),
         (config.ccache_dir(), _CCACHE_DST),
@@ -364,9 +362,7 @@ def portage_ids(rootfs: Path) -> tuple[int, int] | None:
     return None if uid is None or gid is None else (uid, gid)
 
 
-def _ensure_bind_dirs(
-    binds_rw: list[tuple[Path, Path]], *, rootfs: Path | None = None
-) -> None:
+def _ensure_bind_dirs(binds_rw: list[tuple[Path, Path]], *, rootfs: Path | None = None) -> None:
     """Cria os diretórios host-side dos binds RW antes do nspawn.
 
     ``systemd-nspawn`` exige que o *source* de cada ``--bind=`` exista no host;
@@ -492,9 +488,12 @@ class Factory:
                             snapshot=snapshot,
                             fork_points_dir=fork_points_dir,
                         )
-                        step.add(binutils=bootstrap.binutils, gcc=bootstrap.gcc,
-                                 locales_before=bootstrap.locales_before,
-                                 locales_after=bootstrap.locales_after)
+                        step.add(
+                            binutils=bootstrap.binutils,
+                            gcc=bootstrap.gcc,
+                            locales_before=bootstrap.locales_before,
+                            locales_after=bootstrap.locales_after,
+                        )
                 # before any emerge can reuse a binpkg (D26)
                 with run.step("generation") as step:
                     generation_print = fingerprint(rootfs, recipe)
@@ -536,8 +535,7 @@ class Factory:
         # build machine.
         with run.step("isa-check") as step:
             unrunnable = tuple(
-                str(f.path.relative_to(rootfs))
-                for f in isacheck.check_rootfs(rootfs, recipe.arch)
+                str(f.path.relative_to(rootfs)) for f in isacheck.check_rootfs(rootfs, recipe.arch)
             )
             step.add(unrunnable=len(unrunnable))
         run.metric("packages.built", len(built_atoms))
@@ -758,12 +756,12 @@ class Factory:
         # estado já persistido por run_phases_stepwise e o rootfs intacto (R3.5).
         bootstrap: BootstrapResult | None = None
         with Container(
-                rootfs,
-                ephemeral=False,
-                binds=binds_ro,
-                binds_rw=binds_rw,
-                log=config.build_log_path(recipe),
-            ) as container:
+            rootfs,
+            ephemeral=False,
+            binds=binds_ro,
+            binds_rw=binds_rw,
+            log=config.build_log_path(recipe),
+        ) as container:
             run = audit.current()
             if needs_bootstrap:
                 with run.step("bootstrap"):
@@ -993,4 +991,3 @@ class Factory:
         partir de sets quebrados. Agora há uma implementação só.
         """
         install_sets(rootfs, recipe)
-

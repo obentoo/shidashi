@@ -9,9 +9,15 @@ import pytest
 from shidashi import config, system
 from shidashi.container import CommandResult
 
-_UNITS = ("NetworkManager.service", "systemd-timesyncd.service", "plasmalogin.service",
-          "systemd-resolved.service", "systemd-networkd.service", "sshd.service",
-          "systemd-homed.service")
+_UNITS = (
+    "NetworkManager.service",
+    "systemd-timesyncd.service",
+    "plasmalogin.service",
+    "systemd-resolved.service",
+    "systemd-networkd.service",
+    "sshd.service",
+    "systemd-homed.service",
+)
 
 
 def _image(tmp_path: Path) -> Path:
@@ -64,7 +70,8 @@ class _Image:
                         continue
                     if unit == "plasmalogin.service":
                         (etc / "systemd/system/display-manager.service").symlink_to(
-                            f"/usr/lib/systemd/system/{unit}")
+                            f"/usr/lib/systemd/system/{unit}"
+                        )
                     else:
                         (wants / unit).symlink_to(f"/usr/lib/systemd/system/{unit}")
         elif argv[0] == "useradd":
@@ -84,7 +91,11 @@ def _kde(init: str = "systemd") -> system.SystemConfig:
 def test_the_layers_merge_scalars_override_and_lists_add_up() -> None:
     cfg = _kde()
     assert (cfg.hostname, cfg.locale, cfg.keymap, cfg.timezone) == (
-        "bentoo", "en_US.UTF-8", "us", "UTC")
+        "bentoo",
+        "en_US.UTF-8",
+        "us",
+        "UTC",
+    )
     # the base's services, then kde's display manager after them
     assert cfg.services.systemd.enable[0] == "NetworkManager.service"
     assert cfg.services.systemd.enable[-1] == "plasmalogin.service"
@@ -103,7 +114,10 @@ def test_minimal_has_no_display_manager_and_logs_in_on_the_console() -> None:
 def test_merge_is_pure_and_adds_list_items_once() -> None:
     base = {"a": 1, "l": ["x", "y"], "m": {"k": 1}}
     assert system._merge(base, {"a": 2, "l": ["y", "z"], "m": {"j": 2}}) == {
-        "a": 2, "l": ["x", "y", "z"], "m": {"k": 1, "j": 2}}
+        "a": 2,
+        "l": ["x", "y", "z"],
+        "m": {"k": 1, "j": 2},
+    }
     assert base == {"a": 1, "l": ["x", "y"], "m": {"k": 1}}
 
 
@@ -132,15 +146,16 @@ def test_apply_then_verify_leaves_nothing_missing(tmp_path: Path) -> None:
     assert (etc / "sudoers.d/10-wheel").stat().st_mode & 0o777 == 0o440
     assert (etc / "machine-id").read_text() == ""
     assert (etc / "plasmalogin.conf.d/90-bentoo-live.conf").read_text() == (
-        "[Autologin]\nUser=bentoo\nSession=plasma.desktop\nRelogin=false\n")
+        "[Autologin]\nUser=bentoo\nSession=plasma.desktop\nRelogin=false\n"
+    )
     # only the groups the image has; the password never on a command line
     useradd = next(c for c in image.calls if c[0] == "useradd")
     assert useradd[useradd.index("--groups") + 1] == "users,wheel,audio,video"
-    assert not any("bentoo" in arg for call in image.calls for arg in call[:-1]
-                   if call[0] != "useradd")
+    assert not any(
+        "bentoo" in arg for call in image.calls for arg in call[:-1] if call[0] != "useradd"
+    )
     assert "bentoo:$6$salt$h:" in (etc / "shadow").read_text()
-    assert done["disabled"] == ["systemd-networkd.service", "systemd-homed.service",
-                                "sshd.service"]
+    assert done["disabled"] == ["systemd-networkd.service", "systemd-homed.service", "sshd.service"]
     assert "bluetooth.service" in done["skipped"]  # not installed in this image
 
 
@@ -197,8 +212,12 @@ def test_os_release_names_bentoo_in_etc_and_leaves_baselayouts_file(tmp_path: Pa
     """KDE's Welcome Center said "Welcome to the Gentoo operating system"."""
     cfg = _kde()
     image = _Image(_image(tmp_path))
-    system.apply_system(image, cfg, init="systemd",
-                        build={"VERSION_ID": "2026.09.30", "VARIANT": "Kde", "VARIANT_ID": "kde"})
+    system.apply_system(
+        image,
+        cfg,
+        init="systemd",
+        build={"VERSION_ID": "2026.09.30", "VARIANT": "Kde", "VARIANT_ID": "kde"},
+    )
     release = image.rootfs / "etc/os-release"
     assert not release.is_symlink()
     text = release.read_text()
@@ -213,7 +232,8 @@ def test_verify_notices_an_image_that_calls_itself_gentoo(tmp_path: Path) -> Non
     image, _ = _configure(tmp_path, cfg)
     (image.rootfs / "etc/os-release").write_text("NAME=Gentoo\n")
     assert system.verify(image.rootfs, cfg, init="systemd", live=True) == [
-        "/etc/os-release does not name the system Bentoo"]
+        "/etc/os-release does not name the system Bentoo"
+    ]
 
 
 def test_render_os_release_escapes_like_a_shell() -> None:
@@ -241,7 +261,8 @@ def test_verify_catches_the_build_hosts_resolv_conf(tmp_path: Path) -> None:
     resolv.unlink()
     resolv.write_text("nameserver 8.8.8.8\n")
     assert system.verify(image.rootfs, cfg, init="systemd", live=True) == [
-        "/etc/resolv.conf does not point at ../run/systemd/resolve/stub-resolv.conf"]
+        "/etc/resolv.conf does not point at ../run/systemd/resolve/stub-resolv.conf"
+    ]
 
 
 def test_without_resolved_finalize_writes_the_stub(tmp_path: Path) -> None:

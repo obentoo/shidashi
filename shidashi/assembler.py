@@ -116,10 +116,8 @@ def _emerge_log_merges(rootfs: Path, *, since: int) -> dict[str, dict[str, int]]
 def _tree_bytes(path: Path) -> int:
     """Apparent size of a tree (``du -sb``), for the compression ratio; 0 if unknown."""
     try:
-        done = subprocess.run(
-            ["du", "-sxb", str(path)], capture_output=True, text=True, check=True
-        )
-    except (OSError, subprocess.CalledProcessError):
+        done = subprocess.run(["du", "-sxb", str(path)], capture_output=True, text=True, check=True)
+    except OSError, subprocess.CalledProcessError:
         return 0
     return int(done.stdout.split()[0])
 
@@ -157,7 +155,10 @@ def iso_emerge_argv(recipe: ResolvedRecipe, *, jobs: int | None = None) -> list[
     seedou).
     """
     return [
-        "emerge", *ISO_EMERGE_OPTIONS, "--verbose", *_jobs_args(jobs),
+        "emerge",
+        *ISO_EMERGE_OPTIONS,
+        "--verbose",
+        *_jobs_args(jobs),
         *image_targets(recipe.sets),
     ]
 
@@ -178,8 +179,15 @@ def _dracut_argv(kver: str, initramfs: Path) -> list[str]:
     dmsquash-live, not through modules-load.d.
     """
     return [
-        "dracut", "--add", "dmsquash-live", "--omit", "systemd-modules-load", "--no-hostonly",
-        "--force", str(initramfs), kver,
+        "dracut",
+        "--add",
+        "dmsquash-live",
+        "--omit",
+        "systemd-modules-load",
+        "--no-hostonly",
+        "--force",
+        str(initramfs),
+        kver,
     ]
 
 
@@ -431,8 +439,12 @@ class Assembler:
                     step.add(removed=_depclean_count(cleaned.stdout + cleaned.stderr))
                 with run.step("preserved-rebuild"):
                     container.run(
-                        ["emerge", *ISO_SETTLE_OPTIONS, *_jobs_args(self.jobs),
-                         "@preserved-rebuild"]
+                        [
+                            "emerge",
+                            *ISO_SETTLE_OPTIONS,
+                            *_jobs_args(self.jobs),
+                            "@preserved-rebuild",
+                        ]
                     )
                 with run.step("system") as step:
                     version = f"{when:%Y.%m.%d}"
@@ -509,22 +521,38 @@ class Assembler:
                 squashfs = rootfs.parent / f"{key}.{profile}.squashfs"
                 squashfs_files.append(squashfs)
                 with run.step(f"squashfs:{profile}") as step:
-                    image.make_squashfs(rootfs, squashfs, compression=profile,
-                                        exclude_file=exclude_file, processors=self.jobs)
+                    image.make_squashfs(
+                        rootfs,
+                        squashfs,
+                        compression=profile,
+                        exclude_file=exclude_file,
+                        processors=self.jobs,
+                    )
                     squashed = squashfs.stat().st_size
                     step.add(rootfs_bytes=rootfs_bytes, squashfs_bytes=squashed)
                     if squashed:
                         run.metric(f"squashfs.{profile}.ratio", round(rootfs_bytes / squashed, 3))
                 iso = output_dir / f"{name}{suffix}.iso"
                 info = build_info(
-                    recipe, name=f"{name}{suffix}", build_id=run.run_id or name, kernel=kver,
-                    compression=profile, volume=volume, packages=len(packages),
-                    world_atoms=len(atoms), stage3=pointer.model_dump(mode="json"),
+                    recipe,
+                    name=f"{name}{suffix}",
+                    build_id=run.run_id or name,
+                    kernel=kver,
+                    compression=profile,
+                    volume=volume,
+                    packages=len(packages),
+                    world_atoms=len(atoms),
+                    stage3=pointer.model_dump(mode="json"),
                 )
                 with run.step(f"iso:{profile}") as step:
                     image.build_iso(
-                        squashfs, iso, kernel=kernel, initramfs=initramfs, volume=volume,
-                        title=publish.title(recipe, when), build_id=run.run_id or name,
+                        squashfs,
+                        iso,
+                        kernel=kernel,
+                        initramfs=initramfs,
+                        volume=volume,
+                        title=publish.title(recipe, when),
+                        build_id=run.run_id or name,
                         text_target="multi-user.target" if recipe.init == "systemd" else None,
                         open_nvidia=ships_nvidia_driver(rootfs),
                         extra={

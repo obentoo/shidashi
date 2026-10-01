@@ -32,8 +32,17 @@ def test_mksquashfs_argv_default_is_zstd_19_with_1m_blocks() -> None:
     """The faster live session: 1M blocks gave -5.7% at the same speed (2026-09-30)."""
     argv = _mksquashfs_argv(Path("/r"), Path("/o.sq"))
     assert argv == [
-        "mksquashfs", "/r", "/o.sq", "-comp", "zstd", "-Xcompression-level", "19", "-b", "1M",
-        "-noappend", "-no-progress",
+        "mksquashfs",
+        "/r",
+        "/o.sq",
+        "-comp",
+        "zstd",
+        "-Xcompression-level",
+        "19",
+        "-b",
+        "1M",
+        "-noappend",
+        "-no-progress",
     ]
 
 
@@ -67,7 +76,15 @@ def test_the_repository_exclude_list_keeps_mount_points() -> None:
 def test_grub_mkrescue_argv_passes_volid_after_separator() -> None:
     argv = _grub_mkrescue_argv(Path("/iso"), Path("/out.iso"), volume_id="BENTOO_KDE")
     assert argv == [
-        "grub-mkrescue", "-o", "/out.iso", "-iso-level", "3", "/iso", "--", "-volid", "BENTOO_KDE"
+        "grub-mkrescue",
+        "-o",
+        "/out.iso",
+        "-iso-level",
+        "3",
+        "/iso",
+        "--",
+        "-volid",
+        "BENTOO_KDE",
     ]
 
 
@@ -88,8 +105,15 @@ def test_volume_id_is_per_flavor_and_iso9660_safe() -> None:
 def test_grub_cfg_offers_the_entries_the_major_distributions_do() -> None:
     cfg = _grub_cfg(volume="BENTOO_KDE", title="Bentoo KDE", text_target="multi-user.target")
     assert cfg.count("root=live:CDLABEL=BENTOO_KDE rd.live.image") == 4
-    for entry in ("Bentoo KDE", "(safe graphics)", "(copy to RAM)", "(text console)",
-                  "UEFI firmware settings", "Reboot", "Power off"):
+    for entry in (
+        "Bentoo KDE",
+        "(safe graphics)",
+        "(copy to RAM)",
+        "(text console)",
+        "UEFI firmware settings",
+        "Reboot",
+        "Power off",
+    ):
         assert entry in cfg
     assert "nomodeset" in cfg and "rd.live.ram=1" in cfg
     assert "systemd.unit=multi-user.target" in cfg
@@ -113,13 +137,20 @@ def test_stage_iso_tree_lays_out_the_medium_and_its_metadata(tmp_path: Path) -> 
     sbom.write_text("{}")
     root = tmp_path / "iso"
     _stage_iso_tree(
-        root, squashfs=squashfs, kernel=kernel, initramfs=initramfs, volume="BENTOO_KDE",
-        title="Bentoo KDE", build_id="20260930T0100Z-abc", text_target=None,
+        root,
+        squashfs=squashfs,
+        kernel=kernel,
+        initramfs=initramfs,
+        volume="BENTOO_KDE",
+        title="Bentoo KDE",
+        build_id="20260930T0100Z-abc",
+        text_target=None,
         extra={"bentoo/version": "bentoo-x\n", "bentoo/sbom.spdx.json": sbom},
     )
     assert (root / "LiveOS/squashfs.img").read_bytes() == b"SQ"
     assert (root / "LiveOS/squashfs.img.sha512").read_text() == (
-        f"{hashlib.sha512(b'SQ').hexdigest()}  squashfs.img\n")
+        f"{hashlib.sha512(b'SQ').hexdigest()}  squashfs.img\n"
+    )
     assert (root / "boot/vmlinuz").read_bytes() == b"K"
     assert (root / "boot/initramfs.img").read_bytes() == b"I"
     assert "BENTOO_KDE" in (root / "boot/grub/grub.cfg").read_text()

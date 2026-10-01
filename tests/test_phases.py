@@ -164,14 +164,14 @@ def test_phase_emerge_argv_always_reuses_binpkgs_of_the_generation() -> None:
         Phase(name="minimal", stage="minimal", sets=("extra-system",)),
     ):
         assert phase_emerge_argv(phase, _recipe(), emptytree=True)[:3] == [
-            "emerge", "--verbose", "--usepkg",
+            "emerge",
+            "--verbose",
+            "--usepkg",
         ]
 
 
 def test_phase_emerge_argv_non_rebuild_has_no_emptytree() -> None:
-    argv = phase_emerge_argv(
-        Phase(name="graphics", sets=("graphics",)), _recipe(), emptytree=True
-    )
+    argv = phase_emerge_argv(Phase(name="graphics", sets=("graphics",)), _recipe(), emptytree=True)
     assert "--emptytree" not in argv
     assert "@graphics" in argv
 
@@ -262,8 +262,9 @@ def _chain_recipe(flavor: str = "kde") -> ResolvedRecipe:
     return _recipe(
         flavor=flavor,
         phases=(
-            Phase(name="base", stage="base", sets=("base",), emptytree=True,
-                  use_break=(trunk_cut,)),
+            Phase(
+                name="base", stage="base", sets=("base",), emptytree=True, use_break=(trunk_cut,)
+            ),
             Phase(name="minimal", stage="minimal", sets=("extra-system",), ships=True),
             Phase(name="desktop", stage="desktop", sets=("gpu",)),
             Phase(name="flavor", stage=flavor, sets=(flavor,), ships=True),
@@ -329,8 +330,12 @@ def _run_chain(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, **kw: Any) -> An
     # the settle only redoes cuts on INSTALLED packages: python is in the image
     (tmp_path / "rootfs" / "var/db/pkg/dev-lang/python-3.14.7").mkdir(parents=True)
     results = phases.run_phases(
-        container, _chain_recipe(), emptytree=True, snapshot="S",
-        fork_points_dir=tmp_path, **kw,
+        container,
+        _chain_recipe(),
+        emptytree=True,
+        snapshot="S",
+        fork_points_dir=tmp_path,
+        **kw,
     )
     return results, container, snaps
 
@@ -341,24 +346,48 @@ def test_run_phases_settles_each_shipped_stage_and_snapshots_every_stage(
     """D24: minimal is settled on the way to kde, and desktop starts from it settled."""
     results, container, snaps = _run_chain(tmp_path, monkeypatch)
     assert [(r.phase.name, r.phase.stage) for r in results] == [
-        ("base", "base"), ("minimal", "minimal"), ("settle", "minimal"),
-        ("desktop", "desktop"), ("flavor", "kde"), ("settle", "kde"),
+        ("base", "base"),
+        ("minimal", "minimal"),
+        ("settle", "minimal"),
+        ("desktop", "desktop"),
+        ("flavor", "kde"),
+        ("settle", "kde"),
     ]
     assert snaps == [f"v3-systemd-S-{s}.tar" for s in ("base", "minimal", "desktop", "kde")]
     # kde's settle has no pending cut, so it runs no emerge
-    (base, minimal, settle_minimal, check_minimal, check_minimal_settle, desktop, _flavor,
-     check_kde, check_kde_settle) = container.emerge_calls
+    (
+        base,
+        minimal,
+        settle_minimal,
+        check_minimal,
+        check_minimal_settle,
+        desktop,
+        _flavor,
+        check_kde,
+        check_kde_settle,
+    ) = container.emerge_calls
     assert base[:4] == ["emerge", "--verbose", "--usepkg", "--emptytree"]
     # each shipped image is resolved as the assembler will -- against the
     # stage3's vdb, under the chain's cuts, then the settle of the cut packages
     root = "--root=/var/tmp/shidashi-iso-root"
     pretend = [
-        "emerge", "--pretend", root, "--usepkgonly", "--binpkg-respect-use=y", "--emptytree",
+        "emerge",
+        "--pretend",
+        root,
+        "--usepkgonly",
+        "--binpkg-respect-use=y",
+        "--emptytree",
         "@system",
     ]
     settle_check = [
-        "emerge", "--pretend", root, "--usepkgonly", "--binpkg-respect-use=y", "--oneshot",
-        "--nodeps", "dev-lang/python",
+        "emerge",
+        "--pretend",
+        root,
+        "--usepkgonly",
+        "--binpkg-respect-use=y",
+        "--oneshot",
+        "--nodeps",
+        "dev-lang/python",
     ]
     assert check_minimal == [*pretend, "@base", "@extra-system"]
     assert check_kde == [*pretend, "@base", "@extra-system", "@gpu", "@kde"]
@@ -368,8 +397,9 @@ def test_run_phases_settles_each_shipped_stage_and_snapshots_every_stage(
     assert minimal[3:6] == desktop[3:6] == ["--update", "--deep", "--newuse"]
     # minimal's settle undoes the trunk cut, which rode the base phase
     assert settle_minimal[-1] == "dev-lang/python"
-    assert not (tmp_path / "rootfs" / "etc" / "portage" / "package.use"
-                / "zz-shidashi-use-break").exists()
+    assert not (
+        tmp_path / "rootfs" / "etc" / "portage" / "package.use" / "zz-shidashi-use-break"
+    ).exists()
 
 
 def test_run_phases_resumed_from_desktop_builds_only_the_flavor(
@@ -470,8 +500,11 @@ def test_fork_point_round_trip_keeps_sticky_setuid_and_group_write(tmp_path: Pat
     restored.mkdir()
     snapshot_fork_point(src, tmp_path / "fp.tar")
     restore_fork_point(tmp_path / "fp.tar", restored)
-    assert _modes(restored) == {"tmp": "0o1777", "usr/bin/su": "0o4755",
-                                "var/cache/distfiles": "0o2775"}
+    assert _modes(restored) == {
+        "tmp": "0o1777",
+        "usr/bin/su": "0o4755",
+        "var/cache/distfiles": "0o2775",
+    }
 
 
 # --- regression: settle re-emerges only what is installed ------------------------
@@ -496,8 +529,12 @@ def test_settle_pass_skips_cut_packages_that_are_not_installed(tmp_path: Path) -
     desktop stage, D24) -- so the settle tried to INSTALL it. A cut whose package
     is absent has nothing to undo."""
     settle_pass: Any = try_import("shidashi.phases", "settle_pass")
-    for cpv in ("dev-lang/python-3.14.7", "dev-lang/python-exec-2.4.10",
-                "dev-python/pillow-12.3.0", "media-video/pipewire-common-1"):
+    for cpv in (
+        "dev-lang/python-3.14.7",
+        "dev-lang/python-exec-2.4.10",
+        "dev-python/pillow-12.3.0",
+        "media-video/pipewire-common-1",
+    ):
         (tmp_path / "var/db/pkg" / cpv).mkdir(parents=True)
     c = _SettleContainer(tmp_path)
     breaks = (
@@ -526,8 +563,8 @@ def test_parse_reused_atoms_reads_binary_lines_apart_from_built_ones() -> None:
     parse_reused_atoms: Any = try_import("shidashi.phases", "parse_reused_atoms")
     out = (
         "[binary     N    ] acct-group/tss-0-r3::gentoo  0 KiB\n"
-        "[ebuild   R    ] sys-apps/kbd-2.10.0::gentoo  USE=\"xkb*\" 1.747 KiB\n"
-        "[binary   R    ] dev-lang/python-3.14.7-1:3.14::gentoo  USE=\"-bluetooth\" 0 KiB\n"
+        '[ebuild   R    ] sys-apps/kbd-2.10.0::gentoo  USE="xkb*" 1.747 KiB\n'
+        '[binary   R    ] dev-lang/python-3.14.7-1:3.14::gentoo  USE="-bluetooth" 0 KiB\n'
     )
     assert parse_reused_atoms(out) == ("acct-group/tss-0-r3", "dev-lang/python-3.14.7-1")
     assert parse_built_atoms(out) == ("sys-apps/kbd-2.10.0",)
@@ -551,7 +588,9 @@ def test_run_phases_stop_after_a_shipped_stage_includes_its_settle(
 ) -> None:
     results, _container, snaps = _run_chain(tmp_path, monkeypatch, stop_after="minimal")
     assert [(r.phase.name, r.phase.stage) for r in results] == [
-        ("base", "base"), ("minimal", "minimal"), ("settle", "minimal"),
+        ("base", "base"),
+        ("minimal", "minimal"),
+        ("settle", "minimal"),
     ]
     assert snaps == ["v3-systemd-S-base.tar", "v3-systemd-S-minimal.tar"]
 
@@ -572,8 +611,9 @@ def test_an_option_added_in_the_flow_reaches_the_stage_emerge(
 ) -> None:
     """Adding e.g. --keep-going is an edit of flow.yaml, not of Python."""
     flow = phases.stages_flow()
-    edited = _flow_with(emerge={**flow.emerge.model_dump(),
-                                "options": (*flow.emerge.options, "--keep-going")})
+    edited = _flow_with(
+        emerge={**flow.emerge.model_dump(), "options": (*flow.emerge.options, "--keep-going")}
+    )
     monkeypatch.setattr(phases, "stages_flow", lambda: edited)
     base = Phase(name="base", stage="base", sets=("base",), emptytree=True)
     argv = phase_emerge_argv(base, _recipe(), emptytree=True)
@@ -604,8 +644,12 @@ def test_the_steps_after_the_emerge_run_in_the_declared_order(
     monkeypatch.setattr(phases, "settle_pass", _settle)
     container = _RecordingContainer(tmp_path / "rootfs")
     phases.run_phases(
-        container, _chain_recipe(), emptytree=True, snapshot="S",
-        fork_points_dir=tmp_path, stop_after="minimal",
+        container,
+        _chain_recipe(),
+        emptytree=True,
+        snapshot="S",
+        fork_points_dir=tmp_path,
+        stop_after="minimal",
     )
     assert events == ["snap:v3-systemd-S-base.tar", "snap:v3-systemd-S-minimal.tar", "settle"]
 
@@ -654,7 +698,9 @@ def test_a_missing_binpkg_fails_the_stage_naming_the_package(tmp_path: Path) -> 
         def run(self, argv: Any, **_k: Any) -> Any:
             if "--pretend" in argv:
                 raise subprocess.CalledProcessError(
-                    1, argv, output="",
+                    1,
+                    argv,
+                    output="",
                     stderr='emerge: there are no binary packages to satisfy "dev-util/ccache".\n',
                 )
             return super().run(argv)
@@ -735,8 +781,11 @@ def test_every_stage_and_step_is_in_the_audit_trail(
     manifest = audit.build_manifest(audit.read_events(trail.path / "events.jsonl"))
     steps = [s["step"] for s in manifest["steps"]]
     assert steps[:5] == [
-        "stage:base/apply-config", "stage:base/write-cuts", "stage:base/emerge-stage",
-        "stage:base/module-rebuild", "stage:base/fork-point",
+        "stage:base/apply-config",
+        "stage:base/write-cuts",
+        "stage:base/emerge-stage",
+        "stage:base/module-rebuild",
+        "stage:base/fork-point",
     ]
     assert "stage:minimal/settle" in steps and "stage:minimal/check-binpkgs" in steps
     assert steps[-1] == "stage:kde"
@@ -814,10 +863,16 @@ def test_module_rebuild_rebuilds_the_owners_from_source_and_drops_the_dir(
     root = _kernel_rootfs(tmp_path)
     container = _RebuildContainer(root)
     done = phases.module_rebuild(container, phase="desktop")  # type: ignore[arg-type]
-    assert done == {"stale": ["7.2.6-gentoo-dist"],
-                    "rebuilt": ["x11-drivers/nvidia-drivers-615.71.09"]}
+    assert done == {
+        "stale": ["7.2.6-gentoo-dist"],
+        "rebuilt": ["x11-drivers/nvidia-drivers-615.71.09"],
+    }
     assert container.calls[0] == [
-        "emerge", "--oneshot", "--verbose", "--usepkg=n", "=x11-drivers/nvidia-drivers-615.71.09"
+        "emerge",
+        "--oneshot",
+        "--verbose",
+        "--usepkg=n",
+        "=x11-drivers/nvidia-drivers-615.71.09",
     ]
     assert not (root / "usr/lib/modules/7.2.6-gentoo-dist").exists()
     assert (root / "usr/lib/modules/7.2.6-gentoo-dist-bin/vmlinuz").exists()

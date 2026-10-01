@@ -216,8 +216,7 @@ def fetch_stage3(pointer: Stage3Pointer, *, cache_dir: Path, download: bool = Tr
 #: GNU tar flags that keep a rootfs intact: owners by number (the image's, not
 #: the host's name mapping), every mode bit (sticky /tmp, setuid su), and the
 #: xattrs that carry file capabilities. The lab's reseed.sh used exactly these.
-ROOTFS_TAR_FLAGS = ("--numeric-owner", "--preserve-permissions", "--xattrs",
-                    "--xattrs-include=*.*")
+ROOTFS_TAR_FLAGS = ("--numeric-owner", "--preserve-permissions", "--xattrs", "--xattrs-include=*.*")
 
 
 def extract_stage3(tarball: Path, rootfs: Path) -> None:
@@ -234,13 +233,10 @@ def extract_stage3(tarball: Path, rootfs: Path) -> None:
     """
     rootfs.mkdir(parents=True, exist_ok=True)
     result = subprocess.run(
-        ["tar", "--extract", "--file", str(tarball), "--directory", str(rootfs),
-         *ROOTFS_TAR_FLAGS],
+        ["tar", "--extract", "--file", str(tarball), "--directory", str(rootfs), *ROOTFS_TAR_FLAGS],
         capture_output=True,
         text=True,
         check=False,
     )
     if result.returncode != 0:
-        raise SeedError(
-            f"falha ao extrair {tarball.name} em {rootfs}: {result.stderr.strip()}"
-        )
+        raise SeedError(f"falha ao extrair {tarball.name} em {rootfs}: {result.stderr.strip()}")

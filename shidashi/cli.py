@@ -295,9 +295,7 @@ def _pin_inputs(init: str) -> dict[str, object]:
 
 
 @contextlib.contextmanager
-def _audited(
-    command: str, resolved: ResolvedRecipe, **inputs: object
-) -> Generator[audit.Recorder]:
+def _audited(command: str, resolved: ResolvedRecipe, **inputs: object) -> Generator[audit.Recorder]:
     """Run the block as an audited run (:mod:`shidashi.audit`) and say where it went.
 
     The trail records the whole recipe, the pins and ``inputs``, then every step
@@ -652,8 +650,14 @@ def _run_factory_oneshot(
     With ``update`` it runs :meth:`Factory.update` instead of a build (D26).
     """
     try:
-        with _audited("factory", resolved, pkgdir=str(pkgdir), update=update,
-                      emptytree=emptytree, stop_after=stop_after):
+        with _audited(
+            "factory",
+            resolved,
+            pkgdir=str(pkgdir),
+            update=update,
+            emptytree=emptytree,
+            stop_after=stop_after,
+        ):
             factory_obj = Factory(resolved, pkgdir)
             if update:
                 result = factory_obj.update(download=download, keep=keep)
@@ -664,8 +668,7 @@ def _run_factory_oneshot(
     except FactoryError as err:
         if err.phase:
             _err_console.print(
-                f"[bold red]falha na fase[/bold red] "
-                f"{escape(str(err.phase))}: {escape(str(err))}"
+                f"[bold red]falha na fase[/bold red] {escape(str(err.phase))}: {escape(str(err))}"
             )
         else:
             _err_console.print(f"[bold red]erro:[/bold red] {escape(str(err))}")
@@ -717,8 +720,14 @@ def _run_factory_stepwise(
     # amigável (R3.3/R1.5) — nunca um traceback.
     while True:
         try:
-            with _audited("factory-stepwise", resolved, pkgdir=str(pkgdir), until=until,
-                          reset=reset, force_resume=force_resume):
+            with _audited(
+                "factory-stepwise",
+                resolved,
+                pkgdir=str(pkgdir),
+                until=until,
+                reset=reset,
+                force_resume=force_resume,
+            ):
                 result = _invoke_stepwise(
                     factory_obj,
                     until=until,
@@ -852,8 +861,11 @@ def assemble(
     ] = "zstd",
     stage4: Annotated[
         bool,
-        typer.Option("--stage4", help="Also publish the configured system as a stage4 "
-                     "tarball (tar.xz, xz -9e), made before the live user is added."),
+        typer.Option(
+            "--stage4",
+            help="Also publish the configured system as a stage4 "
+            "tarball (tar.xz, xz -9e), made before the live user is added.",
+        ),
     ] = False,
     no_sbom: Annotated[
         bool, typer.Option("--no-sbom", help="Do not generate the SBOM (syft).")
@@ -914,12 +926,24 @@ def assemble(
     compressions = ("zstd", "xz") if compression == "both" else (compression,)
 
     try:
-        with _audited("assemble", resolved, binhost=str(binhost), output_dir=str(output_dir),
-                      jobs=jobs, keep=keep, compressions=list(compressions), stage4=stage4,
-                      sbom=not no_sbom) as trail:
+        with _audited(
+            "assemble",
+            resolved,
+            binhost=str(binhost),
+            output_dir=str(output_dir),
+            jobs=jobs,
+            keep=keep,
+            compressions=list(compressions),
+            stage4=stage4,
+            sbom=not no_sbom,
+        ) as trail:
             produced = Assembler(resolved, binhost, jobs=jobs).assemble(
-                output_dir, download=not no_download, keep=keep, compressions=compressions,
-                stage4=stage4, sbom=not no_sbom,
+                output_dir,
+                download=not no_download,
+                keep=keep,
+                compressions=compressions,
+                stage4=stage4,
+                sbom=not no_sbom,
             )
         # the trail is complete only once the run closed: publish it beside the ISO
         if trail.root is not None:
@@ -927,7 +951,12 @@ def assemble(
             publish.update_sha256sums(output_dir, {bundle.name: publish.sha256_of(bundle)})
             produced = produced.model_copy(update={"artifacts": (*produced.artifacts, bundle)})
     except (
-        AssemblerError, ImageError, SeedError, ResolveError, ConfigurationError, StaleWorldError
+        AssemblerError,
+        ImageError,
+        SeedError,
+        ResolveError,
+        ConfigurationError,
+        StaleWorldError,
     ) as err:
         if isinstance(err, ResolveError) and err.raw_output:
             _err_console.print(err.raw_output, markup=False, highlight=False)
@@ -1005,8 +1034,12 @@ def build(
     ] = False,
     jobs: Annotated[
         int | None,
-        typer.Option("--jobs", min=1, help="MAKEOPTS -jN in the factory; emerge --jobs N and "
-                     "mksquashfs -processors N in the assemble."),
+        typer.Option(
+            "--jobs",
+            min=1,
+            help="MAKEOPTS -jN in the factory; emerge --jobs N and "
+            "mksquashfs -processors N in the assemble.",
+        ),
     ] = None,
     keep: Annotated[bool, typer.Option("--keep", help="Keep the build rootfs.")] = False,
     no_download: Annotated[
@@ -1014,8 +1047,11 @@ def build(
     ] = False,
     boot_test: Annotated[
         bool,
-        typer.Option("--boot-test", help="Boot every ISO on BIOS and UEFI and check it "
-                     "(shidashi vm test); a failed check fails the build."),
+        typer.Option(
+            "--boot-test",
+            help="Boot every ISO on BIOS and UEFI and check it "
+            "(shidashi vm test); a failed check fails the build.",
+        ),
     ] = False,
     work_dir: Annotated[
         Path | None,
@@ -1035,9 +1071,11 @@ def build(
         _err_console.print("[bold red]erro:[/bold red] --compression is zstd, xz or both")
         raise typer.Exit(1)
     compressions = ("zstd", "xz") if compression == "both" else (compression,)
-    wanted = config.target_names() if images == "all" else [
-        i.strip() for i in images.split(",") if i.strip()
-    ]
+    wanted = (
+        config.target_names()
+        if images == "all"
+        else [i.strip() for i in images.split(",") if i.strip()]
+    )
     try:
         factory_targets, iso_targets = plan_tree(wanted)
         recipes = {t: _resolve(arch, t, init) for t in {*factory_targets, *iso_targets}}
@@ -1049,9 +1087,14 @@ def build(
     results: list[AssembleResult] = []
     try:
         with _audited(
-            "build", recipes[iso_targets[-1]], images=iso_targets,
-            factory=[] if skip_factory else factory_targets, pkgdir=str(pkgdir),
-            output_dir=str(output_dir), compressions=list(compressions), stage4=stage4,
+            "build",
+            recipes[iso_targets[-1]],
+            images=iso_targets,
+            factory=[] if skip_factory else factory_targets,
+            pkgdir=str(pkgdir),
+            output_dir=str(output_dir),
+            compressions=list(compressions),
+            stage4=stage4,
             jobs=jobs,
         ) as trail:
             run = audit.current()
@@ -1065,8 +1108,12 @@ def build(
                 with run.step(f"assemble:{target}"):
                     results.append(
                         Assembler(recipes[target], pkgdir, jobs=jobs).assemble(
-                            output_dir, download=not no_download, keep=keep,
-                            compressions=compressions, stage4=stage4, sbom=not no_sbom,
+                            output_dir,
+                            download=not no_download,
+                            keep=keep,
+                            compressions=compressions,
+                            stage4=stage4,
+                            sbom=not no_sbom,
                         )
                     )
             if boot_test:
@@ -1077,12 +1124,14 @@ def build(
                         report = vm.boot_test(result.isos[0])
                         step.add(passed=report["passed"])
                         if not report["passed"]:
-                            failed = [f"{fw}: {c['check']}"
-                                      for fw, r in report["firmwares"].items()
-                                      for c in r["checks"] if not c["passed"]]
+                            failed = [
+                                f"{fw}: {c['check']}"
+                                for fw, r in report["firmwares"].items()
+                                for c in r["checks"]
+                                if not c["passed"]
+                            ]
                             raise AssemblerError(
-                                f"{result.isos[0].name} failed its boot test: "
-                                + "; ".join(failed)
+                                f"{result.isos[0].name} failed its boot test: " + "; ".join(failed)
                             )
     except FactoryError as err:
         where = f" {escape(str(err.phase))}" if err.phase else ""
@@ -1091,7 +1140,12 @@ def build(
             _err_console.print(err.output, markup=False, highlight=False)
         raise typer.Exit(1) from err
     except (
-        AssemblerError, ImageError, SeedError, ResolveError, ConfigurationError, StaleWorldError
+        AssemblerError,
+        ImageError,
+        SeedError,
+        ResolveError,
+        ConfigurationError,
+        StaleWorldError,
     ) as err:
         _err_console.print(f"[bold red]erro:[/bold red] {escape(str(err))}")
         raise typer.Exit(1) from err
@@ -1350,8 +1404,9 @@ def vm_start(
     from shidashi import vm
 
     _apply_work_dir(work_dir)
-    spec = vm.VmSpec(iso=iso.resolve(), uefi=uefi, cid=cid, memory=memory, cpus=cpus,
-                     display=display)
+    spec = vm.VmSpec(
+        iso=iso.resolve(), uefi=uefi, cid=cid, memory=memory, cpus=cpus, display=display
+    )
     session = vm.Session(spec, vm.session_dir(name))
     try:
         session.start()
@@ -1414,9 +1469,7 @@ def vm_stop(
 @vm_app.command("test")
 def vm_test(
     iso: Path,
-    firmware: Annotated[
-        str, typer.Option("--firmware", help="bios, uefi or both.")
-    ] = "both",
+    firmware: Annotated[str, typer.Option("--firmware", help="bios, uefi or both.")] = "both",
     cid: Annotated[int, typer.Option("--cid", min=3)] = 42,
     screenshots: Annotated[
         Path | None, typer.Option("--screenshots", help="Also save a screenshot per boot here.")
@@ -1438,22 +1491,26 @@ def vm_test(
         info = vm.read_build_info(iso.resolve())
         recipe = _resolve(info["arch"], info["flavor"], info["init"])
         with _audited("vm-test", recipe, iso=str(iso.resolve()), firmwares=list(firmwares)):
-            report = vm.boot_test(iso.resolve(), firmwares=firmwares, cid=cid,
-                                  screenshots=screenshots)
+            report = vm.boot_test(
+                iso.resolve(), firmwares=firmwares, cid=cid, screenshots=screenshots
+            )
     except (vm.VmError, config.UnknownAxisError, RecipeChainError) as err:
         raise _vm_error(err) from err
 
     console = Console()
     for name, result in report["firmwares"].items():
-        table = Table(title=f"boot test {name}: "
-                      f"{'PASSED' if result['passed'] else 'FAILED'} "
-                      f"(ssh after {result['ssh_after_s']} s)")
+        table = Table(
+            title=f"boot test {name}: "
+            f"{'PASSED' if result['passed'] else 'FAILED'} "
+            f"(ssh after {result['ssh_after_s']} s)"
+        )
         table.add_column("check")
         table.add_column("result")
         table.add_column("got")
         for check in result["checks"]:
-            table.add_row(check["check"], "ok" if check["passed"] else "FAIL",
-                          escape(str(check["got"]))[:80])
+            table.add_row(
+                check["check"], "ok" if check["passed"] else "FAIL", escape(str(check["got"]))[:80]
+            )
         for metric, value in result["metrics"].items():
             table.add_row(f"[dim]{metric}[/dim]", "", escape(value)[:80])
         console.print(table)

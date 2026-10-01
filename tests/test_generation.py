@@ -38,8 +38,12 @@ def _recipe(common_flags: str = "-march=x86-64-v3 -O2 -pipe") -> ResolvedRecipe:
 def rootfs(tmp_path: Path) -> Path:
     root = tmp_path / "rootfs"
     for cpv in (
-        "sys-devel/gcc-9.5.0", "sys-devel/gcc-15.3.0", "sys-devel/gcc-config-2.12",
-        "sys-devel/binutils-2.46.1", "sys-devel/binutils-2.47", "sys-devel/binutils-config-5.6",
+        "sys-devel/gcc-9.5.0",
+        "sys-devel/gcc-15.3.0",
+        "sys-devel/gcc-config-2.12",
+        "sys-devel/binutils-2.46.1",
+        "sys-devel/binutils-2.47",
+        "sys-devel/binutils-config-5.6",
         "sys-libs/glibc-2.43-r4",
     ):
         (root / "var/db/pkg" / cpv).mkdir(parents=True)

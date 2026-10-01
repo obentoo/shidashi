@@ -35,7 +35,8 @@ def _snapshot_bytes(date: str) -> bytes:
 
 def _pin(date: str = "20260919", payload: bytes = b"") -> TreePin:
     return TreePin(
-        date=date, base_url="https://mirror.test/snapshots",
+        date=date,
+        base_url="https://mirror.test/snapshots",
         sha512=hashlib.sha512(payload).hexdigest(),
     )
 
@@ -137,9 +138,19 @@ from shidashi.tree import OverlayPin, ensure_overlay, load_overlay_pins  # noqa:
 
 def _git(*args: str, cwd: Path) -> str:
     return subprocess.run(
-        ["git", *args], cwd=cwd, check=True, capture_output=True, text=True,
-        env={"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t",
-             "GIT_COMMITTER_EMAIL": "t@t", "PATH": "/usr/bin:/bin", "HOME": str(cwd)},
+        ["git", *args],
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+        text=True,
+        env={
+            "GIT_AUTHOR_NAME": "t",
+            "GIT_AUTHOR_EMAIL": "t@t",
+            "GIT_COMMITTER_NAME": "t",
+            "GIT_COMMITTER_EMAIL": "t@t",
+            "PATH": "/usr/bin:/bin",
+            "HOME": str(cwd),
+        },
     ).stdout.strip()
 
 
@@ -201,5 +212,9 @@ def test_the_overlay_directory_is_readable_by_the_portage_user(tmp_path: Path) -
     dest = ensure_overlay(pin, cache_dir=tmp_path / "cache")
     assert oct(dest.stat().st_mode & 0o777) == "0o755"
     dest.chmod(0o700)  # as the first real run left it
-    assert oct(ensure_overlay(pin, cache_dir=tmp_path / "cache", download=False)
-               .stat().st_mode & 0o777) == "0o755"
+    assert (
+        oct(
+            ensure_overlay(pin, cache_dir=tmp_path / "cache", download=False).stat().st_mode & 0o777
+        )
+        == "0o755"
+    )
