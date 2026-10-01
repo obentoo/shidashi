@@ -1,59 +1,124 @@
+<div align="center">
+
 # Shidashi 仕出し
 
-> The catering of **bentoo** — prepares and serves builds and installation ISOs from a Gentoo stage3.
+**The catering of [Bentoo](https://github.com/obentoo/bentoo):** builds Bentoo (Gentoo stage5)
+images and live ISOs from an official Gentoo stage3, phase by phase.
 
-Shidashi always starts from an **official stage3** and applies the bentoo layer (config + packages),
-compiling in isolated environments per *flavor*, serving binpkgs in USE variations via a
-binhost, and assembling live ISOs — across multiple architectures and flavors, with weekly
-releases (**every Sunday at 00:00**).
+[![CI](https://github.com/obentoo/shidashi/actions/workflows/release.yml/badge.svg)](https://github.com/obentoo/shidashi/actions/workflows/release.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+![Python 3.14+](https://img.shields.io/badge/python-3.14%2B-blue.svg)
 
-📄 Full architecture: **[OVERVIEW.md](OVERVIEW.md)**.
+</div>
+
+---
+
+## What it does
+
+Shidashi starts from an **official, verified stage3** and grows it, stage by stage, into the
+Bentoo images. Every stage is built in an isolated `systemd-nspawn` container, every package it
+compiles lands in a **binhost** as a binpkg, and the live ISOs are assembled from that binhost
+without compiling anything.
+
+```text
+stage3 ─► bootstrap ─► base ─► minimal ─► desktop ─┬─► kde
+         (toolchain)                               ├─► gnome
+                                                   └─► wm
+           each stage leaves a fork point; the binpkgs go to the binhost
+
+binhost ─► assemble ─► live ISO (BIOS + UEFI) ─► vm test
+```
+
+- **Shared trunk.** `base`, `minimal` and `desktop` are built once and reused by every image
+  of the same arch and init.
+- **Kits.** [`variants/kits/`](variants/kits/README) is the library of everything Bentoo
+  builds; each stage declares which kits its image installs. A line marked `#atom` is built for
+  the binhost but installed by no image.
+- **Audited.** Every run records its steps, the packages built or reused, and the result.
+
+The full architecture is in **[OVERVIEW.md](OVERVIEW.md)**.
 
 ## Status
 
-**Phases 0 and 1 complete (code).** The Python package `shidashi/` (14 modules), the recipes
-(`variants/`) and both subsystems (Package Factory + ISO Assembler) **are implemented and
-covered by tests** (381 passing). The live ISO boot was validated on QEMU/KVM; validation of the
-**build on a root Gentoo host** is *host-gated* and remains deferred by design (pilots in progress).
-Phases 2–5 open — see the roadmap in OVERVIEW.md §17 and the schedule in `.epic/docs/ROADMAP.md`.
+| Area | State |
+|---|---|
+| Package Factory (stage3 → binpkgs) | ✅ implemented and tested |
+| ISO Assembler (binpkgs → live ISO) | ✅ implemented and tested |
+| Boot test (`shidashi vm test`, BIOS + UEFI) | ✅ the `kde` and `minimal` ISOs pass |
+| Weekly releases (every Sunday, 00:00 UTC) | 🚧 planned: needs a self-hosted Gentoo runner |
 
-The commands below already run off-host (`recipe`, `pretend`); `factory`/`assemble` require a root host.
+658 tests; lint, types and tests run on every push. The roadmap is in
+[OVERVIEW.md §17](OVERVIEW.md#17-development-roadmap).
+
+## Images
+
+The images combine three axes, `arch × flavor × init`, all defined under
+[`variants/`](variants/):
+
+| Axis | Values |
+|---|---|
+| **Flavor** | `minimal` (console only) · `kde` (Qt) · `gnome` (GTK) · `wm` (Wayland-only: Hyprland, Sway, niri) |
+| **Arch** | `v3` (x86-64-v3, baseline) · `znver5` (Zen 5, tier 1) · `arrowlake` (tier 2, build-only) |
+| **Init** | `systemd` · `openrc` |
+
+The `::gentoo` snapshot and the overlays are pinned per release, so a build is reproducible
+from its inputs.
 
 ## Requirements
 
-- **Gentoo host** (Shidashi uses Portage's Python API: `import portage`).
-- **Python ≥ 3.14**.
-- Planned distribution: **ebuild** `app-misc/shidashi` in the bentoo overlay.
+- **To develop and run the tests:** Python ≥ 3.14 and [uv](https://docs.astral.sh/uv/). Any
+  Linux works.
+- **To build images:** a **Gentoo host**, with root, plus `systemd-nspawn`, `mksquashfs`,
+  `grub-mkrescue` and `xorriso`. `shidashi vm` also needs QEMU/KVM.
 
-## Installation (dev)
+Portage itself runs inside the build containers; the host's Python does not need it.
+
+## Getting started
 
 ```sh
-python -m venv .venv && . .venv/bin/activate
-pip install -e '.[dev]'
+git clone https://github.com/obentoo/shidashi.git
+cd shidashi
+uv sync --frozen --extra dev     # exactly uv.lock, with the dev tools
+uv run shidashi --help
+```
+
+Run the same checks as CI:
+
+```sh
+uv run ruff check . && uv run ruff format --check . && uv run mypy . && uv run pytest
 ```
 
 ## Usage
 
 ```sh
-shidashi recipe show v3 minimal systemd   # shows the resolved recipe (axis deep-merge)
-shidashi recipe validate v3 kde systemd   # validates the fragment merge
-shidashi factory v3 kde systemd           # compiles binpkgs → binhost
-shidashi assemble v3 kde systemd          # assembles the ISO from the binhost
-shidashi release --all                    # orchestrates the whole matrix
+shidashi recipe list                       # the arches, images and inits available
+shidashi recipe show v3 kde systemd        # the resolved recipe of one image
+shidashi world kde systemd                 # its packages, kit by kit (nothing is written)
+
+sudo shidashi factory v3 kde systemd       # build the binpkgs, stage by stage
+sudo shidashi assemble v3 kde systemd      # assemble the live ISO from the binhost
+shidashi vm test bentoo-…-kde-systemd-v3.iso   # boot it and check what it declares
 ```
 
-> Initial pilot: `v3 × minimal × systemd`, then `v3 × kde × systemd`.
+| Command | What it does | Root |
+|---|---|:---:|
+| `recipe list` / `show` / `validate` | inspect and validate the resolved recipes | |
+| `world` | write, check or print each image's package list | |
+| `kits check` | check every kit atom against the pinned trees | |
+| `pretend` | resolve a recipe against the real tree with `emerge --pretend` | ✔ |
+| `factory` | build an image's binpkgs in a container | ✔ |
+| `assemble` | assemble an image's live ISO from the binhost | ✔ |
+| `build` | the factory, then every ISO, in one audited run | ✔ |
+| `vm start` / `run` / `test` / `stop` | boot an ISO in a VM and drive it over SSH on vsock | |
+| `release` | publish a release (not implemented yet) | |
 
-## Model
+## Contributing
 
-- **Composable axes:** `arch × flavor × init` (see `variants/`, co-located per axis).
-- **Flavors:** `minimal` (TTY only) · `kde` (Qt) · `gnome` (GTK) · `wm` (Wayland-only: Hyprland/Sway/niri).
-- **Archs:** `v3` (baseline) · `znver5` (Zen 5, Tier 1) · `arrowlake` (Tier 2, build-only).
-- **Two subsystems:** Package Factory (compiles) + ISO Assembler (assembles).
-- **Build:** persistent trunk (weekly delta) + full clean wipe on *toolchain-bump*.
-- **Input determinism:** `::gentoo` snapshot pin per release.
-- **Language:** Python ≥ 3.14 — because Portage *is* a Python library.
+Issues and pull requests are welcome. Before pushing, run the checks above; the CI job can be
+reproduced locally with [`act`](https://github.com/nektos/act) (`act -j quality`).
+
+To report a vulnerability, see [SECURITY.md](SECURITY.md).
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+[MIT](LICENSE).
