@@ -57,6 +57,8 @@ vm_app = typer.Typer(
     help="Boot an ISO in a VM and drive it over SSH on vsock (no network, no screen).",
 )
 app.add_typer(vm_app, name="vm")
+kits_app = typer.Typer(no_args_is_help=True, help="The kit library: every package Bentoo builds.")
+app.add_typer(kits_app, name="kits")
 
 _err_console = Console(stderr=True)
 
@@ -1165,6 +1167,37 @@ def release(
     """Stub: publicação de release (não implementado na Fase 0) (R6.2)."""
     typer.echo(f"release: {_STUB_MSG}")
     raise typer.Exit(2)
+
+
+@kits_app.command("check")
+def kits_check(
+    work_dir: Annotated[Path | None, typer.Option("--work-dir")] = None,
+    no_download: Annotated[
+        bool, typer.Option("--no-download", help="Use the cached pinned trees only.")
+    ] = False,
+) -> None:
+    """Every kit atom must exist in the pinned trees; every @ref must name a kit.
+
+    Read-only. Exit 1 with one line per problem (kit:line: atom -- why).
+    """
+    from shidashi import kits
+    from shidashi.tree import pinned_repos
+
+    _apply_work_dir(work_dir)
+    try:
+        repos = pinned_repos(
+            seeds_dir=config.seeds_dir(), cache_dir=config.cache_dir(), download=not no_download
+        )
+    except (SeedError, OSError) as err:
+        raise _vm_error(err) from err
+    problems = kits.check(config.kits_dir(), repos)
+    atoms = sum(1 for *_, token in kits.iter_kits(config.kits_dir()) if not token.startswith("@"))
+    for problem in problems:
+        typer.echo(problem)
+    pins = ", ".join(f"::{name} ({path.name})" for name, path in repos.items())
+    typer.echo(f"{atoms} atoms checked against {pins}: {len(problems)} problem(s)")
+    if problems:
+        raise typer.Exit(1)
 
 
 # --- vm: control and the automated boot test ------------------------------------------

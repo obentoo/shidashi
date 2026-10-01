@@ -157,6 +157,7 @@ def set_closure(recipe: ResolvedRecipe) -> dict[str, list[str]]:
     index = kit_index(kits)
     excluded = frozenset(recipe.exclude)
     closure: dict[str, list[str]] = {}
+    matched: set[str] = set()
     pending = list(recipe.sets)
     while pending:
         name = pending.pop(0)
@@ -174,12 +175,21 @@ def set_closure(recipe: ResolvedRecipe) -> dict[str, list[str]]:
                 pending.append(token[0][1:])
             if token and token[0] in excluded:
                 dropped.append(token[0])
+                matched.add(token[0])
                 continue
             kept.append(line)
         if dropped:
             kept.insert(0, f"# shidashi: excluded by flavor/{recipe.flavor}: "
                            + " ".join(sorted(dropped)))
         closure[name] = kept
+    # an exclude that matches nothing is a typo, or a package the chain never
+    # had: silently ignored, it would leave in the image what it meant to take out
+    unmatched = sorted(excluded - matched)
+    if unmatched:
+        raise ResolveError(
+            f"exclude: {', '.join(unmatched)} is in no set of the {recipe.flavor} chain "
+            f"({', '.join(recipe.stages)}): a typo, or a package these stages never had"
+        )
     return closure
 
 

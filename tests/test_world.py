@@ -70,3 +70,23 @@ def test_the_world_command_checks_and_names_stale_files(
     assert result.exit_code == 1 and "stale   variants/minimal/world.systemd" in result.output
     assert runner.invoke(app, ["world"]).exit_code == 0  # regenerates
     assert runner.invoke(app, ["world", "--check"]).exit_code == 0
+
+
+def test_an_exclude_takes_the_package_out_of_the_world() -> None:
+    from shidashi.resolve import world_atoms
+
+    recipe = config.load_recipe("v3", "kde", "systemd")
+    excluded = recipe.model_copy(update={"exclude": ("app-emulation/virtualbox",)})
+    assert "app-emulation/virtualbox" in world_atoms(recipe)
+    assert "app-emulation/virtualbox" not in world_atoms(excluded)
+
+
+def test_an_exclude_that_matches_nothing_fails_with_the_reason() -> None:
+    """A typo in exclude: used to be ignored -- the package it meant to take
+    out stayed in the image, and nothing said so."""
+    from shidashi.resolve import ResolveError, world_atoms
+
+    recipe = config.load_recipe("v3", "minimal", "systemd")
+    typo = recipe.model_copy(update={"exclude": ("app-emulation/virtualbx",)})
+    with pytest.raises(ResolveError, match="virtualbx is in no set of the minimal chain"):
+        world_atoms(typo)

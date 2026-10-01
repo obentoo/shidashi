@@ -271,7 +271,10 @@ def ensure_overlay(pin: OverlayPin, *, cache_dir: Path, download: bool = True) -
     """
     dest = cache_dir / "repos" / f"{pin.name}-{pin.commit[:12]}"
     if dest.is_dir():
-        dest.chmod(0o755)  # repairs a tree cached before the fix below
+        # repairs a tree cached before the fix below -- only when needed: the
+        # cache is root's, and an unprivileged reader (kits check) cannot chmod
+        if dest.stat().st_mode & 0o777 != 0o755:
+            dest.chmod(0o755)
         return dest
     gitdir = cache_dir / "git" / f"{pin.name}.git"
     if not gitdir.is_dir():
