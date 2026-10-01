@@ -20,8 +20,8 @@ def test_plan_tree_builds_flavors_and_lets_their_chain_settle_minimal() -> None:
     # minimal ships inside kde's chain: no factory run of its own
     assert plan_tree(["kde", "minimal"]) == (["kde"], ["minimal", "kde"])
     # chain order, whatever the order asked
-    assert plan_tree(["xfce", "gnome", "kde"]) == (
-        ["gnome", "kde", "xfce"], ["gnome", "kde", "xfce"])
+    assert plan_tree(["wm", "gnome", "kde"]) == (
+        ["gnome", "kde", "wm"], ["gnome", "kde", "wm"])
 
 
 def test_plan_tree_explains_that_desktop_is_not_an_image() -> None:

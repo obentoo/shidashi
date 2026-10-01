@@ -30,14 +30,14 @@ mail-mta/proton-mail-bridge gui
 media-libs/opencolorio -opengl
 sys-boot/plymouth gtk
 # No `kwallet` here: it pulls kde-frameworks/kwallet:6, and remmina reaches
-# every graphical flavor through sets/remote -> @extra-desktop. Under gnome,
-# xfce or wm the KDE wallet would be compiled and never run. The flag moved to
+# every graphical flavor through sets/remote -> @extra-desktop. Under gnome
+# or wm the KDE wallet would be compiled and never run. The flag moved to
 # variants/flavor/kde/portage/package.use/extras, where it applies to the only
 # flavor that has a wallet to talk to. `keyring` stays available as the portable
 # alternative, and it is now ON: `keyring` pulls app-crypt/libsecret, which is
 # ALREADY in the plan of every graphical flavor through mail-mta/
 # proton-mail-bridge (sets/comms). Enabling it costs no new package and gives
-# remmina credential storage on gnome, xfce and wm, where the KDE wallet does not
+# remmina credential storage on gnome and wm, where the KDE wallet does not
 # exist. Under kde both are on; nothing in remmina's REQUIRED_USE opposes them
 # (2026-09-11).
 net-misc/remmina keyring rdp spice ssh vnc -zeroconf -appindicator

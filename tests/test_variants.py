@@ -138,7 +138,7 @@ def test_the_trunk_phase_carries_no_cut(flavor: str) -> None:
     assert trunk[0].use_break == (), trunk[0].use_break
 
 
-@pytest.mark.parametrize("flavor", ["kde", "gnome", "xfce", "wm"])
+@pytest.mark.parametrize("flavor", ["kde", "gnome", "wm"])
 def test_the_audio_cycle_is_cut_by_the_desktop_stage(flavor: str) -> None:
     """F72: ffmpeg -> libsdl2 -> pipewire -> ffmpeg forms where the graphical
     USE and the audio server arrive -- the desktop stage. Declared on the base,
@@ -153,7 +153,7 @@ def test_the_audio_cycle_is_cut_by_the_desktop_stage(flavor: str) -> None:
     assert "media-video/pipewire" not in {b.atom for b in base.use_break}
 
 
-@pytest.mark.parametrize("flavor", ["kde", "gnome", "xfce", "wm"])
+@pytest.mark.parametrize("flavor", ["kde", "gnome", "wm"])
 def test_every_graphical_flavor_is_built_on_desktop_on_minimal(flavor: str) -> None:
     """D24: base ─► minimal ─► desktop ─► flavor, and only the base rebuilds."""
     recipe = _recipe(flavor)
@@ -337,10 +337,10 @@ def test_kde_use_lives_in_the_assembled_make_conf(tmp_path: Path) -> None:
     assert 'USE="${USE} ${DESKTOPS}"' in text
 
 
-# --- flavors minimal/gnome/xfce/wm: parseiam; minimal omite desktop ----------
+# --- flavors minimal/gnome/wm: parseiam; minimal omite desktop ----------
 
 
-@pytest.mark.parametrize("name", ["minimal", "desktop", "gnome", "xfce", "wm"])
+@pytest.mark.parametrize("name", ["minimal", "desktop", "gnome", "wm"])
 def test_every_stage_parses(name: str) -> None:
     assert _load_stage(name).stage == name
 
@@ -437,7 +437,6 @@ def test_apply_portage_keeps_both_package_use_system_files(tmp_path: Path) -> No
         ("znver5", "kde", "openrc", {"kde", "qt6", "wayland", "elogind", "udev"},
          {"boot", "uki", "ukify", "X"}),
         ("v3", "gnome", "systemd", {"gtk", "gnome", "wayland"}, {"kde", "qt6", "X", "elogind"}),
-        ("v3", "xfce", "systemd", {"gtk", "wayland"}, {"gnome", "kde", "qt6", "X"}),
     ],
 )
 def test_assembled_make_conf_composes_use_across_axes(
@@ -521,7 +520,7 @@ def test_every_set_reference_resolves_to_a_shipped_file() -> None:
             assert ref in shipped, f"set {name!r} referencia @{ref}, que não existe"
 
 
-@pytest.mark.parametrize("flavor", ["minimal", "kde", "gnome", "xfce", "wm"])
+@pytest.mark.parametrize("flavor", ["minimal", "kde", "gnome", "wm"])
 def test_every_declared_set_is_shipped(flavor: str) -> None:
     recipe = _recipe(flavor)
     shipped = _shipped_sets()
@@ -529,7 +528,7 @@ def test_every_declared_set_is_shipped(flavor: str) -> None:
         assert name in shipped, f"{flavor}: set {name!r} declarado mas não embarcado"
 
 
-@pytest.mark.parametrize("flavor", ["minimal", "kde", "gnome", "xfce", "wm"])
+@pytest.mark.parametrize("flavor", ["minimal", "kde", "gnome", "wm"])
 def test_every_phase_target_is_reachable(flavor: str) -> None:
     """Nenhuma fase pode apontar para um ``@set`` que não será instalado."""
     recipe = _recipe(flavor)
@@ -572,7 +571,7 @@ def test_no_orphan_sets() -> None:
 
     reachable: set[str] = set()
     # Every init: a stage's init_sets reach a set only under their own init.
-    for flavor, init in itertools.product(("minimal", "kde", "gnome", "xfce", "wm"), _INITS):
+    for flavor, init in itertools.product(("minimal", "kde", "gnome", "wm"), _INITS):
         recipe = _recipe(flavor, init)
         pending = list(recipe.sets)
         while pending:

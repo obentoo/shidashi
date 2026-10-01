@@ -35,7 +35,8 @@ media-libs/gegl lcms          # (F37) required by media-gfx/gimp
 media-gfx/inkscape cdr exif imagemagick jpeg spell svg2
 # No `-X` on gimp. The flag built a Wayland-only GIMP, while gimp reaches every
 # graphical flavor through sets/imaging -> @extra-desktop -- including xfce and
-# wm, which are X11. It would not have opened there. Both `X` and `wayland` are
+# wm, which were X11 then (xfce was dropped on 2026-10-01: no Wayland
+# session). It would not have opened there. Both `X` and `wayland` are
 # in the global USE, so GIMP now builds for both and XWayland covers the rest
 # (2026-09-09).
 media-gfx/imagemagick -openmp fftw fontconfig jbig jpeg jpeg2k lcms opencl openexr pango svg tiff webp truetype xml

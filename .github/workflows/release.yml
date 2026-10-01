@@ -57,7 +57,7 @@ jobs:
       matrix:
         arch: [v3, znver5, arrowlake]
         init: [systemd, openrc]
-        desktop: [minimal, kde, gnome, xfce, wm]
+        desktop: [minimal, kde, gnome, wm]
     steps:
       - uses: actions/checkout@v4
       # TODO(phase-4): seed stage3 -> shidashi factory -> shidashi assemble -> publicar

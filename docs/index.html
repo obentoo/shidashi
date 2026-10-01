@@ -192,7 +192,7 @@ flowchart TD
     P1 --> P2["Fase 2 · graphics<br/>@graphics — wayland, mesa,<br/>pipewire, dbus, seat"]:::proc
     P2 --> FK{"Flavor tem<br/>desktop?"}:::dec
     FK -->|"minimal"| SKIP["(pula a fase de desktop)"]:::skip
-    FK -->|"kde / gnome / xfce / wm"| P3["Fase 3 · desktop<br/>@kde | @gnome | @xfce | @wm"]:::proc
+    FK -->|"kde / gnome / wm"| P3["Fase 3 · desktop<br/>@kde | @gnome | @wm"]:::proc
     SKIP --> P4["Fase 4 · apps<br/>@bentoo-apps"]:::proc
     P3 --> P4
     P4 --> OUT["binpkgs do flavor<br/>→ binhost (arch)"]:::art
@@ -246,12 +246,10 @@ flowchart LR
     GR --> M["minimal<br/>(= tronco)"]:::art
     GR --> K["+kde → binpkgs kde"]:::art
     GR --> G["+gnome → binpkgs gnome"]:::art
-    GR --> X["+xfce → binpkgs xfce"]:::art
     GR --> WM["+wm → binpkgs Hyprland/Sway/niri"]:::art
     M --> BH
     K --> BH
     G --> BH
-    X --> BH
     WM --> BH[("BINHOST por arch<br/>v3 · znver5 · arrowlake")]:::store
     classDef seed fill:#1f6feb,stroke:#388bfd,color:#fff;
     classDef proc fill:#21262d,stroke:#30363d,color:#e6edf3;
@@ -277,7 +275,7 @@ flowchart TD
     SEED["container seeda stage3"]:::seed --> RES["resolve USE final do flavor"]:::proc
     RES --> MATCH{"match multi-instance<br/>no binhost"}:::dec
     MATCH -->|"poppler#91;qt6#93;"| KDE["ISO KDE"]:::art
-    MATCH -->|"poppler#91;gtk#93;"| GN["ISO GNOME / XFCE"]:::art
+    MATCH -->|"poppler#91;gtk#93;"| GN["ISO GNOME"]:::art
     MATCH -->|"sem DE"| MIN["ISO minimal"]:::art
     KDE --> SQ
     GN --> SQ
@@ -313,7 +311,6 @@ flowchart LR
       f0["minimal (só TTY)"]
       f1["kde (Qt)"]
       f2["gnome (GTK)"]
-      f3["xfce (GTK)"]
       f4["wm (Hyprland/Sway/niri)"]
     end
     subgraph INI["init"]

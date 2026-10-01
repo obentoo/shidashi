@@ -47,7 +47,7 @@ shidashi release --all                    # orquestra a matriz inteira
 ## Modelo
 
 - **Eixos componíveis:** `arch × flavor × init` (ver `variants/`, co-localizado por eixo).
-- **Flavors:** `minimal` (só TTY) · `kde` (Qt) · `gnome`/`xfce` (GTK) · `wm` (Wayland-only: Hyprland/Sway/niri).
+- **Flavors:** `minimal` (só TTY) · `kde` (Qt) · `gnome` (GTK) · `wm` (Wayland-only: Hyprland/Sway/niri).
 - **Archs:** `v3` (baseline) · `znver5` (Zen 5, Tier 1) · `arrowlake` (Tier 2, build-only).
 - **Dois subsistemas:** Package Factory (compila) + ISO Assembler (monta).
 - **Build:** tronco persistente (delta semanal) + wipe total limpo em *toolchain-bump*.

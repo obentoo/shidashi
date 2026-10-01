@@ -28,7 +28,7 @@ O **Shidashi** (`仕出し`, "catering — produz lotes sob encomenda e entrega"
 |---|---|
 | **stage3** | Tarball base oficial do Gentoo (sistema mínimo + toolchain). Ponto de partida. |
 | **stage4** | stage3 + pacotes/config adicionais. O artefato "sistema bentoo". |
-| **flavor** | Ecossistema-alvo: `minimal` (sem DE, só TTY), `kde` (Qt), `gnome`/`xfce` (GTK), `wm` (Wayland-only: Hyprland/Sway/niri). |
+| **flavor** | Ecossistema-alvo: `minimal` (sem DE, só TTY), `kde` (Qt), `gnome` (GTK), `wm` (Wayland-only: Hyprland/Sway/niri). |
 | **init** | Sistema de init: `systemd` ou `openrc` (com elogind/seatd). |
 | **arch** | Alvo de microarquitetura: `v3` (baseline), `znver5`, `arrowlake`. |
 | **recipe** | Receita YAML componível que descreve uma release (`base + arch + flavor + init`). |
@@ -51,7 +51,7 @@ O **Shidashi** (`仕出し`, "catering — produz lotes sob encomenda e entrega"
 - ISOs **otimizadas por microarquitetura** (Zen 5, Intel moderno) além do baseline.
 - **Binhost** servindo pacotes em **variações de USE** (ex.: LibreOffice Qt vs GTK).
 - **Reprodutibilidade de entrada** auditável (mesmo input → mesmo conjunto de pacotes/USE).
-- Suporte a múltiplos **flavors** (minimal, KDE, GNOME, XFCE, WM) e **inits** (systemd, openrc).
+- Suporte a múltiplos **flavors** (minimal, KDE, GNOME, WM) e **inits** (systemd, openrc).
 - **Extensibilidade por terceiros**: "receita é dado" — qualquer pessoa adiciona sua arch/init/desktop em YAML.
 
 ### Não-objetivos (escopo explicitamente fora)
@@ -99,12 +99,11 @@ Diferente de Catalyst/Metro (que fazem `seed → stage1 → stage2 → stage3`),
         │ v3       │         │ minimal     │       │ systemd  │
         │ znver5   │    ×    │ kde (Qt)    │   ×   │ openrc   │
         │ arrowlake│         │ gnome (GTK) │       └──────────┘
-        └─────────┘         │ xfce (GTK)  │
-                            │ wm (Wayland)│
+        └─────────┘         │ wm (Wayland)│
                             └─────────────┘
 ```
 
-O **desktop ≈ flavor** (KDE→Qt, GNOME/XFCE→GTK, WM→Wayland/Hyprland·Sway·niri, minimal→sem DE/só TTY), então os eixos não se multiplicam de forma ingênua. A composição evita escrever N×M×K receitas completas.
+O **desktop ≈ flavor** (KDE→Qt, GNOME→GTK, WM→Wayland/Hyprland·Sway·niri, minimal→sem DE/só TTY), então os eixos não se multiplicam de forma ingênua. A composição evita escrever N×M×K receitas completas.
 
 ### 5.3 Dois subsistemas
 
@@ -153,7 +152,7 @@ A garantia de pureza vem do **container por flavor**, não do recurso de armazen
 Exemplo concreto — **LibreOffice**:
 
 ```
-app-office/libreoffice-X.Y[gtk,-qt6,-kde]   ← BUILD_ID 1  (consumido por GNOME/XFCE)
+app-office/libreoffice-X.Y[gtk,-qt6,-kde]   ← BUILD_ID 1  (consumido por GNOME)
 app-office/libreoffice-X.Y[qt6,kde,-gtk]    ← BUILD_ID 2  (consumido por KDE)
 ```
 
@@ -227,7 +226,6 @@ desktop   minimal    -uDN @world @gpu …                       + desktop
 seed ─ bootstrap ─ base ─ minimal ──┬── (imagem minimal)
                                     └── desktop ──┬── kde
                                                   ├── gnome
-                                                  ├── xfce
                                                   └── wm
 ```
 
@@ -283,7 +281,6 @@ sistema construído, ela abre uma geração. O update termina em
 | `minimal` | **nenhum (console-only)** | `-qt6 -gnome -kde -gtk` (sistema base) | systemd / openrc |
 | `kde` | KDE Plasma | `qt6 kde wayland -gnome -gtk` | systemd / openrc |
 | `gnome` | GNOME | `gtk gnome wayland -qt6 -kde` | systemd / openrc |
-| `xfce` | XFCE | `gtk -qt6 -gnome` | systemd / openrc |
 | `wm` | **Hyprland · Sway · niri** (Wayland-only) | `wayland -qt6 -gnome -kde` | systemd / openrc |
 
 > **`minimal` = stage4 base, sem ambiente gráfico, apenas TTY** (modelo Arch/Debian-netinst). É o "controle" mais
@@ -407,7 +404,7 @@ strategy:
   matrix:
     arch:    [v3, znver5, arrowlake]
     init:    [systemd, openrc]
-    desktop: [minimal, kde, gnome, xfce, wm]
+    desktop: [minimal, kde, gnome, wm]
 ```
 
 ---
@@ -480,7 +477,7 @@ stages/                          # raiz do projeto (este repo)
 │   │   ├── system/              #   extra-system (agregador) net-tools monitoring laptop firmware misc …
 │   │   ├── graphics/ services/ internet/ media/ dev/ virt/
 │   │   ├── groups/              #   extra-desktop extra-dev extra-media extra-virt
-│   │   └── desktops/            #   kde gnome xfce wm
+│   │   └── desktops/            #   kde gnome wm
 │   ├── base/                    # ESTÁGIO 1 — o núcleo; a única reconstrução completa (D24)
 │   │   ├── recipe.yaml
 │   │   └── portage/             # /etc/portage base (CORE/FEATURES/DISTDIR/PKGDIR…)
@@ -493,7 +490,6 @@ stages/                          # raiz do projeto (este repo)
 │   ├── flavor/
 │   │   ├── kde/{recipe.yaml, portage/}      # ESTÁGIO 4 — after: desktop; imagem entregue
 │   │   ├── gnome/{recipe.yaml, portage/}
-│   │   ├── xfce/{recipe.yaml, portage/}
 │   │   └── wm/{recipe.yaml, portage/}     # Wayland-only: Hyprland, Sway, niri
 │   └── init/
 │       ├── systemd/{recipe.yaml, portage/}
@@ -528,7 +524,7 @@ kde: `kde-dm-plasma` (plasma-login-manager, exige systemd) ou `kde-dm-sddm`.
 | `extra-system` | `kits/system/` | os kits de console — declarado por todo flavor |
 | `extra-desktop`, `extra-media`, `extra-dev`, `extra-virt` | `kits/groups/` | **opcionais** — cada flavor declara os que quer |
 | folhas (`boot`, `fs`, `audio`, `web`, `devel` …) | `kits/<categoria>/` | referenciadas pelos agregadores; um flavor pode declarar uma direto (ex.: `gpu`) |
-| `kde`, `gnome`, `xfce`, `wm` | `kits/desktops/` | **específicos** do desktop — cada um declarado só pelo seu flavor |
+| `kde`, `gnome`, `wm` | `kits/desktops/` | **específicos** do desktop — cada um declarado só pelo seu flavor |
 
 Qual fase instala quais sets é **declarado** em `base/recipe.yaml` (campo `sets` de cada
 fase), não deduzido do nome da fase. `phase_target` intersecta com os sets da
@@ -583,10 +579,10 @@ profile é o **init**. *Todos* os flavors herdam a mesma âncora; **não há pro
 
 - `base` fixa `default/linux/amd64/23.0/no-multilib` (no-multilib é padrão — §3).
 - `init.profile_suffix` acrescenta `/systemd` (systemd) ou nada (openrc).
-- **O flavor NÃO contribui com profile.** A "camada de desktop" (KDE/GNOME/XFCE/WM) é construída
+- **O flavor NÃO contribui com profile.** A "camada de desktop" (KDE/GNOME/WM) é construída
   inteiramente **acima** do no-multilib via `portage/` (make.conf + package.use) + `sets` (§13).
 
-Profile resolvido (idêntico para minimal/kde/gnome/xfce/wm — só muda por init):
+Profile resolvido (idêntico para minimal/kde/gnome/wm — só muda por init):
 - `* + openrc`  → `default/linux/amd64/23.0/no-multilib`
 - `* + systemd` → `default/linux/amd64/23.0/no-multilib/systemd`
 
@@ -653,7 +649,7 @@ O `make.conf` de referência (já organizado em grupos nomeados) mapeia diretame
 
 ### Fase 3 — Matriz
 - [x] Eixo arch: `znver5` (tier 1), `arrowlake` (tier 2, build-only, boot-test QEMU/TCG). *(receitas v3/znver5/arrowlake completas; boot-test `arrowlake` QEMU/TCG diferido.)*
-- [ ] Eixo flavor: `gnome`, `xfce`, `wm` (Wayland-only: Hyprland, Sway, niri). *(só `kde` e `minimal` curados; `gnome`/`xfce`/`wm` ainda placeholder — sets vazios.)*
+- [ ] Eixo flavor: `gnome`, `wm` (Wayland-only: Hyprland, Sway, niri). *(só `kde` e `minimal` curados; `gnome`/`wm` ainda placeholder — sets vazios.)*
 - [x] Eixo init: `openrc`. *(systemd + openrc completos.)*
 
 ### Fase 4 — Automação
@@ -781,7 +777,7 @@ só teste e vira parte do pipeline de curadoria.
 | **multilib** | **no-multilib** por padrão; 32-bit só na futura fase de jogos, **por-pacote via `ABI_X86="32 64"`** (§3). |
 | **Seed** | stage3 **no-multilib** por init (systemd/openrc), do mesmo snapshot pinado (§11). |
 | **`ships`** | O estágio é uma imagem entregue (`minimal` e cada flavor): recebe settle e um fork-point assentado (§6.4). |
-| **Camada de desktop** | **Profile `no-multilib[/systemd]` apenas** — sem profiles de DE no overlay; KDE/GNOME/XFCE/WM construídos **acima** via `package.use` + sets (§14). |
+| **Camada de desktop** | **Profile `no-multilib[/systemd]` apenas** — sem profiles de DE no overlay; KDE/GNOME/WM construídos **acima** via `package.use` + sets (§14). |
 | **Linguagem** | **Python ≥ 3.14** (em vias de virar o padrão do Gentoo), recursos modernos (PEP 695/749/750, `match`) (§12). |
 | **Hospedagem** | **Local agora → Cloudflare R2 depois** (sem egress) para binhost e ISOs (§16). |
 | **Toolchain-bump** | Fase explícita que dispara `@preserved-rebuild` + subslot-rebuilds (§6.6). |

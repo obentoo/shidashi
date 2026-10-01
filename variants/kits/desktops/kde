@@ -42,7 +42,7 @@ net-irc/konversation
 # amd64) it builds against dev-qt/qtbase:6, qt5compat, qtdeclarative, qtsvg plus
 # kde-frameworks/kwindowsystem and qqc2-desktop-style. vlc-3 had no Qt at all --
 # this is upstream drift. Under KDE that stack is already present, so vlc costs
-# nothing; under xfce/wm/minimal it would drag the whole Qt6+KF6 layer in for one
+# nothing; under gnome/wm/minimal it would drag the whole Qt6+KF6 layer in for one
 # player. `graphics` keeps media-video/mpv, which every flavor can afford
 # (measured 2026-09-08).
 media-video/vlc

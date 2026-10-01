@@ -1,9 +1,0 @@
-# CURATION: fed by pretend-resolve (§18.7) — XFCE desktop atoms.
-# No real source edition exists for XFCE yet (only editions/plasma is shipped),
-# so NO package atoms are fabricated here. Populate by curating an XFCE world set
-# and validating with `shidashi pretend-resolve` before trusting.
-#
-# NOTE when curating: `graphics` gives every graphical flavor media-video/mpv but
-# NOT media-video/vlc -- vlc-4 is a Qt6/KDE-Frameworks application now, so it sits
-# in flavor/kde/sets/kde. If this flavor wants a full-featured player, pick the
-# native one (media-video/parole) rather than pulling Qt6+KF6 in for vlc alone.

@@ -3,7 +3,7 @@
 #
 # Built over the settled minimal with `emerge -uDN @world`: only what the
 # graphical USE changes is rebuilt, once for all four flavors. Its fork point is
-# where kde, gnome, xfce and wm branch.
+# where kde, gnome and wm branch.
 #
 # Deliberately thin today (step 2 of D24 is neutral): it installs @gpu, which the
 # old `graphics` phase did, and has no portage/ yet. Step 3 moves the graphical
