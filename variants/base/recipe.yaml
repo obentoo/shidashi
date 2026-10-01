@@ -1,4 +1,4 @@
-# variants/base/base.yaml — the BASE stage: the core every image is built on (D24).
+# variants/base/recipe.yaml — the BASE stage: the core every image is built on (D24).
 #
 #   base ─► minimal ─► desktop ─► <flavor>
 #
@@ -26,7 +26,7 @@ sets:
 # fresh stage3 with the pinned tree and NO cut: base 622 packages, minimal 723,
 # rc=0, no cycle, python -bluetooth by configuration -- and the pipeline's first
 # base build had the two remaining cuts in place without either changing a flag.
-# The audio cut lives on desktop.yaml (F72); the other two did not return there
+# The audio cut lives on desktop/recipe.yaml (F72); the other two did not return there
 # when the desktop stage was resolved over the real minimal.
 #
 # A later stage declares its own cuts where its cycles form.

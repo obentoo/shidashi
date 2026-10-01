@@ -1,4 +1,4 @@
-# variants/desktop/desktop.yaml — the DESKTOP stage (D24): the graphical
+# variants/desktop/recipe.yaml — the DESKTOP stage (D24): the graphical
 # infrastructure shared by every graphical flavor, and no applications.
 #
 # Built over the settled minimal with `emerge -uDN @world`: only what the

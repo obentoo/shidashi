@@ -1,4 +1,4 @@
-# variants/minimal/minimal.yaml — the MINIMAL stage (D24): a shipped image, and
+# variants/minimal/recipe.yaml — the MINIMAL stage (D24): a shipped image, and
 # the step every graphical flavor is built on.
 #
 # Console-only, no graphical environment (OVERVIEW §8/§14): the base plus the

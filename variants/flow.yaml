@@ -63,7 +63,7 @@ bootstrap:
 
 # --- stages ---------------------------------------------------------------------
 # What EVERY stage of the chain does -- base → minimal → desktop → <flavor>, as
-# declared by variants/base/base.yaml, minimal/, desktop/ and flavor/<f>/ -- in
+# declared by variants/{base,minimal,desktop,flavor/<f>}/recipe.yaml -- in
 # this order. Which sets it installs and which cycle cuts it declares come from
 # the stage's own YAML; how it emerges comes from here.
 stages:

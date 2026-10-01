@@ -1,15 +1,15 @@
 """A minimal, VALID ``variants/`` tree for the CLI tests, in the stage format (D24).
 
 Five test modules used to carry their own copy of this tree, in the pre-D24
-format -- a phases list in base.yaml, ``use_prefer``, ``override_ok`` -- and
+format -- a phases list in the base recipe, ``use_prefer``, ``override_ok`` -- and
 all five broke together when the model changed. One writer, one format.
 
 The tree::
 
-    base/base.yaml               stage base (emptytree), sets [base]
+    base/recipe.yaml             stage base (emptytree), sets [base]
     arch/v3/recipe.yaml          + portage/make.conf with the compile knobs
-    minimal/minimal.yaml         after base, ships, sets [extra-system]
-    desktop/desktop.yaml         after minimal                       (kde=True)
+    minimal/recipe.yaml          after base, ships, sets [extra-system]
+    desktop/recipe.yaml          after minimal                       (kde=True)
     flavor/kde/recipe.yaml       after desktop, ships, sets [kde]    (kde=True)
     flavor/broken/recipe.yaml    declares another stage's name       (broken=True)
     init/systemd/recipe.yaml     profile_suffix systemd
@@ -19,7 +19,7 @@ The tree::
 from pathlib import Path
 
 _FILES: dict[str, str] = {
-    "base/base.yaml": (
+    "base/recipe.yaml": (
         "profile_base: default/linux/amd64/23.0/no-multilib\n"
         "stage: base\nupdate: emptytree\nsets: [base]\n"
     ),
@@ -31,11 +31,11 @@ _FILES: dict[str, str] = {
         'RUSTFLAGS="-C target-cpu=x86-64-v3"\n'
         'CPU_FLAGS_X86="sse4_2 avx2"\n'
     ),
-    "minimal/minimal.yaml": "stage: minimal\nafter: base\nships: true\nsets: [extra-system]\n",
+    "minimal/recipe.yaml": "stage: minimal\nafter: base\nships: true\nsets: [extra-system]\n",
     "init/systemd/recipe.yaml": "init: systemd\nprofile_suffix: systemd\n",
 }
 _KDE: dict[str, str] = {
-    "desktop/desktop.yaml": "stage: desktop\nafter: minimal\n",
+    "desktop/recipe.yaml": "stage: desktop\nafter: minimal\n",
     "flavor/kde/recipe.yaml": "stage: kde\nafter: desktop\nships: true\nsets: [kde]\n",
 }
 _OPENRC: dict[str, str] = {

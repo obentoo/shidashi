@@ -482,10 +482,10 @@ stages/                          # raiz do projeto (este repo)
 │   │   ├── groups/              #   extra-desktop extra-dev extra-media extra-virt
 │   │   └── desktops/            #   kde gnome xfce wm
 │   ├── base/                    # ESTÁGIO 1 — o núcleo; a única reconstrução completa (D24)
-│   │   ├── base.yaml
+│   │   ├── recipe.yaml
 │   │   └── portage/             # /etc/portage base (CORE/FEATURES/DISTDIR/PKGDIR…)
-│   ├── minimal/minimal.yaml     # ESTÁGIO 2 — after: base; imagem entregue (console)
-│   ├── desktop/desktop.yaml     # ESTÁGIO 3 — after: minimal; infra gráfica, sem apps
+│   ├── minimal/recipe.yaml      # ESTÁGIO 2 — after: base; imagem entregue (console)
+│   ├── desktop/recipe.yaml      # ESTÁGIO 3 — after: minimal; infra gráfica, sem apps
 │   ├── arch/
 │   │   ├── v3/{recipe.yaml, portage/}
 │   │   ├── znver5/{recipe.yaml, portage/}
@@ -524,13 +524,13 @@ kde: `kde-dm-plasma` (plasma-login-manager, exige systemd) ou `kde-dm-sddm`.
 
 | Set | Local | Escopo |
 |---|---|---|
-| `base` (agregador) | `kits/core/` | **universal** — declarado pelo `base.yaml`, entra em toda imagem |
+| `base` (agregador) | `kits/core/` | **universal** — declarado pelo `base/recipe.yaml`, entra em toda imagem |
 | `extra-system` | `kits/system/` | os kits de console — declarado por todo flavor |
 | `extra-desktop`, `extra-media`, `extra-dev`, `extra-virt` | `kits/groups/` | **opcionais** — cada flavor declara os que quer |
 | folhas (`boot`, `fs`, `audio`, `web`, `devel` …) | `kits/<categoria>/` | referenciadas pelos agregadores; um flavor pode declarar uma direto (ex.: `gpu`) |
 | `kde`, `gnome`, `xfce`, `wm` | `kits/desktops/` | **específicos** do desktop — cada um declarado só pelo seu flavor |
 
-Qual fase instala quais sets é **declarado** em `base.yaml` (campo `sets` de cada
+Qual fase instala quais sets é **declarado** em `base/recipe.yaml` (campo `sets` de cada
 fase), não deduzido do nome da fase. `phase_target` intersecta com os sets da
 receita, então listar ali um set que só alguns flavors declaram é seguro.
 
@@ -555,7 +555,7 @@ sets: [kde, extra-desktop, extra-media, extra-dev, extra-virt]
 ```
 
 ```yaml
-# variants/minimal/minimal.yaml
+# variants/minimal/recipe.yaml
 stage: minimal
 after: base
 ships: true

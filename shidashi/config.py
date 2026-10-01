@@ -90,22 +90,24 @@ def recipe_path(axis: str, name: str) -> Path:
 
 
 def base_path() -> Path:
-    """Devolve ``variants_dir()/"base"/"base.yaml"`` (R1.3)."""
-    return variants_dir() / "base" / "base.yaml"
+    """Devolve ``variants_dir()/"base"/"recipe.yaml"`` (R1.3)."""
+    return variants_dir() / "base" / "recipe.yaml"
 
 
 def stage_path(name: str) -> Path:
     """The YAML of a stage (D24): where each kind of stage lives.
 
-    - ``base`` → ``variants/base/base.yaml``;
-    - ``minimal``, ``desktop`` → ``variants/<name>/<name>.yaml``;
+    - ``base``, ``minimal``, ``desktop`` → ``variants/<name>/recipe.yaml``;
     - a flavor → ``variants/flavor/<name>/recipe.yaml``.
+
+    Every stage is a ``recipe.yaml``, like every axis value: the place of a
+    stage's ``exclude:`` is the same wherever the stage sits in the chain.
 
     An unknown name raises :class:`UnknownAxisError` listing the targets.
     """
     if name == "base":
         return base_path()
-    core = variants_dir() / name / f"{name}.yaml"
+    core = variants_dir() / name / "recipe.yaml"
     if name in ("minimal", "desktop") and core.is_file():
         return core
     flavor = variants_dir() / "flavor" / name / "recipe.yaml"

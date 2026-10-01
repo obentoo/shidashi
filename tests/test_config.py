@@ -37,7 +37,7 @@ def variants_tree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
             recipe = root / axis / name / "recipe.yaml"
             recipe.parent.mkdir(parents=True, exist_ok=True)
             recipe.write_text("", encoding="utf-8")
-    base = root / "base" / "base.yaml"
+    base = root / "base" / "recipe.yaml"
     base.parent.mkdir(parents=True, exist_ok=True)
     base.write_text("", encoding="utf-8")
     monkeypatch.setenv("SHIDASHI_VARIANTS_DIR", str(root))
@@ -90,7 +90,7 @@ def test_recipe_path_resolves_every_fixture(variants_tree: Path, axis: str, name
 
 def test_base_path_points_at_base_yaml(variants_tree: Path) -> None:
     resolved = base_path()
-    assert resolved == variants_tree / "base" / "base.yaml"
+    assert resolved == variants_tree / "base" / "recipe.yaml"
     assert resolved.is_file()
 
 

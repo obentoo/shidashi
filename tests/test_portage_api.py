@@ -183,7 +183,7 @@ def test_recipe_cli_path_never_imports_portage_api(variants_tree: Path) -> None:
             recipe.load_base(_BASE_PATH(variants_tree)),
             recipe.load_arch(_RECIPE_PATH(variants_tree, "arch", "v3")),
             recipe.load_chain(
-                "minimal", lambda name: variants_tree / name / f"{name}.yaml"
+                "minimal", lambda name: variants_tree / name / "recipe.yaml"
             ),
             recipe.load_init(_RECIPE_PATH(variants_tree, "init", "systemd")),
         )
@@ -209,7 +209,7 @@ def test_recipe_cli_path_never_imports_portage_api(variants_tree: Path) -> None:
 
 
 def _BASE_PATH(root: Path) -> Path:
-    return root / "base" / "base.yaml"
+    return root / "base" / "recipe.yaml"
 
 
 def _RECIPE_PATH(root: Path, axis: str, name: str) -> Path:
