@@ -1,11 +1,11 @@
-"""UNIT da CLI ``shidashi assemble`` via Typer ``CliRunner`` (Fase 1).
+"""UNIT tests of the ``shidashi assemble`` CLI via Typer's ``CliRunner`` (Phase 1).
 
-Determinista no host CI: ``Assembler.assemble`` (privilegiado) é monkeypatched no
-namespace de ``shidashi.cli`` p/ devolver um ``Path`` de ISO sintético ou levantar
+Deterministic on the CI host: ``Assembler.assemble`` (privileged) is monkeypatched in
+the ``shidashi.cli`` namespace to return a synthetic ISO ``Path`` or raise
 ``AssemblerError``/``ImageError``/``SeedError``/``ResolveError``/``CalledProcessError``
-— exercitamos só a CAMADA CLI: ``--help``, render pretty/json, mapeamento de exit
-codes e propagação de flags (``--output``/``--no-download``/``--keep``/``--binhost``).
-Nenhum stage3/nspawn/mksquashfs é tocado (espelha tests/test_cli_factory.py).
+— we exercise only the CLI LAYER: ``--help``, pretty/json rendering, exit code
+mapping and flag propagation (``--output``/``--no-download``/``--keep``/``--binhost``).
+No stage3/nspawn/mksquashfs is touched (mirrors tests/test_cli_factory.py).
 """
 
 import json
@@ -95,7 +95,7 @@ def test_assemble_help_shows_options() -> None:
     assert "--keep" in out
 
 
-# --- sucesso pretty/json ------------------------------------------------------
+# --- pretty/json success ------------------------------------------------------
 
 
 def test_assemble_success_pretty_exit0(
@@ -121,7 +121,7 @@ def test_assemble_json_shape(monkeypatch: pytest.MonkeyPatch, variants_tree: Pat
     assert "binhost" in data
 
 
-# --- propagação de flags ------------------------------------------------------
+# --- flag propagation --------------------------------------------------------
 
 
 def test_assemble_passes_output_and_flags(
@@ -184,7 +184,7 @@ def test_assemble_binhost_default_is_per_arch_and_generation(
     monkeypatch.setattr(cli, "Assembler", _fake_assembler(lambda o, **_k: o, sink), raising=False)
     result = runner.invoke(app, ["assemble", "v3", "minimal", "systemd"])
     assert result.exit_code == 0, result.stdout
-    # binhost default particionado por arch e por GERAÇÃO (D26): the same
+    # the default binhost is partitioned per arch and per GENERATION (D26): the same
     # .../binpkgs/v3/<stage3 snapshot> the factory writes to
     from shidashi import config
     from shidashi.seed import load_pointer
@@ -193,16 +193,16 @@ def test_assemble_binhost_default_is_per_arch_and_generation(
     assert sink["instance"].binhost.parts[-3:] == ("binpkgs", "v3", generation)
 
 
-# --- mapeamento de erros → exit 1 amigável -----------------------------------
+# --- error mapping → friendly exit 1 -----------------------------------------
 
 
 @pytest.mark.parametrize(
     ("exc", "needle"),
     [
-        (AssemblerError("nenhum vmlinuz encontrado"), "vmlinuz"),
-        (ImageError("mksquashfs ausente no host"), "mksquashfs"),
+        (AssemblerError("no vmlinuz found"), "vmlinuz"),
+        (ImageError("mksquashfs missing on the host"), "mksquashfs"),
         (SeedError("sha512 mismatch for stage3 tarball"), "sha512"),
-        (ResolveError("repo 'bentoo' ausente; rode emerge --sync"), "bentoo"),
+        (ResolveError("repo 'bentoo' missing; run emerge --sync"), "bentoo"),
     ],
 )
 def test_assemble_known_errors_exit1(
@@ -224,7 +224,7 @@ def test_assemble_emerge_failure_exit1(
     monkeypatch: pytest.MonkeyPatch, variants_tree: Path
 ) -> None:
     def _raise(_o: Path, **_k: object) -> Any:
-        raise subprocess.CalledProcessError(1, ["emerge"], stderr="!!! sem binpkg para @kde")
+        raise subprocess.CalledProcessError(1, ["emerge"], stderr="!!! no binpkg for @kde")
 
     monkeypatch.setattr(cli, "Assembler", _fake_assembler(_raise), raising=False)
     result = runner.invoke(app, ["assemble", "v3", "minimal", "systemd"])
@@ -235,19 +235,19 @@ def test_assemble_emerge_failure_exit1(
 
 
 def test_assemble_unknown_axis_exit1(variants_tree: Path) -> None:
-    # eixo desconhecido falha no _resolve, antes de instanciar o Assembler.
-    result = runner.invoke(app, ["assemble", "v3", "naoexiste", "systemd"])
+    # an unknown axis fails in _resolve, before the Assembler is instantiated.
+    result = runner.invoke(app, ["assemble", "v3", "doesnotexist", "systemd"])
     assert result.exit_code == 1
     combined = result.stdout + (result.stderr or "")
     assert "Traceback" not in combined
 
 
 def test_assemble_is_not_a_stub(monkeypatch: pytest.MonkeyPatch, variants_tree: Path) -> None:
-    # regressão: assemble deixou de ser o stub exit-2 "Fase 0".
+    # regression: assemble is no longer the exit-2 "Phase 0" stub.
     monkeypatch.setattr(cli, "Assembler", _fake_assembler(lambda o, **_k: o), raising=False)
     result = runner.invoke(app, ["assemble", "v3", "minimal", "systemd"])
     assert result.exit_code == 0
-    assert "Fase 0" not in result.stdout
+    assert "Phase 0" not in result.stdout
 
 
 def test_assemble_jobs_reaches_the_assembler(

@@ -1,18 +1,18 @@
-"""UNIT da CLI ``shidashi factory`` stepwise via Typer ``CliRunner`` (story 004 7.1).
+"""UNIT tests of the stepwise ``shidashi factory`` CLI via Typer's ``CliRunner`` (story 004 7.1).
 
-Determinista no host CI: ``Factory.build``/``build_stepwise`` (privilegiados) são
-monkeypatched no namespace de ``shidashi.cli`` — exercitamos só a CAMADA CLI:
+Deterministic on the CI host: ``Factory.build``/``build_stepwise`` (privileged) are
+monkeypatched in the ``shidashi.cli`` namespace — we exercise only the CLI LAYER:
 
-* guardas/usabilidade: ``--step`` sem TTY → exit 1 (monkeypatch ``isatty``);
+* guards/usability: ``--step`` without a TTY → exit 1 (monkeypatch ``isatty``);
   ``--step --format json`` → exit 1 (R2.6/R2.7);
-* ``--help`` lista ``--step``/``--until``/``--reset``/``--force-resume`` (R8.3);
-* propagação: ``--until <phase>`` chega a ``build_stepwise``; ``--step`` produz
-  ``interactive=True``; ``--reset`` chega como flag (R1.1/R2.1/R6.3);
-* mapeamento de exit: stop limpo → exit 0; FactoryError (abort) → exit 1 amigável
+* ``--help`` lists ``--step``/``--until``/``--reset``/``--force-resume`` (R8.3);
+* propagation: ``--until <phase>`` reaches ``build_stepwise``; ``--step`` yields
+  ``interactive=True``; ``--reset`` arrives as a flag (R1.1/R2.1/R6.3);
+* exit mapping: clean stop → exit 0; FactoryError (abort) → friendly exit 1
   (R1.5/R3.3/R8.1).
 
-``--step``/``--until`` etc. ainda não existem na CLI (story 003 só tem o one-shot),
-então estes casos ficam Red pelo motivo esperado (exit code/flag ausente).
+``--step``/``--until`` etc. do not exist in the CLI yet (story 003 only has the
+one-shot), so these cases stay Red for the expected reason (exit code/missing flag).
 """
 
 import sys
@@ -61,7 +61,7 @@ class _FakeInstance:
     def __init__(self, step_fn: Any) -> None:
         self._step_fn = step_fn
 
-    def build(self, **_k: object) -> Any:  # one-shot não usado aqui
+    def build(self, **_k: object) -> Any:  # one-shot not used here
         return _fake_result(stopped_at=None)
 
     def build_stepwise(self, **kwargs: object) -> Any:
@@ -76,12 +76,12 @@ def _fake_factory(step_fn: Any) -> Any:
 
 
 def _force_tty(monkeypatch: pytest.MonkeyPatch, value: bool) -> None:
-    # patcha o stdin REAL (stdlib sys): a CLI consulta sys.stdin.isatty() para a
-    # guarda de TTY do --step. Independe de como shidashi.cli importa sys.
+    # patches the REAL stdin (stdlib sys): the CLI checks sys.stdin.isatty() for the
+    # --step TTY guard. Independent of how shidashi.cli imports sys.
     monkeypatch.setattr(sys.stdin, "isatty", lambda: value, raising=False)
 
 
-# --- R8.3 --help lista as novas flags ----------------------------------------
+# --- R8.3 --help lists the new flags -----------------------------------------
 
 
 def test_factory_help_lists_new_flags() -> None:
@@ -94,7 +94,7 @@ def test_factory_help_lists_new_flags() -> None:
     assert "--force-resume" in out
 
 
-# --- R2.6 --step sem TTY → exit 1 --------------------------------------------
+# --- R2.6 --step without a TTY → exit 1 --------------------------------------
 
 
 def test_step_without_tty_exits_1(monkeypatch: pytest.MonkeyPatch, variants_tree: Path) -> None:
@@ -104,10 +104,10 @@ def test_step_without_tty_exits_1(monkeypatch: pytest.MonkeyPatch, variants_tree
     assert result.exit_code == 1
     combined = result.stdout + (result.stderr or "")
     assert "Traceback" not in combined
-    assert "--until" in combined  # mensagem direciona ao caminho scriptável
+    assert "--until" in combined  # the message points to the scriptable path
 
 
-# --- R2.7 --step com --format json → exit 1 ----------------------------------
+# --- R2.7 --step with --format json → exit 1 ---------------------------------
 
 
 def test_step_with_json_format_exits_1(
@@ -123,7 +123,7 @@ def test_step_with_json_format_exits_1(
     assert "Traceback" not in combined
 
 
-# --- R1.1 --until propaga para build_stepwise --------------------------------
+# --- R1.1 --until propagates to build_stepwise -------------------------------
 
 
 def test_until_propagates_to_build_stepwise(
@@ -155,22 +155,22 @@ def test_step_sets_interactive_true(monkeypatch: pytest.MonkeyPatch, variants_tr
     assert captured.get("interactive") is True
 
 
-# --- R1.5 --until inválido → exit 1 (ValueError de plan_phase_run) -----------
+# --- R1.5 invalid --until → exit 1 (ValueError from plan_phase_run) ---------
 
 
 def test_until_invalid_phase_exits_1(monkeypatch: pytest.MonkeyPatch, variants_tree: Path) -> None:
     def _raise(**_k: object) -> Any:
-        raise ValueError("fase inválida 'bogus'; válidas: seed, rebuild, graphics, apps")
+        raise ValueError("invalid phase 'bogus'; valid: seed, rebuild, graphics, apps")
 
     monkeypatch.setattr(cli, "Factory", _fake_factory(_raise), raising=False)
     result = runner.invoke(app, ["factory", "v3", "minimal", "systemd", "--until", "bogus"])
     assert result.exit_code == 1
     combined = result.stdout + (result.stderr or "")
     assert "Traceback" not in combined
-    assert "rebuild" in combined  # lista os nomes válidos
+    assert "rebuild" in combined  # lists the valid names
 
 
-# --- R3.3/R8.1 stop limpo → exit 0; FactoryError (abort) → exit 1 ------------
+# --- R3.3/R8.1 clean stop → exit 0; FactoryError (abort) → exit 1 -----------
 
 
 def test_clean_stop_exits_0_and_reports_stopped_at(
@@ -189,7 +189,7 @@ def test_clean_stop_exits_0_and_reports_stopped_at(
 
 def test_abort_factory_error_exits_1(monkeypatch: pytest.MonkeyPatch, variants_tree: Path) -> None:
     def _raise(**_k: object) -> Any:
-        raise FactoryError("abortado pelo usuário", phase="rebuild", output="!!! build break")
+        raise FactoryError("aborted by the user", phase="rebuild", output="!!! build break")
 
     monkeypatch.setattr(cli, "Factory", _fake_factory(_raise), raising=False)
     result = runner.invoke(app, ["factory", "v3", "minimal", "systemd", "--until", "rebuild"])

@@ -9,14 +9,14 @@ build/
 .ruff_cache/
 .pytest_cache/
 
-# epic: planeamento e notas de laboratório — local, fora do git (2026-09-09).
-# Os ficheiros continuam em disco; deixaram de ser versionados.
+# epic: planning and lab notes -- local, kept out of git (2026-09-09).
+# The files stay on disk; they are no longer versioned.
 .epic/
 
-# estado local do agente (Claude Code) — config/memória de sessão, não do projeto
+# the agent's local state (Claude Code) -- session config and memory, not the project's
 .claude/
 
-# artefatos de build do Shidashi
+# Shidashi's build artifacts
 /work/
 *.iso
 *.squashfs

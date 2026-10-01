@@ -1,18 +1,18 @@
-"""UNIT de shidashi.state (story 004 grupo 1) — modelos + persistência PUROS.
+"""UNIT tests of shidashi.state (story 004 group 1) — PURE models + persistence.
 
-Tudo aqui é puro ou faz apenas I/O contra um tmp dir (sem root, sem nspawn):
+Everything here is pure or does only I/O against a tmp dir (no root, no nspawn):
 
-* 1.1 modelos frozen pydantic v2 (``extra="forbid"``, coleções ``tuple``):
+* 1.1 frozen pydantic v2 models (``extra="forbid"``, ``tuple`` collections):
   ``EmergePlanEntry`` / ``PhaseDiff`` / ``BuildState`` (R4.1/R4.4/R6.1);
-* 1.2 persistência: ``recipe_hash`` (SHA-256 estável + sensível à receita),
-  ``save_state``/``load_state`` round-trip com escrita atômica (temp+rename),
-  ``clear_state`` idempotente, ``is_stale`` (mismatch de snapshot ou hash)
+* 1.2 persistence: ``recipe_hash`` (stable SHA-256 + sensitive to the recipe),
+  ``save_state``/``load_state`` round-trip with an atomic write (temp+rename),
+  idempotent ``clear_state``, ``is_stale`` (snapshot or hash mismatch)
   (R6.1/R6.2/R6.4).
 
-Contrato derivado de design.md §state. Os símbolos de ``shidashi.state`` são
-importados de forma tolerante (``try_import``) para não abortar a coleção do
-pytest enquanto a impl não existe; cada teste fica Red no uso nomeando o símbolo
-pendente (Red esperado da story 004).
+Contract derived from design.md §state. The ``shidashi.state`` symbols are
+imported tolerantly (``try_import``) so as not to abort pytest's collection
+while the impl does not exist; each test goes Red on use, naming the pending
+symbol (expected Red of story 004).
 """
 
 from pathlib import Path
@@ -63,7 +63,7 @@ def _state(**over: Any) -> Any:
     return BuildState(**base)
 
 
-# --- 1.1 modelos frozen + extra=forbid + tuple ------------------------------
+# --- 1.1 frozen models + extra=forbid + tuple -------------------------------
 
 
 def test_emerge_plan_entry_fields_and_default_use_changes() -> None:
@@ -123,7 +123,7 @@ def test_build_state_seed_sha512_round_trips(tmp_path: Path) -> None:
 
 
 def test_build_state_loads_legacy_json_without_seed_sha512(tmp_path: Path) -> None:
-    # JSON antigo (sem o campo) ainda carrega sob extra="forbid", via o default.
+    # old JSON (without the field) still loads under extra="forbid", via the default.
     p = tmp_path / "legacy.json"
     p.write_text(
         '{"arch":"v3","flavor":"minimal","init":"systemd",'
@@ -194,7 +194,7 @@ def test_clear_state_removes_and_is_idempotent(tmp_path: Path) -> None:
     assert path.exists()
     clear_state(path)
     assert not path.exists()
-    clear_state(path)  # idempotente: não levanta
+    clear_state(path)  # idempotent: does not raise
     assert not path.exists()
 
 

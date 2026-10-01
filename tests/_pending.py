@@ -1,17 +1,17 @@
-"""Helper de import tolerante para testes Red da story 003.
+"""Tolerant import helper for the Red tests of story 003.
 
-Permite que módulos de teste cujo contrato ainda não existe em produção
-(símbolos ausentes em ``shidashi.*``) sejam *coletáveis*: a importação não aborta a
-coleção do pytest inteiro; em vez disso cada teste falha (Red) no ponto de uso
-com uma mensagem clara apontando o símbolo pendente. Quando a implementação
-chega, ``try_import`` devolve o objeto real e os testes passam (Green).
+Lets test modules whose contract does not exist in production yet
+(symbols missing from ``shidashi.*``) be *collectable*: the import does not abort
+collection of the whole pytest run; instead each test fails (Red) at the point of use
+with a clear message naming the pending symbol. When the implementation
+lands, ``try_import`` returns the real object and the tests pass (Green).
 """
 
 from typing import Any
 
 
 class _Pending:
-    """Sentinela que falha ao ser usada, nomeando o símbolo ainda inexistente."""
+    """Sentinel that fails when used, naming the symbol that does not exist yet."""
 
     def __init__(self, module: str, name: str) -> None:
         self._module = module
@@ -19,8 +19,8 @@ class _Pending:
 
     def _fail(self) -> Any:
         raise AssertionError(
-            f"símbolo pendente: {self._module}.{self._name} ainda não implementado "
-            "(story 003 — Red esperado)"
+            f"pending symbol: {self._module}.{self._name} not implemented yet "
+            "(story 003 — expected Red)"
         )
 
     def __call__(self, *_a: object, **_k: object) -> Any:
@@ -31,7 +31,7 @@ class _Pending:
 
 
 def try_import(module: str, name: str) -> Any:
-    """Devolve ``module.name`` se existir; senão um sentinela ``_Pending``."""
+    """Return ``module.name`` if it exists; otherwise a ``_Pending`` sentinel."""
     try:
         mod = __import__(module, fromlist=[name])
     except ImportError:

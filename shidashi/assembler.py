@@ -1,20 +1,20 @@
-"""Assembler — ISO Assembler: monta a ISO live a partir do binhost (OVERVIEW §7).
+"""Assembler — ISO Assembler: builds the live ISO from the binhost (OVERVIEW §7).
 
-Metade leve do pipeline (OVERVIEW §5.3): seleciona e empacota, não compila. Para
-uma :class:`~shidashi.recipe.ResolvedRecipe` e um binhost por arch, semeia um
-stage3, sobrepõe os MESMOS layers de portage da Factory (de modo que a USE final
-resolvida case com a gravada nos binpkgs — OVERVIEW §18.6), puxa a fatia do
-flavor do binhost com ``emerge --usepkgonly`` (binário pronto, sem ordem de build
-→ imune a ciclo, §18.6), gera o initramfs ``dmsquash-live`` com dracut, comprime
-o rootfs em squashfs e produz a ISO híbrida (:mod:`shidashi.image`).
+The light half of the pipeline (OVERVIEW §5.3): it selects and packages, it does not compile.
+For a :class:`~shidashi.recipe.ResolvedRecipe` and a per-arch binhost, it seeds a
+stage3, overlays the SAME portage layers as the Factory (so that the final
+resolved USE matches the one recorded in the binpkgs — OVERVIEW §18.6), pulls the
+flavor's slice from the binhost with ``emerge --usepkgonly`` (prebuilt binaries, no build order
+→ immune to cycles, §18.6), generates the ``dmsquash-live`` initramfs with dracut, compresses
+the rootfs into a squashfs and produces the hybrid ISO (:mod:`shidashi.image`).
 
-Imune a ciclo: ``--usepkgonly`` instala binário pronto e o match multi-instance
-pega a instância certa por flavor pela USE final; toda a complexidade de ciclo
-fica na Factory (OVERVIEW §7, §18.6). Os símbolos privilegiados de execução
-(``fetch_stage3``/``extract_stage3``/``apply_portage``/``bind_repos`` e os de
-:mod:`shidashi.image`) são globais do módulo, monkeypatcháveis nos testes; a
-execução real (nspawn + emerge + dracut + mksquashfs + grub-mkrescue) exige root
-e é exercida pelos testes host-gated.
+Immune to cycles: ``--usepkgonly`` installs prebuilt binaries and the multi-instance match
+picks the right instance per flavor by the final USE; all the cycle complexity
+stays in the Factory (OVERVIEW §7, §18.6). The privileged execution symbols
+(``fetch_stage3``/``extract_stage3``/``apply_portage``/``bind_repos`` and those of
+:mod:`shidashi.image`) are module globals, monkeypatchable in the tests; the
+real execution (nspawn + emerge + dracut + mksquashfs + grub-mkrescue) requires root
+and is exercised by the host-gated tests.
 """
 
 import datetime
@@ -56,34 +56,34 @@ from shidashi.tree import pinned_repos
 
 __all__ = ["Assembler", "AssemblerError"]
 
-# Alvo fixo do binhost dentro do container: o ``make.conf`` base aponta o PKGDIR
-# para cá, então o binhost host-side é bind-montado sobre este caminho (igual à
-# Factory, que monta o PKGDIR de saída no mesmo destino — OVERVIEW §6.3).
+# Fixed binhost target inside the container: the base ``make.conf`` points PKGDIR
+# here, so the host-side binhost is bind-mounted over this path (same as the
+# Factory, which mounts the output PKGDIR at the same destination — OVERVIEW §6.3).
 _BINHOST_DST = Path("/var/cache/binpkgs")
 
 
 class AssemblerError(Exception):
-    """Falha ao montar a ISO (OVERVIEW §7).
+    """Failure to build the ISO (OVERVIEW §7).
 
-    Levantada pela guarda de root, por kernel/initramfs ausentes no rootfs após o
-    emerge/dracut e por versão de kernel ambígua. Falhas de ``emerge``/``dracut``
-    sobem como ``CalledProcessError`` do :class:`~shidashi.container.Container`; as
-    de squashfs/ISO como :class:`shidashi.image.ImageError`.
+    Raised by the root guard, by a kernel/initramfs missing from the rootfs after
+    emerge/dracut and by an ambiguous kernel version. ``emerge``/``dracut`` failures
+    propagate as ``CalledProcessError`` from the :class:`~shidashi.container.Container`;
+    squashfs/ISO ones as :class:`shidashi.image.ImageError`.
     """
 
 
 def _require_root() -> None:
-    """Guarda de privilégio: levanta :class:`AssemblerError` se não-root.
+    """Privilege guard: raises :class:`AssemblerError` if not root.
 
-    Primeira coisa que :meth:`Assembler.assemble` faz — antes de qualquer
-    fetch/extração — espelhando :func:`shidashi.factory._require_root` (R8.1):
-    nspawn + extração de stage3 + dracut exigem root e o Shidashi nunca escala
-    privilégios sozinho.
+    The first thing :meth:`Assembler.assemble` does — before any
+    fetch/extraction — mirroring :func:`shidashi.factory._require_root` (R8.1):
+    nspawn + stage3 extraction + dracut require root and Shidashi never escalates
+    privileges on its own.
     """
     if os.geteuid() != 0:
         raise AssemblerError(
-            "shidashi assemble requer root (systemd-nspawn + extração de stage3 + dracut); "
-            "rode como root — o Shidashi não escala privilégios sozinho"
+            "shidashi assemble requires root (systemd-nspawn + stage3 extraction + dracut); "
+            "run as root — Shidashi does not escalate privileges on its own"
         )
 
 
@@ -138,21 +138,21 @@ def iso_settle_argv(atoms: tuple[str, ...], *, jobs: int | None = None) -> list[
 
 
 def iso_emerge_argv(recipe: ResolvedRecipe, *, jobs: int | None = None) -> list[str]:
-    """Monta o argv do ``emerge --usepkgonly`` da ISO (OVERVIEW §7/§18.6/§9.3). **Pura**.
+    """Build the argv of the ISO's ``emerge --usepkgonly`` (OVERVIEW §7/§18.6/§9.3). **Pure**.
 
-    Forma: ``["emerge", "--usepkgonly", "--emptytree", "--verbose", *alvos]``.
-    ``--usepkgonly`` instala SÓ binpkgs do binhost (nunca compila → imune a ciclo,
-    §18.6). ``--emptytree`` reinstala TODO o fecho de dependências dos alvos a
-    partir do binhost — inclusive o ``@system`` — para que a base **não** fique
-    com os binários genéricos/baseline do stage3 semente: numa ISO ``znver5`` o
-    ``@system`` também vem arch-native, honrando o §7 ("puxa **tudo** do binhost")
-    e o §9.3 (sem v3 vazando). É simétrico à fase ``rebuild`` da Factory
-    (``--emptytree @world``), que garante o binhost completo que isto exige.
+    Shape: ``["emerge", "--usepkgonly", "--emptytree", "--verbose", *targets]``.
+    ``--usepkgonly`` installs ONLY binpkgs from the binhost (never compiles → immune to cycles,
+    §18.6). ``--emptytree`` reinstalls the WHOLE dependency closure of the targets
+    from the binhost — including ``@system`` — so that the base does **not** keep
+    the generic/baseline binaries of the seed stage3: in a ``znver5`` ISO,
+    ``@system`` also comes arch-native, honoring §7 ("pulls **everything** from the binhost")
+    and §9.3 (no v3 leaking). It is symmetric to the Factory's ``rebuild`` phase
+    (``--emptytree @world``), which guarantees the complete binhost this requires.
 
-    Alvos: ``@system`` + os sets da receita (``@base``, os ``@extra-*`` que o
-    flavor declara e ``@<flavor>``) — a base mais a fatia consumível; quando a
-    receita não declara sets recai-se em ``@world`` (= ``@system`` + o que a base
-    seedou).
+    Targets: ``@system`` + the recipe's sets (``@base``, the ``@extra-*`` that the
+    flavor declares and ``@<flavor>``) — the base plus the consumable slice; when the
+    recipe declares no sets it falls back to ``@world`` (= ``@system`` + what the base
+    seeded).
     """
     return [
         "emerge",
@@ -164,12 +164,12 @@ def iso_emerge_argv(recipe: ResolvedRecipe, *, jobs: int | None = None) -> list[
 
 
 def _dracut_argv(kver: str, initramfs: Path) -> list[str]:
-    """Monta o argv do ``dracut`` do live medium (OVERVIEW §7). **Pura**.
+    """Build the ``dracut`` argv for the live medium (OVERVIEW §7). **Pure**.
 
-    Forma: ``["dracut", "--add", "dmsquash-live", "--no-hostonly", "--force",
-    <initramfs>, <kver>]``. ``--add dmsquash-live`` embute o módulo que monta o
-    squashfs como raiz overlay em RAM; ``--no-hostonly`` torna o initramfs
-    genérico (a ISO precisa bootar em qualquer máquina, não só na de build).
+    Shape: ``["dracut", "--add", "dmsquash-live", "--no-hostonly", "--force",
+    <initramfs>, <kver>]``. ``--add dmsquash-live`` embeds the module that mounts the
+    squashfs as an overlay root in RAM; ``--no-hostonly`` makes the initramfs
+    generic (the ISO has to boot on any machine, not only the build one).
 
     ``--omit systemd-modules-load``: that dracut module copies the image's
     modules-load.d into the initramfs but not the out-of-tree modules they name,
@@ -202,30 +202,30 @@ def ships_nvidia_driver(rootfs: Path) -> bool:
 
 
 def _kernel_version(rootfs: Path) -> str:
-    """Descobre a versão do kernel instalada via ``${rootfs}/lib/modules/`` (OVERVIEW §7).
+    """Find the installed kernel version via ``${rootfs}/lib/modules/`` (OVERVIEW §7).
 
-    Espera exatamente um diretório sob ``lib/modules`` (o kernel puxado do binhost
-    pelo set ``boot``, universal via ``@base``); levanta :class:`AssemblerError` se
-    houver zero (nenhum kernel) ou mais de um (ambíguo — qual bootar?).
+    Expects exactly one directory under ``lib/modules`` (the kernel pulled from the binhost
+    by the ``boot`` set, universal via ``@base``); raises :class:`AssemblerError` if
+    there are zero (no kernel) or more than one (ambiguous — which one to boot?).
     """
     modules = rootfs / "lib" / "modules"
     versions = sorted(p.name for p in modules.iterdir() if p.is_dir()) if modules.is_dir() else []
     if len(versions) != 1:
         raise AssemblerError(
-            f"esperava exatamente um kernel em {modules}; encontrei {versions or 'nenhum'} "
-            "(garanta que os sets puxem um único gentoo-kernel/dist-kernel do binhost)"
+            f"expected exactly one kernel in {modules}; found {versions or 'none'} "
+            "(make sure the sets pull a single gentoo-kernel/dist-kernel from the binhost)"
         )
     return versions[0]
 
 
 def _locate_kernel(rootfs: Path, kver: str) -> Path:
-    """Localiza o ``vmlinuz`` do kernel ``kver`` no rootfs (OVERVIEW §7).
+    """Locate the ``vmlinuz`` of kernel ``kver`` in the rootfs (OVERVIEW §7).
 
-    Tenta, em ordem: ``boot/vmlinuz-<kver>`` (convenção dist-kernel);
+    Tries, in order: ``boot/vmlinuz-<kver>`` (dist-kernel convention);
     ``usr/lib/modules/<kver>/vmlinuz``, where kernel-install keeps the image --
     the only place it is when installkernel[uki] (the base's SYSTEMD="boot uki
     ukify") writes a UKI to ``boot/EFI/Linux`` instead of ``boot/vmlinuz``; and
-    qualquer ``boot/vmlinuz*``. Levanta :class:`AssemblerError` se não achar.
+    any ``boot/vmlinuz*``. Raises :class:`AssemblerError` if none is found.
     The modules entry is a relative symlink into ``usr/src``; it must resolve
     inside the rootfs, never to the host.
     """
@@ -238,20 +238,20 @@ def _locate_kernel(rootfs: Path, kver: str) -> Path:
         return modules
     globbed = sorted(boot.glob("vmlinuz*")) if boot.is_dir() else []
     if not globbed:
-        raise AssemblerError(f"nenhum vmlinuz encontrado em {boot} (kernel não instalado?)")
+        raise AssemblerError(f"no vmlinuz found in {boot} (kernel not installed?)")
     return globbed[0]
 
 
 def _build_binds(
     binhost_dir: Path, repos_conf_dir: Path, *, repos: Mapping[str, Path] | None = None
 ) -> tuple[list[tuple[Path, Path]], list[tuple[Path, Path]]]:
-    """Monta os binds RO (repos + binhost) e RW (vazio) do container. **Pura**.
+    """Build the container's RO (repos + binhost) and RW (empty) binds. **Pure**.
 
-    O Assembler só LÊ — repos sincronizados do host (:func:`shidashi.resolve.bind_repos`)
-    e o binhost por arch (montado sobre :data:`_BINHOST_DST`) entram **read-only**
-    (``--usepkgonly`` não escreve no PKGDIR). Não há binds RW: o rootfs é mutado
-    in-place pelo emerge/dracut, não via bind. ``bind_repos`` é global do módulo
-    (monkeypatchável nos testes). ``repos`` are the pinned repositories the
+    The Assembler only READS — the host's synced repos (:func:`shidashi.resolve.bind_repos`)
+    and the per-arch binhost (mounted over :data:`_BINHOST_DST`) go in **read-only**
+    (``--usepkgonly`` does not write to the PKGDIR). There are no RW binds: the rootfs is mutated
+    in place by emerge/dracut, not through a bind. ``bind_repos`` is a module global
+    (monkeypatchable in the tests). ``repos`` are the pinned repositories the
     binpkgs were built from (D26): assembling against other trees would ask
     the binhost for versions it does not have.
     """
@@ -261,10 +261,10 @@ def _build_binds(
 
 
 def _install_sets(rootfs: Path, recipe: ResolvedRecipe) -> None:
-    """Instala os sets da receita (OVERVIEW §13). Delega a :func:`resolve.install_sets`.
+    """Install the recipe's sets (OVERVIEW §13). Delegates to :func:`resolve.install_sets`.
 
-    Mantido como nome local porque os testes e o Assembler o importam daqui; a
-    lógica vive num lugar só, compartilhada com a Factory (fonte única de USE,
+    Kept as a local name because the tests and the Assembler import it from here; the
+    logic lives in a single place, shared with the Factory (single source of USE,
     OVERVIEW §4.2).
     """
     install_sets(rootfs, recipe)
@@ -577,7 +577,7 @@ class Assembler:
             artifacts.append(publish.update_sha256sums(output_dir, sums))
             artifacts.append(publish.write_latest(output_dir, key, isos[0]))
         except BaseException:
-            keep_rootfs = True  # preserva o rootfs para depuração em falha
+            keep_rootfs = True  # keep the rootfs for debugging on failure
             raise
 
         if not keep_rootfs:

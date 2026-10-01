@@ -1,8 +1,8 @@
-"""Testes de resolução de caminhos da árvore variants/ (shidashi.config).
+"""Path-resolution tests for the variants/ tree (shidashi.config).
 
-INTEGRAÇÃO: constrói uma árvore variants/ temporária em ``tmp_path`` e aponta o
-código para ela via override ``SHIDASHI_VARIANTS_DIR``. Estes testes verificam
-RESOLUÇÃO DE CAMINHOS, não parsing de YAML — daí os arquivos serem mínimos.
+INTEGRATION: builds a temporary variants/ tree in ``tmp_path`` and points the
+code at it via the ``SHIDASHI_VARIANTS_DIR`` override. These tests check PATH
+RESOLUTION, not YAML parsing -- hence the minimal files.
 """
 
 from pathlib import Path
@@ -20,7 +20,7 @@ from shidashi.config import (
     variants_dir,
 )
 
-# nomes de fixture por eixo (propositalmente fora de ordem p/ exercer o sort)
+# fixture names per axis (deliberately out of order to exercise the sort)
 _FIXTURE = {
     "arch": ["znver5", "v3"],
     "flavor": ["minimal", "kde"],
@@ -30,7 +30,7 @@ _FIXTURE = {
 
 @pytest.fixture
 def variants_tree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Monta variants/ em tmp_path e exporta SHIDASHI_VARIANTS_DIR para ela."""
+    """Build variants/ in tmp_path and export SHIDASHI_VARIANTS_DIR pointing at it."""
     root = tmp_path / "variants"
     for axis, names in _FIXTURE.items():
         for name in names:
@@ -44,7 +44,7 @@ def variants_tree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return root
 
 
-# --- variants_dir honra o override -------------------------------------------
+# --- variants_dir honors the override ----------------------------------------
 
 
 def test_variants_dir_honors_env_override(variants_tree: Path) -> None:
@@ -62,7 +62,7 @@ def test_variants_dir_reads_env_fresh_each_call(
     assert variants_dir() == b
 
 
-# --- axis_dir / recipe_path resolvem cada eixo da fixture --------------------
+# --- axis_dir / recipe_path resolve every axis of the fixture ----------------
 
 
 @pytest.mark.parametrize(
@@ -94,7 +94,7 @@ def test_base_path_points_at_base_yaml(variants_tree: Path) -> None:
     assert resolved.is_file()
 
 
-# --- available_names ordenado -------------------------------------------------
+# --- available_names sorted ---------------------------------------------------
 
 
 @pytest.mark.parametrize("axis", list(_FIXTURE))
@@ -106,7 +106,7 @@ def test_available_names_absent_axis_is_empty(variants_tree: Path) -> None:
     assert available_names("nonexistent") == []
 
 
-# --- nome desconhecido levanta UnknownAxisError com os disponíveis -----------
+# --- an unknown name raises UnknownAxisError with the available ones ---------
 
 
 def test_axis_dir_unknown_name_raises_with_available(variants_tree: Path) -> None:
@@ -134,7 +134,7 @@ def test_recipe_path_unknown_name_raises_with_available(variants_tree: Path) -> 
 
 
 def test_catalyst_dir_is_arch_partitioned(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    # default sob cache_dir()/catalyst/<arch>; particionado por arch como pkgdir.
+    # default under cache_dir()/catalyst/<arch>; partitioned per arch like pkgdir.
     monkeypatch.delenv("SHIDASHI_CATALYST_DIR", raising=False)
     monkeypatch.setenv("SHIDASHI_CACHE", str(tmp_path))
     assert catalyst_dir("znver5") == tmp_path / "catalyst" / "znver5"

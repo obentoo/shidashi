@@ -1,18 +1,18 @@
-"""Modelos de receita do Shidashi e loaders YAML→modelo.
+"""Shidashi's recipe models and YAML→model loaders.
 
-A receita de uma imagem é uma CADEIA DE ESTÁGIOS (D24)::
+An image's recipe is a CHAIN OF STAGES (D24)::
 
     base ─► minimal ─► desktop ─► <flavor>
 
-cada estágio declarando quem vem antes dele (``after:``), mais dois eixos
-ortogonais: ``arch`` (knobs de CPU) e ``init`` (profile e seat). Todos os
-fragmentos são modelos pydantic *frozen* com ``extra="forbid"``. O módulo
-mantém-se livre de acoplamento com Portage e com ``config``: quem sabe onde os
-arquivos moram passa um ``locate`` para :func:`load_chain`.
+each stage declaring which one comes before it (``after:``), plus two
+orthogonal axes: ``arch`` (CPU knobs) and ``init`` (profile and seat). Every
+fragment is a *frozen* pydantic model with ``extra="forbid"``. The module stays
+free of coupling to Portage and to ``config``: whoever knows where the files
+live passes a ``locate`` to :func:`load_chain`.
 
-O USE não vive aqui. Até 2026-09-26 os fragmentos traziam ``use_prefer``, que
-só era EXIBIDO (``recipe show``) e nunca chegava ao build; o USE de verdade
-sempre veio do ``make.conf`` de cada camada, e agora essa é a única fonte.
+USE does not live here. Until 2026-09-26 the fragments carried ``use_prefer``,
+which was only DISPLAYED (``recipe show``) and never reached the build; the real
+USE always came from each layer's ``make.conf``, and now that is the only source.
 """
 
 import re
@@ -23,7 +23,7 @@ from typing import Any, Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, ValidationError
 
-type SeedSource = Literal["download", "catalyst"]  # fonte do stage3 semente (story 005)
+type SeedSource = Literal["download", "catalyst"]  # source of the seed stage3 (story 005)
 type UpdateMode = Literal["emptytree", "newuse"]
 
 _STRICT = ConfigDict(frozen=True, extra="forbid")
@@ -48,12 +48,13 @@ def stage_phase_name(name: str) -> str:
 
 
 class UseBreak(BaseModel):
-    """Quebra de ciclo curada: força uma USE flag durante o break-pass (R4.1).
+    """Curated cycle break: forces a USE flag during the break-pass (R4.1).
 
-    Frozen pydantic com ``extra="forbid"``. ``atom`` é o pacote, ``flag`` a USE
-    flag e ``enable`` o sinal: ``enable=False`` (padrão) força a flag OFF durante
-    o break-pass; ``enable=True`` força-a ON. Espelha :class:`resolve.CycleBreak`
-    porém sem ``raw_line`` — aqui é dado curado, não extraído de saída.
+    Frozen pydantic with ``extra="forbid"``. ``atom`` is the package, ``flag`` the
+    USE flag and ``enable`` the sign: ``enable=False`` (default) forces the flag
+    OFF during the break-pass; ``enable=True`` forces it ON. Mirrors
+    :class:`resolve.CycleBreak` but without ``raw_line`` -- here it is curated
+    data, not extracted from output.
     """
 
     model_config = _STRICT
@@ -63,17 +64,17 @@ class UseBreak(BaseModel):
 
 
 class Phase(BaseModel):
-    """Uma fase de build: o que ela instala e sob qual configuração.
+    """A build phase: what it installs and under which configuration.
 
-    Uma fase por estágio da cadeia (mais as que o ``init`` antepõe, como
-    ``seat``). ``sets`` é a relação fase→set, declarada pelo estágio.
+    One phase per stage of the chain (plus those the ``init`` prepends, such as
+    ``seat``). ``sets`` is the phase→set relation, declared by the stage.
 
-    - ``emptytree``: só a base -- a única reconstrução completa.
-    - ``ships``: uma imagem entregue termina aqui (``minimal`` e cada flavor);
-      o pipeline assenta os cortes de ciclo e grava o fork-point já assentado.
-    - ``layers``: as camadas de portage EM VIGOR nesta fase, acumuladas do
-      início da cadeia até o seu estágio (mais ``arch`` e ``init``). É isto
-      que deixa o USE gráfico entrar no meio do caminho, no estágio desktop.
+    - ``emptytree``: the base only -- the one full rebuild.
+    - ``ships``: a delivered image ends here (``minimal`` and each flavor); the
+      pipeline settles the cycle breaks and records the already-settled fork point.
+    - ``layers``: the portage layers IN EFFECT in this phase, accumulated from
+      the start of the chain up to its stage (plus ``arch`` and ``init``). This
+      is what lets the graphical USE come in midway, at the desktop stage.
     """
 
     model_config = _STRICT
@@ -88,14 +89,15 @@ class Phase(BaseModel):
 
 
 class StageFragment(BaseModel):
-    """Um estágio da cadeia: configuração (o ``portage/`` ao lado) + escolha.
+    """A stage of the chain: configuration (the ``portage/`` next to it) + choice.
 
-    ``after`` nomeia o estágio anterior -- a cadeia é explícita. ``sets`` são os
-    sets que ESTE estágio instala (o conteúdo mora em ``variants/kits/``, D25).
-    ``exclude`` são átomos REMOVIDOS desses sets quando materializados no rootfs;
-    note o que ele NÃO faz: não impede o átomo de entrar como DEPENDÊNCIA de
-    outro pacote -- é "não peço", não "proíbo". ``use_break`` são os cortes de
-    ciclo que valem a partir deste estágio, até o settle da imagem.
+    ``after`` names the previous stage -- the chain is explicit. ``sets`` are the
+    sets THIS stage installs (the content lives in ``variants/kits/``, D25).
+    ``exclude`` are atoms REMOVED from those sets when materialized in the
+    rootfs; note what it does NOT do: it does not stop the atom from coming in as
+    a DEPENDENCY of another package -- it is "I do not ask for it", not "I forbid
+    it". ``use_break`` are the cycle breaks in force from this stage on, until
+    the image's settle.
 
     ``init_sets`` maps an init to extra sets this stage installs only under it
     (kde's display manager: plasma-login-manager needs systemd, openrc gets
@@ -121,7 +123,7 @@ class StageFragment(BaseModel):
 
 
 class BaseFragment(StageFragment):
-    """O estágio ``base`` -- o núcleo, e a âncora do profile."""
+    """The ``base`` stage -- the core, and the anchor of the profile."""
 
     stage: str = BASE_STAGE
     update: UpdateMode = "emptytree"
@@ -137,15 +139,16 @@ class ArchFragment(BaseModel):
     cpu_flags_x86: tuple[str, ...]
     runnable_on_build_host: bool = False
     tier: int = 2
-    # fonte do stage3 semente (story 005): "download" baixa o genérico (default,
-    # retrocompatível); "catalyst" gera um stage3 com -march do alvo via Catalyst.
+    # source of the seed stage3 (story 005): "download" fetches the generic one
+    # (default, backward compatible); "catalyst" builds a stage3 with the target's
+    # -march via Catalyst.
     seed_source: SeedSource = "download"
 
 
 class InitFragment(BaseModel):
     model_config = _STRICT
     init: str
-    profile_suffix: str = ""  # token puro, SEM barra inicial
+    profile_suffix: str = ""  # bare token, NO leading slash
     phases_prepend: tuple[Phase, ...] = ()
     #: Atoms left out of every image built with this init, on top of the stages'
     #: own ``exclude``: what the other init does instead (metalog and ntp are
@@ -180,8 +183,8 @@ class ResolvedRecipe(BaseModel):
     portage_layers: tuple[str, ...]
     #: The chain, base first: ``("base", "minimal", "desktop", "kde")``.
     stages: tuple[str, ...] = ()
-    # default "download" mantém retrocompatível quem constrói ResolvedRecipe
-    # diretamente; merge() sempre o preenche explicitamente a partir do arch.
+    # the "download" default keeps code that builds ResolvedRecipe directly
+    # backward compatible; merge() always fills it explicitly from the arch.
     seed_source: SeedSource = "download"
 
 
@@ -219,19 +222,19 @@ class RecipeChainError(Exception):
 
 
 def _read_yaml(path: Path) -> dict[str, Any]:
-    """Lê um YAML de mapeamento e devolve um dict.
+    """Read a mapping YAML and return a dict.
 
-    Levanta ``TypeError`` se o documento não for um mapeamento (ex.: lista ou
-    escalar), para que loaders construam modelos a partir de dicts apenas.
+    Raise ``TypeError`` if the document is not a mapping (e.g. a list or a
+    scalar), so that loaders build models from dicts only.
     """
     data = yaml.safe_load(path.read_text(encoding="utf-8"))
     if not isinstance(data, dict):
-        raise TypeError(f"esperado mapeamento YAML em {path}, obtido {type(data).__name__}")
+        raise TypeError(f"expected a YAML mapping in {path}, got {type(data).__name__}")
     return data
 
 
 def _ordered_unique(items: tuple[str, ...]) -> tuple[str, ...]:
-    """Une preservando a ordem da primeira ocorrência e descartando duplicatas."""
+    """Union that keeps first-occurrence order and drops duplicates."""
     seen: dict[str, None] = {}
     for item in items:
         seen.setdefault(item, None)
@@ -266,22 +269,23 @@ def merge(
     stages: tuple[StageFragment, ...],
     init: InitFragment,
 ) -> ResolvedRecipe:
-    """Funde a cadeia de estágios com ``arch`` e ``init`` numa receita (D24). Puro.
+    """Merge the chain of stages with ``arch`` and ``init`` into a recipe (D24). Pure.
 
-    ``stages`` é o que :func:`load_chain` devolve: os estágios DEPOIS da base,
-    na ordem da cadeia. O último é o alvo (``flavor`` da receita); cadeia vazia
-    é a própria base.
+    ``stages`` is what :func:`load_chain` returns: the stages AFTER the base, in
+    chain order. The last one is the target (the recipe's ``flavor``); an empty
+    chain is the base itself.
 
-    - **Profile:** ``base.profile_base`` + ``/<init.profile_suffix>`` quando há
-      sufixo. Só ``init`` mexe no profile.
-    - **Camadas:** ``base``, ``arch/<a>``, cada estágio na ordem da cadeia
-      (:func:`stage_layer`), ``init/<i>``. ``portage_layers`` é a lista FINAL;
-      cada fase carrega em ``layers`` as camadas até o seu estágio -- o
-      ``init`` vale em todas, porque o profile e o seat valem desde o seed.
-    - **Fases:** ``init.phases_prepend`` e depois uma por estágio
-      (:func:`stage_phase_name`), com os sets, os cortes e o modo do estágio.
-    - **sets / exclude:** união ordenada-única sobre toda a cadeia; os sets de
-      cada estágio incluem os do seu ``init_sets`` para ``init.init``.
+    - **Profile:** ``base.profile_base`` + ``/<init.profile_suffix>`` when there
+      is a suffix. Only ``init`` touches the profile.
+    - **Layers:** ``base``, ``arch/<a>``, each stage in chain order
+      (:func:`stage_layer`), ``init/<i>``. ``portage_layers`` is the FINAL list;
+      each phase carries in ``layers`` the layers up to its stage -- ``init``
+      applies to all of them, because the profile and the seat apply from the
+      seed on.
+    - **Phases:** ``init.phases_prepend`` and then one per stage
+      (:func:`stage_phase_name`), with the stage's sets, breaks and mode.
+    - **sets / exclude:** ordered-unique union over the whole chain; each
+      stage's sets include those of its ``init_sets`` for ``init.init``.
     - **include:** each stage's becomes ``@include-<stage>`` on its own phase.
       An atom the same stage, a later one or the init excludes is a contradiction
       and raises :class:`RecipeChainError`.

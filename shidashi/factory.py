@@ -1,18 +1,18 @@
-"""Factory — Package Factory: constrói binpkgs a partir de uma receita (OVERVIEW §6).
+"""Factory — Package Factory: builds binpkgs from a recipe (OVERVIEW §6).
 
-Orquestra, para uma :class:`~shidashi.recipe.ResolvedRecipe`, o build multi-instance
-de binpkgs num container limpo por flavor (OVERVIEW §6.1–§6.3): seed/extração do
-stage3 (ou reuso de um fork-point do tronco), sobreposição dos layers de portage
-+ instalação dos sets, montagem dos binds (repos RO; PKGDIR/ccache/sccache/DISTDIR
-RW sobre os caminhos fixos do ``make.conf``) e execução das fases (OVERVIEW §6.4)
-seguida do settle-pass. A guarda de privilégio (root) é a **primeira** coisa que
-:meth:`Factory.build` faz — o Shidashi nunca escala privilégios sozinho (R8.1).
+Orchestrates, for a :class:`~shidashi.recipe.ResolvedRecipe`, the multi-instance build
+of binpkgs in a clean container per flavor (OVERVIEW §6.1–§6.3): seed/extraction of the
+stage3 (or reuse of a trunk fork point), overlaying of the portage layers
++ installation of the sets, mounting of the binds (repos RO; PKGDIR/ccache/sccache/DISTDIR
+RW over the fixed paths of ``make.conf``) and execution of the phases (OVERVIEW §6.4)
+followed by the settle-pass. The privilege guard (root) is the **first** thing
+:meth:`Factory.build` does — Shidashi never escalates privileges on its own (R8.1).
 
-Os símbolos privilegiados de execução são importados a **nível de módulo**
-(``fetch_stage3``/``extract_stage3``/``bind_repos``/``apply_portage``) para que os
-testes possam monkeypatchá-los em ``shidashi.factory`` e :meth:`build` os observe.
-:class:`FactoryError` é definida em :mod:`shidashi.phases` (evita o ciclo de import
-``factory`` → ``phases``) e **re-exportada** aqui.
+The privileged execution symbols are imported at **module level**
+(``fetch_stage3``/``extract_stage3``/``bind_repos``/``apply_portage``) so that the
+tests can monkeypatch them in ``shidashi.factory`` and :meth:`build` sees them.
+:class:`FactoryError` is defined in :mod:`shidashi.phases` (avoiding the import cycle
+``factory`` → ``phases``) and **re-exported** here.
 """
 
 import os
@@ -60,9 +60,9 @@ __all__ = [
     "StaleStateError",
 ]
 
-# Caminhos fixos do container, definidos pelo ``make.conf`` base (OVERVIEW §6.3):
-# a Factory escolhe os diretórios *host-side* (sob ``cache_dir()``) e os bind-monta
-# sobre estes alvos fixos — o ``make.conf`` não é editado.
+# Fixed container paths, defined by the base ``make.conf`` (OVERVIEW §6.3):
+# the Factory picks the *host-side* directories (under ``cache_dir()``) and bind-mounts them
+# over these fixed targets — ``make.conf`` is not edited.
 _PKGDIR_DST = Path("/var/cache/binpkgs")
 _CCACHE_DST = Path("/var/cache/ccache")
 _SCCACHE_DST = Path("/var/cache/sccache")
@@ -70,20 +70,20 @@ _DISTDIR_DST = Path("/var/cache/distfiles")
 
 
 class FactoryResult(pydantic.BaseModel):
-    """Resultado de uma execução da Factory (OVERVIEW §6).
+    """The result of one Factory run (OVERVIEW §6).
 
-    Value object *frozen* (pydantic v2, ``extra="forbid"``;
-    ``arbitrary_types_allowed`` admite :class:`~pathlib.Path`). Carrega o
-    ``pkgdir`` produzido, os ``built_atoms`` compilados, os nomes das ``phases``
-    executadas, o ``fork_point`` materializado/reusado (``None`` quando não há),
-    ``fork_point_reused`` (reuso do tronco) e os ``settle_atoms`` do settle-pass.
+    *Frozen* value object (pydantic v2, ``extra="forbid"``;
+    ``arbitrary_types_allowed`` admits :class:`~pathlib.Path`). Carries the
+    ``pkgdir`` produced, the compiled ``built_atoms``, the names of the ``phases``
+    that ran, the materialized/reused ``fork_point`` (``None`` when there is none),
+    ``fork_point_reused`` (trunk reuse) and the settle-pass's ``settle_atoms``.
 
-    Os campos do build interativo (story 004) são **defaultados** para manter a
-    construção da story 003 (sem eles) válida apesar do ``extra="forbid"`` (R8.2):
-    ``stopped_at`` é o rótulo onde um stepwise parou cedo (``--until``/STOP) ou
-    ``None`` quando rodou até o fim; ``phase_diffs`` o histórico de
-    :class:`~shidashi.state.PhaseDiff` por fase e ``completed_phases`` os nomes das
-    fases já encerradas — ambos lidos do estado persistido pelo stepwise.
+    The interactive build's fields (story 004) are **defaulted** to keep story 003's
+    construction (without them) valid despite ``extra="forbid"`` (R8.2):
+    ``stopped_at`` is the label where a stepwise run stopped early (``--until``/STOP) or
+    ``None`` when it ran to the end; ``phase_diffs`` the per-phase history of
+    :class:`~shidashi.state.PhaseDiff` and ``completed_phases`` the names of the
+    phases already closed — both read from the state persisted by the stepwise run.
     """
 
     model_config = pydantic.ConfigDict(frozen=True, extra="forbid", arbitrary_types_allowed=True)
@@ -109,54 +109,54 @@ class FactoryResult(pydantic.BaseModel):
 
 
 class StaleStateError(FactoryError):
-    """Estado de build persistido obsoleto frente ao snapshot/receita atuais (R6.3).
+    """Persisted build state that is stale against the current snapshot/recipe (R6.3).
 
-    Levantada por :meth:`Factory.build_stepwise` quando :func:`shidashi.state.is_stale`
-    acusa divergência (snapshot do stage3 ou hash da receita mudou) e nem
-    ``--reset`` nem ``--force-resume`` foram passados — o stepwise NUNCA prossegue
-    silenciosamente sobre progresso obsoleto. Subclasse de :class:`FactoryError`
-    (carrega a mesma ``phase``/``output``); a CLI (Task 7) a captura para emitir um
-    prompt/diagnóstico e sair com código 1, distinguindo-a de uma falha de emerge.
+    Raised by :meth:`Factory.build_stepwise` when :func:`shidashi.state.is_stale`
+    reports a divergence (the stage3 snapshot or the recipe hash changed) and neither
+    ``--reset`` nor ``--force-resume`` was passed — the stepwise run NEVER proceeds
+    silently over stale progress. Subclass of :class:`FactoryError`
+    (carries the same ``phase``/``output``); the CLI (Task 7) catches it to emit a
+    prompt/diagnosis and exit with code 1, telling it apart from an emerge failure.
     """
 
 
 def _require_root() -> None:
-    """Guarda de privilégio (R8.1): levanta :class:`FactoryError` se não-root.
+    """Privilege guard (R8.1): raises :class:`FactoryError` if not root.
 
-    Primeira coisa que :meth:`Factory.build` e :meth:`Factory.build_stepwise`
-    chamam — **antes** de qualquer fetch/extração/I/O de estado. O Shidashi nunca
-    escala privilégios sozinho; a mensagem é acionável e menciona ``root``.
+    The first thing :meth:`Factory.build` and :meth:`Factory.build_stepwise`
+    call — **before** any fetch/extraction/state I/O. Shidashi never
+    escalates privileges on its own; the message is actionable and mentions ``root``.
     """
     if os.geteuid() != 0:
         raise FactoryError(
-            "shidashi factory requer root (systemd-nspawn + extração de stage3); "
-            "rode como root — o Shidashi não escala privilégios sozinho"
+            "shidashi factory requires root (systemd-nspawn + stage3 extraction); "
+            "run it as root — Shidashi does not escalate privileges on its own"
         )
 
 
 def _fresh_seed(
     rootfs: Path, pointer: Stage3Pointer, *, download: bool, recipe: ResolvedRecipe
 ) -> str:
-    """Seeda um rootfs **fresco** a partir do stage3 do ``pointer`` (R1.4/R8.2/R5.x).
+    """Seed a **fresh** rootfs from the ``pointer``'s stage3 (R1.4/R8.2/R5.x).
 
-    Devolve o ``seed_sha512`` do stage3 buildado localmente — ``""`` quando a
-    seed veio por download (story 005). Ramifica em ``recipe.seed_source``:
+    Returns the ``seed_sha512`` of the locally built stage3 — ``""`` when the
+    seed came from a download (story 005). Branches on ``recipe.seed_source``:
 
-    * ``download`` (default): :func:`shidashi.seed.fetch_stage3` (cache de
-      :func:`shidashi.config.cache_dir`) seguido de :func:`shidashi.seed.extract_stage3`
-      (que já cria ``rootfs``). É o corpo EXATO do ramo fresh original — sem
-      ``rmtree``/``mkdir`` extra — para que o one-shot não mude (R8.2/R5.2).
-    * ``catalyst``: o stage3 genérico baixado/verificado vira a SEMENTE de
-      bootstrap de :func:`shidashi.catalyst.build_stage3_catalyst`, que gera um
-      stage3 com o ``-march`` do alvo (specs sob ``catalyst_spec_dir``, saída sob
+    * ``download`` (default): :func:`shidashi.seed.fetch_stage3` (cache under
+      :func:`shidashi.config.cache_dir`) followed by :func:`shidashi.seed.extract_stage3`
+      (which already creates ``rootfs``). It is the EXACT body of the original fresh
+      branch — no extra ``rmtree``/``mkdir`` — so that the one-shot does not change (R8.2/R5.2).
+    * ``catalyst``: the downloaded/verified generic stage3 becomes the bootstrap
+      SEED of :func:`shidashi.catalyst.build_stage3_catalyst`, which produces a
+      stage3 with the target's ``-march`` (specs under ``catalyst_spec_dir``, output under
       ``catalyst_dir``, ``portage_confdir`` = ``variants/arch/<arch>/portage``);
-      extrai-se o tarball produzido e devolve-se seu SHA-512 (R5.1/R4.1). O
-      ``catalyst`` roda no host — NUNCA aninhado no :class:`Container`/nspawn.
+      the produced tarball is extracted and its SHA-512 returned (R5.1/R4.1).
+      ``catalyst`` runs on the host — NEVER nested in the :class:`Container`/nspawn.
 
-    Sub-passo PRIVILEGIADO compartilhado pelo caminho fresh de
-    :func:`_seed_or_restore` e pelo caso "sem estado" de :meth:`Factory.build_stepwise`;
-    ``fetch_stage3``/``extract_stage3``/``build_stage3_catalyst`` são globais do
-    módulo (monkeypatcháveis nos testes).
+    PRIVILEGED sub-step shared by the fresh path of
+    :func:`_seed_or_restore` and by the "no state" case of :meth:`Factory.build_stepwise`;
+    ``fetch_stage3``/``extract_stage3``/``build_stage3_catalyst`` are module
+    globals (monkeypatchable in the tests).
     """
     tarball = fetch_stage3(pointer, cache_dir=config.cache_dir(), download=download)
     if recipe.seed_source == "catalyst":
@@ -228,16 +228,16 @@ def _seed_or_restore(
     fork_points_dir: Path,
     download: bool,
 ) -> tuple[str | None, Path, bool, bool]:
-    """Decide entre reusar o fork-point do tronco e um seed fresco (R5.1/R5.2/R8.2).
+    """Decide between reusing the trunk fork point and a fresh seed (R5.1/R5.2/R8.2).
 
-    Bloco *seed-or-restore* extraído de :meth:`Factory.build` SEM mudança de
-    comportamento (R8.2): se :func:`shidashi.phases.fork_point` acha o tronco pinado
-    para ``snapshot``, restaura-o num rootfs limpo e devolve
-    ``(resume_at, fork_point_path, True, True)`` onde ``resume_at`` é a fase do estágio
-    restaurado; senão restaura o checkpoint do bootstrap, se existe, ou faz
-    :func:`_fresh_seed` -- ``(None, <chave do primeiro estágio>, False,
+    *Seed-or-restore* block extracted from :meth:`Factory.build` WITHOUT a change in
+    behavior (R8.2): if :func:`shidashi.phases.fork_point` finds the trunk pinned
+    for ``snapshot``, it restores it into a clean rootfs and returns
+    ``(resume_at, fork_point_path, True, True)`` where ``resume_at`` is the phase of the
+    restored stage; otherwise it restores the bootstrap checkpoint, if it exists, or runs
+    :func:`_fresh_seed` -- ``(None, <key of the first stage>, False,
     bootstrapped)``. The last flag says whether the toolchain bootstrap is
-    already in the rootfs; ``False`` means the caller must run it. PRIVILEGIADO.
+    already in the rootfs; ``False`` means the caller must run it. PRIVILEGED.
     """
     found = fork_point(recipe, snapshot=snapshot, fork_points_dir=fork_points_dir)
     if found is not None:
@@ -293,12 +293,12 @@ def _entry_layers(recipe: ResolvedRecipe, *, done: tuple[str, ...]) -> tuple[str
 def _prepare_portage(
     rootfs: Path, recipe: ResolvedRecipe, *, layers: tuple[str, ...] | None = None
 ) -> None:
-    """Sobrepõe os layers de portage e instala os sets da receita (R6.4/R8.2).
+    """Overlay the portage layers and install the recipe's sets (R6.4/R8.2).
 
-    Bloco *portage-apply* extraído de :meth:`Factory.build` SEM mudança de
-    comportamento (R8.2): :func:`shidashi.resolve.apply_portage` (layers sob
-    :func:`shidashi.config.variants_dir`) seguido de :meth:`Factory._install_sets`.
-    Compartilhado por :meth:`Factory.build` e :meth:`Factory.build_stepwise`.
+    *Portage-apply* block extracted from :meth:`Factory.build` WITHOUT a change in
+    behavior (R8.2): :func:`shidashi.resolve.apply_portage` (layers under
+    :func:`shidashi.config.variants_dir`) followed by :meth:`Factory._install_sets`.
+    Shared by :meth:`Factory.build` and :meth:`Factory.build_stepwise`.
 
     The layers' ``rootfs/`` trees go first (:func:`shidashi.resolve.apply_rootfs`):
     the bootstrap's ``locale-gen`` reads the curated ``/etc/locale.gen``.
@@ -315,19 +315,19 @@ def _build_binds(
     repos_conf_dir: Path | None = None,
     repos: Mapping[str, Path] | None = None,
 ) -> tuple[list[tuple[Path, Path]], list[tuple[Path, Path]]]:
-    """Monta os binds RO (repos) e RW (PKGDIR/caches) do container (R6.2/R6.3/R7.2). Pura.
+    """Build the container's RO (repos) and RW (PKGDIR/caches) binds (R6.2/R6.3/R7.2). Pure.
 
-    - ``binds_ro`` = :func:`shidashi.resolve.bind_repos` sobre ``repos_conf_dir`` (o
-      ``repos.conf`` do rootfs resolvido; os repos sincronizados do host ficam RO,
-      a árvore do host nunca é mutada).
-    - ``binds_rw`` mapeia os diretórios *host-side* (sob ``cache_dir()``) sobre os
-      alvos fixos do ``make.conf`` do container: ``pkgdir`` → ``/var/cache/binpkgs``,
+    - ``binds_ro`` = :func:`shidashi.resolve.bind_repos` over ``repos_conf_dir`` (the
+      resolved rootfs's ``repos.conf``; the host's synced repos stay RO,
+      the host's tree is never mutated).
+    - ``binds_rw`` maps the *host-side* directories (under ``cache_dir()``) over the
+      fixed targets of the container's ``make.conf``: ``pkgdir`` → ``/var/cache/binpkgs``,
       ``ccache_dir()`` → ``/var/cache/ccache``, ``sccache_dir()`` → ``/var/cache/sccache``,
-      ``distdir()`` → ``/var/cache/distfiles``. Binpkgs e caches persistem no host.
+      ``distdir()`` → ``/var/cache/distfiles``. Binpkgs and caches persist on the host.
 
-    ``repos_conf_dir`` é opcional para manter a chamada de teste (que monkeypatcha
-    ``bind_repos``) trivial; :meth:`Factory.build` passa o ``repos.conf`` real do
-    rootfs. ``bind_repos`` é resolvido via global do módulo (monkeypatchável).
+    ``repos_conf_dir`` is optional to keep the test call (which monkeypatches
+    ``bind_repos``) trivial; :meth:`Factory.build` passes the rootfs's real
+    ``repos.conf``. ``bind_repos`` is resolved via the module global (monkeypatchable).
     ``repos`` are the pinned repositories by name (D26: the ::gentoo snapshot
     and the overlays' commits), bound in place of the host's clones.
     """
@@ -363,11 +363,11 @@ def portage_ids(rootfs: Path) -> tuple[int, int] | None:
 
 
 def _ensure_bind_dirs(binds_rw: list[tuple[Path, Path]], *, rootfs: Path | None = None) -> None:
-    """Cria os diretórios host-side dos binds RW antes do nspawn.
+    """Create the host-side directories of the RW binds before the nspawn.
 
-    ``systemd-nspawn`` exige que o *source* de cada ``--bind=`` exista no host;
-    sem isto o spawn aborta com ``Failed to clone …``. Fica fora de
-    :func:`_build_binds` para preservar a pureza (e o unit test) daquela montagem.
+    ``systemd-nspawn`` requires the *source* of each ``--bind=`` to exist on the host;
+    without this the spawn aborts with ``Failed to clone …``. It stays outside
+    :func:`_build_binds` to preserve the purity (and the unit test) of that assembly.
 
     With ``rootfs``, the ccache directory is also handed to the image's
     ``portage`` user: compiles run under ``userpriv``, and a root-owned cache
@@ -384,11 +384,11 @@ def _ensure_bind_dirs(binds_rw: list[tuple[Path, Path]], *, rootfs: Path | None 
 
 
 class Factory:
-    """Constrói o stage4 (binpkgs) de uma receita resolvida (OVERVIEW §6).
+    """Builds the stage4 (binpkgs) of a resolved recipe (OVERVIEW §6).
 
-    Recebe a receita já resolvida e o ``pkgdir`` (PKGDIR host-side) de saída e
-    orquestra o build em fases num container limpo e **não-efêmero** (o rootfs
-    persiste para reuso de fork-point e depuração — R8.4).
+    Takes the already resolved recipe and the output ``pkgdir`` (host-side PKGDIR) and
+    orchestrates the phased build in a clean, **non-ephemeral** container (the rootfs
+    persists for fork-point reuse and debugging — R8.4).
     """
 
     def __init__(self, recipe: ResolvedRecipe, pkgdir: Path) -> None:
@@ -403,30 +403,30 @@ class Factory:
         keep: bool = False,
         stop_after: str | None = None,
     ) -> FactoryResult:
-        """Compila os binpkgs da receita num container nspawn (OVERVIEW §6, R1.1/R8.x).
+        """Compile the recipe's binpkgs in an nspawn container (OVERVIEW §6, R1.1/R8.x).
 
-        Ordem (ver Sequence do design):
+        Order (see the design's Sequence):
 
-        1. **Guarda de root** (R8.1): se não-root, levanta :class:`FactoryError`
-           acionável **antes de qualquer trabalho** — o Shidashi não escala privilégios.
-        2. Resolve o ``snapshot`` do pointer do stage3 (``seed.load_pointer``).
-           Se :func:`shidashi.phases.fork_point` acha o tronco pinado, restaura-o no
-           rootfs e retoma após a última fase do tronco (``resume_at``,
+        1. **Root guard** (R8.1): if not root, raises an actionable :class:`FactoryError`
+           **before any work** — Shidashi does not escalate privileges.
+        2. Resolves the ``snapshot`` from the stage3 pointer (``seed.load_pointer``).
+           If :func:`shidashi.phases.fork_point` finds the pinned trunk, restores it into the
+           rootfs and resumes after the trunk's last phase (``resume_at``,
            ``fork_point_reused=True``); else the bootstrap checkpoint, when it
-           exists; else ``fetch_stage3`` + ``extract_stage3`` num rootfs fresco.
-        3. ``apply_rootfs`` + ``apply_portage`` (layers) + instala ``recipe.sets``
-           em ``/etc/portage/sets/``.
-        4. Monta os binds (:func:`_build_binds`, ccache owned by the image's
-           ``portage``) e abre um :class:`Container` **não-efêmero**.
+           exists; else ``fetch_stage3`` + ``extract_stage3`` into a fresh rootfs.
+        3. ``apply_rootfs`` + ``apply_portage`` (layers) + installs ``recipe.sets``
+           into ``/etc/portage/sets/``.
+        4. Builds the binds (:func:`_build_binds`, ccache owned by the image's
+           ``portage``) and opens a **non-ephemeral** :class:`Container`.
         5. Over a fresh stage3 only: the toolchain bootstrap
            (:func:`shidashi.bootstrap.run_bootstrap`), then its checkpoint. Then
            the generation fingerprint is recorded in, or checked against, the
            PKGDIR (:func:`shidashi.generation.check_or_record`, D26).
-        6. :func:`shidashi.phases.run_phases` (fases + settle-pass).
-        7. Monta o :class:`FactoryResult`. Em sucesso e sem ``keep``, remove o
-           rootfs de build; em falha ou ``keep``, preserva-o (R8.4). Uma falha de
-           ``emerge`` já sobe como :class:`FactoryError` de ``run_phase``/
-           ``settle_pass`` e propaga.
+        6. :func:`shidashi.phases.run_phases` (phases + settle-pass).
+        7. Builds the :class:`FactoryResult`. On success and without ``keep``, removes the
+           build rootfs; on failure or ``keep``, preserves it (R8.4). An ``emerge``
+           failure already comes up as a :class:`FactoryError` from ``run_phase``/
+           ``settle_pass`` and propagates.
         """
         _require_root()
         run = audit.current()
@@ -510,7 +510,7 @@ class Factory:
                         stop_after=stop_after,
                     )
         except BaseException:
-            keep_rootfs = True  # preserva o rootfs para depuração em falha (R8.4)
+            keep_rootfs = True  # preserves the rootfs for debugging on failure (R8.4)
             raise
 
         phase_names = tuple(r.phase.name for r in results if r.phase.name != "settle")
@@ -657,35 +657,35 @@ class Factory:
         on_checkpoint: CheckpointHook | None = None,
         on_failure: FailureHook | None = None,
     ) -> FactoryResult:
-        """Constrói os binpkgs passo-a-passo, com resume/checkpoints (OVERVIEW §6, R1.x/R2.x/R6.x).
+        """Build the binpkgs step by step, with resume/checkpoints (OVERVIEW §6, R1.x/R2.x/R6.x).
 
-        Variante interativa/resumível de :meth:`build`. Ordem:
+        Interactive/resumable variant of :meth:`build`. Order:
 
-        1. **Guarda de root** (R8.1, :func:`_require_root`) — PRIMEIRA coisa, antes
-           de qualquer fetch/extração/I/O de estado.
-        2. Resolve ``snapshot`` (pointer do stage3) e ``recipe_hash``; o caminho do
-           estado persistido é :func:`shidashi.config.build_state_path`.
-        3. ``reset`` (R6.4): limpa o estado persistido e remove o rootfs, recomeçando
-           do zero. Senão carrega o estado: se existe e está obsoleto
-           (:func:`shidashi.state.is_stale`) e nem ``force_resume`` → levanta
-           :class:`StaleStateError` (R6.3) — NUNCA prossegue sobre progresso stale.
-        4. **Seed-or-restore** em três casos: (a) há fases completadas →
-           :func:`shidashi.phases.latest_resumable` + :func:`restore_fork_point` (se o
-           tarball some/corrompe, levanta :class:`FactoryError` e MANTÉM o rootfs);
-           (b) ``seed_done`` mas sem fases (ex.: ``--until seed`` anterior) → reusa o
-           rootfs persistente AS-IS (R1.4); (c) sem estado/``reset`` → seed fresco
-           (:func:`_fresh_seed`), marca ``seed_done`` e persiste; se ``interactive``,
-           checkpoint ``"seed"`` honrando CONTINUE/STOP/SHELL (R2.5).
+        1. **Root guard** (R8.1, :func:`_require_root`) — the FIRST thing, before
+           any fetch/extraction/state I/O.
+        2. Resolves ``snapshot`` (stage3 pointer) and ``recipe_hash``; the path of the
+           persisted state is :func:`shidashi.config.build_state_path`.
+        3. ``reset`` (R6.4): clears the persisted state and removes the rootfs, starting
+           over from scratch. Otherwise it loads the state: if it exists and is stale
+           (:func:`shidashi.state.is_stale`) and there is no ``force_resume`` → raises
+           :class:`StaleStateError` (R6.3) — NEVER proceeds over stale progress.
+        4. **Seed-or-restore** in three cases: (a) there are completed phases →
+           :func:`shidashi.phases.latest_resumable` + :func:`restore_fork_point` (if the
+           tarball is gone/corrupted, raises :class:`FactoryError` and KEEPS the rootfs);
+           (b) ``seed_done`` but no phases (e.g. an earlier ``--until seed``) → reuses the
+           persistent rootfs AS-IS (R1.4); (c) no state/``reset`` → fresh seed
+           (:func:`_fresh_seed`), marks ``seed_done`` and persists; if ``interactive``,
+           the ``"seed"`` checkpoint honoring CONTINUE/STOP/SHELL (R2.5).
         5. :func:`_prepare_portage` (layers + sets).
-        6. Abre um :class:`Container` **não-efêmero** persistente (binds RO/RW).
+        6. Opens a persistent **non-ephemeral** :class:`Container` (RO/RW binds).
         7. :func:`shidashi.phases.run_phases_stepwise` (resume, checkpoints, retry,
-           snapshot por fase, persistência por fase).
-        8. Monta o :class:`FactoryResult` estendido (``stopped_at``/``phase_diffs``/
-           ``completed_phases`` lidos do estado persistido).
-        9. **Teardown: NUNCA auto-deleta o rootfs** — stop, conclusão e falha TODOS
-           o mantêm (R1.6); só ``reset`` (passo 3) o remove. Uma falha de ``emerge``
-           sobe como :class:`FactoryError` (estado já persistido pelo stepwise,
-           rootfs mantido) e propaga → CLI exit 1.
+           per-phase snapshot, per-phase persistence).
+        8. Builds the extended :class:`FactoryResult` (``stopped_at``/``phase_diffs``/
+           ``completed_phases`` read from the persisted state).
+        9. **Teardown: NEVER auto-deletes the rootfs** — stop, completion and failure ALL
+           keep it (R1.6); only ``reset`` (step 3) removes it. An ``emerge`` failure
+           comes up as a :class:`FactoryError` (state already persisted by the stepwise run,
+           rootfs kept) and propagates → CLI exit 1.
         """
         _require_root()
 
@@ -712,9 +712,9 @@ class Factory:
                 and not force_resume
             ):
                 raise StaleStateError(
-                    f"estado de build obsoleto para {recipe.arch}-{recipe.flavor}-"
-                    f"{recipe.init} (snapshot/receita mudaram); rode com --reset para "
-                    "recomeçar do zero ou --force-resume para retomar assim mesmo"
+                    f"stale build state for {recipe.arch}-{recipe.flavor}-"
+                    f"{recipe.init} (snapshot/recipe changed); run with --reset to "
+                    "start over from scratch or --force-resume to resume anyway"
                 )
 
         completed = loaded.completed_phases if loaded is not None else ()
@@ -750,10 +750,10 @@ class Factory:
         )
         _ensure_bind_dirs(binds_rw, rootfs=rootfs)
 
-        # Teardown rule (R1.6): o stepwise NUNCA auto-deleta o rootfs — stop,
-        # conclusão e falha TODOS o mantêm; só ``reset`` (acima) o remove. Por isso
-        # NÃO há cláusula de remoção aqui, e uma falha de emerge propaga com o
-        # estado já persistido por run_phases_stepwise e o rootfs intacto (R3.5).
+        # Teardown rule (R1.6): the stepwise run NEVER auto-deletes the rootfs — stop,
+        # completion and failure ALL keep it; only ``reset`` (above) removes it. That is why
+        # there is NO removal clause here, and an emerge failure propagates with the
+        # state already persisted by run_phases_stepwise and the rootfs intact (R3.5).
         bootstrap: BootstrapResult | None = None
         with Container(
             rootfs,
@@ -817,22 +817,22 @@ class Factory:
         download: bool,
         on_checkpoint: CheckpointHook | None,
     ) -> bool:
-        """Resolve o seed-or-restore do stepwise nos três casos (R1.4/R2.5/R5.2/R6.4).
+        """Resolve the stepwise seed-or-restore in its three cases (R1.4/R2.5/R5.2/R6.4).
 
-        Devolve ``True`` se um checkpoint ``"seed"`` interativo pediu STOP (o
-        chamador retorna cedo, rootfs mantido); ``False`` caso o build deva seguir.
+        Returns ``True`` if an interactive ``"seed"`` checkpoint asked for STOP (the
+        caller returns early, rootfs kept); ``False`` if the build should go on.
 
-        * (a) ``completed`` não-vazio → :func:`shidashi.phases.latest_resumable` e, se há
-          snapshot por-fase, :func:`restore_fork_point` num rootfs limpo. Se o
-          restore levanta (tarball sumiu/corrompido — ``latest_resumable`` só sondou
-          ``.exists()``), embrulha em :class:`FactoryError` e MANTÉM o rootfs
-          (Reviewer #8) — não segue com rootfs indefinido.
-        * (b) ``seed_done`` sem fases completadas → reusa o rootfs persistente AS-IS,
-          sem re-fetch/extract e sem restore (R1.4 — Reviewer #5).
-        * (c) sem estado → :func:`_fresh_seed`, marca ``seed_done`` e persiste; se
-          ``interactive`` apresenta o checkpoint ``"seed"`` (CONTINUE/STOP/SHELL,
-          R2.5) — no seed o Container ainda não está aberto, então SHELL abre um
-          shell transitório sobre o rootfs persistente.
+        * (a) non-empty ``completed`` → :func:`shidashi.phases.latest_resumable` and, if there
+          is a per-phase snapshot, :func:`restore_fork_point` into a clean rootfs. If the
+          restore raises (tarball gone/corrupted — ``latest_resumable`` only probed
+          ``.exists()``), wraps it in :class:`FactoryError` and KEEPS the rootfs
+          (Reviewer #8) — it does not go on with an undefined rootfs.
+        * (b) ``seed_done`` without completed phases → reuses the persistent rootfs AS-IS,
+          with no re-fetch/extract and no restore (R1.4 — Reviewer #5).
+        * (c) no state → :func:`_fresh_seed`, marks ``seed_done`` and persists; if
+          ``interactive`` presents the ``"seed"`` checkpoint (CONTINUE/STOP/SHELL,
+          R2.5) — at the seed the Container is not open yet, so SHELL opens a
+          transient shell over the persistent rootfs.
         """
         if completed:
             phase, path = latest_resumable(
@@ -843,19 +843,19 @@ class Factory:
                 rootfs.mkdir(parents=True, exist_ok=True)
                 try:
                     restore_fork_point(path, rootfs)
-                except Exception as err:  # tarball sumiu/corrompido entre o probe e o uso
+                except Exception as err:  # tarball gone/corrupted between the probe and the use
                     raise FactoryError(
-                        f"falha ao restaurar o snapshot da fase {phase!r} de {path}: {err}; "
-                        "o rootfs foi mantido — rode com --reset para recomeçar do zero"
+                        f"failed to restore the snapshot of phase {phase!r} from {path}: {err}; "
+                        "the rootfs was kept — run with --reset to start over from scratch"
                     ) from err
             return False
 
         if seed_done:
-            # (b) seed já feito por um --until seed anterior, sem fases completadas:
-            # reusa o rootfs persistente como está — não re-seeda nem restaura (R1.4).
+            # (b) seed already done by an earlier --until seed, with no completed phases:
+            # reuse the persistent rootfs as it is — neither re-seed nor restore (R1.4).
             return False
 
-        # (c) sem estado. The bootstrap checkpoint, when one exists, replaces
+        # (c) no state. The bootstrap checkpoint, when one exists, replaces
         # the raw stage3 AND the ~15 min toolchain rebuild on top of it.
         checkpoint = bootstrap_fork_point_path(
             recipe, snapshot=snapshot, fork_points_dir=fork_points_dir
@@ -876,9 +876,9 @@ class Factory:
             )
             return self._seed_checkpoint(rootfs, recipe, on_checkpoint) if interactive else False
 
-        # Seed fresco e persiste o marco seed_done. Quando
-        # seed_source=catalyst, _fresh_seed devolve o sha512 do stage3 buildado
-        # localmente, pinado no BuildState (R4.1); vazio no caminho download.
+        # Fresh seed, and persist the seed_done milestone. When
+        # seed_source=catalyst, _fresh_seed returns the sha512 of the locally built
+        # stage3, pinned in the BuildState (R4.1); empty on the download path.
         shutil.rmtree(rootfs, ignore_errors=True)  # no state: nothing to keep
         seed_sha512 = _fresh_seed(rootfs, pointer, download=download, recipe=recipe)
         state.save_state(
@@ -901,13 +901,13 @@ class Factory:
     def _seed_checkpoint(
         rootfs: Path, recipe: ResolvedRecipe, on_checkpoint: CheckpointHook | None
     ) -> bool:
-        """Apresenta o checkpoint ``"seed"`` e devolve ``True`` se o usuário pediu STOP (R2.5).
+        """Present the ``"seed"`` checkpoint and return ``True`` if the user asked for STOP (R2.5).
 
-        Sem ``on_checkpoint`` ⇒ auto-CONTINUE (devolve ``False``). Caso contrário
-        consulta o hook com um :class:`~shidashi.state.PhaseDiff` base (fase ``"seed"``,
-        sem átomos): CONTINUE segue (``False``); STOP interrompe (``True``); SHELL
-        abre um shell transitório sobre o rootfs persistente (o Container do build
-        ainda não está aberto no seed) e re-apresenta o MESMO checkpoint.
+        Without ``on_checkpoint`` ⇒ auto-CONTINUE (returns ``False``). Otherwise it
+        asks the hook with a base :class:`~shidashi.state.PhaseDiff` (phase ``"seed"``,
+        no atoms): CONTINUE goes on (``False``); STOP breaks (``True``); SHELL
+        opens a transient shell over the persistent rootfs (the build's Container
+        is not open yet at the seed) and presents the SAME checkpoint again.
         """
         if on_checkpoint is None:
             return False
@@ -928,13 +928,13 @@ class Factory:
         results: tuple[PhaseResult, ...],
         bootstrap: BootstrapResult | None = None,
     ) -> FactoryResult:
-        """Monta o :class:`FactoryResult` estendido lendo o estado persistido (R6.1).
+        """Build the extended :class:`FactoryResult` by reading the persisted state (R6.1).
 
-        ``phase_diffs``/``completed_phases`` vêm do :class:`~shidashi.state.BuildState`
-        relido (a fonte de verdade do progresso, persistido por fase); na ausência
-        de estado caem para ``()``. ``built_atoms``/``settle_atoms``/``phases`` são
-        derivados das fases efetivamente executadas em ``results`` (o settle só
-        consta quando rodou), espelhando :meth:`build`.
+        ``phase_diffs``/``completed_phases`` come from the re-read
+        :class:`~shidashi.state.BuildState` (the source of truth of the progress, persisted
+        per phase); without a state they fall back to ``()``. ``built_atoms``/``settle_atoms``/
+        ``phases`` are derived from the phases actually run in ``results`` (the settle only
+        appears when it ran), mirroring :meth:`build`.
         """
         persisted = state.load_state(state_path)
         phase_diffs = persisted.phase_diffs if persisted is not None else ()
@@ -967,13 +967,14 @@ class Factory:
     def _stopped_label(
         results: tuple[PhaseResult, ...], *, until: str | None, final_phase: str | None
     ) -> str | None:
-        """Rótulo onde o stepwise parou: a última fase real se não foi a final.
+        """The label where the stepwise run stopped: the last real phase, when it was
+        not the final one.
 
-        ``None`` (rodou até o fim) quando a última fase REAL executada é a fase
-        final da receita. Antes o critério era "houve settle", que deixou de
-        valer com um settle por estágio entregue (D24): o minimal é assentado no
-        meio do caminho do kde. Sem nenhuma fase real executada (tudo já estava
-        completado), devolve ``until``.
+        ``None`` (ran to the end) when the last REAL phase run is the recipe's
+        final phase. The criterion used to be "there was a settle", which stopped
+        holding with one settle per shipped stage (D24): minimal is settled
+        halfway through kde's path. With no real phase run (everything was already
+        completed), returns ``until``.
         """
         real = [r.phase.name for r in results if r.phase.name != "settle"]
         if real:
@@ -982,12 +983,12 @@ class Factory:
 
     @staticmethod
     def _install_sets(rootfs: Path, recipe: ResolvedRecipe) -> None:
-        """Instala os sets da receita (R6.4). Delega a :func:`resolve.install_sets`.
+        """Install the recipe's sets (R6.4). Delegates to :func:`resolve.install_sets`.
 
-        A Factory e o Assembler consomem a MESMA curadoria de sets, e por muito
-        tempo cada um teve a sua CÓPIA da lógica -- "espelha o outro", dizia a
-        docstring. As duas divergiram assim que uma foi corrigida: o Assembler
-        seguia sem resolver ``@refs`` e sem aplicar ``exclude``, montando ISOs a
-        partir de sets quebrados. Agora há uma implementação só.
+        The Factory and the Assembler consume the SAME set curation, and for a long
+        time each had its own COPY of the logic -- "mirrors the other", the
+        docstring said. The two diverged as soon as one was fixed: the Assembler
+        went on without resolving ``@refs`` and without applying ``exclude``, assembling ISOs
+        from broken sets. Now there is a single implementation.
         """
         install_sets(rootfs, recipe)

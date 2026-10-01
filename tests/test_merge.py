@@ -1,9 +1,9 @@
-"""Testes do motor de merge (shidashi.recipe.merge / load_chain) — D24.
+"""Tests of the merge engine (shidashi.recipe.merge / load_chain) — D24.
 
-A receita é uma CADEIA DE ESTÁGIOS ``base → minimal → desktop → <flavor>``,
-cada um declarando ``after:``, fundida com os eixos ``arch`` e ``init``. Os
-fragmentos são construídos programaticamente; só os testes de ``load_chain``
-escrevem YAML num diretório temporário.
+The recipe is a CHAIN OF STAGES ``base → minimal → desktop → <flavor>``,
+each declaring ``after:``, merged with the ``arch`` and ``init`` axes. The
+fragments are built programmatically; only the ``load_chain`` tests write YAML
+into a temporary directory.
 """
 
 from pathlib import Path
@@ -27,7 +27,7 @@ from shidashi.recipe import (
 )
 from shidashi.state import recipe_hash
 
-# --- builders de fragmentos ---------------------------------------------------
+# --- fragment builders -------------------------------------------------------
 
 _TRUNK_CUT = UseBreak(atom="dev-lang/python", flag="bluetooth")
 
@@ -52,8 +52,8 @@ def make_arch(
     tier: int = 1,
     seed_source: str | None = None,
 ) -> ArchFragment:
-    # seed_source omitido (None) exercita o default do modelo; quando fornecido
-    # é passado cru, para que valores inválidos ("metro") fiquem com o pydantic.
+    # an omitted seed_source (None) exercises the model's default; when given it
+    # is passed raw, so that invalid values ("metro") are left to pydantic.
     extra: dict[str, Any] = {} if seed_source is None else {"seed_source": seed_source}
     return ArchFragment(
         arch=arch,
@@ -98,7 +98,7 @@ def test_profile_systemd_suffix_appended() -> None:
 
 
 def test_profile_empty_suffix_no_change() -> None:
-    # openrc usa sufixo vazio -> profile permanece o profile_base, sem barra final
+    # openrc uses an empty suffix -> profile stays the profile_base, no trailing slash
     r = merge(make_base(), make_arch(), make_chain(), make_init(init="openrc", profile_suffix=""))
     assert r.profile == "default/linux/amd64/23.0"
     assert not r.profile.endswith("/")
@@ -141,7 +141,7 @@ def test_arch_knobs_copied_through() -> None:
 
 
 def test_seed_source_defaults_to_download() -> None:
-    # arch sem seed_source -> default "download" propagado à receita resolvida.
+    # arch without seed_source -> default "download" propagated to the resolved recipe.
     r = merge(make_base(), make_arch(), make_chain(), make_init())
     assert r.seed_source == "download"
 
@@ -152,14 +152,14 @@ def test_seed_source_catalyst_surfaces_on_resolved() -> None:
 
 
 def test_seed_source_invalid_value_rejected() -> None:
-    # qualquer valor fora de {download, catalyst} falha no load do fragmento.
+    # any value outside {download, catalyst} fails when the fragment is loaded.
     with pytest.raises(ValidationError):
         make_arch(seed_source="metro")
 
 
 def test_seed_source_changes_recipe_hash() -> None:
-    # incluir seed_source na receita resolvida sensibiliza o recipe_hash, de modo
-    # que estado persistido anterior é detectado como obsoleto (is_stale).
+    # including seed_source in the resolved recipe makes the recipe_hash sensitive
+    # to it, so that earlier persisted state is detected as stale (is_stale).
     base, chain, init = make_base(), make_chain(), make_init()
     h_download = recipe_hash(merge(base, make_arch(seed_source="download"), chain, init))
     h_catalyst = recipe_hash(merge(base, make_arch(seed_source="catalyst"), chain, init))

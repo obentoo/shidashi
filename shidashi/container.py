@@ -1,10 +1,10 @@
-"""Container — wrapper sobre ``systemd-nspawn`` para builds isolados (OVERVIEW §12).
+"""Container — wrapper around ``systemd-nspawn`` for isolated builds (OVERVIEW §12).
 
-O isolamento é feito por ``systemd-nspawn`` (OVERVIEW §12): ``emerge``/``eselect``
-rodam *dentro* do container, nunca via ``import portage``. A construção da linha
-de comando (:func:`_nspawn_argv`) é **pura e inspecionável** — testável sem root;
-a execução (:meth:`Container.run`) e o ciclo de vida (context manager) exigem
-root + ``systemd-nspawn`` e são exercidos pelos testes de integração host-gated.
+Isolation is done by ``systemd-nspawn`` (OVERVIEW §12): ``emerge``/``eselect``
+run *inside* the container, never via ``import portage``. Building the command
+line (:func:`_nspawn_argv`) is **pure and inspectable** — testable without root;
+execution (:meth:`Container.run`) and the lifecycle (context manager) require
+root + ``systemd-nspawn`` and are exercised by the host-gated integration tests.
 """
 
 import datetime
@@ -19,9 +19,9 @@ from shidashi import audit
 
 
 class CommandResult:
-    """Resultado de um comando executado dentro do container (OVERVIEW §12).
+    """Result of a command run inside the container (OVERVIEW §12).
 
-    Value object: código de saída e os fluxos ``stdout``/``stderr`` capturados.
+    Value object: exit code and the captured ``stdout``/``stderr`` streams.
     """
 
     def __init__(self, exit_code: int, stdout: str, stderr: str) -> None:
@@ -56,12 +56,12 @@ def _emit_binds(
     binds: Sequence[tuple[Path, Path]],
     binds_rw: Sequence[tuple[Path, Path]],
 ) -> list[str]:
-    """Bloco de binds do ``systemd-nspawn``: ``--bind-ro=`` (RO) e depois ``--bind=`` (RW).
+    """``systemd-nspawn`` bind block: ``--bind-ro=`` (RO) and then ``--bind=`` (RW).
 
-    Emite ``--bind-ro=src:dst`` por bind RO na ordem declarada, seguido de
-    ``--bind=src:dst`` por bind RW na ordem declarada (todos os RW *após* os RO).
-    Único ponto de verdade do bloco — compartilhado por :func:`_nspawn_argv` e
-    :func:`_nspawn_shell_argv` para que a paridade seja estrutural (R7.2).
+    Emits ``--bind-ro=src:dst`` per RO bind in the declared order, followed by
+    ``--bind=src:dst`` per RW bind in the declared order (every RW *after* the RO ones).
+    Single source of truth for the block — shared by :func:`_nspawn_argv` and
+    :func:`_nspawn_shell_argv` so that parity is structural (R7.2).
     """
     block: list[str] = []
     for src, dst in binds:
@@ -79,13 +79,13 @@ def _nspawn_argv(
     binds_rw: Sequence[tuple[Path, Path]] = (),
     ephemeral: bool,
 ) -> list[str]:
-    """Monta a linha de comando ``systemd-nspawn`` (R4.4/R7.1/R7.2). **Pura**, sem efeitos.
+    """Build the ``systemd-nspawn`` command line (R4.4/R7.1/R7.2). **Pure**, no side effects.
 
-    Forma: ``["systemd-nspawn", "--directory", <rootfs>, ("--ephemeral")?,
-    ("--bind-ro=src:dst" por bind RO, na ordem), ("--bind=src:dst" por bind RW,
-    na ordem, *após* todos os RO), "--", *argv]``. Os binds vêm antes do
-    separador ``--``; o ``argv`` do comando vem depois. Sem ``binds_rw`` o argv
-    é idêntico ao da story 002 (R7.3 back-compat).
+    Shape: ``["systemd-nspawn", "--directory", <rootfs>, ("--ephemeral")?,
+    ("--bind-ro=src:dst" per RO bind, in order), ("--bind=src:dst" per RW bind,
+    in order, *after* every RO one), "--", *argv]``. The binds come before the
+    ``--`` separator; the command's ``argv`` comes after. Without ``binds_rw`` the argv
+    is identical to story 002's (R7.3 back-compat).
     """
     cmd: list[str] = [
         "systemd-nspawn",
@@ -109,13 +109,13 @@ def _nspawn_shell_argv(
     binds: Sequence[tuple[Path, Path]] = (),
     binds_rw: Sequence[tuple[Path, Path]] = (),
 ) -> list[str]:
-    """Monta a linha de um shell interativo ``systemd-nspawn`` (R7.1/R7.2). **Pura**.
+    """Build the line for an interactive ``systemd-nspawn`` shell (R7.1/R7.2). **Pure**.
 
-    Forma: ``["systemd-nspawn", "--directory", <rootfs>, ("--bind-ro=src:dst"),
-    ("--bind=src:dst" após os RO)]`` — o MESMO bloco de binds de
-    :func:`_nspawn_argv` (via :func:`_emit_binds`), porém **SEM** comando final
-    (sem o separador ``--`` nem argv), de modo que o nspawn caia no shell de
-    login do container. Não altera o argv de :func:`_nspawn_argv` (R8.4).
+    Shape: ``["systemd-nspawn", "--directory", <rootfs>, ("--bind-ro=src:dst"),
+    ("--bind=src:dst" after the RO ones)]`` — the SAME bind block as
+    :func:`_nspawn_argv` (via :func:`_emit_binds`), but **WITHOUT** a trailing command
+    (no ``--`` separator and no argv), so that nspawn drops into the container's
+    login shell. Does not change the argv of :func:`_nspawn_argv` (R8.4).
     """
     cmd: list[str] = ["systemd-nspawn", "--directory", str(rootfs), *_HOST_OPTIONS]
     cmd.extend(_emit_binds(binds, binds_rw))
@@ -123,13 +123,13 @@ def _nspawn_shell_argv(
 
 
 class Container:
-    """Wrapper de um ``systemd-nspawn`` com raiz em ``rootfs`` (OVERVIEW §12).
+    """Wrapper of a ``systemd-nspawn`` rooted at ``rootfs`` (OVERVIEW §12).
 
-    Context manager: ``__enter__`` valida o ambiente (root + ``systemd-nspawn``
-    presentes) e ``__exit__`` faz o teardown do scratch efêmero. Quando
-    ``ephemeral=True``, o ``--ephemeral`` do nspawn já deixa o rootfs seedado
-    imutável (overlay descartável); o teardown remove o diretório de scratch
-    apenas quando ele *não* é efêmero não-preservado.
+    Context manager: ``__enter__`` validates the environment (root + ``systemd-nspawn``
+    present) and ``__exit__`` tears down the ephemeral scratch. When
+    ``ephemeral=True``, nspawn's ``--ephemeral`` already keeps the seeded rootfs
+    immutable (disposable overlay); the teardown removes the scratch directory
+    only when it is *not* a non-preserved ephemeral one.
     """
 
     def __init__(
@@ -157,12 +157,12 @@ class Container:
         env: Mapping[str, str] | None = None,
         check: bool = True,
     ) -> CommandResult:
-        """Executa ``argv`` dentro do container e devolve o resultado (R4.1/R4.3).
+        """Run ``argv`` inside the container and return the result (R4.1/R4.3).
 
-        Constrói a linha via :func:`_nspawn_argv` e executa com
-        ``subprocess.run`` capturando os fluxos. Quando ``check`` é ``True`` e o
-        comando sai com código não-zero, levanta ``CalledProcessError`` (com o
-        ``stderr`` anexado), em vez de retornar silenciosamente.
+        Builds the line via :func:`_nspawn_argv` and runs it with
+        ``subprocess.run`` capturing the streams. When ``check`` is ``True`` and the
+        command exits with a non-zero code, raises ``CalledProcessError`` (with the
+        ``stderr`` attached), instead of returning silently.
         """
         cmd = _nspawn_argv(
             self.rootfs,
@@ -246,20 +246,20 @@ class Container:
         )
 
     def shell(self) -> None:
-        """Abre um shell interativo no rootfs *vivo* e devolve quando ele sai (R7.1/R7.3).
+        """Open an interactive shell in the *live* rootfs and return when it exits (R7.1/R7.3).
 
-        Monta a linha via :func:`_nspawn_shell_argv` (mesmos binds RO/RW do
-        build) e executa com ``subprocess.run`` de stdio **herdado** — sem
-        ``capture_output``/``text``/``check`` — para que o terminal do usuário
-        se acople ao container. Reaproveita o rootfs persistente
-        (``ephemeral=False``), então mudanças feitas no shell persistem na
-        próxima fase; retorna ao sair **sem** derrubar o rootfs.
+        Builds the line via :func:`_nspawn_shell_argv` (same RO/RW binds as the
+        build) and runs it with ``subprocess.run`` with **inherited** stdio — no
+        ``capture_output``/``text``/``check`` — so that the user's terminal
+        attaches to the container. Reuses the persistent rootfs
+        (``ephemeral=False``), so changes made in the shell persist into the
+        next phase; returns on exit **without** tearing down the rootfs.
         """
         subprocess.run(_nspawn_shell_argv(self.rootfs, binds=self.binds, binds_rw=self.binds_rw))
 
     def __enter__(self) -> Container:
         if shutil.which("systemd-nspawn") is None:
-            raise RuntimeError("systemd-nspawn ausente no host")
+            raise RuntimeError("systemd-nspawn missing on the host")
         return self
 
     def __exit__(
@@ -268,8 +268,8 @@ class Container:
         exc: BaseException | None,
         tb: TracebackType | None,
     ) -> None:
-        # Teardown do scratch: só removemos quando o container é efêmero (rootfs
-        # descartável). ignore_errors=True garante que um teardown falho não
-        # mascare uma exceção em voo.
+        # Scratch teardown: we only remove it when the container is ephemeral (disposable
+        # rootfs). ignore_errors=True ensures a failed teardown does not
+        # mask an in-flight exception.
         if self.ephemeral and self.rootfs.exists():
             shutil.rmtree(self.rootfs, ignore_errors=True)

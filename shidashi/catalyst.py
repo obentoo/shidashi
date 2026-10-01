@@ -1,15 +1,15 @@
-"""Geração de stage3 por microarquitetura via Catalyst (story 005).
+"""Per-microarchitecture stage3 generation via Catalyst (story 005).
 
-Separa a lógica **pura** (geração do texto dos specs stage1/2/3 a partir da
-receita resolvida — :func:`render_specs`) da execução **privilegiada** (invocar
-``catalyst`` por shell-out, computar o SHA-512 do tarball — Task 4), no mesmo
-idioma de ``seed.py``. A parte pura é unit-testada em CI não-Gentoo; a invocação
-do ``catalyst`` é isolada num helper monkeypatchável.
+Separates the **pure** logic (generating the text of the stage1/2/3 specs from the
+resolved recipe — :func:`render_specs`) from the **privileged** execution (invoking
+``catalyst`` by shelling out, computing the tarball's SHA-512 — Task 4), in the same
+idiom as ``seed.py``. The pure part is unit-tested on non-Gentoo CI; the invocation
+of ``catalyst`` is isolated in a monkeypatchable helper.
 
-O ajuste de microarquitetura (``-march`` etc.) NÃO entra pelo ``subarch`` do
-Catalyst (não há subarch ``znver5`` upstream) e sim pelo ``portage_confdir`` —
-que reusa o ``variants/arch/<arch>/portage`` já existente. O ``subarch`` fica no
-baseline genérico ``amd64``.
+The microarchitecture tuning (``-march`` etc.) does NOT come in through Catalyst's
+``subarch`` (there is no ``znver5`` subarch upstream) but through ``portage_confdir`` —
+which reuses the already existing ``variants/arch/<arch>/portage``. The ``subarch`` stays at
+the generic ``amd64`` baseline.
 """
 
 import hashlib
@@ -19,11 +19,11 @@ from pathlib import Path
 
 from shidashi.recipe import ResolvedRecipe
 
-# subarch baseline (o march específico vem via portage_confdir, não pelo subarch)
+# baseline subarch (the specific march comes via portage_confdir, not through the subarch)
 _SUBARCH = "amd64"
-# compressão do tarball produzido — casa o `.tar.xz` da seed genérica
+# compression of the produced tarball — matches the generic seed's `.tar.xz`
 _COMPRESSION = "xz"
-# ordem estável das chaves no texto do spec (determinismo, R2.6)
+# stable key order in the spec text (determinism, R2.6)
 _KEY_ORDER = (
     "subarch",
     "target",
@@ -38,25 +38,25 @@ _KEY_ORDER = (
 
 
 class CatalystError(Exception):
-    """Falha ao gerar specs ou ao executar o Catalyst (story 005).
+    """Failure to generate specs or to run Catalyst (story 005).
 
-    Levantada por entrada obrigatória ausente em :func:`render_specs` e, na
-    Task 4, por ``catalyst`` indisponível, saída não-zero ou divergência de
-    SHA-512 do tarball produzido.
+    Raised for a missing required input in :func:`render_specs` and, in
+    Task 4, for an unavailable ``catalyst``, a non-zero exit or a SHA-512
+    mismatch of the produced tarball.
     """
 
 
 def _built_subpath(rel_type: str, stage_n: int, version_stamp: str) -> str:
-    """Subpath do stage construído sob o storedir do Catalyst.
+    """Subpath of the built stage under Catalyst's storedir.
 
-    Convenção do Catalyst: ``<rel_type>/stage<N>-<subarch>-<version_stamp>``.
-    Usado para encadear ``source_subpath`` (stage2 parte do stage1, etc.).
+    Catalyst convention: ``<rel_type>/stage<N>-<subarch>-<version_stamp>``.
+    Used to chain ``source_subpath`` (stage2 starts from stage1, etc.).
     """
     return f"{rel_type}/stage{stage_n}-{_SUBARCH}-{version_stamp}"
 
 
 def _render_one(fields: dict[str, str]) -> str:
-    """Formata um spec como linhas ``chave: valor`` em ordem estável."""
+    """Format a spec as ``key: value`` lines in a stable order."""
     return "".join(f"{key}: {fields[key]}\n" for key in _KEY_ORDER)
 
 
@@ -68,17 +68,17 @@ def render_specs(
     snapshot_treeish: str,
     confdir: Path,
 ) -> dict[str, str]:
-    """Gera os specs stage1/2/3 a partir da receita resolvida (R2.1–R2.6). Pura.
+    """Generate the stage1/2/3 specs from the resolved recipe (R2.1–R2.6). Pure.
 
-    Mapeia ``recipe`` + stamps → ``{"stage1": <texto>, "stage2": ..., "stage3":
-    ...}``. Todas as entradas variáveis são parâmetros — sem relógio nem
-    aleatoriedade — de modo que mesmas entradas produzem texto byte-idêntico
-    (R2.6). ``source_subpath`` é encadeado: stage1 parte de ``seed_subpath`` (a
-    semente genérica de bootstrap, R2.2), stage2 do stage1 construído e stage3 do
-    stage2 (R2.3). ``portage_confdir`` reusa o diretório portage do arch (R2.4) e
-    ``rel_type`` deriva do arch com ``subarch`` no baseline ``amd64`` (R2.5).
+    Maps ``recipe`` + stamps → ``{"stage1": <text>, "stage2": ..., "stage3":
+    ...}``. Every variable input is a parameter — no clock and no
+    randomness — so the same inputs produce byte-identical text
+    (R2.6). ``source_subpath`` is chained: stage1 starts from ``seed_subpath`` (the
+    generic bootstrap seed, R2.2), stage2 from the built stage1 and stage3 from
+    stage2 (R2.3). ``portage_confdir`` reuses the arch's portage directory (R2.4) and
+    ``rel_type`` derives from the arch, with ``subarch`` at the ``amd64`` baseline (R2.5).
 
-    Levanta :class:`CatalystError` se uma entrada obrigatória vier vazia.
+    Raises :class:`CatalystError` if a required input is empty.
     """
     for name, value in (
         ("seed_subpath", seed_subpath),
@@ -86,7 +86,9 @@ def render_specs(
         ("snapshot_treeish", snapshot_treeish),
     ):
         if not value:
-            raise CatalystError(f"entrada obrigatória {name!r} vazia ao gerar specs do catalyst")
+            raise CatalystError(
+                f"required input {name!r} is empty while generating the catalyst specs"
+            )
 
     rel_type = f"shidashi/{recipe.arch}"
     common = {
@@ -109,17 +111,17 @@ def render_specs(
     }
 
 
-# --- invocação privilegiada + orquestração (Task 4) --------------------------
+# --- privileged invocation + orchestration (Task 4) --------------------------
 
-# sufixos de tarball reconhecidos ao derivar o subpath da semente de bootstrap
+# tarball suffixes recognized when deriving the bootstrap seed's subpath
 _ARCHIVE_SUFFIXES = (".tar.xz", ".tar.gz", ".tar.bz2", ".tar.zst", ".tar")
 
 
 def _seed_subpath(seed: Path) -> str:
-    """Subpath da semente de bootstrap p/ o ``source_subpath`` do stage1.
+    """Subpath of the bootstrap seed for stage1's ``source_subpath``.
 
-    Deriva do nome do tarball genérico sem o sufixo de arquivo (o Catalyst
-    referencia stages sem extensão sob o storedir).
+    Derived from the generic tarball's name without the archive suffix (Catalyst
+    references stages without an extension under the storedir).
     """
     name = seed.name
     for suffix in _ARCHIVE_SUFFIXES:
@@ -129,12 +131,12 @@ def _seed_subpath(seed: Path) -> str:
 
 
 def _stage3_tarball(output_dir: Path, version_stamp: str) -> Path:
-    """Caminho do stage3 que o Catalyst deve produzir (convenção de nome)."""
+    """Path of the stage3 that Catalyst must produce (naming convention)."""
     return output_dir / f"stage3-{_SUBARCH}-{version_stamp}.tar.xz"
 
 
 def _sha512_file(path: Path) -> str:
-    """SHA-512 hex de ``path``, lido em blocos (idêntico a seed.verify_digest)."""
+    """Hex SHA-512 of ``path``, read in chunks (identical to seed.verify_digest)."""
     h = hashlib.sha512()
     with path.open("rb") as fh:
         for chunk in iter(lambda: fh.read(1024 * 1024), b""):
@@ -143,10 +145,10 @@ def _sha512_file(path: Path) -> str:
 
 
 def _run_catalyst(spec: Path) -> None:
-    """Executa ``catalyst -f <spec>`` no host (privilegiado). Isolado p/ monkeypatch.
+    """Run ``catalyst -f <spec>`` on the host (privileged). Isolated for monkeypatching.
 
-    Nunca ignora o código de retorno: saída não-zero levanta :class:`CatalystError`
-    nomeando o spec (e portanto o stage) que falhou, espelhando
+    Never ignores the return code: a non-zero exit raises :class:`CatalystError`
+    naming the spec (and therefore the stage) that failed, mirroring
     ``seed.verify_signature``.
     """
     try:
@@ -157,9 +159,9 @@ def _run_catalyst(spec: Path) -> None:
             check=False,
         )
     except OSError as err:
-        raise CatalystError(f"falha ao executar catalyst -f {spec.name}: {err}") from err
+        raise CatalystError(f"failed to run catalyst -f {spec.name}: {err}") from err
     if result.returncode != 0:
-        raise CatalystError(f"catalyst falhou em {spec.name}:\n{result.stderr.strip()}")
+        raise CatalystError(f"catalyst failed on {spec.name}:\n{result.stderr.strip()}")
 
 
 def build_stage3_catalyst(
@@ -173,27 +175,27 @@ def build_stage3_catalyst(
     output_dir: Path,
     expected_sha512: str = "",
 ) -> tuple[Path, str]:
-    """Constrói o stage3 por microarquitetura via Catalyst (R3.1–R3.5, R4.1, R4.3).
+    """Build the per-microarchitecture stage3 via Catalyst (R3.1–R3.5, R4.1, R4.3).
 
-    Orquestrador *thin* sobre :func:`render_specs` e :func:`_run_catalyst`:
+    A *thin* orchestrator over :func:`render_specs` and :func:`_run_catalyst`:
 
-    1. Falha cedo (antes de qualquer build) se ``catalyst`` não estiver no
-       ``PATH`` — :class:`CatalystError` nomeando ``dev-util/catalyst`` (R3.3).
-    2. Gera os specs e os grava em ``scratch_dir``; invoca ``catalyst`` uma vez
-       por spec na ordem stage1→stage2→stage3 (R3.2). Uma saída não-zero
-       propaga e aborta sem prosseguir aos stages seguintes (R3.4).
-    3. Localiza o stage3 produzido em ``output_dir`` (erro claro se ausente) e
-       computa seu SHA-512 (R4.1/R3.5).
-    4. Se ``expected_sha512`` for fornecido e divergir, levanta
-       :class:`CatalystError` em vez de devolver bytes divergentes (R4.3).
+    1. Fails early (before any build) if ``catalyst`` is not on the
+       ``PATH`` — :class:`CatalystError` naming ``dev-util/catalyst`` (R3.3).
+    2. Generates the specs and writes them to ``scratch_dir``; invokes ``catalyst`` once
+       per spec in the order stage1→stage2→stage3 (R3.2). A non-zero exit
+       propagates and aborts without moving on to the following stages (R3.4).
+    3. Locates the produced stage3 in ``output_dir`` (clear error if missing) and
+       computes its SHA-512 (R4.1/R3.5).
+    4. If ``expected_sha512`` is given and does not match, raises
+       :class:`CatalystError` instead of returning diverging bytes (R4.3).
 
-    Devolve ``(tarball, sha512)``. A colocação privilegiada de ``generic_seed``
-    no storedir do Catalyst (o ``--seed`` de bootstrap) e o ``catalyst`` real são
-    host-gated; aqui ``generic_seed`` define o ``source_subpath`` do stage1.
+    Returns ``(tarball, sha512)``. The privileged placement of ``generic_seed``
+    in Catalyst's storedir (the bootstrap ``--seed``) and the real ``catalyst`` are
+    host-gated; here ``generic_seed`` defines stage1's ``source_subpath``.
     """
     if shutil.which("catalyst") is None:
         raise CatalystError(
-            "catalyst indisponível no host; instale dev-util/catalyst para seed_source=catalyst"
+            "catalyst unavailable on the host; install dev-util/catalyst for seed_source=catalyst"
         )
 
     specs = render_specs(
@@ -206,19 +208,19 @@ def build_stage3_catalyst(
     scratch_dir.mkdir(parents=True, exist_ok=True)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    for target in ("stage1", "stage2", "stage3"):  # ordem do seed chain (R3.2)
+    for target in ("stage1", "stage2", "stage3"):  # seed chain order (R3.2)
         spec_path = scratch_dir / f"{target}.spec"
         spec_path.write_text(specs[target], encoding="utf-8")
-        _run_catalyst(spec_path)  # propaga CatalystError, abortando (R3.4)
+        _run_catalyst(spec_path)  # propagates CatalystError, aborting (R3.4)
 
     tarball = _stage3_tarball(output_dir, version_stamp)
     if not tarball.is_file():
-        raise CatalystError(f"catalyst não produziu o stage3 esperado: {tarball}")
+        raise CatalystError(f"catalyst did not produce the expected stage3: {tarball}")
 
     sha512 = _sha512_file(tarball)
     if expected_sha512 and sha512 != expected_sha512:
         raise CatalystError(
-            f"sha512 divergente do stage3 buildado {tarball.name}: "
-            f"esperado {expected_sha512}, obtido {sha512}"
+            f"sha512 mismatch for the built stage3 {tarball.name}: "
+            f"expected {expected_sha512}, got {sha512}"
         )
     return tarball, sha512

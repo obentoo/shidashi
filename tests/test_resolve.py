@@ -1,32 +1,32 @@
-"""UNIT + INTEGRAÇÃO de shidashi.resolve — o coração do fluxo pretend.
+"""UNIT + INTEGRATION tests of shidashi.resolve — the heart of the pretend flow.
 
-UNIT (determinista, CI não-Gentoo):
-* ``_layer_dirs`` mapeia ``portage_layers`` → ``variants/<layer>/portage/`` (R3.1);
-* ``apply_portage`` sobrepõe arquivos camada-a-camada num tmp dir, camadas
-  posteriores sobrescrevendo as anteriores; layer ausente → ResolveError (R3.1);
-* ``bind_repos`` recebe um DIRETÓRIO ``repos.conf/`` (estilo eselect-repo),
-  itera os ``*.conf`` nele, parseia stanzas ``[<name>]`` / ``location = <path>``
-  (stdlib ``configparser``), mapeia o ``location`` de cada repo declarado (sob o
-  host ``/var/db/repos/<name>``) para o mesmo caminho no container como bind RO,
-  e levanta ResolveError nomeando repo ausente (R3.2, R3.3, R6.3) — raiz de repos
-  do host forçada via ``tmp_path`` (não dependemos do host real);
-* ``parse_cycle_breaks`` extrai átomo+flag+sinal de saída capturada do emerge,
-  incl. o ciclo ``libsdl2 ↔ pipewire ↔ ffmpeg`` (§18.2) (R5.2);
-* ``parse_packages`` extrai a lista de átomos resolvidos da saída do
-  ``emerge --pretend``, independente do parsing de ciclos (R5.2);
-* ``CycleBreak``/``PretendReport`` são frozen pydantic;
-* ``ResolveError`` carrega ``raw_output`` opcional (raw emerge em hard-conflict);
-* ``pretend_resolve(..., keep=False)`` levanta ResolveError ANTES de qualquer
-  trabalho quando não-root (R5.1, R6.1) — ``os.geteuid`` é monkeypatched.
+UNIT (deterministic, non-Gentoo CI):
+* ``_layer_dirs`` maps ``portage_layers`` → ``variants/<layer>/portage/`` (R3.1);
+* ``apply_portage`` overlays files layer by layer in a tmp dir, later layers
+  overriding earlier ones; missing layer → ResolveError (R3.1);
+* ``bind_repos`` takes a ``repos.conf/`` DIRECTORY (eselect-repo style),
+  iterates its ``*.conf`` files, parses ``[<name>]`` / ``location = <path>`` stanzas
+  (stdlib ``configparser``), maps the ``location`` of each declared repo (under the
+  host's ``/var/db/repos/<name>``) to the same path in the container as an RO bind,
+  and raises ResolveError naming a missing repo (R3.2, R3.3, R6.3) — the host's
+  repos root is forced via ``tmp_path`` (we do not depend on the real host);
+* ``parse_cycle_breaks`` extracts atom+flag+sign from captured emerge output,
+  incl. the ``libsdl2 ↔ pipewire ↔ ffmpeg`` cycle (§18.2) (R5.2);
+* ``parse_packages`` extracts the list of resolved atoms from the
+  ``emerge --pretend`` output, independently of cycle parsing (R5.2);
+* ``CycleBreak``/``PretendReport`` are frozen pydantic;
+* ``ResolveError`` carries an optional ``raw_output`` (raw emerge on hard-conflict);
+* ``pretend_resolve(..., keep=False)`` raises ResolveError BEFORE any work when
+  not root (R5.1, R6.1) — ``os.geteuid`` is monkeypatched.
 
-INTEGRAÇÃO (host-gated, R5.1/R5.3/R5.4): pipeline real em ``v3 × minimal ×
-systemd`` exige root+Gentoo → PULA fora do host privilegiado (Red diferido).
+INTEGRATION (host-gated, R5.1/R5.3/R5.4): the real pipeline on ``v3 × minimal ×
+systemd`` requires root+Gentoo → SKIPS outside the privileged host (deferred Red).
 
-Contrato (design.md §resolve, refinado): Frozen pydantic
-``CycleBreak(atom, flag, enable, raw_line)`` e ``PretendReport(arch, flavor,
+Contract (design.md §resolve, refined): Frozen pydantic
+``CycleBreak(atom, flag, enable, raw_line)`` and ``PretendReport(arch, flavor,
 init, packages, cycle_breaks, raw_output)``. ``bind_repos(repos_conf_dir: Path)``
-(DIRETÓRIO de ``*.conf``). ``parse_packages(output: str) -> tuple[str, ...]``.
-``ResolveError(msg, *, raw_output: str | None = None)`` expõe ``.raw_output``.
+(a DIRECTORY of ``*.conf``). ``parse_packages(output: str) -> tuple[str, ...]``.
+``ResolveError(msg, *, raw_output: str | None = None)`` exposes ``.raw_output``.
 ``pretend_resolve(arch, flavor, init, *, download=True, keep=False)``.
 """
 
@@ -54,15 +54,15 @@ from shidashi.resolve import (
 
 _NEEDS_HOST = os.geteuid() != 0 or shutil.which("systemd-nspawn") is None
 _skip_privileged = pytest.mark.skipif(
-    _NEEDS_HOST, reason="exige root + systemd-nspawn + stage3 seedado (host Gentoo)"
+    _NEEDS_HOST, reason="requires root + systemd-nspawn + a seeded stage3 (Gentoo host)"
 )
 
 _LAYERS = ("base", "arch/v3", "flavor/minimal", "init/systemd")
 
 
 def _recipe() -> ResolvedRecipe:
-    # constrói um ResolvedRecipe mínimo com portage_layers conhecido; só esse
-    # campo importa para _layer_dirs/apply_portage.
+    # builds a minimal ResolvedRecipe with known portage_layers; only that
+    # field matters for _layer_dirs/apply_portage.
 
     return ResolvedRecipe(
         arch="v3",
@@ -89,12 +89,12 @@ def test_resolve_error_is_exception_subclass() -> None:
 
 
 def test_resolve_error_carries_optional_raw_output() -> None:
-    # raw_output é opcional: ausente por padrão (None), presente quando o erro
-    # transporta a saída crua do emerge (hard-conflict, §Error Handling).
+    # raw_output is optional: absent by default (None), present when the error
+    # carries the raw emerge output (hard-conflict, §Error Handling).
     plain = ResolveError("nope")
     assert getattr(plain, "raw_output", None) is None
-    with_raw = ResolveError("hard conflict", raw_output="!!! conflito\n...emerge...")
-    assert with_raw.raw_output == "!!! conflito\n...emerge..."
+    with_raw = ResolveError("hard conflict", raw_output="!!! conflict\n...emerge...")
+    assert with_raw.raw_output == "!!! conflict\n...emerge..."
 
 
 # --- _layer_dirs (R3.1) ------------------------------------------------------
@@ -116,9 +116,9 @@ def _seed_layer(variants: Path, layer: str, rel: str, content: str) -> None:
 
 
 def test_apply_portage_concatenates_make_conf_and_keeps_unique_files(tmp_path: Path) -> None:
-    # make.conf é UM arquivo lido pelo shell e os layers trazem FRAGMENTOS, logo
-    # ele é concatenado — não sobrescrito. Sobrescrever fazia o make.conf de 133
-    # linhas da base virar o fragmento de 6 linhas do init (F28).
+    # make.conf is ONE file read by the shell and the layers carry FRAGMENTS, so
+    # it is concatenated — not overwritten. Overwriting turned the base's 133-line
+    # make.conf into the init's 6-line fragment (F28).
     variants = tmp_path / "variants"
     _seed_layer(variants, "base", "make.conf", "FROM_BASE")
     _seed_layer(variants, "arch/v3", "package.use/arch", "ARCH")
@@ -134,20 +134,20 @@ def test_apply_portage_concatenates_make_conf_and_keeps_unique_files(tmp_path: P
     make_conf = (portage / "make.conf").read_text(encoding="utf-8")
     assert "FROM_BASE" in make_conf
     assert "FROM_INIT" in make_conf
-    # e na ORDEM dos layers, que é o que dá sentido ao "último vence" do shell
+    # and in layer ORDER, which is what gives the shell's "last one wins" its meaning
     assert make_conf.index("FROM_BASE") < make_conf.index("FROM_INIT")
-    # o arquivo montado nomeia a origem de cada fragmento
+    # the assembled file names the origin of each fragment
     assert "layer: base" in make_conf
     assert "layer: init/systemd" in make_conf
 
-    # arquivos exclusivos de camadas intermediárias seguem preservados
+    # files unique to intermediate layers are still kept
     assert (portage / "package.use" / "arch").read_text(encoding="utf-8") == "ARCH"
     assert (portage / "package.use" / "flavor").read_text(encoding="utf-8") == "FLAVOR"
 
 
 def test_apply_portage_assembled_make_conf_gives_the_last_assignment(tmp_path: Path) -> None:
-    # Dentro do arquivo montado vale a regra do shell: a última atribuição vence.
-    # É esse o efeito de especialização do eixo arch sobre a base.
+    # Inside the assembled file the shell rule applies: the last assignment wins.
+    # That is the specialization effect of the arch axis over the base.
     variants = tmp_path / "variants"
     _seed_layer(variants, "base", "make.conf", 'COMMON_FLAGS="-O2"\nUSE="a b"\n')
     _seed_layer(variants, "arch/v3", "make.conf", 'COMMON_FLAGS="-march=x86-64-v3 -O2"\n')
@@ -166,8 +166,8 @@ def test_apply_portage_assembled_make_conf_gives_the_last_assignment(tmp_path: P
         check=True,
     )
     flags, use = out.stdout.split("|")
-    assert flags == "-march=x86-64-v3 -O2"  # arch venceu a base
-    assert sorted(use.split()) == ["a", "b", "systemd"]  # init SOMOU, não trocou
+    assert flags == "-march=x86-64-v3 -O2"  # arch beat the base
+    assert sorted(use.split()) == ["a", "b", "systemd"]  # init ADDED, did not replace
 
 
 def test_apply_portage_jobs_override_is_the_last_makeopts(
@@ -207,15 +207,15 @@ def test_apply_portage_refuses_a_jobs_value_that_is_not_a_positive_integer(
 
 
 def test_apply_portage_raises_when_two_layers_provide_the_same_file(tmp_path: Path) -> None:
-    # Fora do make.conf, esses caminhos são DIRETÓRIOS que o Portage lê como
-    # união: dois layers no mesmo caminho não se combinam, um apaga o outro. Era
-    # perda silenciosa — package.use/system caía de 69 linhas para 4 (F28).
+    # Outside make.conf, these paths are DIRECTORIES that Portage reads as a
+    # union: two layers at the same path do not combine, one erases the other. It
+    # was a silent loss — package.use/system dropped from 69 lines to 4 (F28).
     variants = tmp_path / "variants"
     _seed_layer(variants, "base", "make.conf", "BASE")
-    _seed_layer(variants, "base", "package.use/system", "SESSENTA E NOVE LINHAS")
+    _seed_layer(variants, "base", "package.use/system", "SIXTY-NINE LINES")
     _seed_layer(variants, "arch/v3", "package.use/arch", "ARCH")
     _seed_layer(variants, "flavor/minimal", "package.use/flavor", "FLAVOR")
-    _seed_layer(variants, "init/systemd", "package.use/system", "QUATRO LINHAS")
+    _seed_layer(variants, "init/systemd", "package.use/system", "FOUR LINES")
 
     rootfs = tmp_path / "rootfs"
     (rootfs / "etc").mkdir(parents=True)
@@ -223,7 +223,7 @@ def test_apply_portage_raises_when_two_layers_provide_the_same_file(tmp_path: Pa
     with pytest.raises(ResolveError) as excinfo:
         apply_portage(rootfs, _recipe(), variants_dir=variants)
     msg = str(excinfo.value)
-    # o erro precisa nomear OS DOIS layers e o caminho, senão não é acionável
+    # the error must name BOTH layers and the path, otherwise it is not actionable
     assert "package.use/system" in msg
     assert "base" in msg
     assert "init/systemd" in msg
@@ -269,7 +269,7 @@ def test_apply_rootfs_later_layer_wins_and_missing_trees_are_skipped(tmp_path: P
 
 def test_apply_portage_missing_layer_raises(tmp_path: Path) -> None:
     variants = tmp_path / "variants"
-    # apenas base existe; arch/v3 ausente → ResolveError
+    # only base exists; arch/v3 missing → ResolveError
     _seed_layer(variants, "base", "make.conf", "X")
     rootfs = tmp_path / "rootfs"
     (rootfs / "etc").mkdir(parents=True)
@@ -279,11 +279,11 @@ def test_apply_portage_missing_layer_raises(tmp_path: Path) -> None:
 
 # --- bind_repos (R3.2, R3.3, R6.3) -------------------------------------------
 #
-# Contrato refinado: bind_repos recebe um DIRETÓRIO repos.conf/ (estilo
-# eselect-repo). Itera os *.conf, parseia stanzas [<name>] / location = <path>
-# (stdlib configparser) e, para cada repo declarado, exige que seu location de
-# host exista sob /var/db/repos/<name>, mapeando-o RO ao mesmo caminho no
-# container. A raiz de repos do host é forçada via monkeypatch para o tmp.
+# Refined contract: bind_repos takes a repos.conf/ DIRECTORY (eselect-repo
+# style). It iterates the *.conf files, parses [<name>] / location = <path> stanzas
+# (stdlib configparser) and, for each declared repo, requires its host location
+# to exist under /var/db/repos/<name>, mapping it RO to the same path in the
+# container. The host's repos root is forced to the tmp dir via monkeypatch.
 
 _ESELECT_REPO_CONF = """\
 [gentoo]
@@ -295,7 +295,7 @@ location = {root}/bentoo
 
 
 def _write_repos_conf_dir(tmp_path: Path, host_repos: Path) -> Path:
-    """Cria um diretório repos.conf/ com um eselect-repo.conf de duas stanzas."""
+    """Create a repos.conf/ directory with a two-stanza eselect-repo.conf."""
     repos_conf_dir = tmp_path / "repos.conf"
     repos_conf_dir.mkdir()
     (repos_conf_dir / "eselect-repo.conf").write_text(
@@ -308,7 +308,7 @@ def test_bind_repos_declares_ro_pairs(tmp_path: Path, monkeypatch: pytest.Monkey
     host_repos = tmp_path / "var" / "db" / "repos"
     (host_repos / "gentoo").mkdir(parents=True)
     (host_repos / "bentoo").mkdir(parents=True)
-    # redireciona a raiz de repos do host para o tmp (não dependemos do host real)
+    # redirects the host's repos root to the tmp dir (we do not depend on the real host)
     monkeypatch.setattr(resolve, "_HOST_REPOS_ROOT", host_repos, raising=False)
 
     repos_conf_dir = _write_repos_conf_dir(tmp_path, host_repos)
@@ -317,7 +317,7 @@ def test_bind_repos_declares_ro_pairs(tmp_path: Path, monkeypatch: pytest.Monkey
     srcs = {src for src, _dst in pairs}
     assert host_repos / "gentoo" in srcs
     assert host_repos / "bentoo" in srcs
-    # cada par mapeia o location do host → o MESMO caminho no container
+    # each pair maps the host location → the SAME path in the container
     for src, dst in pairs:
         assert dst == src
 
@@ -326,7 +326,7 @@ def test_bind_repos_missing_repo_raises_naming_it(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     host_repos = tmp_path / "var" / "db" / "repos"
-    (host_repos / "gentoo").mkdir(parents=True)  # bentoo declarado mas ausente
+    (host_repos / "gentoo").mkdir(parents=True)  # bentoo declared but missing
     monkeypatch.setattr(resolve, "_HOST_REPOS_ROOT", host_repos, raising=False)
 
     repos_conf_dir = _write_repos_conf_dir(tmp_path, host_repos)
@@ -353,10 +353,10 @@ def test_bind_repos_binds_an_override_at_the_repos_usual_path(
     assert (host_repos / "bentoo", host_repos / "bentoo") in pairs
 
 
-# --- parse_cycle_breaks (R5.2) — núcleo da curadoria §18.2 -------------------
+# --- parse_cycle_breaks (R5.2) — core of the §18.2 curation ------------------
 
-# Fixture inspirada na saída real do emerge ao reportar dependências circulares
-# com sugestões de "change USE". Contém o ciclo libsdl2 ↔ pipewire ↔ ffmpeg.
+# Fixture inspired by real emerge output reporting circular dependencies with
+# "change USE" suggestions. Contains the libsdl2 ↔ pipewire ↔ ffmpeg cycle.
 _EMERGE_CYCLE = """\
 These are the packages that would be merged, in order:
 
@@ -378,8 +378,8 @@ Calculating dependencies... done!
    - media-video/ffmpeg-6.1.1 (Change USE: +sdl)
 """
 
-# Fixture de saída "limpa" do emerge --pretend: a lista de pacotes resolvidos,
-# uma linha [ebuild ...] por átomo, sem ciclos. Captura o formato real do
+# Fixture of "clean" emerge --pretend output: the list of resolved packages,
+# one [ebuild ...] line per atom, no cycles. Captures the real format of
 # emerge --pretend --emptytree @world.
 _EMERGE_PACKAGES = """\
 These are the packages that would be merged, in order:
@@ -399,11 +399,11 @@ def test_parse_cycle_breaks_extracts_atom_flag_sign() -> None:
     assert isinstance(breaks, tuple)
     assert len(breaks) == 2
     by_atom = {b.atom: b for b in breaks}
-    # "-pipewire" → desabilitar
+    # "-pipewire" → disable
     sdl = by_atom["media-libs/libsdl2-2.30.5"]
     assert sdl.flag == "pipewire"
     assert sdl.enable is False
-    # "+sdl" → habilitar
+    # "+sdl" → enable
     ff = by_atom["media-video/ffmpeg-6.1.1"]
     assert ff.flag == "sdl"
     assert ff.enable is True
@@ -413,13 +413,13 @@ def test_parse_cycle_breaks_empty_on_clean_output() -> None:
     assert parse_cycle_breaks(_EMERGE_PACKAGES) == ()
 
 
-# --- parse_packages (R5.2) — lista de átomos resolvidos, independente de ciclos
+# --- parse_packages (R5.2) — list of resolved atoms, independent of cycles
 
 
 def test_parse_packages_extracts_resolved_atom_list() -> None:
     pkgs = parse_packages(_EMERGE_PACKAGES)
     assert isinstance(pkgs, tuple)
-    # extrai os átomos das linhas [ebuild ...], independente do parsing de ciclos
+    # extracts the atoms of the [ebuild ...] lines, independently of cycle parsing
     assert pkgs == (
         "sys-libs/zlib-1.3.1",
         "dev-libs/openssl-3.3.1",
@@ -428,11 +428,11 @@ def test_parse_packages_extracts_resolved_atom_list() -> None:
 
 
 def test_parse_packages_empty_when_no_ebuild_lines() -> None:
-    # saída sem linhas [ebuild ...] → lista vazia (não levanta)
+    # output without [ebuild ...] lines → empty list (does not raise)
     assert parse_packages("Calculating dependencies... done!\n") == ()
 
 
-# --- modelos frozen ----------------------------------------------------------
+# --- frozen models -----------------------------------------------------------
 
 
 def test_cycle_break_is_frozen() -> None:
@@ -455,18 +455,18 @@ def test_pretend_report_holds_packages_and_breaks() -> None:
     assert rep.cycle_breaks[0].flag == "foo"
 
 
-# --- non-root guard (R5.1, R6.1) — falha antes de qualquer trabalho ----------
+# --- non-root guard (R5.1, R6.1) — fails before any work --------------------
 
 
 def test_pretend_resolve_non_root_raises_before_work(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(os, "geteuid", lambda: 1000)
     with pytest.raises(ResolveError) as excinfo:
         pretend_resolve("v3", "minimal", "systemd", keep=False)
-    # mensagem acionável menciona root
+    # the actionable message mentions root
     assert "root" in str(excinfo.value).lower()
 
 
-# --- INTEGRAÇÃO host-gated (R5.1, R5.3, R5.4) --------------------------------
+# --- host-gated INTEGRATION (R5.1, R5.3, R5.4) -------------------------------
 
 
 @_skip_privileged

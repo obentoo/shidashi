@@ -1,24 +1,24 @@
-"""Phases — execução do build em fases + cache de camadas (OVERVIEW §6.4 / §6.5).
+"""Phases — phased build execution + layer cache (OVERVIEW §6.4 / §6.5).
 
-Camada de planejamento PURA da story 003 (grupos 3 + 4.1):
+PURE planning layer of story 003 (groups 3 + 4.1):
 
-* **3.1** :func:`phase_target` / :func:`phase_emerge_argv` — alvo emerge de cada
-  fase e o argv completo (``--emptytree`` só na base, ``-uDN`` nos demais estágios).
+* **3.1** :func:`phase_target` / :func:`phase_emerge_argv` — the emerge target of each
+  phase and the full argv (``--emptytree`` only in the base, ``-uDN`` in the other stages).
 * **3.2** :func:`use_break_lines` / :func:`write_use_break` / :func:`clear_use_break`
-  — ``package.use`` transitório do break-pass (I/O só contra um rootfs em disco,
-  sem root).
-* **3.3** :func:`parse_built_atoms` — átomos construídos a partir da saída
-  ``emerge --verbose`` (reusa o matcher de :mod:`shidashi.resolve`).
-* **3.4** :func:`fork_point` / :func:`trunk_phase_names` — decisão de reuso do
-  tronco (só sonda o filesystem) e nomes das fases do tronco.
-* **4.1** :func:`snapshot_fork_point` / :func:`restore_fork_point` — captura e
-  restauração do tronco como tarball (escrita atômica via temp + ``os.replace``;
-  I/O contra uma árvore em disco, sem nspawn).
+  — the break-pass's transient ``package.use`` (I/O only against an on-disk rootfs,
+  no root).
+* **3.3** :func:`parse_built_atoms` — atoms built, from the ``emerge --verbose``
+  output (reuses the matcher of :mod:`shidashi.resolve`).
+* **3.4** :func:`fork_point` / :func:`trunk_phase_names` — the trunk reuse decision
+  (only probes the filesystem) and the names of the trunk's phases.
+* **4.1** :func:`snapshot_fork_point` / :func:`restore_fork_point` — capture and
+  restore of the trunk as a tarball (atomic write via temp + ``os.replace``;
+  I/O against an on-disk tree, no nspawn).
 
-A orquestração privilegiada (``run_phase``/``settle_pass``/``run_phases``) da
-story 003 tarefa 5 roda ``emerge`` *dentro* do container (nspawn) — exige root e
-é exercida pelos testes de integração host-gated. Falhas de ``emerge`` (exit
-não-zero) são embrulhadas em :class:`FactoryError`.
+The privileged orchestration (``run_phase``/``settle_pass``/``run_phases``) of
+story 003 task 5 runs ``emerge`` *inside* the container (nspawn) — it requires root and
+is exercised by the host-gated integration tests. ``emerge`` failures (non-zero
+exit) are wrapped in :class:`FactoryError`.
 """
 
 import dataclasses
@@ -45,14 +45,14 @@ _USE_BREAK_FILE = ("etc", "portage", "package.use", "zz-shidashi-use-break")
 
 
 class FactoryError(Exception):
-    """Falha ao construir uma fase/stage dentro do container (OVERVIEW §6.4).
+    """Failure to build a phase/stage inside the container (OVERVIEW §6.4).
 
-    Carrega a ``phase`` em que ocorreu (``None`` quando não atrelada a uma fase)
-    e a ``output`` capturada do ``emerge`` (stdout+stderr) para diagnóstico.
+    Carries the ``phase`` where it happened (``None`` when not tied to a phase)
+    and the captured ``emerge`` ``output`` (stdout+stderr) for diagnosis.
 
-    Definida aqui (e não em :mod:`shidashi.factory`) para evitar import circular:
-    ``factory`` importa de ``phases`` (orquestra fases), e ``phases`` precisa
-    levantar este erro; ``shidashi.factory`` re-exporta o símbolo.
+    Defined here (and not in :mod:`shidashi.factory`) to avoid a circular import:
+    ``factory`` imports from ``phases`` (it orchestrates phases), and ``phases`` needs
+    to raise this error; ``shidashi.factory`` re-exports the symbol.
     """
 
     def __init__(self, message: str, *, phase: str | None = None, output: str = "") -> None:
@@ -62,13 +62,13 @@ class FactoryError(Exception):
 
 
 class CheckpointDecision(StrEnum):
-    """Decisão do usuário num checkpoint pós-fase do build interativo (R2.2/R2.3).
+    """The user's decision at a post-phase checkpoint of the interactive build (R2.2/R2.3).
 
-    ``StrEnum`` (não ``(str, Enum)`` — UP042) cujos membros valem o próprio nome:
-    ``CONTINUE`` segue para a próxima fase, ``STOP`` interrompe o laço sem rodar o
-    settle (R1.3), ``SHELL`` abre um shell no container e re-apresenta o MESMO
-    checkpoint. Definida aqui (e não em :mod:`shidashi.factory`) para evitar import
-    circular ``factory → phases``; ``shidashi.factory`` re-exporta o símbolo (Task 6).
+    ``StrEnum`` (not ``(str, Enum)`` — UP042) whose members are worth their own name:
+    ``CONTINUE`` goes on to the next phase, ``STOP`` breaks the loop without running the
+    settle (R1.3), ``SHELL`` opens a shell in the container and presents the SAME
+    checkpoint again. Defined here (and not in :mod:`shidashi.factory`) to avoid the
+    circular import ``factory → phases``; ``shidashi.factory`` re-exports the symbol (Task 6).
     """
 
     CONTINUE = "CONTINUE"
@@ -77,12 +77,12 @@ class CheckpointDecision(StrEnum):
 
 
 class FailureDecision(StrEnum):
-    """Decisão do usuário ante a falha de uma fase do build interativo (R3.1–R3.4).
+    """The user's decision on the failure of a phase of the interactive build (R3.1–R3.4).
 
-    ``StrEnum`` (UP042): ``RETRY`` re-roda a MESMA fase (mesmo argv) e ``ABORT``
-    persiste o estado e levanta :class:`FactoryError`. NÃO há opção de pular uma
-    fase falha (R3.4). Definida aqui pelo mesmo motivo de import circular que
-    :class:`CheckpointDecision`; re-exportada por :mod:`shidashi.factory` (Task 6).
+    ``StrEnum`` (UP042): ``RETRY`` re-runs the SAME phase (same argv) and ``ABORT``
+    persists the state and raises :class:`FactoryError`. There is NO option to skip a
+    failed phase (R3.4). Defined here for the same circular-import reason as
+    :class:`CheckpointDecision`; re-exported by :mod:`shidashi.factory` (Task 6).
     """
 
     RETRY = "RETRY"
@@ -90,15 +90,15 @@ class FailureDecision(StrEnum):
 
 
 class PhaseResult(pydantic.BaseModel):
-    """Resultado da execução de uma única fase (OVERVIEW §6.4).
+    """The result of running a single phase (OVERVIEW §6.4).
 
-    Value object *frozen*: a fase executada, os átomos construídos
-    (:func:`parse_built_atoms` da saída do ``emerge``), o caminho do snapshot do
-    fork-point quando houver (OVERVIEW §6.5; ``None`` quando a fase não materializa
-    fork-point) e a ``output`` crua do ``emerge --verbose`` (stdout+stderr) para o
-    driver compor o diff da fase SEM re-rodar emerge (R4.1). ``output`` é defaultada
-    a ``""`` — mantém válida a construção da story 003 que não a informa.
-    ``arbitrary_types_allowed`` admite :class:`~pathlib.Path`.
+    *Frozen* value object: the phase that ran, the atoms built
+    (:func:`parse_built_atoms` of the ``emerge`` output), the path of the fork-point
+    snapshot when there is one (OVERVIEW §6.5; ``None`` when the phase does not
+    materialize a fork point) and the raw ``emerge --verbose`` ``output`` (stdout+stderr)
+    for the driver to compose the phase's diff WITHOUT re-running emerge (R4.1). ``output``
+    defaults to ``""`` — it keeps story 003's construction, which does not pass it, valid.
+    ``arbitrary_types_allowed`` admits :class:`~pathlib.Path`.
     """
 
     model_config = pydantic.ConfigDict(frozen=True, arbitrary_types_allowed=True)
@@ -110,11 +110,11 @@ class PhaseResult(pydantic.BaseModel):
     reused_atoms: tuple[str, ...] = ()
 
 
-# --- 3.1 phase_target / phase_emerge_argv (PURO) -----------------------------
+# --- 3.1 phase_target / phase_emerge_argv (PURE) -----------------------------
 
 
 def phase_target(phase: Phase, recipe: ResolvedRecipe) -> tuple[str, ...]:
-    """Devolve o alvo ``emerge`` de uma fase (R3.1/R3.2/R3.3, D24). Puro.
+    """Return the ``emerge`` target of a phase (R3.1/R3.2/R3.3, D24). Pure.
 
     - every STAGE phase → ``@world`` and then the stage's own sets. The base
       rebuilds it (``--emptytree``); a later stage updates it (``-uDN``), so
@@ -123,10 +123,10 @@ def phase_target(phase: Phase, recipe: ResolvedRecipe) -> tuple[str, ...]:
       minimal: desktop left vim, kbd and fastfetch with the old USE without it);
     - a phase that is not a stage → ``phase.packages`` (the ``seat`` atoms).
 
-    Nada aqui depende do NOME da fase. Duas convenções por nome já custaram
-    caro: ``apps`` → ``@bentoo-apps`` literal (renomear o set deixou a fase
-    apontando para o vazio) e ``desktop`` → ``@<flavor>``. A relação agora é
-    dado do estágio, e ``recipe`` fica na assinatura só por compatibilidade.
+    Nothing here depends on the phase's NAME. Two name-based conventions already
+    cost dearly: ``apps`` → a literal ``@bentoo-apps`` (renaming the set left the phase
+    pointing at nothing) and ``desktop`` → ``@<flavor>``. The relation is now
+    data of the stage, and ``recipe`` stays in the signature only for compatibility.
     """
     del recipe  # the stage says it all; kept for the callers' signature
     sets = tuple("@" + name for name in phase.sets)
@@ -294,16 +294,16 @@ def stages_flow() -> StagesFlow:
 def phase_emerge_argv(
     phase: Phase, recipe: ResolvedRecipe, *, emptytree: bool, flow: StagesFlow | None = None
 ) -> list[str]:
-    """Monta o argv de ``emerge`` para uma fase (R3.1, D24). Puro.
+    """Build the ``emerge`` argv for a phase (R3.1, D24). Pure.
 
-    O modo vem do estágio, não do nome da fase:
+    The mode comes from the stage, not from the phase's name:
 
-    - a base (``phase.emptytree``) → ``--emptytree`` quando ``emptytree`` é
-      verdadeiro: a única reconstrução completa, que "cozinha" o stage3;
-    - todo estágio depois dela → ``--update --deep --newuse``: recompila só o
-      que a configuração daquele estágio muda (o USE gráfico, no desktop) e
-      instala os seus sets. Também a base quando ``emptytree`` é falso;
-    - uma fase sem estágio (a ``seat`` do openrc) → só os seus átomos.
+    - the base (``phase.emptytree``) → ``--emptytree`` when ``emptytree`` is
+      true: the only full rebuild, which "cooks" the stage3;
+    - every stage after it → ``--update --deep --newuse``: recompiles only what
+      that stage's configuration changes (the graphical USE, in desktop) and
+      installs its sets. Also the base when ``emptytree`` is false;
+    - a phase without a stage (openrc's ``seat``) → only its atoms.
 
     ``--usepkg`` always: a binpkg of the same package, version and USE is
     reused. Safe only because the PKGDIR belongs to ONE generation -- the
@@ -323,15 +323,15 @@ def phase_emerge_argv(
     return ["emerge", *emerge.options, *mode, *target]
 
 
-# --- 3.2 package.use transitório do break-pass -------------------------------
+# --- 3.2 the break-pass's transient package.use ------------------------------
 
 
 def use_break_lines(phase: Phase) -> tuple[str, ...]:
-    """Renderiza as linhas ``package.use`` das quebras de ciclo da fase (R4.1). Puro.
+    """Render the ``package.use`` lines of the phase's cycle breaks (R4.1). Pure.
 
-    Uma linha por :class:`~shidashi.recipe.UseBreak`: ``"<atom> <±flag>"`` onde o
-    sinal é ``""`` (habilita) quando ``enable`` é verdadeiro e ``"-"``
-    (desabilita) caso contrário. Fase sem quebras → tupla vazia.
+    One line per :class:`~shidashi.recipe.UseBreak`: ``"<atom> <±flag>"`` where the
+    sign is ``""`` (enables) when ``enable`` is true and ``"-"``
+    (disables) otherwise. A phase without breaks → empty tuple.
     """
     return cut_lines(phase.use_break)
 
@@ -342,12 +342,12 @@ def cut_lines(cuts: tuple[UseBreak, ...]) -> tuple[str, ...]:
 
 
 def write_use_break(rootfs: Path, phase: Phase) -> Path | None:
-    """Escreve o ``package.use`` transitório do break-pass (R4.1/R4.4).
+    """Write the break-pass's transient ``package.use`` (R4.1/R4.4).
 
-    Grava as linhas de :func:`use_break_lines` em
-    ``${rootfs}/etc/portage/package.use/zz-shidashi-use-break`` (criando os
-    diretórios-pai) e devolve o caminho escrito. Quando a fase não tem quebras,
-    nada é escrito e devolve-se ``None``. Apenas I/O de filesystem — sem root.
+    Writes the lines of :func:`use_break_lines` to
+    ``${rootfs}/etc/portage/package.use/zz-shidashi-use-break`` (creating the
+    parent directories) and returns the path written. When the phase has no breaks,
+    nothing is written and ``None`` is returned. Filesystem I/O only — no root.
     """
     return write_cuts(rootfs, phase.use_break)
 
@@ -364,14 +364,14 @@ def write_cuts(rootfs: Path, cuts: tuple[UseBreak, ...]) -> Path | None:
 
 
 def clear_use_break(rootfs: Path) -> None:
-    """Remove o ``package.use`` transitório do break-pass se presente (R4.4).
+    """Remove the break-pass's transient ``package.use`` if present (R4.4).
 
-    Idempotente: limpar quando o arquivo já não existe é um no-op (não levanta).
+    Idempotent: clearing when the file no longer exists is a no-op (does not raise).
     """
     rootfs.joinpath(*_USE_BREAK_FILE).unlink(missing_ok=True)
 
 
-# --- 3.3 parse de átomos construídos -----------------------------------------
+# --- 3.3 parsing of built atoms ----------------------------------------------
 
 
 def parse_reused_atoms(emerge_output: str) -> tuple[str, ...]:
@@ -385,23 +385,23 @@ def parse_reused_atoms(emerge_output: str) -> tuple[str, ...]:
 
 
 def parse_built_atoms(emerge_output: str) -> tuple[str, ...]:
-    """Extrai os átomos ``cat/pkg-version`` de uma saída ``emerge --verbose`` (R3.4). Puro.
+    """Extract the ``cat/pkg-version`` atoms from an ``emerge --verbose`` output (R3.4). Pure.
 
-    Reusa o matcher compartilhado :func:`shidashi.resolve._iter_atom_lines` (mesmo
-    casamento de linha ``[ebuild ...]`` de :func:`shidashi.resolve.parse_packages`).
-    Saída sem linhas ``[ebuild ...]`` → tupla vazia.
+    Reuses the shared matcher :func:`shidashi.resolve._iter_atom_lines` (the same
+    ``[ebuild ...]`` line matching as :func:`shidashi.resolve.parse_packages`).
+    Output without ``[ebuild ...]`` lines → empty tuple.
     """
     return tuple(_iter_atom_lines(emerge_output))
 
 
-# --- 3.4 decisão de fork-point (PURO, só sonda o filesystem) -----------------
+# --- 3.4 fork-point decision (PURE, only probes the filesystem) --------------
 
 
 def _variant_key(recipe: ResolvedRecipe) -> str:
-    """Prefixo de chave por variante: ``<arch>-<flavor>-<init>`` (R5.1/R5.2). Puro.
+    """Per-variant key prefix: ``<arch>-<flavor>-<init>`` (R5.1/R5.2). Pure.
 
-    Componente comum às chaves de fork-point (tronco e por-fase) e ao estado de
-    build (:func:`shidashi.config.build_state_path`), isolando o build por variante.
+    Component shared by the fork-point keys (trunk and per-phase) and the build
+    state (:func:`shidashi.config.build_state_path`), isolating the build per variant.
     """
     return f"{recipe.arch}-{recipe.flavor}-{recipe.init}"
 
@@ -458,11 +458,11 @@ def pending_breaks(recipe: ResolvedRecipe, *, through: str | None) -> tuple[UseB
 
 
 def trunk_phase_names(recipe: ResolvedRecipe) -> tuple[str, ...]:
-    """Nomes das fases do *tronco*: até e incluindo a da base (R5.4, D24). Puro.
+    """Names of the *trunk*'s phases: up to and including the base's (R5.4, D24). Pure.
 
-    O tronco é o que toda imagem do mesmo arch × init compartilha: o seed, as
-    fases que o ``init`` antepõe (``seat``) e a base, a única reconstrução
-    completa. É o fork-point 1 da árvore ``base → minimal → desktop → flavor``.
+    The trunk is what every image of the same arch × init shares: the seed, the
+    phases the ``init`` prepends (``seat``) and the base, the only full
+    rebuild. It is fork point 1 of the ``base → minimal → desktop → flavor`` tree.
     """
     names: list[str] = []
     for phase in recipe.phases:
@@ -472,28 +472,28 @@ def trunk_phase_names(recipe: ResolvedRecipe) -> tuple[str, ...]:
     return tuple(names)
 
 
-# --- 3.1 (story 004) parse_emerge_plan (PURO) --------------------------------
+# --- 3.1 (story 004) parse_emerge_plan (PURE) --------------------------------
 
 
 def _clean_use_flag(token: str) -> str:
-    """Normaliza um token de USE-delta ao nome puro da flag. Pura.
+    """Normalize a USE-delta token to the bare flag name. Pure.
 
-    Remove os parênteses externos, o sinal ``-`` de desabilitação e os marcadores
-    de mudança ``%``/``*`` (em qualquer combinação), devolvendo só o nome da flag
-    (ex.: ``(sound%)`` → ``sound``; ``-wayland*`` → ``wayland``;
+    Removes the outer parentheses, the ``-`` disabling sign and the change markers
+    ``%``/``*`` (in any combination), returning only the flag name
+    (e.g. ``(sound%)`` → ``sound``; ``-wayland*`` → ``wayland``;
     ``(rsync-verify%*)`` → ``rsync-verify``).
     """
     return token.strip("()").lstrip("-").rstrip("%*")
 
 
 def _use_changes_from_segment(stripped: str) -> tuple[str, ...]:
-    """Extrai as USE-deltas do segmento ``USE="..."`` de uma linha ``[ebuild]``. Pura.
+    """Extract the USE deltas from the ``USE="..."`` segment of an ``[ebuild]`` line. Pure.
 
-    Lê apenas o conteúdo entre aspas do primeiro ``USE="..."`` e devolve as flags
-    *alteradas* — as marcadas por ``()``/``%``/``*`` (default mudou, mudou desde a
-    última build, asterisco). Flags sem marcador (ex.: ``X``, ``vulkan``) são
-    estado corrente, não delta, e são ignoradas. Sem segmento ``USE`` ou sem
-    flags marcadas → tupla vazia.
+    Reads only the quoted content of the first ``USE="..."`` and returns the
+    *changed* flags — those marked by ``()``/``%``/``*`` (default changed, changed since
+    the last build, asterisk). Flags without a marker (e.g. ``X``, ``vulkan``) are
+    current state, not a delta, and are ignored. No ``USE`` segment or no
+    marked flags → empty tuple.
     """
     match = re.search(r'USE="([^"]*)"', stripped)
     if match is None:
@@ -510,17 +510,17 @@ def _use_changes_from_segment(stripped: str) -> tuple[str, ...]:
 def parse_emerge_plan(
     output: str,
 ) -> tuple[tuple[EmergePlanEntry, ...], tuple[str, ...]]:
-    """Parseia uma saída ``emerge --verbose`` em entradas de plano + blockers (R4.1/R4.3). Pura.
+    """Parse an ``emerge --verbose`` output into plan entries + blockers (R4.1/R4.3). Pure.
 
-    Caminha as linhas ``[ebuild ...]`` reusando o núcleo de casamento compartilhado
-    :func:`shidashi.resolve._atom_from_ebuild_line` (mesmo átomo de
-    :func:`parse_built_atoms`), lendo de cada uma: a coluna de operação (o token
-    logo após ``[ebuild`` — ``N``/``R``/``rR``/``U``/``D``/``r``/``NS``/``UD``) em
-    :attr:`~shidashi.state.EmergePlanEntry.op` e as USE-deltas do segmento
-    ``USE="..."`` (:func:`_use_changes_from_segment`) em ``use_changes``. Linhas
-    ``[blocks B ...]`` são coletadas (cruas, stripadas) na segunda tupla. Saída sem
-    merge (ex.: ``"Nothing to merge"``) → ``((), ())``. NÃO faz I/O nem dispara
-    emerge — opera sobre a saída já capturada.
+    Walks the ``[ebuild ...]`` lines reusing the shared matching core
+    :func:`shidashi.resolve._atom_from_ebuild_line` (the same atom as
+    :func:`parse_built_atoms`), reading from each one: the operation column (the token
+    right after ``[ebuild`` — ``N``/``R``/``rR``/``U``/``D``/``r``/``NS``/``UD``) into
+    :attr:`~shidashi.state.EmergePlanEntry.op` and the USE deltas of the
+    ``USE="..."`` segment (:func:`_use_changes_from_segment`) into ``use_changes``.
+    ``[blocks B ...]`` lines are collected (raw, stripped) in the second tuple. Output
+    without a merge (e.g. ``"Nothing to merge"``) → ``((), ())``. Does NOT do I/O nor run
+    emerge — it operates on the output already captured.
     """
     entries: list[EmergePlanEntry] = []
     blockers: list[str] = []
@@ -532,8 +532,8 @@ def parse_emerge_plan(
         atom = _atom_from_ebuild_line(stripped)
         if atom is None:
             continue
-        # coluna de op = tokens entre ``[ebuild`` e ``]`` (ex.: ``N``, ``rR``);
-        # _atom_from_ebuild_line já garantiu o prefixo e a presença do ``]``.
+        # op column = tokens between ``[ebuild`` and ``]`` (e.g. ``N``, ``rR``);
+        # _atom_from_ebuild_line already guaranteed the prefix and the presence of ``]``.
         op_column = stripped[len("[ebuild") :].split("]", 1)[0].split()
         if not op_column:
             continue
@@ -547,18 +547,18 @@ def parse_emerge_plan(
     return tuple(entries), tuple(blockers)
 
 
-# --- 3.2 (story 004) compute_phase_diff (PURO) -------------------------------
+# --- 3.2 (story 004) compute_phase_diff (PURE) -------------------------------
 
 
 def _category_pn(atom: str) -> str:
-    """Reduz ``cat/pkg-version`` ao identificador ``cat/pkg`` (version-stripped). Pura.
+    """Reduce ``cat/pkg-version`` to the ``cat/pkg`` identifier (version-stripped). Pure.
 
-    Remove o sufixo de versão do nome do pacote — tudo a partir do último ``-``
-    seguido de dígito (cobre revisões ``-rN``, que são parte da versão). Assim
-    ``media-libs/mesa-24.0.7`` e ``media-libs/mesa-24.0.5`` colapsam ambos em
-    ``media-libs/mesa``, permitindo casar rebuilds por category/PN
-    independentemente da versão. Átomos sem componente de versão são devolvidos
-    inalterados.
+    Removes the version suffix from the package name — everything from the last ``-``
+    followed by a digit (covers ``-rN`` revisions, which are part of the version). So
+    ``media-libs/mesa-24.0.7`` and ``media-libs/mesa-24.0.5`` both collapse into
+    ``media-libs/mesa``, allowing rebuilds to be matched by category/PN
+    regardless of the version. Atoms without a version component are returned
+    unchanged.
     """
     return re.sub(r"-\d.*$", "", atom)
 
@@ -570,21 +570,21 @@ def compute_phase_diff(
     *,
     prior_atoms: tuple[str, ...],
 ) -> PhaseDiff:
-    """Classifica o plano de uma fase num :class:`~shidashi.state.PhaseDiff` (R4.1/R4.2). Pura.
+    """Classify a phase's plan into a :class:`~shidashi.state.PhaseDiff` (R4.1/R4.2). Pure.
 
-    A partir das entradas de :func:`parse_emerge_plan` compõe o diff da fase
+    From the entries of :func:`parse_emerge_plan` it composes the diff of phase
     ``phase``:
 
-    * ``built`` — os átomos das entradas, na ordem;
-    * ``unexpected_rebuilds`` — entradas com op ``R``/``rR`` cujo identificador
-      category/PN (:func:`_category_pn`, *version-stripped*) já consta em
-      ``prior_atoms`` (uma fase reconstruindo o que uma fase anterior já
-      construiu, R4.2) — registra o átomo da entrada (com versão);
-    * ``use_changes`` — todas as flags das entradas que carregam ``use_changes``,
-      achatadas na ordem;
-    * ``blockers`` — passthrough do argumento ``blockers``.
+    * ``built`` — the entries' atoms, in order;
+    * ``unexpected_rebuilds`` — entries with op ``R``/``rR`` whose category/PN
+      identifier (:func:`_category_pn`, *version-stripped*) is already in
+      ``prior_atoms`` (a phase rebuilding what an earlier phase already
+      built, R4.2) — records the entry's atom (with version);
+    * ``use_changes`` — every flag of the entries that carry ``use_changes``,
+      flattened in order;
+    * ``blockers`` — passthrough of the ``blockers`` argument.
 
-    NÃO faz I/O nem dispara emerge.
+    Does NOT do I/O nor run emerge.
     """
     prior_pn = {_category_pn(atom) for atom in prior_atoms}
     built = tuple(entry.atom for entry in plan_entries)
@@ -603,17 +603,17 @@ def compute_phase_diff(
     )
 
 
-# --- 2.1 (story 004) checkpoint_sequence / plan_phase_run (PURO) -------------
+# --- 2.1 (story 004) checkpoint_sequence / plan_phase_run (PURE) -------------
 
 
 def checkpoint_sequence(recipe: ResolvedRecipe) -> tuple[str, ...]:
-    """Sequência de checkpoints do build: ``seed`` + fases + ``settle`` (R2.5). Puro.
+    """The build's checkpoint sequence: ``seed`` + phases + ``settle`` (R2.5). Pure.
 
-    O ``seed`` é o checkpoint 0 (o stage3 seedado, antes de qualquer fase) e
-    ``settle`` o checkpoint final (settle-pass de reconciliação do USE). Ambos são
-    rótulos de checkpoint/``--until`` apenas — NUNCA membros de
-    ``completed_phases``/``phase_diffs``/snapshots por fase, que rastreiam só as
-    fases reais da receita.
+    ``seed`` is checkpoint 0 (the seeded stage3, before any phase) and
+    ``settle`` the final checkpoint (the USE-reconciliation settle-pass). Both are
+    checkpoint/``--until`` labels only — NEVER members of
+    ``completed_phases``/``phase_diffs``/per-phase snapshots, which track only the
+    recipe's real phases.
     """
     return ("seed", *(p.name for p in recipe.phases), "settle")
 
@@ -621,21 +621,21 @@ def checkpoint_sequence(recipe: ResolvedRecipe) -> tuple[str, ...]:
 def plan_phase_run(
     recipe: ResolvedRecipe, *, completed: tuple[str, ...], until: str | None
 ) -> tuple[Phase, ...]:
-    """Plano de fases a rodar do ponto de resume até ``until`` (R1.1/R1.2/R1.4/R1.5). Puro.
+    """The plan of phases to run from the resume point up to ``until`` (R1.1/R1.2/R1.4/R1.5). Pure.
 
-    Parte de ``recipe.phases``, descarta toda fase cujo nome está em ``completed``
-    (resume pula o que já foi construído) e, quando ``until`` não é ``None``, para
-    **após** a fase nomeada por ``until`` (inclusive). ``until="seed"`` ⇒ plano
-    vazio (apenas seed, nenhuma fase). ``until`` inválido — fora de
-    ``{"seed"} ∪ {nomes de fase}`` — levanta :class:`ValueError` cuja mensagem
-    **lista os nomes válidos** (incluindo ``"seed"``); a CLI mapeia esse erro para
-    exit 1. ``seed`` e ``settle`` são rótulos de checkpoint, não fases: nunca
-    entram em ``completed`` nem no plano devolvido.
+    Starts from ``recipe.phases``, drops every phase whose name is in ``completed``
+    (resume skips what was already built) and, when ``until`` is not ``None``, stops
+    **after** the phase named by ``until`` (inclusive). ``until="seed"`` ⇒ an empty
+    plan (only seed, no phase). An invalid ``until`` — outside
+    ``{"seed"} ∪ {phase names}`` — raises :class:`ValueError` whose message
+    **lists the valid names** (including ``"seed"``); the CLI maps that error to
+    exit 1. ``seed`` and ``settle`` are checkpoint labels, not phases: they never
+    enter ``completed`` nor the returned plan.
     """
     phase_names = tuple(p.name for p in recipe.phases)
     valid = ("seed", *phase_names)
     if until is not None and until not in valid:
-        raise ValueError(f"--until {until!r} inválido; valores válidos: {', '.join(valid)}")
+        raise ValueError(f"--until {until!r} is invalid; valid values: {', '.join(valid)}")
     plan: list[Phase] = []
     for phase in recipe.phases:
         if phase.name in completed:
@@ -648,18 +648,18 @@ def plan_phase_run(
     return tuple(plan)
 
 
-# --- 2.2 (story 004) phase_snapshot_path / latest_resumable (PURO) -----------
+# --- 2.2 (story 004) phase_snapshot_path / latest_resumable (PURE) -----------
 
 
 def phase_snapshot_path(
     recipe: ResolvedRecipe, *, snapshot: str, phase: str, fork_points_dir: Path
 ) -> Path:
-    """Caminho do snapshot por-fase sob ``fork_points_dir`` (R5.1/R5.2). Puro.
+    """Path of the per-phase snapshot under ``fork_points_dir`` (R5.1/R5.2). Pure.
 
-    A chave é ``<arch>-<flavor>-<init>-<snapshot>-<phase>.tar`` — DISTINTA da chave
-    do fork-point do tronco da story 003 (:func:`fork_point`, que omite ``phase``):
-    cada fase completada materializa seu próprio snapshot para resume granular. Não
-    sonda nem escreve nada — apenas compõe o caminho.
+    The key is ``<arch>-<flavor>-<init>-<snapshot>-<phase>.tar`` — DISTINCT from the key
+    of story 003's trunk fork point (:func:`fork_point`, which omits ``phase``):
+    each completed phase materializes its own snapshot for a granular resume. It
+    neither probes nor writes anything — it only composes the path.
     """
     return fork_points_dir / f"{_variant_key(recipe)}-{snapshot}-{phase}.tar"
 
@@ -671,12 +671,12 @@ def latest_resumable(
     completed: tuple[str, ...],
     fork_points_dir: Path,
 ) -> tuple[str | None, Path | None]:
-    """Última fase completada com snapshot em disco e seu caminho (R5.2). Puro.
+    """The last completed phase with a snapshot on disk, and its path (R5.2). Pure.
 
-    Caminha as fases completadas na ordem de ``recipe.phases`` (não na ordem de
-    ``completed``) e devolve a ÚLTIMA cujo :func:`phase_snapshot_path` existe no
-    disco, junto do caminho — o ponto de restauração do resume. Se nenhuma fase
-    completada tem snapshot em disco devolve ``(None, None)``. Apenas sonda o
+    Walks the completed phases in the order of ``recipe.phases`` (not in the order of
+    ``completed``) and returns the LAST one whose :func:`phase_snapshot_path` exists on
+    disk, together with the path — the resume's restore point. If no completed phase
+    has a snapshot on disk it returns ``(None, None)``. Only probes the
     filesystem.
     """
     found: tuple[str, Path] | None = None
@@ -693,17 +693,17 @@ def latest_resumable(
     return found
 
 
-# --- 4.1 snapshot / restore do fork-point (tarball, I/O em disco) ------------
+# --- 4.1 fork-point snapshot / restore (tarball, on-disk I/O) ----------------
 
 
 def snapshot_fork_point(rootfs: Path, dest: Path) -> Path:
-    """Captura ``rootfs`` num tarball em ``dest`` e devolve ``dest`` (R5.1/R5.2).
+    """Capture ``rootfs`` into a tarball at ``dest`` and return ``dest`` (R5.1/R5.2).
 
-    Escrita atômica: o tar é gravado primeiro num arquivo temporário irmão de
-    ``dest`` (mesmo diretório, logo mesmo filesystem) e só então promovido via
-    :func:`os.replace`. Falha durante a escrita remove o temp parcial. O
-    conteúdo fica na raiz do tar (``-C rootfs .``), de modo que
-    :func:`restore_fork_point` o reconstrua diretamente sob outro diretório.
+    Atomic write: the tar is first written to a temporary file that is a sibling of
+    ``dest`` (same directory, hence same filesystem) and only then promoted via
+    :func:`os.replace`. A failure during the write removes the partial temp. The
+    content sits at the root of the tar (``-C rootfs .``), so that
+    :func:`restore_fork_point` rebuilds it directly under another directory.
 
     GNU tar with :data:`shidashi.seed.ROOTFS_TAR_FLAGS`: every mode bit and the
     xattrs (file capabilities) survive, which Python's ``tarfile`` did not.
@@ -719,7 +719,7 @@ def snapshot_fork_point(rootfs: Path, dest: Path) -> Path:
 
 
 def restore_fork_point(tarball: Path, rootfs: Path) -> None:
-    """Extrai ``tarball`` dentro de ``rootfs`` (R5.1/R5.2), modes and xattrs intact."""
+    """Extract ``tarball`` into ``rootfs`` (R5.1/R5.2), modes and xattrs intact."""
     _tar(["--extract", "--file", str(tarball), "--directory", str(rootfs), *ROOTFS_TAR_FLAGS])
 
 
@@ -729,26 +729,26 @@ def _tar(args: list[str]) -> None:
         raise FactoryError(f"tar {args[0]} failed: {result.stderr.strip()}", phase="fork-point")
 
 
-# --- orquestração privilegiada (story 003 tarefa 5) --------------------------
+# --- privileged orchestration (story 003 task 5) -----------------------------
 
 
 def _run_emerge(
     container: Container, argv: list[str], *, phase: str
 ) -> tuple[tuple[str, ...], str]:
-    """Roda um ``emerge`` no container; devolve ``(átomos, saída crua)`` (R3.4/R8.3).
+    """Run an ``emerge`` in the container; return ``(atoms, raw output)`` (R3.4/R8.3).
 
-    Embrulha um ``emerge`` não-zero (``CalledProcessError``) em
-    :class:`FactoryError` carregando ``phase`` e a saída capturada
-    (stdout+stderr). No sucesso devolve a tupla de :func:`parse_built_atoms`
-    JUNTO da saída crua ``stdout+stderr`` — o driver stepwise reusa essa saída
-    para compor o diff da fase (:func:`parse_emerge_plan`/:func:`compute_phase_diff`)
-    SEM re-rodar emerge (R4.1).
+    Wraps a non-zero ``emerge`` (``CalledProcessError``) in a
+    :class:`FactoryError` carrying ``phase`` and the captured output
+    (stdout+stderr). On success it returns the tuple of :func:`parse_built_atoms`
+    TOGETHER with the raw ``stdout+stderr`` output — the stepwise driver reuses that output
+    to compose the phase's diff (:func:`parse_emerge_plan`/:func:`compute_phase_diff`)
+    WITHOUT re-running emerge (R4.1).
     """
     try:
         result = container.run(argv, check=True)
     except subprocess.CalledProcessError as exc:
         output = (exc.output or "") + (exc.stderr or "")
-        raise FactoryError(f"emerge falhou na fase {phase!r}", phase=phase, output=output) from exc
+        raise FactoryError(f"emerge failed in phase {phase!r}", phase=phase, output=output) from exc
     raw_output = result.stdout + result.stderr
     return parse_built_atoms(raw_output), raw_output
 
@@ -835,21 +835,21 @@ def module_rebuild(container: Container, *, phase: str) -> dict[str, object]:
 def run_phase(
     container: Container, recipe: ResolvedRecipe, phase: Phase, *, emptytree: bool
 ) -> PhaseResult:
-    """Executa uma fase (um ``emerge`` ordenado) dentro do container (R3.1/R3.4/R4.1).
+    """Run one phase (one ordered ``emerge``) inside the container (R3.1/R3.4/R4.1).
 
-    PRIVILEGIADO (``emerge`` roda dentro do nspawn). Escreve o ``package.use``
-    transitório do break-pass da fase (:func:`write_use_break`), roda
-    ``emerge --verbose`` com o(s) alvo(s) de :func:`phase_emerge_argv`
-    (``--emptytree`` só na base, ``-uDN`` nos estágios seguintes) e devolve um
-    :class:`PhaseResult` com os átomos de :func:`parse_built_atoms`
-    (``snapshot=None`` — o fork-point é materializado por :func:`run_phases`).
-    Um ``emerge`` com saída não-zero (``CalledProcessError``) é embrulhado em
-    :class:`FactoryError` carregando o nome da fase e a saída capturada (R8.3).
+    PRIVILEGED (``emerge`` runs inside the nspawn). Writes the phase's transient
+    break-pass ``package.use`` (:func:`write_use_break`), runs
+    ``emerge --verbose`` with the target(s) of :func:`phase_emerge_argv`
+    (``--emptytree`` only in the base, ``-uDN`` in the following stages) and returns a
+    :class:`PhaseResult` with the atoms of :func:`parse_built_atoms`
+    (``snapshot=None`` — the fork point is materialized by :func:`run_phases`).
+    An ``emerge`` with a non-zero exit (``CalledProcessError``) is wrapped in a
+    :class:`FactoryError` carrying the phase name and the captured output (R8.3).
     """
     if not phase_target(phase, recipe):
-        # Fase sem alvo é NO-OP, no mesmo espírito de settle_pass com breaks
-        # vazio: nenhum `emerge` é executado. Hoje só uma fase que não é estágio
-        # (a `seat` do openrc) sem átomos cairia aqui; um estágio sempre tem @world.
+        # A phase without a target is a NO-OP, in the same spirit as settle_pass with empty
+        # breaks: no `emerge` is run. Today only a phase that is not a stage
+        # (openrc's `seat`) without atoms would land here; a stage always has @world.
         return PhaseResult(phase=phase, built_atoms=(), snapshot=None, output="")
     flow = stages_flow()
     before, _after = flow.split()
@@ -938,14 +938,14 @@ def is_installed(rootfs: Path, cp: str) -> bool:
 def settle_pass(
     container: Container, recipe: ResolvedRecipe, breaks: tuple[UseBreak, ...], *, stage: str = ""
 ) -> PhaseResult:
-    """Settle-pass: re-emerge os átomos quebrados com o USE final (R4.2/R4.3/R4.4).
+    """Settle-pass: re-emerge the broken atoms with the final USE (R4.2/R4.3/R4.4).
 
-    PRIVILEGIADO. Quando ``breaks`` é vazio é um **no-op**: devolve um
-    :class:`PhaseResult` da fase ``settle`` sem átomos e **sem** chamar
-    ``container.run`` (nenhum ``emerge``; R4.4). Caso contrário remove o
-    ``package.use`` transitório do break-pass (:func:`clear_use_break`) e re-emerge
-    os átomos distintos das quebras (ordenados) com ``--newuse --oneshot`` para
-    reconstruí-los com o USE definitivo. Falha de ``emerge`` (não-zero) embrulha em
+    PRIVILEGED. When ``breaks`` is empty it is a **no-op**: returns a
+    :class:`PhaseResult` of phase ``settle`` with no atoms and **without** calling
+    ``container.run`` (no ``emerge``; R4.4). Otherwise it removes the break-pass's
+    transient ``package.use`` (:func:`clear_use_break`) and re-emerges
+    the breaks' distinct atoms (sorted) with ``--newuse --oneshot`` to
+    rebuild them with the definitive USE. An ``emerge`` failure (non-zero) is wrapped in
     :class:`FactoryError` (``phase="settle"``).
     """
     settle = Phase(name="settle", stage=stage)
@@ -995,20 +995,20 @@ def run_phases(
     fork_points_dir: Path,
     stop_after: str | None = None,
 ) -> tuple[PhaseResult, ...]:
-    """Orquestra a cadeia de estágios na ordem (R3.x/R4.x/R5.x, D24).
+    """Orchestrate the chain of stages in order (R3.x/R4.x/R5.x, D24).
 
-    PRIVILEGIADO. Quando ``resume_at`` é dado (um fork-point restaurado), as
-    fases até e incluindo ele são puladas e os cortes que ainda valiam ali
-    (:func:`pending_breaks`) seguem pendentes. Para cada fase restante:
+    PRIVILEGED. When ``resume_at`` is given (a restored fork point), the
+    phases up to and including it are skipped and the cuts still in force there
+    (:func:`pending_breaks`) stay pending. For each remaining phase:
 
-    1. :func:`run_phase` -- aplica as camadas do estágio, os cortes e o emerge;
-    2. se o estágio é ENTREGUE (``ships``), :func:`settle_pass` desfaz os cortes
-       acumulados desde o último settle -- a imagem é assentada aqui, e o que
-       vem depois parte dela assentada;
-    3. se a fase é de um estágio, grava o fork-point dele
-       (:func:`stage_fork_point_path`), depois do settle.
+    1. :func:`run_phase` -- applies the stage's layers, the cuts and the emerge;
+    2. if the stage SHIPS (``ships``), :func:`settle_pass` undoes the cuts
+       accumulated since the last settle -- the image is settled here, and what
+       comes after starts from it settled;
+    3. if the phase belongs to a stage, writes its fork point
+       (:func:`stage_fork_point_path`), after the settle.
 
-    Devolve os :class:`PhaseResult` na ordem, cada settle logo após o seu estágio.
+    Returns the :class:`PhaseResult` in order, each settle right after its stage.
 
     ``stop_after`` names a STAGE: the run ends right after that stage's fork
     point (and its settle, when it ships). The next run without it resumes from
@@ -1054,7 +1054,7 @@ def run_phases(
     return tuple(results)
 
 
-# --- 5.1/5.2 (story 004) orquestração stepwise interativa --------------------
+# --- 5.1/5.2 (story 004) interactive stepwise orchestration ------------------
 
 
 CheckpointHook = Callable[[str, PhaseDiff], CheckpointDecision]
@@ -1063,15 +1063,15 @@ FailureHook = Callable[[str, Exception], FailureDecision]
 
 @dataclasses.dataclass
 class _RunState:
-    """Estado mutável acumulado ao longo das fases do build stepwise (R4.1/R6.1).
+    """Mutable state accumulated across the phases of the stepwise build (R4.1/R6.1).
 
-    Concentra o progresso corrente — ``completed`` (nomes de fase já encerradas),
-    ``phase_diffs`` (diff por fase), ``accumulated_breaks`` (quebras de ciclo
-    acumuladas) e ``prior_atoms`` (todos os átomos construídos até aqui, base do
-    ``prior_atoms`` de :func:`compute_phase_diff`) — e sabe se persistir via
-    :meth:`persist` (``state.save_state`` módulo-qualificado; ``OSError`` propaga).
-    Isolar o estado num objeto evita capturar variáveis de laço numa closure de
-    persistência no caminho de ABORT.
+    Holds the current progress — ``completed`` (names of phases already closed),
+    ``phase_diffs`` (per-phase diff), ``accumulated_breaks`` (accumulated cycle
+    breaks) and ``prior_atoms`` (every atom built so far, the basis of
+    :func:`compute_phase_diff`'s ``prior_atoms``) — and knows how to persist itself via
+    :meth:`persist` (module-qualified ``state.save_state``; ``OSError`` propagates).
+    Isolating the state in an object avoids capturing loop variables in a
+    persistence closure on the ABORT path.
     """
 
     recipe: ResolvedRecipe
@@ -1083,14 +1083,16 @@ class _RunState:
     prior_atoms: tuple[str, ...] = ()
 
     def record(self, phase: Phase, diff: PhaseDiff, built_atoms: tuple[str, ...]) -> None:
-        """Incorpora uma fase concluída: nome, diff, quebras e átomos construídos."""
+        """Incorporate a finished phase: name, diff, breaks and atoms built."""
         self.completed += (phase.name,)
         self.phase_diffs += (diff,)
         self.accumulated_breaks += phase.use_break
         self.prior_atoms += built_atoms
 
     def persist(self) -> None:
-        """Persiste o :class:`~shidashi.state.BuildState` corrente (R6.1; ``OSError`` propaga)."""
+        """Persist the current :class:`~shidashi.state.BuildState` (R6.1).
+
+        An ``OSError`` propagates."""
         state.save_state(
             self.state_path,
             state.BuildState(
@@ -1118,15 +1120,15 @@ def _run_phase_retrying(
     on_failure: FailureHook | None,
     on_abort: Callable[[], None],
 ) -> PhaseResult:
-    """Roda uma fase via :func:`run_phase` num laço de retry guiado por ``on_failure``.
+    """Run a phase via :func:`run_phase` in a retry loop driven by ``on_failure``.
 
-    Numa falha (``FactoryError`` — que :func:`run_phase` levanta embrulhando o
-    ``CalledProcessError`` do emerge): sem ``on_failure`` re-levanta (caminho
-    não-interativo ``--until``; o estado das fases anteriores já está persistido e
-    o rootfs é mantido → exit 1, R3.5). Com ``on_failure``, consulta
-    ``on_failure(phase.name, err)``: ``RETRY`` re-roda a MESMA fase (mesmo argv —
-    novo laço); ``ABORT`` invoca ``on_abort`` (persistir o estado das fases
-    anteriores) e levanta a :class:`FactoryError`. NUNCA pula uma fase falha (R3.4).
+    On a failure (``FactoryError`` — which :func:`run_phase` raises wrapping the
+    emerge's ``CalledProcessError``): without ``on_failure`` it re-raises (the
+    non-interactive ``--until`` path; the state of the earlier phases is already persisted and
+    the rootfs is kept → exit 1, R3.5). With ``on_failure``, it asks
+    ``on_failure(phase.name, err)``: ``RETRY`` re-runs the SAME phase (same argv —
+    a new loop); ``ABORT`` calls ``on_abort`` (persist the state of the earlier
+    phases) and raises the :class:`FactoryError`. NEVER skips a failed phase (R3.4).
     """
     while True:
         try:
@@ -1139,7 +1141,7 @@ def _run_phase_retrying(
             on_abort()
             if isinstance(err, FactoryError):
                 raise
-            raise FactoryError(f"build abortado na fase {phase.name!r}", phase=phase.name) from err
+            raise FactoryError(f"build aborted in phase {phase.name!r}", phase=phase.name) from err
 
 
 def run_phases_stepwise(
@@ -1155,35 +1157,36 @@ def run_phases_stepwise(
     on_checkpoint: CheckpointHook | None = None,
     on_failure: FailureHook | None = None,
 ) -> tuple[PhaseResult, ...]:
-    """Orquestra as fases do build passo-a-passo, com checkpoints e retry (R1.x/R2.x/R3.x/R5.x).
+    """Orchestrate the build's phases step by step, with checkpoints and retry
+    (R1.x/R2.x/R3.x/R5.x).
 
-    PRIVILEGIADO. Itera o plano de :func:`plan_phase_run` (resume a partir de
-    ``completed``, parando após ``until`` inclusive). Por fase:
+    PRIVILEGED. Iterates the plan of :func:`plan_phase_run` (resuming from
+    ``completed``, stopping after ``until`` inclusive). Per phase:
 
-    * roda-a via :func:`run_phase` num laço de retry (:func:`_run_phase_retrying`):
-      sem ``on_failure`` uma falha propaga com o estado anterior persistido e o
-      rootfs mantido (R3.5); com ``on_failure``, ``RETRY`` re-roda a mesma fase e
-      ``ABORT`` persiste e levanta (R3.1–R3.3); jamais pula (R3.4);
-    * compõe o diff via :func:`compute_phase_diff` a partir da saída capturada da
-      fase (sem re-rodar emerge), com ``prior_atoms`` = todos os átomos das fases
-      anteriores (R4.1/R4.2);
-    * captura o fork-point por-fase em :func:`phase_snapshot_path` via
+    * runs it via :func:`run_phase` in a retry loop (:func:`_run_phase_retrying`):
+      without ``on_failure`` a failure propagates with the earlier state persisted and the
+      rootfs kept (R3.5); with ``on_failure``, ``RETRY`` re-runs the same phase and
+      ``ABORT`` persists and raises (R3.1–R3.3); never skips (R3.4);
+    * composes the diff via :func:`compute_phase_diff` from the phase's captured
+      output (without re-running emerge), with ``prior_atoms`` = every atom of the
+      earlier phases (R4.1/R4.2);
+    * captures the per-phase fork point at :func:`phase_snapshot_path` via
       :func:`snapshot_fork_point` (R5.1/R5.2);
-    * acumula ``completed``/``phase_diffs``/quebras e persiste o
-      :class:`~shidashi.state.BuildState` via ``state.save_state`` (módulo-qualificado
-      para ser monkeypatchável; ``OSError`` propaga — um build que não consegue
-      gravar progresso falha alto);
-    * consulta ``on_checkpoint(phase.name, diff)`` (``None`` ⇒ auto-CONTINUE) e
-      honra a :class:`CheckpointDecision`: ``CONTINUE`` segue; ``STOP`` interrompe o
-      laço antes da fase seguinte (R1.3/R2.3); ``SHELL`` abre ``container.shell()`` e
-      re-apresenta o MESMO checkpoint.
+    * accumulates ``completed``/``phase_diffs``/breaks and persists the
+      :class:`~shidashi.state.BuildState` via ``state.save_state`` (module-qualified
+      so it can be monkeypatched; ``OSError`` propagates — a build that cannot
+      record progress fails loudly);
+    * asks ``on_checkpoint(phase.name, diff)`` (``None`` ⇒ auto-CONTINUE) and
+      honors the :class:`CheckpointDecision`: ``CONTINUE`` goes on; ``STOP`` breaks the
+      loop before the next phase (R1.3/R2.3); ``SHELL`` opens ``container.shell()`` and
+      presents the SAME checkpoint again.
 
-    Cada estágio ENTREGUE (``ships``) é assentado logo depois da sua fase
-    (D24): :func:`settle_pass` desfaz os cortes acumulados desde o último
-    settle, e o snapshot e o checkpoint daquela fase já veem a imagem assentada.
-    Um STOP interrompe antes da fase seguinte, nunca no meio de uma imagem. Ao
-    retomar, os cortes ainda pendentes vêm de :func:`pending_breaks`. Devolve os
-    :class:`PhaseResult` executados, cada settle logo após o seu estágio.
+    Each SHIPPED stage (``ships``) is settled right after its phase
+    (D24): :func:`settle_pass` undoes the cuts accumulated since the last
+    settle, and that phase's snapshot and checkpoint already see the settled image.
+    A STOP breaks before the next phase, never in the middle of an image. On
+    resume, the cuts still pending come from :func:`pending_breaks`. Returns the
+    :class:`PhaseResult` that ran, each settle right after its stage.
     """
     plan = plan_phase_run(recipe, completed=completed, until=until)
     _before, after = stages_flow().split()
@@ -1252,11 +1255,11 @@ def _checkpoint_decision(
     phase_name: str,
     diff: PhaseDiff,
 ) -> CheckpointDecision:
-    """Resolve a decisão do checkpoint pós-fase honrando ``SHELL`` (R2.2/R2.3).
+    """Resolve the post-phase checkpoint decision, honoring ``SHELL`` (R2.2/R2.3).
 
-    Sem ``on_checkpoint`` ⇒ auto-``CONTINUE``. Caso contrário consulta o hook; numa
-    decisão ``SHELL`` abre ``container.shell()`` e re-apresenta o MESMO checkpoint
-    (re-chama o hook), repetindo até uma decisão terminal ``CONTINUE``/``STOP``.
+    Without ``on_checkpoint`` ⇒ auto-``CONTINUE``. Otherwise it asks the hook; on a
+    ``SHELL`` decision it opens ``container.shell()`` and presents the SAME checkpoint again
+    (calls the hook again), repeating until a terminal ``CONTINUE``/``STOP`` decision.
     """
     if on_checkpoint is None:
         return CheckpointDecision.CONTINUE

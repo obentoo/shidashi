@@ -1,14 +1,14 @@
-"""Pipeline *pretend-resolve* do Shidashi (OVERVIEW §18) — coração da story 002.
+"""Shidashi's *pretend-resolve* pipeline (OVERVIEW §18) -- the heart of story 002.
 
-Sobrepõe os layers de portage da receita + os repos do host num rootfs seedado,
-roda ``emerge --pretend --emptytree @world`` dentro de um ``systemd-nspawn`` e
-parseia a saída em um :class:`PretendReport` (lista de pacotes + sugestões de
-quebra de ciclo que alimentam a curadoria manual de ``use_break``, §18.7).
+Overlays the recipe's portage layers + the host's repos onto a seeded rootfs,
+runs ``emerge --pretend --emptytree @world`` inside a ``systemd-nspawn`` and
+parses the output into a :class:`PretendReport` (package list + cycle-break
+suggestions that feed the manual curation of ``use_break``, §18.7).
 
-A lógica pura (mapeamento de layers, parse de repos.conf, parse da saída do
-emerge) é unit-testada em CI; a orquestração privilegiada (seed/extract/nspawn)
-é host-gated. ``emerge`` roda como subprocesso *dentro* do container — nunca
-via ``import portage``.
+The pure logic (layer mapping, repos.conf parsing, emerge output parsing) is
+unit-tested in CI; the privileged orchestration (seed/extract/nspawn) is
+host-gated. ``emerge`` runs as a subprocess *inside* the container -- never
+through ``import portage``.
 """
 
 import configparser
@@ -27,17 +27,17 @@ from shidashi.recipe import INCLUDE_SET_PREFIX, ResolvedRecipe
 
 _STRICT = ConfigDict(frozen=True, extra="forbid")
 
-# Raiz dos repos sincronizados do host (bind-mounted RO no container). Atributo
-# de módulo para que os testes possam redirecioná-lo via monkeypatch.
+# Root of the host's synced repos (bind-mounted RO in the container). A module
+# attribute so that tests can redirect it via monkeypatch.
 _HOST_REPOS_ROOT = Path("/var/db/repos")
 
 
 class ResolveError(Exception):
-    """Falha do pipeline pretend-resolve (não-root, repo ausente, hard-conflict).
+    """Failure of the pretend-resolve pipeline (non-root, missing repo, hard-conflict).
 
-    Carrega opcionalmente ``raw_output`` — a saída crua do ``emerge`` quando o
-    erro é um conflito de dependências genuíno (hard-conflict, R5.4), para que a
-    CLI a surfaceie ao usuário. Ausente (``None``) nos demais casos.
+    Optionally carries ``raw_output`` -- the raw ``emerge`` output when the error
+    is a genuine dependency conflict (hard-conflict, R5.4), so that the CLI can
+    surface it to the user. Absent (``None``) in every other case.
     """
 
     def __init__(self, message: str, *, raw_output: str | None = None) -> None:
@@ -46,11 +46,11 @@ class ResolveError(Exception):
 
 
 class CycleBreak(BaseModel):
-    """Uma sugestão de quebra de ciclo extraída da saída do emerge (R5.2).
+    """A cycle-break suggestion extracted from the emerge output (R5.2).
 
-    Frozen pydantic. ``atom`` é o pacote, ``flag`` a USE flag sugerida, ``enable``
-    o sinal (``True`` = ``+flag``, ``False`` = ``-flag``) e ``raw_line`` a linha
-    crua de origem (rastreabilidade da curadoria §18.7).
+    Frozen pydantic. ``atom`` is the package, ``flag`` the suggested USE flag,
+    ``enable`` the sign (``True`` = ``+flag``, ``False`` = ``-flag``) and
+    ``raw_line`` the raw source line (traceability for the §18.7 curation).
     """
 
     model_config = _STRICT
@@ -61,7 +61,7 @@ class CycleBreak(BaseModel):
 
 
 class PretendReport(BaseModel):
-    """Resultado tipado de um ``shidashi pretend`` (R1.1/R1.3/R5.2). Frozen pydantic."""
+    """Typed result of a ``shidashi pretend`` (R1.1/R1.3/R5.2). Frozen pydantic."""
 
     model_config = _STRICT
     arch: str
@@ -78,10 +78,10 @@ class PretendReport(BaseModel):
 def _layer_dirs(
     recipe: ResolvedRecipe, variants_dir: Path, layers: tuple[str, ...] | None = None
 ) -> list[Path]:
-    """Mapeia cada entrada de ``portage_layers`` → ``variants_dir/<entry>/portage``.
+    """Map each ``portage_layers`` entry → ``variants_dir/<entry>/portage``.
 
-    As entradas são valores de layer crus (``"base"``, ``"arch/v3"`` …) **sem**
-    prefixo ``variants/`` — não se faz double-join. **Pura.**
+    The entries are raw layer values (``"base"``, ``"arch/v3"`` …) **without** a
+    ``variants/`` prefix -- no double join. **Pure.**
     """
     chosen = recipe.portage_layers if layers is None else layers
     return [variants_dir / entry / "portage" for entry in chosen]
@@ -117,29 +117,31 @@ def kit_index(kits_dir: Path) -> dict[str, Path]:
 
 
 def install_sets(rootfs: Path, recipe: ResolvedRecipe) -> None:
-    """Instala os sets da receita em ``${rootfs}/etc/portage/sets/`` (R6.4).
+    """Install the recipe's sets into ``${rootfs}/etc/portage/sets/`` (R6.4).
 
-    Todo set mora na biblioteca ``variants/kits/<categoria>/<name>`` (D25); as
-    camadas só declaram quais instalam. Não há mais sobrescrita por mesmo nome
-    entre camadas -- um nome é único na biblioteca (:func:`kit_index`), e o
-    ajuste por flavor é explícito: declarar um set, ou ``exclude:`` átomos.
+    Every set lives in the ``variants/kits/<category>/<name>`` library (D25); the
+    layers only declare which ones they install. There is no longer any
+    same-name overriding between layers -- a name is unique in the library
+    (:func:`kit_index`), and per-flavor tuning is explicit: declare a set, or
+    ``exclude:`` atoms.
 
-    Três comportamentos que não são óbvios:
+    Three behaviors that are not obvious:
 
-    **Referências transitivas.** Um set pode conter ``@outro-set`` e o
-    Portage expande isso recursivamente (verificado 2026-09-09). Portanto
-    instalar ``@base`` exige instalar também os sets que ele referencia, ou
-    ``@base`` resolve para um alvo inexistente DENTRO do container -- longe
-    da causa. A varredura segue as ``@refs`` até fechar.
+    **Transitive references.** A set may contain ``@other-set`` and Portage
+    expands it recursively (verified 2026-09-09). So installing ``@base``
+    requires also installing the sets it references, or ``@base`` resolves to a
+    missing target INSIDE the container -- far from the cause. The walk follows
+    the ``@refs`` until closed.
 
-    **``recipe.exclude``.** Os átomos excluídos pelo flavor são removidos das
-    listas na escrita. A base é a regra; o flavor é a exceção. Note que isto
-    não impede o átomo de entrar como DEPENDÊNCIA de outro pacote -- é "não
-    peço", não "proíbo".
+    **``recipe.exclude``.** The atoms excluded by the flavor are removed from
+    the lists as they are written. The base is the rule; the flavor is the
+    exception. Note that this does not stop the atom from coming in as a
+    DEPENDENCY of another package -- it is "I do not ask for it", not "I forbid
+    it".
 
-    **Falha alta.** Um set declarado sem arquivo na biblioteca é erro de
-    curadoria e levanta :class:`ResolveError`. Antes era ignorado em
-    silêncio, e a falha só aparecia no ``emerge``.
+    **Fail loudly.** A declared set with no file in the library is a curation
+    error and raises :class:`ResolveError`. It used to be silently ignored, and
+    the failure only showed up in ``emerge``.
     """
     dest_dir = rootfs / "etc" / "portage" / "sets"
     dest_dir.mkdir(parents=True, exist_ok=True)
@@ -239,7 +241,7 @@ def kit_view(recipe: ResolvedRecipe, *, optional: frozenset[str] = frozenset()) 
         src = index.get(name)
         if src is None:
             raise ResolveError(
-                f"set {name!r} declarado na receita mas ausente da biblioteca {kits}"
+                f"set {name!r} declared in the recipe but missing from the library {kits}"
             )
         kept: list[str] = []
         dropped: list[str] = []
@@ -310,35 +312,35 @@ def apply_portage(
     variants_dir: Path,
     layers: tuple[str, ...] | None = None,
 ) -> None:
-    """Compõe os ``portage/`` dos layers em ``${rootfs}/etc/portage`` (R3.1).
+    """Compose the layers' ``portage/`` trees into ``${rootfs}/etc/portage`` (R3.1).
 
-    Os layers são percorridos na ordem base→arch→flavor→init, e há exatamente
-    **dois** regimes, porque o Portage lê os dois tipos de arquivo de formas
-    diferentes:
+    The layers are walked in base→arch→flavor→init order, and there are exactly
+    **two** regimes, because Portage reads the two kinds of file differently:
 
-    - ``make.conf`` é UM arquivo, lido pelo shell. Os layers trazem *fragmentos*
-      (``arch/v3`` só knobs de CPU, ``init/systemd`` só o grupo SYSTEMD), então
-      ele é **concatenado** na ordem dos layers. Dentro do arquivo montado vale a
-      regra do shell: a última atribuição de uma variável vence — que é
-      exatamente o efeito de especialização desejado do eixo arch.
-    - Todo o resto (``package.use/``, ``package.mask/``, ``env/`` …) são
-      DIRETÓRIOS que o Portage lê como UNIÃO. Dois layers que entreguem o mesmo
-      caminho não se combinam: um apagaria o outro. Isso é sempre erro de
-      curadoria, e aqui vira :class:`ResolveError` em vez de perda silenciosa.
+    - ``make.conf`` is ONE file, read by the shell. The layers carry *fragments*
+      (``arch/v3`` only CPU knobs, ``init/systemd`` only the SYSTEMD group), so
+      it is **concatenated** in layer order. Inside the assembled file the shell
+      rule applies: the last assignment of a variable wins -- which is exactly
+      the specialization effect wanted from the arch axis.
+    - Everything else (``package.use/``, ``package.mask/``, ``env/`` …) are
+      DIRECTORIES that Portage reads as a UNION. Two layers delivering the same
+      path do not combine: one would erase the other. That is always a curation
+      error, and here it becomes a :class:`ResolveError` instead of a silent loss.
 
-    A versão anterior copiava tudo com sobrescrita, inclusive ``make.conf``.
-    Medido para ``v3 × minimal × systemd``: o ``make.conf`` de 133 linhas da base
-    virava o fragmento de 6 linhas do ``init/systemd``, levando junto ``FEATURES``,
-    ``PKGDIR``, ``LLVM_SLOT``, ``PYTHON_TARGETS``, ``MAKEOPTS``, ``L10N``,
-    ``CFLAGS`` e ``CHOST``; e ``package.use/system`` caía de 69 linhas para 4
-    (lab 2026-08-30, F28).
+    The previous version copied everything with overwrite, ``make.conf``
+    included. Measured for ``v3 × minimal × systemd``: the base's 133-line
+    ``make.conf`` became the 6-line fragment of ``init/systemd``, taking along
+    ``FEATURES``, ``PKGDIR``, ``LLVM_SLOT``, ``PYTHON_TARGETS``, ``MAKEOPTS``,
+    ``L10N``, ``CFLAGS`` and ``CHOST``; and ``package.use/system`` dropped from
+    69 lines to 4 (lab 2026-08-30, F28).
 
-    ``layers`` escolhe QUAIS camadas compor -- as de uma fase (``phase.layers``,
-    D24), que crescem ao longo da cadeia; o padrão é a lista final da receita.
+    ``layers`` chooses WHICH layers to compose -- those of a phase
+    (``phase.layers``, D24), which grow along the chain; the default is the
+    recipe's final list.
 
-    Um layer INEXISTENTE levanta :class:`ResolveError` -- é nome errado. Um
-    layer que existe mas não tem ``portage/`` é um estágio que não configura
-    nada (``minimal`` e ``desktop`` hoje, D24) e simplesmente não contribui.
+    A MISSING layer raises :class:`ResolveError` -- it is a wrong name. A layer
+    that exists but has no ``portage/`` is a stage that configures nothing
+    (``minimal`` and ``desktop`` today, D24) and simply contributes nothing.
     """
     dest = rootfs / "etc" / "portage"
     dest.mkdir(parents=True, exist_ok=True)
@@ -348,7 +350,7 @@ def apply_portage(
     for layer_dir in layer_dirs:
         if not layer_dir.parent.is_dir():
             raise ResolveError(
-                f"layer ausente: {layer_dir.parent} (receita "
+                f"missing layer: {layer_dir.parent} (recipe "
                 f"{recipe.arch}×{recipe.flavor}×{recipe.init})"
             )
 
@@ -367,11 +369,11 @@ def apply_portage(
                 continue
             if rel in provider:
                 raise ResolveError(
-                    f"colisão de caminho entre layers em etc/portage/{rel}: "
-                    f"{provider[rel]!r} e {layer!r} entregam o mesmo arquivo, e o "
-                    f"segundo apagaria o primeiro. O Portage lê esses diretórios "
-                    f"como união — renomeie um dos dois (convenção: prefixo "
-                    f"numérico, ex. '50-{Path(rel).name}')"
+                    f"path collision between layers at etc/portage/{rel}: "
+                    f"{provider[rel]!r} and {layer!r} deliver the same file, and the "
+                    f"second would erase the first. Portage reads these directories "
+                    f"as a union -- rename one of the two (convention: a numeric "
+                    f"prefix, e.g. '50-{Path(rel).name}')"
                 )
             provider[rel] = layer
             target = dest / rel
@@ -484,11 +486,11 @@ def _jobs_override() -> int | None:
 
 
 def _assemble_make_conf(parts: list[tuple[str, str]]) -> str:
-    """Concatena os fragmentos de ``make.conf`` marcando a origem de cada um.
+    """Concatenate the ``make.conf`` fragments, marking where each one came from.
 
-    O cabeçalho por layer não é enfeite: o arquivo montado é o que ``emerge
-    --info`` reflete, e sem ele não há como saber de que camada veio uma
-    atribuição — nem que ela sobrescreveu outra mais acima.
+    The per-layer header is not decoration: the assembled file is what ``emerge
+    --info`` reflects, and without it there is no way to tell which layer an
+    assignment came from -- nor that it overrode another one further up.
     """
     out = [
         "# GENERATED by shidashi.resolve.apply_portage — do not edit here.",
@@ -511,13 +513,14 @@ def _assemble_make_conf(parts: list[tuple[str, str]]) -> str:
 def bind_repos(
     repos_conf_dir: Path, *, overrides: Mapping[str, Path] | None = None
 ) -> list[tuple[Path, Path]]:
-    """Produz binds RO host→container para cada repo declarado (R3.2/R3.3).
+    """Produce RO host→container binds for every declared repo (R3.2/R3.3).
 
-    ``repos.conf`` é um **diretório** (estilo eselect-repo): itera seus ``*.conf``
-    e parseia as stanzas ``[<name>]`` / ``location = …`` (stdlib ``configparser``).
-    Para cada repo declarado mapeia o host ``_HOST_REPOS_ROOT/<name>`` para o
-    mesmo caminho no container (RO). Se o host path não existir, levanta
-    :class:`ResolveError` nomeando o repo e sugerindo ``emerge --sync``.
+    ``repos.conf`` is a **directory** (eselect-repo style): iterate its ``*.conf``
+    files and parse the ``[<name>]`` / ``location = …`` stanzas (stdlib
+    ``configparser``). For each declared repo, map the host's
+    ``_HOST_REPOS_ROOT/<name>`` to the same path in the container (RO). If the
+    host path does not exist, raise :class:`ResolveError` naming the repo and
+    suggesting ``emerge --sync``.
 
     ``overrides`` maps a repo name to the host directory to bind INSTEAD, at the
     repo's usual container path -- the pinned ::gentoo snapshot (D26,
@@ -536,24 +539,24 @@ def bind_repos(
         host_path = overrides.get(name, container_path)
         if not host_path.is_dir():
             raise ResolveError(
-                f"repo declarado {name!r} ausente em {host_path}; "
-                f"rode 'emerge --sync' (ou 'eselect repo enable {name}') no host"
+                f"declared repo {name!r} missing at {host_path}; "
+                f"run 'emerge --sync' (or 'eselect repo enable {name}') on the host"
             )
         pairs.append((host_path, container_path))
     return pairs
 
 
-# --- emerge output parsing (R5.2) — puro -------------------------------------
+# --- emerge output parsing (R5.2) — pure -------------------------------------
 
 
 def _atom_from_ebuild_line(stripped: str, prefix: str = "[ebuild") -> str | None:
-    """Extrai ``cat/pkg-version`` de uma linha ``[ebuild ...]`` já stripada. Pura.
+    """Extract ``cat/pkg-version`` from an already-stripped ``[ebuild ...]`` line. Pure.
 
-    Núcleo compartilhado do matcher ``[ebuild ...]`` (R5.2 / R3.4 / R4.1): exige
-    que ``stripped`` comece com ``[ebuild``, toma o primeiro token após o ``]`` e
-    descarta o sufixo de slot/repo (``:slot::repo``). Devolve ``None`` quando a
-    linha não casa (não começa com ``[ebuild``, sem ``]`` ou sem token). Reusado
-    por :func:`_iter_atom_lines` e por :func:`shidashi.phases.parse_emerge_plan`.
+    Shared core of the ``[ebuild ...]`` matcher (R5.2 / R3.4 / R4.1): requires
+    ``stripped`` to start with ``[ebuild``, takes the first token after the ``]``
+    and drops the slot/repo suffix (``:slot::repo``). Returns ``None`` when the
+    line does not match (does not start with ``[ebuild``, no ``]`` or no token).
+    Reused by :func:`_iter_atom_lines` and by :func:`shidashi.phases.parse_emerge_plan`.
     """
     if not stripped.startswith(prefix):  # "[binary" for a binpkg install
         return None
@@ -567,13 +570,13 @@ def _atom_from_ebuild_line(stripped: str, prefix: str = "[ebuild") -> str | None
 
 
 def _iter_atom_lines(emerge_output: str) -> Iterator[str]:
-    """Itera os átomos ``cat/pkg-version`` das linhas ``[ebuild ...]``. Pura.
+    """Iterate the ``cat/pkg-version`` atoms of the ``[ebuild ...]`` lines. Pure.
 
-    Matcher compartilhado (R5.2 / R3.4): para cada linha cujo strip começa com
-    ``[ebuild`` toma o primeiro token após o ``]`` e descarta o sufixo de
-    slot/repo (``:slot::repo``), devolvendo ``cat/pkg-version``. Consumido tanto
-    por :func:`parse_packages` (resolve) quanto por
-    :func:`shidashi.phases.parse_built_atoms`. Delega o casamento de linha a
+    Shared matcher (R5.2 / R3.4): for each line whose stripped form starts with
+    ``[ebuild``, take the first token after the ``]`` and drop the slot/repo
+    suffix (``:slot::repo``), yielding ``cat/pkg-version``. Consumed both by
+    :func:`parse_packages` (resolve) and by
+    :func:`shidashi.phases.parse_built_atoms`. Delegates line matching to
     :func:`_atom_from_ebuild_line`.
     """
     for line in emerge_output.splitlines():
@@ -583,22 +586,22 @@ def _iter_atom_lines(emerge_output: str) -> Iterator[str]:
 
 
 def parse_packages(emerge_output: str) -> tuple[str, ...]:
-    """Extrai a lista de átomos resolvidos das linhas ``[ebuild ...]`` (R5.2). Pura.
+    """Extract the list of resolved atoms from the ``[ebuild ...]`` lines (R5.2). Pure.
 
-    Para cada linha que começa com ``[ebuild`` toma o primeiro token após o
-    ``]`` e descarta o sufixo de slot/repo (``:slot::repo``), devolvendo
-    ``cat/pkg-version``. Saída sem linhas ``[ebuild ...]`` → tupla vazia.
-    Delega o casamento de linha a :func:`_iter_atom_lines`.
+    For each line starting with ``[ebuild``, take the first token after the
+    ``]`` and drop the slot/repo suffix (``:slot::repo``), yielding
+    ``cat/pkg-version``. Output without ``[ebuild ...]`` lines → empty tuple.
+    Delegates line matching to :func:`_iter_atom_lines`.
     """
     return tuple(_iter_atom_lines(emerge_output))
 
 
 def parse_cycle_breaks(emerge_output: str) -> tuple[CycleBreak, ...]:
-    """Extrai sugestões "Change USE" de dependências circulares (R5.2). Pura.
+    """Extract "Change USE" suggestions for circular dependencies (R5.2). Pure.
 
-    Procura linhas do tipo ``- <atom> (Change USE: <±flag>)`` e mapeia cada uma
-    a um :class:`CycleBreak` (atom, flag, sinal). Saída sem sugestões → tupla
-    vazia. É o instrumento de curadoria de ``use_break`` (§18.7).
+    Looks for lines of the form ``- <atom> (Change USE: <±flag>)`` and maps each
+    one to a :class:`CycleBreak` (atom, flag, sign). Output without suggestions →
+    empty tuple. It is the curation instrument for ``use_break`` (§18.7).
     """
     breaks: list[CycleBreak] = []
     for line in emerge_output.splitlines():
@@ -624,10 +627,10 @@ def parse_cycle_breaks(emerge_output: str) -> tuple[CycleBreak, ...]:
 
 
 def run_pretend(container: Container) -> CommandResult:
-    """Roda ``emerge --pretend --emptytree @world`` no container (R5.1).
+    """Run ``emerge --pretend --emptytree @world`` in the container (R5.1).
 
-    Usa ``check=False`` — a semântica de saída (ciclo vs hard-conflict) é
-    decidida por :func:`pretend_resolve`. Captura stdout+stderr no resultado.
+    Uses ``check=False`` -- the exit semantics (cycle vs hard-conflict) are
+    decided by :func:`pretend_resolve`. Captures stdout+stderr in the result.
     """
     return container.run(["emerge", "--pretend", "--emptytree", "@world"], check=False)
 
@@ -640,21 +643,21 @@ def pretend_resolve(
     download: bool = True,
     keep: bool = False,
 ) -> PretendReport:
-    """Orquestra merge→seed→layer→bind→nspawn→parse num report (R5.1/R5.3/R5.4).
+    """Orchestrate merge→seed→layer→bind→nspawn→parse into a report (R5.1/R5.3/R5.4).
 
-    Guarda de privilégio (R6.1): se não-root, levanta :class:`ResolveError`
-    acionável **antes** de qualquer trabalho — não tenta escalar privilégios.
-    Um ciclo reportado é sucesso (exit 0): vira ``cycle_breaks`` no report. Um
-    hard-conflict (saída não-zero sem sugestões de ciclo) levanta
-    :class:`ResolveError` carregando ``raw_output`` (R5.4).
+    Privilege guard (R6.1): if not root, raise an actionable
+    :class:`ResolveError` **before** any work -- it does not try to escalate
+    privileges. A reported cycle is a success (exit 0): it becomes
+    ``cycle_breaks`` in the report. A hard-conflict (non-zero exit with no cycle
+    suggestions) raises :class:`ResolveError` carrying ``raw_output`` (R5.4).
     """
     if os.geteuid() != 0:
         raise ResolveError(
-            "shidashi pretend requer root (systemd-nspawn + extração de stage3); "
-            "rode como root — o Shidashi não escala privilégios sozinho"
+            "shidashi pretend requires root (systemd-nspawn + stage3 extraction); "
+            "run as root -- Shidashi does not escalate privileges by itself"
         )
 
-    # import local evita ciclo de import (cli importa resolve no grupo 6).
+    # a local import avoids an import cycle (cli imports resolve in group 6).
     from shidashi.cli import _resolve
 
     recipe = _resolve(arch, flavor, init)
@@ -683,11 +686,11 @@ def pretend_resolve(
     packages = parse_packages(combined)
     cycle_breaks = parse_cycle_breaks(combined)
 
-    # hard-conflict: emerge falhou e não há sugestões de ciclo → erro (R5.4).
+    # hard-conflict: emerge failed and there are no cycle suggestions → error (R5.4).
     if result.exit_code != 0 and not cycle_breaks:
         raise ResolveError(
-            f"resolução insatisfatível para {arch}×{flavor}×{init} "
-            "(conflito de dependências, não um ciclo)",
+            f"unsatisfiable resolution for {arch}×{flavor}×{init} "
+            "(a dependency conflict, not a cycle)",
             raw_output=combined,
         )
 

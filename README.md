@@ -1,59 +1,59 @@
 # Shidashi 仕出し
 
-> O catering do **bentoo** — prepara e serve builds e ISOs de instalação a partir de um stage3 do Gentoo.
+> The catering of **bentoo** — prepares and serves builds and installation ISOs from a Gentoo stage3.
 
-Shidashi parte sempre de um **stage3 oficial** e aplica a camada bentoo (config + pacotes),
-compilando em ambientes isolados por *flavor*, servindo binpkgs em variações de USE via
-binhost, e montando ISOs live — em múltiplas arquiteturas e flavors, com lançamentos
-semanais (**todo domingo às 00:00**).
+Shidashi always starts from an **official stage3** and applies the bentoo layer (config + packages),
+compiling in isolated environments per *flavor*, serving binpkgs in USE variations via a
+binhost, and assembling live ISOs — across multiple architectures and flavors, with weekly
+releases (**every Sunday at 00:00**).
 
-📄 Arquitetura completa: **[OVERVIEW.md](OVERVIEW.md)**.
+📄 Full architecture: **[OVERVIEW.md](OVERVIEW.md)**.
 
-## Estado
+## Status
 
-**Fases 0 e 1 concluídas (código).** O pacote Python `shidashi/` (14 módulos), as receitas
-(`variants/`) e ambos os subsistemas (Package Factory + ISO Assembler) **estão implementados e
-cobertos por testes** (381 passando). O boot da ISO live foi validado em QEMU/KVM; a validação de
-**build em host Gentoo root** é *host-gated* e segue diferida por design (pilots em andamento).
-Fases 2–5 em aberto — ver roadmap no OVERVIEW.md §17 e o cronograma em `.epic/docs/ROADMAP.md`.
+**Phases 0 and 1 complete (code).** The Python package `shidashi/` (14 modules), the recipes
+(`variants/`) and both subsystems (Package Factory + ISO Assembler) **are implemented and
+covered by tests** (381 passing). The live ISO boot was validated on QEMU/KVM; validation of the
+**build on a root Gentoo host** is *host-gated* and remains deferred by design (pilots in progress).
+Phases 2–5 open — see the roadmap in OVERVIEW.md §17 and the schedule in `.epic/docs/ROADMAP.md`.
 
-Os comandos abaixo já rodam off-host (`recipe`, `pretend`); `factory`/`assemble` exigem host root.
+The commands below already run off-host (`recipe`, `pretend`); `factory`/`assemble` require a root host.
 
-## Requisitos
+## Requirements
 
-- **Host Gentoo** (o Shidashi usa a API Python do Portage: `import portage`).
+- **Gentoo host** (Shidashi uses Portage's Python API: `import portage`).
 - **Python ≥ 3.14**.
-- Distribuição planejada: **ebuild** `app-misc/shidashi` no overlay bentoo.
+- Planned distribution: **ebuild** `app-misc/shidashi` in the bentoo overlay.
 
-## Instalação (dev)
+## Installation (dev)
 
 ```sh
 python -m venv .venv && . .venv/bin/activate
 pip install -e '.[dev]'
 ```
 
-## Uso
+## Usage
 
 ```sh
-shidashi recipe show v3 minimal systemd   # mostra a receita resolvida (deep-merge dos eixos)
-shidashi recipe validate v3 kde systemd   # valida o merge dos fragmentos
-shidashi factory v3 kde systemd           # compila binpkgs → binhost
-shidashi assemble v3 kde systemd          # monta a ISO do binhost
-shidashi release --all                    # orquestra a matriz inteira
+shidashi recipe show v3 minimal systemd   # shows the resolved recipe (axis deep-merge)
+shidashi recipe validate v3 kde systemd   # validates the fragment merge
+shidashi factory v3 kde systemd           # compiles binpkgs → binhost
+shidashi assemble v3 kde systemd          # assembles the ISO from the binhost
+shidashi release --all                    # orchestrates the whole matrix
 ```
 
-> Piloto inicial: `v3 × minimal × systemd`, depois `v3 × kde × systemd`.
+> Initial pilot: `v3 × minimal × systemd`, then `v3 × kde × systemd`.
 
-## Modelo
+## Model
 
-- **Eixos componíveis:** `arch × flavor × init` (ver `variants/`, co-localizado por eixo).
-- **Flavors:** `minimal` (só TTY) · `kde` (Qt) · `gnome` (GTK) · `wm` (Wayland-only: Hyprland/Sway/niri).
+- **Composable axes:** `arch × flavor × init` (see `variants/`, co-located per axis).
+- **Flavors:** `minimal` (TTY only) · `kde` (Qt) · `gnome` (GTK) · `wm` (Wayland-only: Hyprland/Sway/niri).
 - **Archs:** `v3` (baseline) · `znver5` (Zen 5, Tier 1) · `arrowlake` (Tier 2, build-only).
-- **Dois subsistemas:** Package Factory (compila) + ISO Assembler (monta).
-- **Build:** tronco persistente (delta semanal) + wipe total limpo em *toolchain-bump*.
-- **Determinismo de entrada:** pin de snapshot do `::gentoo` por release.
-- **Linguagem:** Python ≥ 3.14 — porque o Portage *é* uma biblioteca Python.
+- **Two subsystems:** Package Factory (compiles) + ISO Assembler (assembles).
+- **Build:** persistent trunk (weekly delta) + full clean wipe on *toolchain-bump*.
+- **Input determinism:** `::gentoo` snapshot pin per release.
+- **Language:** Python ≥ 3.14 — because Portage *is* a Python library.
 
-## Licença
+## License
 
-MIT — veja [LICENSE](LICENSE).
+MIT — see [LICENSE](LICENSE).

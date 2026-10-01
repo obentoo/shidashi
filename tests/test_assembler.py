@@ -1,10 +1,10 @@
-"""Testes de shidashi.assembler — ISO Assembler (OVERVIEW §7/§18.6, Fase 1).
+"""Tests of shidashi.assembler — ISO Assembler (OVERVIEW §7/§18.6, Phase 1).
 
-No idioma de tests/test_factory.py (UNIT off-host): os construtores de argv e os
-localizadores de kernel/initramfs são **puros** (testados sem root), a guarda de
-root é checada com ``os.geteuid`` monkeypatchado, e a orquestração de
-:meth:`Assembler.assemble` roda inteira com seed/portage/Container/image
-monkeypatchados — sem nspawn/emerge/dracut/mksquashfs reais (host-gated).
+In the idiom of tests/test_factory.py (UNIT off-host): the argv builders and the
+kernel/initramfs locators are **pure** (tested without root), the root guard
+is checked with a monkeypatched ``os.geteuid``, and the orchestration of
+:meth:`Assembler.assemble` runs in full with seed/portage/Container/image
+monkeypatched — no real nspawn/emerge/dracut/mksquashfs (host-gated).
 """
 
 import os
@@ -70,8 +70,8 @@ def _no_tree_download(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
 def _recipe(
     *,
     flavor: str = "kde",
-    # default VAZIO: install_sets agora FALHA ALTO num set declarado sem arquivo,
-    # então um teste que não se importa com sets não deve declarar nenhum.
+    # EMPTY default: install_sets now FAILS LOUDLY on a declared set without a file,
+    # so a test that does not care about sets must not declare any.
     sets: tuple[str, ...] = (),
     exclude: tuple[str, ...] = (),
 ) -> ResolvedRecipe:
@@ -106,11 +106,11 @@ def _pointer() -> object:
     )
 
 
-# --- iso_emerge_argv / _dracut_argv (PUROS) ----------------------------------
+# --- iso_emerge_argv / _dracut_argv (PURE) -----------------------------------
 
 
 def test_iso_emerge_argv_targets_system_plus_flavor_sets() -> None:
-    # §7/§9.3 — --emptytree puxa TUDO arch-native (incl. @system) + os sets do flavor.
+    # §7/§9.3 — --emptytree pulls EVERYTHING arch-native (incl. @system) + the flavor's sets.
     assert iso_emerge_argv(_recipe(sets=("graphics", "kde"))) == [
         "emerge",
         "--usepkgonly",
@@ -138,7 +138,7 @@ def test_iso_emerge_argv_jobs_merges_binpkgs_in_parallel() -> None:
 
 
 def test_iso_emerge_argv_empty_sets_falls_back_to_world() -> None:
-    # minimal não declara sets → @world (= @system + o que a base seedou), --emptytree.
+    # minimal declares no sets → @world (= @system + what the base seeded), --emptytree.
     assert iso_emerge_argv(_recipe(sets=())) == [
         "emerge",
         "--usepkgonly",
@@ -175,14 +175,14 @@ def test_kernel_version_single(tmp_path: Path) -> None:
 
 def test_kernel_version_none_raises(tmp_path: Path) -> None:
     (tmp_path / "lib" / "modules").mkdir(parents=True)
-    with pytest.raises(AssemblerError, match="exatamente um kernel"):
+    with pytest.raises(AssemblerError, match="exactly one kernel"):
         _kernel_version(tmp_path)
 
 
 def test_kernel_version_ambiguous_raises(tmp_path: Path) -> None:
     for v in ("6.12.0", "6.13.0"):
         (tmp_path / "lib" / "modules" / v).mkdir(parents=True)
-    with pytest.raises(AssemblerError, match="exatamente um kernel"):
+    with pytest.raises(AssemblerError, match="exactly one kernel"):
         _kernel_version(tmp_path)
 
 
@@ -216,8 +216,8 @@ def test_build_binds_binhost_ro_and_no_rw(monkeypatch: pytest.MonkeyPatch) -> No
     )
     binds_ro, binds_rw = _build_binds(Path("/bh/znver5"), Path("/rootfs/etc/portage/repos.conf"))
     assert binds_ro[0] == (Path("/h/repo"), Path("/var/db/repos/gentoo"))
-    assert (Path("/bh/znver5"), asm._BINHOST_DST) in binds_ro  # binhost montado RO
-    assert binds_rw == []  # Assembler só lê (--usepkgonly): nada RW
+    assert (Path("/bh/znver5"), asm._BINHOST_DST) in binds_ro  # binhost mounted RO
+    assert binds_rw == []  # Assembler only reads (--usepkgonly): nothing RW
 
 
 def test_install_sets_copies_curated_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -238,7 +238,7 @@ def test_install_sets_copies_curated_files(tmp_path: Path, monkeypatch: pytest.M
     assert (sets_dir / "kde").read_text() == "kde-plasma/plasma-meta\n"
 
 
-# --- guarda de root ----------------------------------------------------------
+# --- root guard ---------------------------------------------------------------
 
 
 def test_assemble_requires_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -247,11 +247,11 @@ def test_assemble_requires_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
         Assembler(_recipe(), tmp_path / "binhost").assemble(tmp_path / "out.iso")
 
 
-# --- orquestração de assemble() (tudo monkeypatchado) ------------------------
+# --- assemble() orchestration (everything monkeypatched) ---------------------
 
 
 class _FakeContainer:
-    """Container falso: registra os argv de ``run`` e é um context manager no-op."""
+    """Fake Container: records the ``run`` argv and is a no-op context manager."""
 
     instances: list[_FakeContainer] = []
 
@@ -309,8 +309,8 @@ def test_assemble_orchestrates_seed_emerge_dracut_squashfs_iso(
 
     monkeypatch.setattr(asm, "extract_stage3", fake_extract)
 
-    # Lista única de eventos p/ travar a ORDEM (não só a ocorrência): apply_portage
-    # PRECISA preceder o emerge, senão a USE resolvida ≠ a dos binpkgs (§18.6).
+    # A single event list to pin the ORDER (not only the occurrence): apply_portage
+    # MUST precede the emerge, otherwise the resolved USE ≠ the binpkgs' (§18.6).
     events: list[str] = []
     monkeypatch.setattr(
         asm, "apply_portage", lambda rootfs, recipe, *, variants_dir: events.append("apply_portage")
@@ -369,8 +369,8 @@ def test_assemble_orchestrates_seed_emerge_dracut_squashfs_iso(
 
     out_dir = tmp_path / "dist"
     out = out_dir / "bentoo-2026.09.30-kde-systemd-znver5.iso"
-    # sets=() de propósito: este teste exercita a ORQUESTRAÇÃO do assemble, e
-    # install_sets falharia alto num set declarado sem arquivo curado no tmp_path.
+    # sets=() on purpose: this test exercises the assemble ORCHESTRATION, and
+    # install_sets would fail loudly on a declared set without a curated file in tmp_path.
     recipe = _recipe(sets=()).model_copy(
         update={
             "phases": (
@@ -440,9 +440,9 @@ def test_assemble_orchestrates_seed_emerge_dracut_squashfs_iso(
     assert exclude_file.name == "znver5-kde-systemd.squashfs-exclude"
     assert "dev/*" in exclude_file.read_text().splitlines()  # livecd.yaml's squashfs_exclude
     assert out.read_bytes() == b"ISO"
-    # §18.6 — apply_portage estritamente ANTES do emerge (não só "foi chamado").
+    # §18.6 — apply_portage strictly BEFORE the emerge (not only "was called").
     assert events.index("apply_portage") < events.index("emerge")
-    # ordem dentro do container: emerge --usepkgonly, then the stage3's leftovers
+    # order inside the container: emerge --usepkgonly, then the stage3's leftovers
     # go (depclean + preserved-rebuild from binpkgs only), then dracut.
     inst = _FakeContainer.instances[0]
     parallel = ["--jobs", str(jobs)] if jobs else []
@@ -459,14 +459,14 @@ def test_assemble_orchestrates_seed_emerge_dracut_squashfs_iso(
     # --jobs also caps mksquashfs; without it mksquashfs keeps every CPU
     assert processors_seen == [jobs]
     assert inst.runs[4][0] == "dracut" and "dmsquash-live" in inst.runs[4]
-    # binhost montado RO no container (e nada RW) — fio condutor binhost_dir→Container.
+    # binhost mounted RO in the container (and nothing RW) — the binhost_dir→Container thread.
     assert (tmp_path / "binhost" / "znver5", asm._BINHOST_DST) in inst.binds
     assert inst.binds_rw == []
-    # kernel localizado e encadeado squashfs → ISO.
+    # kernel located and chained squashfs → ISO.
     assert sq_calls and iso_calls
-    assert iso_calls[0][0] == sq_calls[0][1]  # build_iso recebe o squashfs produzido
+    assert iso_calls[0][0] == sq_calls[0][1]  # build_iso receives the produced squashfs
     assert iso_calls[0][2].name == "vmlinuz-6.12.0-bentoo"
-    # sucesso sem --keep → rootfs E squashfs intermediário removidos do scratch.
+    # success without --keep → rootfs AND intermediate squashfs removed from the scratch.
     assemble_dir = tmp_path / "scratch" / "assemble"
     assert not (assemble_dir / "znver5-kde-systemd").exists()
     assert not (assemble_dir / "znver5-kde-systemd.zstd.squashfs").exists()
@@ -494,20 +494,20 @@ def test_assemble_keeps_rootfs_on_emerge_failure(
 
     class _BoomContainer(_FakeContainer):
         def run(self, argv: list[str], **kw: object) -> None:
-            raise RuntimeError("emerge --usepkgonly explodiu")
+            raise RuntimeError("emerge --usepkgonly blew up")
 
     monkeypatch.setattr(asm, "Container", _BoomContainer)
 
     rootfs = tmp_path / "scratch" / "assemble" / "znver5-kde-systemd"
-    with pytest.raises(RuntimeError, match="explodiu"):
+    with pytest.raises(RuntimeError, match="blew up"):
         Assembler(_recipe(), tmp_path / "binhost").assemble(tmp_path / "out.iso")
-    assert rootfs.exists()  # preservado para depuração em falha
+    assert rootfs.exists()  # kept for debugging on failure
 
 
 def test_assemble_keeps_rootfs_on_squashfs_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # ramo distinto: falha PÓS-container (make_squashfs) também preserva o rootfs.
+    # separate branch: a POST-container failure (make_squashfs) also keeps the rootfs.
     _FakeContainer.instances = []
     monkeypatch.setattr(os, "geteuid", lambda: 0)
     monkeypatch.setenv("SHIDASHI_SCRATCH", str(tmp_path / "scratch"))
@@ -526,17 +526,17 @@ def test_assemble_keeps_rootfs_on_squashfs_failure(
     monkeypatch.setattr(asm, "extract_stage3", fake_extract)
     monkeypatch.setattr(asm, "apply_portage", lambda rootfs, recipe, *, variants_dir: None)
     monkeypatch.setattr(asm, "bind_repos", lambda d, **_k: [])
-    monkeypatch.setattr(asm, "Container", _FakeContainer)  # run() é no-op (sucesso)
+    monkeypatch.setattr(asm, "Container", _FakeContainer)  # run() is a no-op (success)
 
     def boom_squashfs(rootfs: Path, output: Path, **_k: object) -> Path:
-        raise ImageError("mksquashfs: disco cheio")
+        raise ImageError("mksquashfs: disk full")
 
     monkeypatch.setattr(image, "make_squashfs", boom_squashfs)
 
     rootfs = tmp_path / "scratch" / "assemble" / "znver5-kde-systemd"
-    with pytest.raises(ImageError, match="disco cheio"):
+    with pytest.raises(ImageError, match="disk full"):
         Assembler(_recipe(), tmp_path / "binhost").assemble(tmp_path / "out.iso")
-    assert rootfs.exists()  # ImageError pós-container também mantém o rootfs
+    assert rootfs.exists()  # a post-container ImageError also keeps the rootfs
 
 
 def test_install_sets_refuses_a_name_defined_twice_in_the_library(
@@ -557,20 +557,20 @@ def test_install_sets_refuses_a_name_defined_twice_in_the_library(
         _install_sets(tmp_path / "rootfs", _recipe(sets=("graphics",)))
 
 
-# NB: o caminho privilegiado real (nspawn + emerge --usepkgonly + dracut +
-# mksquashfs + grub-mkrescue) é host-gated (root + Gentoo + ferramentas); fica
-# para o smoke-test de boot da Fase 1 (QEMU), não para o unit off-host.
+# NB: the real privileged path (nspawn + emerge --usepkgonly + dracut +
+# mksquashfs + grub-mkrescue) is host-gated (root + Gentoo + tools); it is left
+# to the Phase 1 boot smoke test (QEMU), not to the off-host unit tests.
 
 
-# --- _install_sets: @refs transitivas, exclude e falha alta -------------------
+# --- _install_sets: transitive @refs, exclude and loud failure ----------------
 
 
 def test_install_sets_follows_nested_set_references(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Portage expande `@outro-set` dentro de um set file, então instalar o
-    # agregador exige instalar as folhas -- senão @base resolve para um alvo
-    # inexistente DENTRO do container, longe da causa.
+    # Portage expands `@other-set` inside a set file, so installing the
+    # aggregator requires installing the leaves -- otherwise @base resolves to a
+    # nonexistent target INSIDE the container, far from the cause.
     variants = tmp_path / "variants"
     (variants / "kits" / "groups").mkdir(parents=True)
     (variants / "kits" / "groups" / "agg").write_text("@leaf\n")
@@ -592,7 +592,7 @@ def test_install_sets_applies_flavor_exclude(
     variants = tmp_path / "variants"
     (variants / "kits" / "core").mkdir(parents=True)
     (variants / "kits" / "core" / "leaf").write_text(
-        "media-video/vlc\napp-editors/nano  # com comentário\n"
+        "media-video/vlc\napp-editors/nano  # with a comment\n"
     )
     monkeypatch.setenv("SHIDASHI_VARIANTS_DIR", str(variants))
     rootfs = tmp_path / "rootfs"
@@ -603,20 +603,20 @@ def test_install_sets_applies_flavor_exclude(
     assert "media-video/vlc" not in written.replace(
         "# shidashi: excluded by flavor/kde: media-video/vlc", ""
     )
-    assert "app-editors/nano" in written  # o comentário inline não atrapalha
-    assert "excluded by flavor/kde" in written  # a subtração fica registrada
+    assert "app-editors/nano" in written  # the inline comment does not get in the way
+    assert "excluded by flavor/kde" in written  # the subtraction is recorded
 
 
 def test_install_sets_raises_when_declared_set_is_missing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Antes era ignorado em silêncio e só falhava no emerge, dentro do container.
+    # It used to be silently ignored and only failed at the emerge, inside the container.
     variants = tmp_path / "variants"
     (variants / "kits" / "core").mkdir(parents=True)
     monkeypatch.setenv("SHIDASHI_VARIANTS_DIR", str(variants))
 
-    with pytest.raises(ResolveError, match="ausente"):
-        _install_sets(tmp_path / "rootfs", _recipe(sets=("nao-existe",)))
+    with pytest.raises(ResolveError, match="missing"):
+        _install_sets(tmp_path / "rootfs", _recipe(sets=("does-not-exist",)))
 
 
 def test_locate_kernel_finds_the_image_of_a_uki_install(tmp_path: Path) -> None:

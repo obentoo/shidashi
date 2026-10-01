@@ -1,23 +1,23 @@
-"""UNIT da CLI ``shidashi factory`` via Typer ``CliRunner`` (story 003 7.1).
+"""UNIT tests of the ``shidashi factory`` CLI via Typer's ``CliRunner`` (story 003 7.1).
 
-Determinista no host CI: ``Factory.build`` (privilegiado) é monkeypatched no
-namespace de ``shidashi.cli`` p/ devolver um ``FactoryResult`` sintético ou levantar
-``FactoryError``/``SeedError``/``ResolveError`` — exercitamos só a CAMADA CLI:
-``--help`` lista ``factory`` como comando REAL (não mais o stub exit-2),
-renderização pretty/json, mapeamento de exit codes e propagação de flags
-(``--no-download``/``--keep``/``--no-emptytree``/``--pkgdir``) para ``build``.
-Nenhum stage3/nspawn é tocado (espelha ``tests/test_cli_pretend.py``).
+Deterministic on the CI host: ``Factory.build`` (privileged) is monkeypatched in
+the ``shidashi.cli`` namespace to return a synthetic ``FactoryResult`` or raise
+``FactoryError``/``SeedError``/``ResolveError`` — we exercise only the CLI LAYER:
+``--help`` lists ``factory`` as a REAL command (no longer the exit-2 stub),
+pretty/json rendering, exit code mapping and flag propagation
+(``--no-download``/``--keep``/``--no-emptytree``/``--pkgdir``) to ``build``.
+No stage3/nspawn is touched (mirrors ``tests/test_cli_pretend.py``).
 
-Contrato (design.md §cli): ``factory(arch, flavor, init, --format=[pretty|json]
+Contract (design.md §cli): ``factory(arch, flavor, init, --format=[pretty|json]
 (default pretty), --emptytree/--no-emptytree (default on), --pkgdir <path>,
---keep, --no-download)``; sucesso exit 0; FactoryError/SeedError/ResolveError/
-UnknownAxisError → mensagem amigável + Exit(1); FactoryError imprime a phase que
-falhou + ``output``.
+--keep, --no-download)``; success exit 0; FactoryError/SeedError/ResolveError/
+UnknownAxisError → friendly message + Exit(1); FactoryError prints the phase that
+failed + ``output``.
 
-``FactoryError``/``FactoryResult`` são importados de forma tolerante e
-``cli.Factory`` é patchado com ``raising=False`` (ainda não existe). Até a CLI
-substituir o stub ``factory`` (hoje exit 2), estes casos ficam Red pelo motivo
-esperado.
+``FactoryError``/``FactoryResult`` are imported tolerantly and ``cli.Factory`` is
+patched with ``raising=False`` (it does not exist yet). Until the CLI replaces
+the ``factory`` stub (exit 2 today), these cases stay Red for the expected
+reason.
 """
 
 import json
@@ -40,7 +40,7 @@ FactoryResult: Any = try_import("shidashi.factory", "FactoryResult")
 
 runner = CliRunner()
 
-# variants/ mínima reutilizada do estilo de test_cli.py -----------------------
+# minimal variants/ reused in the style of test_cli.py ------------------------
 
 
 @pytest.fixture
@@ -80,7 +80,7 @@ def _fake_factory(build_fn: Any) -> Any:
     return _ctor
 
 
-# --- --help lista factory como comando real (R1.4) ---------------------------
+# --- --help lists factory as a real command (R1.4) ---------------------------
 
 
 def test_help_lists_factory_as_real_command() -> None:
@@ -100,7 +100,7 @@ def test_factory_help_shows_options() -> None:
     assert "--work-dir" in out
 
 
-# --- sucesso pretty exit 0 (R1.1) --------------------------------------------
+# --- pretty success exit 0 (R1.1) --------------------------------------------
 
 
 def test_factory_success_pretty_exit0(monkeypatch: pytest.MonkeyPatch, variants_tree: Path) -> None:
@@ -124,7 +124,7 @@ def test_factory_json_shape(monkeypatch: pytest.MonkeyPatch, variants_tree: Path
     assert "media-video/ffmpeg-6.1.1" in data["settle_atoms"]
 
 
-# --- FactoryError → exit 1 imprimindo phase + output (R8.3) ------------------
+# --- FactoryError → exit 1 printing phase + output (R8.3) --------------------
 
 
 def test_factory_error_exit1_prints_phase_and_output(
@@ -143,7 +143,7 @@ def test_factory_error_exit1_prints_phase_and_output(
     assert "ffmpeg build error" in combined
 
 
-# --- SeedError / ResolveError → exit 1 amigável ------------------------------
+# --- SeedError / ResolveError → friendly exit 1 ------------------------------
 
 
 def test_factory_seed_error_exit1(monkeypatch: pytest.MonkeyPatch, variants_tree: Path) -> None:
@@ -160,7 +160,7 @@ def test_factory_seed_error_exit1(monkeypatch: pytest.MonkeyPatch, variants_tree
 
 def test_factory_resolve_error_exit1(monkeypatch: pytest.MonkeyPatch, variants_tree: Path) -> None:
     def _raise(**_k: object) -> Any:
-        raise ResolveError("repo 'bentoo' ausente; rode emerge --sync")
+        raise ResolveError("repo 'bentoo' missing; run emerge --sync")
 
     monkeypatch.setattr(cli, "Factory", _fake_factory(_raise), raising=False)
     result = runner.invoke(app, ["factory", "v3", "minimal", "systemd"])
@@ -170,7 +170,7 @@ def test_factory_resolve_error_exit1(monkeypatch: pytest.MonkeyPatch, variants_t
     assert "bentoo" in combined
 
 
-# --- flags propagam para build (R1.5) ----------------------------------------
+# --- flags propagate to build (R1.5) -----------------------------------------
 
 
 def test_factory_flags_propagate_to_build(
@@ -209,14 +209,14 @@ def test_factory_pkgdir_override_used(
     assert seen["pkgdir"] == override
 
 
-# --- _apply_work_dir (helper puro) -------------------------------------------
+# --- _apply_work_dir (pure helper) -------------------------------------------
 
 
 def test_apply_work_dir_sets_cache_and_scratch(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    # registra as chaves no monkeypatch p/ restauração no teardown (o helper
-    # muta os.environ diretamente; o undo do monkeypatch as remove ao fim).
+    # registers the keys with monkeypatch for restoration at teardown (the helper
+    # mutates os.environ directly; monkeypatch's undo removes them at the end).
     monkeypatch.delenv("SHIDASHI_CACHE", raising=False)
     monkeypatch.delenv("SHIDASHI_SCRATCH", raising=False)
     cli._apply_work_dir(tmp_path / "w")
@@ -225,18 +225,18 @@ def test_apply_work_dir_sets_cache_and_scratch(
 
 
 def test_apply_work_dir_none_is_noop(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("SHIDASHI_CACHE", "/preexistente")
+    monkeypatch.setenv("SHIDASHI_CACHE", "/preexisting")
     cli._apply_work_dir(None)
-    assert os.environ["SHIDASHI_CACHE"] == "/preexistente"
+    assert os.environ["SHIDASHI_CACHE"] == "/preexisting"
 
 
 def test_apply_work_dir_overrides_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    monkeypatch.setenv("SHIDASHI_CACHE", "/antigo")  # env do usuário
-    cli._apply_work_dir(tmp_path / "w")  # flag vence
+    monkeypatch.setenv("SHIDASHI_CACHE", "/old")  # the user's env
+    cli._apply_work_dir(tmp_path / "w")  # the flag wins
     assert os.environ["SHIDASHI_CACHE"] == str(tmp_path / "w" / "cache")
 
 
-# --- --work-dir deriva os caminhos e --pkgdir o vence ------------------------
+# --- --work-dir derives the paths and --pkgdir beats it ----------------------
 
 
 def test_factory_work_dir_derives_pkgdir(
@@ -254,7 +254,7 @@ def test_factory_work_dir_derives_pkgdir(
     work = tmp_path / "work"
     result = runner.invoke(app, ["factory", "v3", "minimal", "systemd", "--work-dir", str(work)])
     assert result.exit_code == 0, result.stdout
-    # sem --pkgdir, o binhost deriva do cache sob o work-dir -- one directory per
+    # without --pkgdir, the binhost derives from the cache under the work-dir -- one directory per
     # GENERATION, named after the pinned stage3 (D26)
     from shidashi.seed import load_pointer
 
@@ -281,7 +281,7 @@ def test_factory_pkgdir_beats_work_dir(
         ["factory", "v3", "minimal", "systemd", "--work-dir", str(work), "--pkgdir", str(override)],
     )
     assert result.exit_code == 0, result.stdout
-    assert seen["pkgdir"] == override  # --pkgdir vence o cache derivado do work-dir
+    assert seen["pkgdir"] == override  # --pkgdir beats the cache derived from the work-dir
 
 
 # --- --update (D26) -------------------------------------------------------------

@@ -1,11 +1,12 @@
-"""Testes de INTEGRAÇÃO da CLI do Shidashi (shidashi.cli) via Typer ``CliRunner``.
+"""INTEGRATION tests of Shidashi's CLI (shidashi.cli) via Typer's ``CliRunner``.
 
-Constrói a árvore ``variants/`` mínima e VÁLIDA de ``tests/_variants_tree.py``
-em ``tmp_path`` e aponta a CLI para ela com ``SHIDASHI_VARIANTS_DIR``. As cadeias
-``minimal`` e ``kde`` resolvem; ``flavor/broken`` declara o nome de outro estágio
-e força um :class:`RecipeChainError`, que a CLI tem de reportar sem traceback.
+Builds the minimal, VALID ``variants/`` tree of ``tests/_variants_tree.py`` in
+``tmp_path`` and points the CLI at it with ``SHIDASHI_VARIANTS_DIR``. The
+``minimal`` and ``kde`` chains resolve; ``flavor/broken`` declares another
+stage's name and forces a :class:`RecipeChainError`, which the CLI must report
+without a traceback.
 
-Requisitos exercitados: R1.4, R4.1, R4.2, R4.3, R5.1, R5.2, R6.1, R6.2, R6.3.
+Requirements exercised: R1.4, R4.1, R4.2, R4.3, R5.1, R5.2, R6.1, R6.2, R6.3.
 """
 
 import json
@@ -62,7 +63,7 @@ def test_show_unknown_axis_exit1_no_traceback(variants_tree: Path) -> None:
     assert result.exception is None or isinstance(result.exception, SystemExit)
     combined = result.stdout + (result.stderr or "")
     assert "Traceback" not in combined
-    assert "v3" in combined  # lista os arch disponíveis
+    assert "v3" in combined  # lists the available arches
 
 
 # --- recipe validate ---------------------------------------------------------
@@ -88,7 +89,7 @@ def test_validate_unknown_arch_lists_available(variants_tree: Path) -> None:
     assert result.exit_code == 1
     combined = result.stdout + (result.stderr or "")
     assert "Traceback" not in combined
-    assert "v3" in combined  # os nomes de arch disponíveis são listados
+    assert "v3" in combined  # the available arch names are listed
 
 
 # --- recipe list -------------------------------------------------------------
@@ -108,18 +109,18 @@ def test_list_shows_axis_names(variants_tree: Path) -> None:
 # --- stubs (R6.2) ------------------------------------------------------------
 
 
-# NB: factory (story 003) e assemble (Fase 1) deixaram de ser stubs; suas
-# coberturas vivem em tests/test_cli_factory.py e tests/test_cli_assemble.py.
-# Só `release` segue stub (Fase 4) — exit 2 com "Fase 0".
+# NB: factory (story 003) and assemble (Phase 1) are no longer stubs; their
+# coverage lives in tests/test_cli_factory.py and tests/test_cli_assemble.py.
+# Only `release` is still a stub (Phase 4) — exit 2 with "Phase 0".
 
 
 def test_stub_release_exit2(variants_tree: Path) -> None:
     result = runner.invoke(app, ["release", "--all"])
     assert result.exit_code == 2
-    assert "Fase 0" in result.stdout
+    assert "Phase 0" in result.stdout
 
 
-# --- no-args mostra ajuda (R6.3) ---------------------------------------------
+# --- no args shows help (R6.3) ----------------------------------------------
 
 
 def test_no_args_shows_help() -> None:

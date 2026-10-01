@@ -1,21 +1,21 @@
-# Shidashi CI — qualidade (real) + release semanal (scaffold, gated).
+# Shidashi CI -- quality (real) + weekly release (scaffold, gated).
 #
-# Dois gatilhos:
-#   * push / pull_request -> job `quality` (real): roda em runner padrao, sem
-#     Gentoo. Instala pelo uv.lock (--frozen); lint (ruff check) + format (ruff
-#     format --check) + tipos (mypy) + testes (pytest). Rode antes do push com
-#     `act -j quality`.
-#   * schedule (semanal)  -> job `weekly-release` (scaffold): a matriz
-#     arch x init x desktop. Gated com `if: false` porque precisa de um
-#     runner self-hosted Gentoo (OVERVIEW fase 4) — documenta a intencao sem
-#     quebrar a CI.
+# Two triggers:
+#   * push / pull_request -> job `quality` (real): runs on a standard runner,
+#     without Gentoo. Installs from uv.lock (--frozen); lint (ruff check) +
+#     format (ruff format --check) + types (mypy) + tests (pytest). Run it
+#     before pushing with `act -j quality`.
+#   * schedule (weekly)   -> job `weekly-release` (scaffold): the
+#     arch x init x desktop matrix. Gated with `if: false` because it needs a
+#     self-hosted Gentoo runner (OVERVIEW phase 4) -- it documents the intent
+#     without breaking CI.
 name: release
 
 on:
   push:
   pull_request:
   schedule:
-    # toda semana, domingo 00:00 UTC — apenas para o scaffold gated abaixo.
+    # every Sunday, 00:00 UTC -- only for the gated scaffold below.
     - cron: "0 0 * * 0"
 
 jobs:
@@ -56,10 +56,10 @@ jobs:
 
   weekly-release:
     name: weekly-release (scaffold — needs Gentoo runner)
-    # GATED: este job NAO roda. A matriz arch x init x desktop exige um runner
-    # self-hosted Gentoo (stage3 + emerge + systemd-nspawn), indisponivel nos
-    # runners hospedados do GitHub. Habilitar na OVERVIEW fase 4 trocando o
-    # `if` por uma condicao real (ex.: github.event_name == 'schedule').
+    # GATED: this job does NOT run. The arch x init x desktop matrix needs a
+    # self-hosted Gentoo runner (stage3 + emerge + systemd-nspawn), which
+    # GitHub-hosted runners do not provide. Enable it in OVERVIEW phase 4 by
+    # replacing the `if` with a real condition (e.g. github.event_name == 'schedule').
     if: false
     runs-on: ubuntu-latest
     strategy:
@@ -74,7 +74,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      # TODO(phase-4): seed stage3 -> shidashi factory -> shidashi assemble -> publicar
-      #   o artefato da combinacao arch x desktop x init da matriz.
+      # TODO(phase-4): seed stage3 -> shidashi factory -> shidashi assemble -> publish
+      #   the artifact of the matrix's arch x desktop x init combination.
       - name: Placeholder
-        run: echo "scaffold — habilitar na fase 4 num runner Gentoo"
+        run: echo "scaffold -- enable in phase 4 on a Gentoo runner"

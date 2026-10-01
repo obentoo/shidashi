@@ -1,9 +1,9 @@
-"""Testes da geração de specs do Catalyst (shidashi.catalyst) — story 005.
+"""Tests for Catalyst spec generation (shidashi.catalyst) — story 005.
 
-A função ``render_specs`` é **pura** (receita + stamps → texto dos specs), no
-mesmo idioma de ``seed.stage3_url``: unit-testada em CI não-Gentoo, sem I/O nem
-relógio/aleatoriedade. A invocação privilegiada do ``catalyst`` (Task 4) é
-isolada noutro helper e testada por monkeypatch.
+The ``render_specs`` function is **pure** (recipe + stamps → spec text), in the
+same idiom as ``seed.stage3_url``: unit-tested on non-Gentoo CI, with no I/O and no
+clock/randomness. The privileged invocation of ``catalyst`` (Task 4) is
+isolated in another helper and tested via monkeypatch.
 """
 
 import hashlib
@@ -29,7 +29,7 @@ def _resolved(*, arch: str = "znver5", seed_source: str = "catalyst") -> Resolve
 
 
 def _parse(spec_text: str) -> dict[str, str]:
-    """Parseia o texto 'chave: valor' de um spec do catalyst num dict."""
+    """Parse the 'key: value' text of a catalyst spec into a dict."""
     out: dict[str, str] = {}
     for line in spec_text.splitlines():
         line = line.strip()
@@ -59,7 +59,7 @@ _KW: _SpecKW = {
 
 
 def test_render_specs_three_targets_in_order() -> None:
-    # R2.1 — um spec por target, na ordem stage1 → stage2 → stage3.
+    # R2.1 — one spec per target, in the order stage1 → stage2 → stage3.
     specs = render_specs(_resolved(), **_KW)
     assert list(specs.keys()) == ["stage1", "stage2", "stage3"]
     assert _parse(specs["stage1"])["target"] == "stage1"
@@ -68,13 +68,13 @@ def test_render_specs_three_targets_in_order() -> None:
 
 
 def test_render_specs_stage1_source_is_bootstrap_seed() -> None:
-    # R2.2 — stage1.source_subpath aponta para a semente genérica de bootstrap.
+    # R2.2 — stage1.source_subpath points to the generic bootstrap seed.
     specs = render_specs(_resolved(), **_KW)
     assert _parse(specs["stage1"])["source_subpath"] == _KW["seed_subpath"]
 
 
 def test_render_specs_source_subpath_chained() -> None:
-    # R2.3 — stage2 parte do stage1 construído; stage3 parte do stage2.
+    # R2.3 — stage2 starts from the built stage1; stage3 starts from stage2.
     specs = render_specs(_resolved(arch="znver5"), **_KW)
     stamp = _KW["version_stamp"]
     assert _parse(specs["stage2"])["source_subpath"] == f"shidashi/znver5/stage1-amd64-{stamp}"
@@ -82,14 +82,14 @@ def test_render_specs_source_subpath_chained() -> None:
 
 
 def test_render_specs_portage_confdir_is_arch_portage_dir() -> None:
-    # R2.4 — portage_confdir reusa o diretório portage do arch.
+    # R2.4 — portage_confdir reuses the arch's portage directory.
     specs = render_specs(_resolved(), **_KW)
     for target in ("stage1", "stage2", "stage3"):
         assert _parse(specs[target])["portage_confdir"] == str(_CONFDIR)
 
 
 def test_render_specs_rel_type_and_subarch() -> None:
-    # R2.5 — rel_type derivado do arch; subarch no baseline genérico amd64.
+    # R2.5 — rel_type derived from the arch; subarch at the generic amd64 baseline.
     specs = render_specs(_resolved(arch="znver5"), **_KW)
     parsed = _parse(specs["stage3"])
     assert parsed["rel_type"] == "shidashi/znver5"
@@ -97,13 +97,13 @@ def test_render_specs_rel_type_and_subarch() -> None:
 
 
 def test_render_specs_is_deterministic() -> None:
-    # R2.6 — mesmas entradas → texto byte-idêntico (sem relógio/aleatoriedade).
+    # R2.6 — same inputs → byte-identical text (no clock/randomness).
     a = render_specs(_resolved(), **_KW)
     b = render_specs(_resolved(), **_KW)
     assert a == b
 
 
-# --- build_stage3_catalyst (R3.1–R3.5, R4.1, R4.3; integração monkeypatch) ----
+# --- build_stage3_catalyst (R3.1–R3.5, R4.1, R4.3; monkeypatch integration) ----
 
 _SEED = Path("/var/cache/shidashi/stage3-amd64-nomultilib-systemd-20260524T170105Z.tar.xz")
 _STAMP = "20260524T170105Z"
@@ -134,7 +134,7 @@ def _stage3_name() -> str:
 def test_build_invokes_catalyst_per_stage_in_order(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # R3.2 — um catalyst por spec, na ordem stage1→2→3; R3.5/R4.1 retorna tarball+sha.
+    # R3.2 — one catalyst per spec, in the order stage1→2→3; R3.5/R4.1 returns tarball+sha.
     monkeypatch.setattr(shutil, "which", lambda _: "/usr/bin/catalyst")
     out = tmp_path / "out"
     calls: list[str] = []
@@ -154,7 +154,7 @@ def test_build_invokes_catalyst_per_stage_in_order(
 def test_build_missing_catalyst_raises_before_building(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # R3.3 — catalyst ausente no PATH falha ANTES de qualquer build.
+    # R3.3 — catalyst missing from PATH fails BEFORE any build.
     monkeypatch.setattr(shutil, "which", lambda _: None)
     calls: list[str] = []
     monkeypatch.setattr(cat, "_run_catalyst", lambda s: calls.append(s.name))
@@ -164,7 +164,7 @@ def test_build_missing_catalyst_raises_before_building(
 
 
 def test_build_aborts_at_failing_stage(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    # R3.4 — saída não-zero aborta no stage que falhou; stage3 não é tentado.
+    # R3.4 — a non-zero exit aborts at the failing stage; stage3 is not attempted.
     monkeypatch.setattr(shutil, "which", lambda _: "/usr/bin/catalyst")
     seen: list[str] = []
 
@@ -180,17 +180,17 @@ def test_build_aborts_at_failing_stage(tmp_path: Path, monkeypatch: pytest.Monke
 
 
 def test_build_missing_output_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    # catalyst "rodou" mas não produziu o stage3 esperado → erro claro.
+    # catalyst "ran" but did not produce the expected stage3 → clear error.
     monkeypatch.setattr(shutil, "which", lambda _: "/usr/bin/catalyst")
     monkeypatch.setattr(cat, "_run_catalyst", lambda s: None)
-    with pytest.raises(CatalystError, match="não produziu|stage3"):
+    with pytest.raises(CatalystError, match="did not produce|stage3"):
         build_stage3_catalyst(_resolved(), _SEED, **_build_kw(tmp_path))
 
 
 def test_build_cached_sha512_mismatch_raises(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # R4.3 — tarball reusado cujo sha512 difere do pin persistido → falha.
+    # R4.3 — a reused tarball whose sha512 differs from the persisted pin → failure.
     monkeypatch.setattr(shutil, "which", lambda _: "/usr/bin/catalyst")
     out = tmp_path / "out"
 

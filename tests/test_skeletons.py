@@ -1,17 +1,17 @@
-"""Testes UNITÁRIOS dos módulos da Fase 0/1 quanto a import-safety e esqueletos (R9.1–R9.3).
+"""UNIT tests of the Phase 0/1 modules for import-safety and skeletons (R9.1–R9.3).
 
-Os módulos ``container``/``factory``/``phases``/``assembler``/``image`` já foram
-implementados (stories 002/003 e Fase 1) e seus testes vivem nos respectivos
-``tests/test_*.py``; ``binhost`` permanece esqueleto (Fase 2), com todo corpo
-levantando ``NotImplementedError``. Aqui prova-se que:
+The ``container``/``factory``/``phases``/``assembler``/``image`` modules have already been
+implemented (stories 002/003 and Phase 1) and their tests live in the respective
+``tests/test_*.py``; ``binhost`` remains a skeleton (Phase 2), with every body
+raising ``NotImplementedError``. Here we prove that:
 
-* cada módulo importa sem exceção (e o pacote permanece import-safe — nenhum
-  deles aciona ``shidashi.portage_api`` no import);
-* cada ponto de entrada **ainda esqueleto** (``binhost``), quando invocado,
-  levanta ``NotImplementedError`` — não ``pass``/``None``.
+* every module imports without an exception (and the package stays import-safe — none
+  of them triggers ``shidashi.portage_api`` on import);
+* every entry point **still a skeleton** (``binhost``), when invoked,
+  raises ``NotImplementedError`` — not ``pass``/``None``.
 
-As entradas são iteradas explicitamente (uma tabela por módulo), sem
-introspecção mágica, para que um esquecimento (corpo com ``pass``) falhe aqui.
+The entries are iterated explicitly (one table per module), without
+magic introspection, so that an oversight (a body with ``pass``) fails here.
 """
 
 import importlib
@@ -32,7 +32,7 @@ _SKELETON_MODULES = (
 )
 
 
-# --- cada módulo-esqueleto importa sem exceção (R9.1) ------------------------
+# --- every skeleton module imports without an exception (R9.1) --------------
 
 
 @pytest.mark.parametrize("module_name", _SKELETON_MODULES)
@@ -42,19 +42,19 @@ def test_skeleton_module_imports(module_name: str) -> None:
 
 
 def test_importing_skeletons_does_not_trigger_portage_api() -> None:
-    # remove portage_api e re-importa cada esqueleto: nenhum pode puxá-lo (R9.1)
+    # remove portage_api and re-import every skeleton: none may pull it in (R9.1)
     sys.modules.pop("shidashi.portage_api", None)
     for name in _SKELETON_MODULES:
         importlib.import_module(name)
     assert "shidashi.portage_api" not in sys.modules
 
 
-# --- cada ponto de entrada público levanta NotImplementedError (R9.2/R9.3) ---
+# --- every public entry point raises NotImplementedError (R9.2/R9.3) --------
 #
-# Cada item: (rótulo legível, fábrica-de-callable, args posicionais). A
-# fábrica-de-callable é resolvida na hora do teste (lazy) para que a coleção do
-# pytest não importe os módulos antecipadamente. ``_P`` é um Path sentinela
-# (nenhum corpo chega a tocá-lo: todos levantam antes).
+# Each item: (readable label, callable factory, positional args). The
+# callable factory is resolved at test time (lazily) so that pytest collection
+# does not import the modules ahead of time. ``_P`` is a sentinel Path
+# (no body ever touches it: they all raise first).
 
 _P = Path("/nonexistent")
 
@@ -62,10 +62,10 @@ _P = Path("/nonexistent")
 def _entry_points() -> Iterator[tuple[str, Callable[[], Any]]]:
     binhost = importlib.import_module("shidashi.binhost")
 
-    # NB: container/factory/phases (stories 002/003) e assembler/image (Fase 1)
-    # deixaram de ser stubs; seus testes vivem em tests/test_container.py,
-    # tests/test_factory.py, tests/test_phases.py, tests/test_assembler.py e
-    # tests/test_image.py. Por isso não figuram mais nos entry-points abaixo.
+    # NB: container/factory/phases (stories 002/003) and assembler/image (Phase 1)
+    # are no longer stubs; their tests live in tests/test_container.py,
+    # tests/test_factory.py, tests/test_phases.py, tests/test_assembler.py and
+    # tests/test_image.py. That is why they no longer appear in the entry points below.
 
     yield "binhost.BinpkgRef", lambda: binhost.BinpkgRef("cat/pkg-1", (), 1)
     yield "binhost.Binhost", lambda: binhost.Binhost(_P, "v3")

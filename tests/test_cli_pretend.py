@@ -1,19 +1,19 @@
-"""UNIT/INTEGRAÇÃO leve da CLI ``shidashi pretend`` via Typer ``CliRunner``.
+"""Light UNIT/INTEGRATION tests of the ``shidashi pretend`` CLI via Typer's ``CliRunner``.
 
-Determinista no host CI: o orquestrador ``pretend_resolve`` (privilegiado) é
-monkeypatched no namespace de ``shidashi.cli`` para devolver um ``PretendReport``
-sintético ou levantar ``SeedError``/``ResolveError`` — exercitamos só a CAMADA
-CLI: renderização pretty/json, mapeamento de exit codes, propagação de flags e
-a presença de ``pretend`` no ``--help``. Nenhum stage3/nspawn é tocado (espelha
-o padrão de ``tests/test_cli.py`` + os erros monkeypatched do design §Testing
-Strategy).
+Deterministic on the CI host: the (privileged) ``pretend_resolve`` orchestrator is
+monkeypatched in the ``shidashi.cli`` namespace to return a synthetic
+``PretendReport`` or raise ``SeedError``/``ResolveError`` — we exercise only the
+CLI LAYER: pretty/json rendering, exit code mapping, flag propagation and the
+presence of ``pretend`` in ``--help``. No stage3/nspawn is touched (mirrors the
+pattern of ``tests/test_cli.py`` + the monkeypatched errors of the design's
+§Testing Strategy).
 
-Contrato (design.md §cli, refinado): ``pretend(arch, flavor, init,
---format=[pretty|json], --no-download, --keep)``; captura SeedError/ResolveError/
-UnknownAxisError/RecipeConflictError → mensagem amigável + Exit(1); sucesso exit
-0; ``pretend`` listado em ``shidashi --help``. Quando ``ResolveError`` carrega
-``raw_output`` (hard-conflict), a CLI imprime esse raw_output no stderr e sai 1.
-``--keep`` propaga ``keep=True`` ao orquestrador.
+Contract (design.md §cli, refined): ``pretend(arch, flavor, init,
+--format=[pretty|json], --no-download, --keep)``; catches SeedError/ResolveError/
+UnknownAxisError/RecipeConflictError → friendly message + Exit(1); success exit
+0; ``pretend`` listed in ``shidashi --help``. When ``ResolveError`` carries
+``raw_output`` (hard-conflict), the CLI prints that raw_output to stderr and exits 1.
+``--keep`` propagates ``keep=True`` to the orchestrator.
 """
 
 import json
@@ -47,7 +47,7 @@ def _fake_report() -> PretendReport:
     )
 
 
-# --- --help lista pretend (R1.4) ---------------------------------------------
+# --- --help lists pretend (R1.4) ---------------------------------------------
 
 
 def test_help_lists_pretend() -> None:
@@ -62,18 +62,18 @@ def test_pretend_help_shows_work_dir() -> None:
     assert "--work-dir" in result.stdout
 
 
-# --- sucesso exit 0 + pretty (R1.1) ------------------------------------------
+# --- success exit 0 + pretty (R1.1) ------------------------------------------
 
 
 def test_pretend_success_pretty_exit0(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(cli, "pretend_resolve", lambda *a, **k: _fake_report())
     result = runner.invoke(app, ["pretend", "v3", "minimal", "systemd"])
     assert result.exit_code == 0, result.stdout
-    # a lista de pacotes resolvida aparece na saída
+    # the resolved package list shows up in the output
     assert "libsdl2" in result.stdout
 
 
-# --- --format json determinístico (R1.2, R1.3) -------------------------------
+# --- deterministic --format json (R1.2, R1.3) --------------------------------
 
 
 def test_pretend_json_emits_packages_and_breaks(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -82,12 +82,12 @@ def test_pretend_json_emits_packages_and_breaks(monkeypatch: pytest.MonkeyPatch)
     assert result.exit_code == 0, result.stdout
     data = json.loads(result.stdout)
     assert "media-libs/libsdl2-2.30.5" in data["packages"]
-    # as sugestões de quebra de ciclo estão no objeto JSON
+    # the cycle-break suggestions are in the JSON object
     assert data["cycle_breaks"][0]["flag"] == "pipewire"
     assert data["cycle_breaks"][0]["enable"] is False
 
 
-# --- mapeamento de erros → exit 1 amigável (R5.4, R6.1) ----------------------
+# --- error mapping → friendly exit 1 (R5.4, R6.1) ----------------------------
 
 
 def test_pretend_resolve_error_exit1_friendly(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -115,11 +115,11 @@ def test_pretend_seed_error_exit1_friendly(monkeypatch: pytest.MonkeyPatch) -> N
     assert "sha256" in combined.lower()
 
 
-# --- hard-conflict: ResolveError.raw_output vai pro stderr + exit 1 (R5.4) ---
+# --- hard-conflict: ResolveError.raw_output goes to stderr + exit 1 (R5.4) ---
 #
-# Contrato refinado §Error Handling: numa resolução genuinamente insatisfatível
-# (hard conflict, não um ciclo) o orquestrador levanta ResolveError carregando o
-# raw_output do emerge; a CLI imprime esse raw_output no stderr e sai 1.
+# Refined contract §Error Handling: on a genuinely unsatisfiable resolution
+# (a hard conflict, not a cycle) the orchestrator raises ResolveError carrying the
+# emerge raw_output; the CLI prints that raw_output to stderr and exits 1.
 
 _CONFLICT_RAW = (
     "!!! Multiple package instances within a single package slot have been\n"
@@ -140,11 +140,11 @@ def test_pretend_hard_conflict_prints_raw_output_to_stderr(
     assert result.exception is None or isinstance(result.exception, SystemExit)
     stderr = result.stderr or ""
     assert "Traceback" not in (result.stdout + stderr)
-    # o raw_output do emerge é surfaceado no stderr (curadoria do conflito)
+    # the emerge raw_output is surfaced on stderr (curation of the conflict)
     assert "...emerge conflict..." in stderr
 
 
-# --- --no-download e --keep são aceitos e propagados (R2.6) ------------------
+# --- --no-download and --keep are accepted and propagated (R2.6) ------------
 
 
 def test_pretend_accepts_no_download_and_keep(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -157,7 +157,7 @@ def test_pretend_accepts_no_download_and_keep(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setattr(cli, "pretend_resolve", _spy)
     result = runner.invoke(app, ["pretend", "v3", "minimal", "systemd", "--no-download", "--keep"])
     assert result.exit_code == 0, result.stdout
-    # --no-download propaga download=False ao orquestrador
+    # --no-download propagates download=False to the orchestrator
     assert captured.get("download") is False
-    # --keep propaga keep=True ao orquestrador (rootfs scratch preservado)
+    # --keep propagates keep=True to the orchestrator (scratch rootfs kept)
     assert captured.get("keep") is True

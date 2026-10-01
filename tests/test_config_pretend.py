@@ -1,17 +1,17 @@
-"""UNIT (R6.2) — novos helpers de caminho de shidashi.config para o fluxo pretend.
+"""UNIT (R6.2) — new shidashi.config path helpers for the pretend flow.
 
-Contrato (design.md §config): ``scratch_dir()`` (env ``SHIDASHI_SCRATCH``, default
-``/var/tmp/shidashi-pretend``), ``cache_dir()`` (env ``SHIDASHI_CACHE``) e
-``seeds_dir()`` (env ``SHIDASHI_SEEDS_DIR``). Cada helper lê a variável de ambiente
-*por chamada* (mesmo padrão de ``variants_dir``), então forçamos o estado via
-``monkeypatch`` — nunca dependemos do host. Comportamento observável apenas:
-override quando a env existe, default quando ausente.
+Contract (design.md §config): ``scratch_dir()`` (env ``SHIDASHI_SCRATCH``, default
+``/var/tmp/shidashi-pretend``), ``cache_dir()`` (env ``SHIDASHI_CACHE``) and
+``seeds_dir()`` (env ``SHIDASHI_SEEDS_DIR``). Each helper reads the environment
+variable *per call* (same pattern as ``variants_dir``), so we force the state via
+``monkeypatch`` — we never depend on the host. Observable behavior only:
+the override when the env var exists, the default when it is absent.
 
-Story 003 (2.1): novos helpers de build/cache — ``build_root()``
+Story 003 (2.1): new build/cache helpers — ``build_root()``
 (``scratch_dir()/build``), ``pkgdir(arch)`` (``cache_dir()/binpkgs/<arch>``,
-particionado por arch), ``ccache_dir()``/``sccache_dir()``/``distdir()``
-(``cache_dir()/{ccache,sccache,distfiles}``) e ``fork_points_dir()``
-(``cache_dir()/fork-points``). Todos lêem env por chamada.
+partitioned per arch), ``ccache_dir()``/``sccache_dir()``/``distdir()``
+(``cache_dir()/{ccache,sccache,distfiles}``) and ``fork_points_dir()``
+(``cache_dir()/fork-points``). All read the env per call.
 """
 
 from pathlib import Path
@@ -42,7 +42,7 @@ def test_cache_dir_honors_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -
 
 
 def test_cache_dir_read_per_call(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    # a env é lida a cada chamada (sem estado global cacheado)
+    # the env is read on every call (no cached global state)
     monkeypatch.setenv("SHIDASHI_CACHE", str(tmp_path / "a"))
     assert config.cache_dir() == tmp_path / "a"
     monkeypatch.setenv("SHIDASHI_CACHE", str(tmp_path / "b"))
@@ -58,7 +58,7 @@ def test_seeds_dir_honors_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -
 
 
 def test_seeds_dir_returns_path(monkeypatch: pytest.MonkeyPatch) -> None:
-    # sem env, ainda assim devolve um Path (default relativo ao repo)
+    # without the env, it still returns a Path (default relative to the repo)
     monkeypatch.delenv("SHIDASHI_SEEDS_DIR", raising=False)
     assert isinstance(config.seeds_dir(), Path)
 

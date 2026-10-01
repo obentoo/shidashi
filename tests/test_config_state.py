@@ -1,13 +1,13 @@
-"""UNIT (story 004 1.3) — helpers de caminho de estado de build em shidashi.config.
+"""UNIT (story 004 1.3) — build-state path helpers in shidashi.config.
 
-Contrato (design.md §config): ``state_dir()`` = ``cache_dir()/state`` (sobrevive
-ao teardown do rootfs; env-overridable POR CHAMADA via ``SHIDASHI_CACHE``, mesmo
-padrão dos helpers existentes); ``build_state_path(recipe)`` =
-``state_dir()/<arch>-<flavor>-<init>.json`` (espelha a chave de rootfs/fork-point).
-Comportamento observável apenas; nunca dependemos do host.
+Contract (design.md §config): ``state_dir()`` = ``cache_dir()/state`` (survives
+the rootfs teardown; env-overridable PER CALL via ``SHIDASHI_CACHE``, same
+pattern as the existing helpers); ``build_state_path(recipe)`` =
+``state_dir()/<arch>-<flavor>-<init>.json`` (mirrors the rootfs/fork-point key).
+Observable behavior only; we never depend on the host.
 
-``state_dir``/``build_state_path`` são importados de forma tolerante (``getattr``):
-enquanto não existem, ficam Red por ``AttributeError`` no uso (Red esperado).
+``state_dir``/``build_state_path`` are imported tolerantly (``getattr``):
+while they do not exist, they go Red with ``AttributeError`` on use (expected Red).
 """
 
 from pathlib import Path

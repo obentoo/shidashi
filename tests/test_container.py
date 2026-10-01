@@ -1,19 +1,19 @@
-"""UNIT + INTEGRAÇÃO de shidashi.container.
+"""UNIT + INTEGRATION of shidashi.container.
 
-UNIT (R4.4): ``_nspawn_argv`` é puro e inspecionável — testado sem root.
-Contrato (design.md §container): ``_nspawn_argv(rootfs, argv, *, binds, binds_rw,
-ephemeral)`` devolve ``["systemd-nspawn", "--directory", str(rootfs),
-(opcional "--ephemeral"), ("--bind-ro=src:dst" por bind RO), ("--bind=src:dst"
-por bind RW, após os RO), "--", *argv]``. ``CommandResult(exit_code, stdout,
-stderr)`` é um value object.
+UNIT (R4.4): ``_nspawn_argv`` is pure and inspectable — tested without root.
+Contract (design.md §container): ``_nspawn_argv(rootfs, argv, *, binds, binds_rw,
+ephemeral)`` returns ``["systemd-nspawn", "--directory", str(rootfs),
+(optional "--ephemeral"), ("--bind-ro=src:dst" per RO bind), ("--bind=src:dst"
+per RW bind, after the RO ones), "--", *argv]``. ``CommandResult(exit_code, stdout,
+stderr)`` is a value object.
 
-Story 003 (2.2): ``_nspawn_argv`` ganha ``binds_rw`` (emitindo ``--bind=`` após
-``--bind-ro=``); ``Container`` aceita e propaga ``binds_rw``. Back-compat
-(R7.3): sem ``binds_rw`` o argv é idêntico ao da story 002.
+Story 003 (2.2): ``_nspawn_argv`` gains ``binds_rw`` (emitting ``--bind=`` after
+``--bind-ro=``); ``Container`` accepts and propagates ``binds_rw``. Back-compat
+(R7.3): without ``binds_rw`` the argv is identical to story 002's.
 
-INTEGRAÇÃO (R4.1-R4.3): exige root + systemd-nspawn + um rootfs seedado — gated
-com ``@pytest.mark.skipif``. Em CI não-Gentoo / sandbox não-root estes testes
-PULAM (Red diferido ao host privilegiado real).
+INTEGRATION (R4.1-R4.3): requires root + systemd-nspawn + a seeded rootfs — gated
+with ``@pytest.mark.skipif``. On non-Gentoo CI / a non-root sandbox these tests
+SKIP (Red deferred to the real privileged host).
 """
 
 import os
@@ -27,7 +27,7 @@ from shidashi.container import CommandResult, Container, _nspawn_argv, _nspawn_s
 
 _NEEDS_ROOT = os.geteuid() != 0 or shutil.which("systemd-nspawn") is None
 _skip_privileged = pytest.mark.skipif(
-    _NEEDS_ROOT, reason="exige root + systemd-nspawn (host Gentoo privilegiado)"
+    _NEEDS_ROOT, reason="requires root + systemd-nspawn (privileged Gentoo host)"
 )
 
 
@@ -41,7 +41,7 @@ def test_command_result_carries_fields() -> None:
     assert r.stderr == ""
 
 
-# --- _nspawn_argv puro (R4.4) ------------------------------------------------
+# --- pure _nspawn_argv (R4.4) ------------------------------------------------
 
 
 def test_nspawn_argv_basic_shape() -> None:
@@ -54,7 +54,7 @@ def test_nspawn_argv_basic_shape() -> None:
     assert argv[0] == "systemd-nspawn"
     assert "--directory" in argv
     assert argv[argv.index("--directory") + 1] == "/scratch/rootfs"
-    # o argv do comando vem após o separador "--"
+    # the command's argv comes after the "--" separator
     sep = argv.index("--")
     assert argv[sep + 1 :] == ["emerge", "--pretend"]
 
@@ -114,7 +114,7 @@ def test_nspawn_argv_emits_ro_binds() -> None:
     binds = [(Path("/var/db/repos/gentoo"), Path("/var/db/repos/gentoo"))]
     argv = _nspawn_argv(Path("/r"), ["sh"], binds=binds, ephemeral=False)
     assert "--bind-ro=/var/db/repos/gentoo:/var/db/repos/gentoo" in argv
-    # binds vêm antes do separador de comando
+    # binds come before the command separator
     assert argv.index("--bind-ro=/var/db/repos/gentoo:/var/db/repos/gentoo") < argv.index("--")
 
 
@@ -122,7 +122,7 @@ def test_nspawn_argv_emits_ro_binds() -> None:
 
 
 def test_nspawn_argv_no_rw_binds_is_story002_backcompat() -> None:
-    # sem binds_rw o argv é EXATAMENTE o da story 002 (default vazio)
+    # without binds_rw the argv is EXACTLY story 002's (empty default)
     ro = [(Path("/var/db/repos/gentoo"), Path("/var/db/repos/gentoo"))]
     legacy = _nspawn_argv(Path("/r"), ["emerge", "@world"], binds=ro, ephemeral=False)
     explicit_empty = _nspawn_argv(
@@ -140,7 +140,7 @@ def test_nspawn_argv_emits_rw_binds_after_ro() -> None:
     rw_flag = "--bind=/var/cache/shidashi/binpkgs/v3:/var/cache/binpkgs"
     assert ro_flag in argv
     assert rw_flag in argv
-    # RW vem DEPOIS do RO e ANTES do separador de comando
+    # RW comes AFTER RO and BEFORE the command separator
     assert argv.index(ro_flag) < argv.index(rw_flag) < argv.index("--")
 
 
@@ -160,7 +160,7 @@ def test_nspawn_argv_rw_binds_in_declared_order() -> None:
 
 
 def test_container_threads_binds_rw_into_command() -> None:
-    # Container guarda binds_rw e o repassa ao _nspawn_argv ao montar o comando.
+    # Container stores binds_rw and passes it on to _nspawn_argv when building the command.
     rw = [(Path("/h/pkgdir"), Path("/var/cache/binpkgs"))]
     container = Container(Path("/r"), ephemeral=False, binds_rw=rw)
     assert tuple(container.binds_rw) == tuple(rw)
@@ -174,7 +174,7 @@ def test_container_threads_binds_rw_into_command() -> None:
     assert "--bind=/h/pkgdir:/var/cache/binpkgs" in cmd
 
 
-# --- INTEGRAÇÃO host-gated (R4.1-R4.3) ---------------------------------------
+# --- host-gated INTEGRATION (R4.1-R4.3) ---------------------------------------
 
 
 @_skip_privileged

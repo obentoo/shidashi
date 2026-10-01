@@ -1,16 +1,16 @@
-"""CLI do Shidashi (Typer) — caminho ``recipe`` livre de Portage (R7.3).
+"""Shidashi's CLI (Typer) -- a Portage-free ``recipe`` path (R7.3).
 
-Expõe o app raiz ``shidashi`` com o subgrupo ``recipe`` (``show``/``validate``/
-``list``), os comandos reais ``pretend`` (resolução), ``factory`` (build de
-binpkgs) e ``assemble`` (montagem de ISO) e o stub ``release`` (Fase 4). Os
-comandos ``recipe`` apenas resolvem caminhos (``shidashi.config``), carregam e
-fundem fragmentos (``shidashi.recipe``) e renderizam — sem jamais importar ou
-acionar ``shidashi.portage_api``.
+Exposes the root ``shidashi`` app with the ``recipe`` subgroup (``show``/``validate``/
+``list``), the real commands ``pretend`` (resolution), ``factory`` (binpkg
+build) and ``assemble`` (ISO assembly) and the ``release`` stub (Phase 4). The
+``recipe`` commands only resolve paths (``shidashi.config``), load and merge
+fragments (``shidashi.recipe``) and render -- without ever importing or
+invoking ``shidashi.portage_api``.
 
-Mapeamento de erros (R5.2/R6.3): ``UnknownAxisError`` (de ``config``) e
-``RecipeChainError`` (de ``merge``/``load_chain``) são capturados, exibidos como mensagem
-amigável e convertidos em ``typer.Exit(1)`` — nenhum traceback escapa ao
-usuário.
+Error mapping (R5.2/R6.3): ``UnknownAxisError`` (from ``config``) and
+``RecipeChainError`` (from ``merge``/``load_chain``) are caught, shown as a friendly
+message and turned into ``typer.Exit(1)`` -- no traceback ever reaches the
+user.
 """
 
 import contextlib
@@ -49,8 +49,8 @@ from shidashi.state import PhaseDiff
 from shidashi.system import ConfigurationError
 from shidashi.world import StaleWorldError
 
-app = typer.Typer(no_args_is_help=True, help="Shidashi — catering de builds e ISOs do bentoo.")
-recipe_app = typer.Typer(no_args_is_help=True, help="Inspeciona e valida receitas resolvidas.")
+app = typer.Typer(no_args_is_help=True, help="Shidashi — catering of bentoo builds and ISOs.")
+recipe_app = typer.Typer(no_args_is_help=True, help="Inspect and validate resolved recipes.")
 app.add_typer(recipe_app, name="recipe")
 vm_app = typer.Typer(
     no_args_is_help=True,
@@ -62,31 +62,31 @@ app.add_typer(kits_app, name="kits")
 
 _err_console = Console(stderr=True)
 
-# Referência ao ``sys.stdin`` do processo, capturada na importação do módulo. A
-# guarda de TTY do ``--step`` (R2.6) consulta ``_PROCESS_STDIN.isatty()`` em vez de
-# ``sys.stdin.isatty()`` direto porque o ``CliRunner`` do Typer/Click *substitui*
-# ``sys.stdin`` por um wrapper não-tty durante ``invoke`` — uma leitura direta nunca
-# refletiria o ``isatty`` real (nem o monkeypatch dos testes). O stdin verdadeiro do
-# processo não é trocado, então esta referência preserva o estado de TTY observável.
+# Reference to the process's ``sys.stdin``, captured at module import. The
+# ``--step`` TTY guard (R2.6) checks ``_PROCESS_STDIN.isatty()`` instead of
+# ``sys.stdin.isatty()`` directly because Typer/Click's ``CliRunner`` *replaces*
+# ``sys.stdin`` with a non-tty wrapper during ``invoke`` -- a direct read would never
+# reflect the real ``isatty`` (nor the tests' monkeypatch). The process's true stdin
+# is not swapped, so this reference keeps the observable TTY state.
 _PROCESS_STDIN = sys.stdin
 
 
 def _stdin_isatty() -> bool:
-    """Diz se o stdin do processo é um terminal interativo (R2.6).
+    """Tell whether the process's stdin is an interactive terminal (R2.6).
 
-    Consulta a referência de stdin capturada na importação (:data:`_PROCESS_STDIN`),
-    contornando a troca de ``sys.stdin`` que o ``CliRunner`` faz durante ``invoke``;
-    fora de um runner de teste é exatamente o ``sys.stdin`` do processo.
+    Checks the stdin reference captured at import (:data:`_PROCESS_STDIN`),
+    sidestepping the ``sys.stdin`` swap that ``CliRunner`` does during ``invoke``;
+    outside a test runner it is exactly the process's ``sys.stdin``.
     """
     return _PROCESS_STDIN.isatty()
 
 
 class OutputFormat(StrEnum):
-    """Formatos de saída de ``recipe show``.
+    """Output formats of ``recipe show``.
 
-    Nota: design.md §8 esboça ``class OutputFormat(str, Enum)``; usamos
-    :class:`enum.StrEnum` (equivalente: membros são ``str``) para satisfazer o
-    lint ``UP042`` da config ruff do projeto. Comportamento idêntico.
+    Note: design.md §8 sketches ``class OutputFormat(str, Enum)``; we use
+    :class:`enum.StrEnum` (equivalent: members are ``str``) to satisfy the
+    ``UP042`` lint of the project's ruff config. Identical behavior.
     """
 
     yaml = "yaml"
@@ -95,16 +95,16 @@ class OutputFormat(StrEnum):
 
 
 def _apply_work_dir(work_dir: Path | None) -> None:
-    """Aponta cache e scratch sob um único ``--work-dir`` (precedência sobre env).
+    """Point cache and scratch under a single ``--work-dir`` (takes precedence over env).
 
-    Quando ``work_dir`` é dado, deriva ``cache → <work_dir>/cache`` e
-    ``scratch → <work_dir>/scratch`` e ``runs → <work_dir>/runs`` setando
-    ``SHIDASHI_CACHE``/``SHIDASHI_SCRATCH``/``SHIDASHI_RUNS`` no
-    ambiente do processo. :mod:`shidashi.config` lê essas variáveis a cada chamada,
-    então toda a árvore de caminhos (binpkgs, stage3, state, fork-points, rootfs
-    de build) passa a viver sob ``work_dir`` — sem alterar a lógica de paths. A
-    flag vence a env var do usuário (sobrescreve-a); ``None`` é um no-op (mantém
-    env/default). ``--pkgdir`` continua tendo precedência sobre o ``cache`` daqui.
+    When ``work_dir`` is given, derive ``cache → <work_dir>/cache``,
+    ``scratch → <work_dir>/scratch`` and ``runs → <work_dir>/runs`` by setting
+    ``SHIDASHI_CACHE``/``SHIDASHI_SCRATCH``/``SHIDASHI_RUNS`` in the
+    process environment. :mod:`shidashi.config` reads these variables on every call,
+    so the whole path tree (binpkgs, stage3, state, fork points, build rootfs)
+    then lives under ``work_dir`` -- without changing the path logic. The flag
+    beats the user's env var (overrides it); ``None`` is a no-op (keeps
+    env/default). ``--pkgdir`` still takes precedence over the ``cache`` set here.
     """
     if work_dir is None:
         return
@@ -114,23 +114,23 @@ def _apply_work_dir(work_dir: Path | None) -> None:
 
 
 def _resolve(arch: str, flavor: str, init: str) -> ResolvedRecipe:
-    """Carrega a cadeia de estágios do alvo e funde-a (D24).
+    """Load the target's chain of stages and merge it (D24).
 
-    ``flavor`` é o ALVO: ``minimal`` ou um flavor. Delega a
-    :func:`shidashi.config.load_recipe`, que levanta
-    :class:`~shidashi.config.UnknownAxisError` para nomes desconhecidos e
-    :class:`~shidashi.recipe.RecipeChainError` para uma cadeia quebrada. Não
-    captura nada: os chamadores mapeiam as duas.
+    ``flavor`` is the TARGET: ``minimal`` or a flavor. Delegates to
+    :func:`shidashi.config.load_recipe`, which raises
+    :class:`~shidashi.config.UnknownAxisError` for unknown names and
+    :class:`~shidashi.recipe.RecipeChainError` for a broken chain. It catches
+    nothing: the callers map both.
     """
     return config.load_recipe(arch, flavor, init)
 
 
 def _render_pretty(resolved: ResolvedRecipe) -> None:
-    """Renderiza a receita resolvida como tabelas ``rich`` (significativo num TTY)."""
+    """Render the resolved recipe as ``rich`` tables (meaningful on a TTY)."""
     console = Console()
     summary = Table(title=f"recipe {resolved.arch} × {resolved.flavor} × {resolved.init}")
-    summary.add_column("campo", style="bold cyan")
-    summary.add_column("valor")
+    summary.add_column("field", style="bold cyan")
+    summary.add_column("value")
     summary.add_row("profile", resolved.profile)
     summary.add_row("tier", str(resolved.tier))
     summary.add_row("runnable_on_build_host", str(resolved.runnable_on_build_host))
@@ -168,14 +168,14 @@ def recipe_show(
     init: str,
     output_format: Annotated[
         OutputFormat,
-        typer.Option("--format", help="Formato de saída."),
+        typer.Option("--format", help="Output format."),
     ] = OutputFormat.yaml,
 ) -> None:
-    """Resolve, funde e renderiza a receita (R4.1–R4.3)."""
+    """Resolve, merge and render the recipe (R4.1–R4.3)."""
     try:
         resolved = _resolve(arch, flavor, init)
     except (config.UnknownAxisError, RecipeChainError) as err:
-        _err_console.print(f"[bold red]erro:[/bold red] {escape(str(err))}")
+        _err_console.print(f"[bold red]error:[/bold red] {escape(str(err))}")
         raise typer.Exit(1) from err
 
     if output_format is OutputFormat.yaml:
@@ -188,21 +188,21 @@ def recipe_show(
 
 @recipe_app.command("validate")
 def recipe_validate(arch: str, flavor: str, init: str) -> None:
-    """Valida load+merge: sucesso → exit 0; conflito/eixo desconhecido → exit 1 (R5.1/R5.2)."""
+    """Validate load+merge: success → exit 0; conflict/unknown axis → exit 1 (R5.1/R5.2)."""
     try:
         _resolve(arch, flavor, init)
     except (config.UnknownAxisError, RecipeChainError) as err:
-        _err_console.print(f"[bold red]inválida:[/bold red] {escape(str(err))}")
+        _err_console.print(f"[bold red]invalid:[/bold red] {escape(str(err))}")
         raise typer.Exit(1) from err
-    typer.echo(f"válida: {arch} × {flavor} × {init}")
+    typer.echo(f"valid: {arch} × {flavor} × {init}")
 
 
 @recipe_app.command("list")
 def recipe_list() -> None:
-    """Lista o que se pode pedir: arches, ALVOS (imagens entregues) e inits (R6.1).
+    """List what can be asked for: arches, TARGETS (delivered images) and inits (R6.1).
 
-    O alvo é ``minimal`` ou um flavor (D24) -- não o eixo ``flavor``, onde o
-    ``minimal`` já não mora. A base é implícita: toda cadeia começa nela.
+    The target is ``minimal`` or a flavor (D24) -- not the ``flavor`` axis, where
+    ``minimal`` no longer lives. The base is implicit: every chain starts there.
     """
     rows = (
         ("arch", config.available_names("arch")),
@@ -210,28 +210,28 @@ def recipe_list() -> None:
         ("init", config.available_names("init")),
     )
     for label, names in rows:
-        typer.echo(f"{label}: {', '.join(names) if names else '(nenhum)'}")
+        typer.echo(f"{label}: {', '.join(names) if names else '(none)'}")
 
 
 def _render_report_pretty(report: PretendReport) -> None:
-    """Renderiza o :class:`PretendReport` como tabelas ``rich`` (R1.1)."""
+    """Render the :class:`PretendReport` as ``rich`` tables (R1.1)."""
     console = Console()
     pkgs = Table(title=f"pretend {report.arch} × {report.flavor} × {report.init}")
-    pkgs.add_column("pacotes resolvidos", style="bold cyan")
+    pkgs.add_column("resolved packages", style="bold cyan")
     for atom in report.packages:
         pkgs.add_row(atom)
     if not report.packages:
         pkgs.add_row("—")
     console.print(pkgs)
 
-    cycles = Table(title="sugestões de quebra de ciclo (use_break)")
+    cycles = Table(title="cycle-break suggestions (use_break)")
     cycles.add_column("atom", style="bold")
     cycles.add_column("USE")
     for cb in report.cycle_breaks:
         sign = "+" if cb.enable else "-"
         cycles.add_row(cb.atom, f"{sign}{cb.flag}")
     if not report.cycle_breaks:
-        cycles.add_row("—", "(sem ciclos)")
+        cycles.add_row("—", "(no cycles)")
     console.print(cycles)
 
 
@@ -242,24 +242,24 @@ def pretend(
     init: str,
     output_format: Annotated[
         OutputFormat,
-        typer.Option("--format", help="Formato de saída: pretty (default) ou json."),
+        typer.Option("--format", help="Output format: pretty (default) or json."),
     ] = OutputFormat.pretty,
     no_download: Annotated[
-        bool, typer.Option("--no-download", help="Usar só o cache; nunca tocar a rede.")
+        bool, typer.Option("--no-download", help="Use the cache only; never touch the network.")
     ] = False,
     keep: Annotated[
-        bool, typer.Option("--keep", help="Preservar o rootfs de scratch após o run.")
+        bool, typer.Option("--keep", help="Keep the scratch rootfs after the run.")
     ] = False,
     work_dir: Annotated[
         Path | None,
-        typer.Option("--work-dir", help="Raiz de trabalho (cache+scratch sob <DIR>)."),
+        typer.Option("--work-dir", help="Work root (cache+scratch under <DIR>)."),
     ] = None,
 ) -> None:
-    """Resolve a receita contra a árvore real via ``emerge --pretend`` (R1.1–R1.4).
+    """Resolve the recipe against the real tree via ``emerge --pretend`` (R1.1–R1.4).
 
-    Sucesso (mesmo com ciclos reportados) → lista de pacotes + sugestões e exit 0.
-    Erros conhecidos → mensagem amigável + exit 1, sem traceback. Num hard-conflict
-    (``ResolveError`` com ``raw_output``) a saída crua do emerge vai para stderr.
+    Success (even with reported cycles) → package list + suggestions and exit 0.
+    Known errors → friendly message + exit 1, no traceback. On a hard-conflict
+    (``ResolveError`` with ``raw_output``) the raw emerge output goes to stderr.
     """
     _apply_work_dir(work_dir)
     try:
@@ -267,7 +267,7 @@ def pretend(
     except (SeedError, ResolveError, config.UnknownAxisError, RecipeChainError) as err:
         if isinstance(err, ResolveError) and err.raw_output:
             _err_console.print(err.raw_output, markup=False, highlight=False)
-        _err_console.print(f"[bold red]erro:[/bold red] {escape(str(err))}")
+        _err_console.print(f"[bold red]error:[/bold red] {escape(str(err))}")
         raise typer.Exit(1) from err
 
     if output_format is OutputFormat.json:
@@ -315,7 +315,7 @@ def _audited(command: str, resolved: ResolvedRecipe, **inputs: object) -> Genera
         )
         recorder = cm.__enter__()
     except OSError as err:
-        _err_console.print(f"[yellow]aviso:[/yellow] audit trail disabled: {escape(str(err))}")
+        _err_console.print(f"[yellow]warning:[/yellow] audit trail disabled: {escape(str(err))}")
         yield audit.current()
         return
     try:
@@ -339,15 +339,15 @@ def _generation_pkgdir(arch: str, init: str) -> Path:
 
 
 def _render_factory_pretty(result: FactoryResult, arch: str, flavor: str, init: str) -> None:
-    """Renderiza o :class:`FactoryResult` como tabelas ``rich`` (R1.1)."""
+    """Render the :class:`FactoryResult` as ``rich`` tables (R1.1)."""
     console = Console()
     summary = Table(title=f"factory {arch} × {flavor} × {init}")
-    summary.add_column("campo", style="bold cyan")
-    summary.add_column("valor")
+    summary.add_column("field", style="bold cyan")
+    summary.add_column("value")
     summary.add_row("pkgdir", str(result.pkgdir))
     summary.add_row("phases", " → ".join(result.phases) or "—")
     fork = str(result.fork_point) if result.fork_point is not None else "—"
-    reuse = "reusado" if result.fork_point_reused else "criado"
+    reuse = "reused" if result.fork_point_reused else "created"
     summary.add_row("fork_point", f"{fork} ({reuse})")
     if result.bootstrap is not None:
         b = result.bootstrap
@@ -361,8 +361,10 @@ def _render_factory_pretty(result: FactoryResult, arch: str, flavor: str, init: 
 
     summary_reuse = len(result.reused_atoms)
     if summary_reuse:
-        console.print(f"[green]{summary_reuse}[/green] pacotes instalados dos binpkgs da geração")
-    atoms = Table(title="átomos construídos")
+        console.print(
+            f"[green]{summary_reuse}[/green] packages installed from the generation's binpkgs"
+        )
+    atoms = Table(title="built atoms")
     atoms.add_column("built_atoms", style="green")
     for atom in result.built_atoms:
         atoms.add_row(atom)
@@ -380,15 +382,15 @@ def _render_factory_pretty(result: FactoryResult, arch: str, flavor: str, init: 
 
 
 def _render_phase_diff(diff: PhaseDiff, console: Console) -> None:
-    """Renderiza um :class:`~shidashi.state.PhaseDiff` como tabela ``rich`` (R2.2/R4.1).
+    """Render a :class:`~shidashi.state.PhaseDiff` as a ``rich`` table (R2.2/R4.1).
 
-    Mostra o nome da fase, a contagem de átomos construídos e — quando não vazios
-    — os ``unexpected_rebuilds``, as ``use_changes`` e os ``blockers``. Usada tanto
-    no checkpoint interativo (Task 7) quanto no relatório final por-fase.
+    Shows the phase name, the count of built atoms and -- when not empty --
+    the ``unexpected_rebuilds``, the ``use_changes`` and the ``blockers``. Used both
+    in the interactive checkpoint (Task 7) and in the final per-phase report.
     """
-    table = Table(title=f"fase {diff.phase}")
-    table.add_column("campo", style="bold cyan")
-    table.add_column("valor")
+    table = Table(title=f"phase {diff.phase}")
+    table.add_column("field", style="bold cyan")
+    table.add_column("value")
     table.add_row("built", str(len(diff.built)))
     table.add_row("unexpected_rebuilds", "\n".join(diff.unexpected_rebuilds) or "—")
     table.add_row("use_changes", " ".join(diff.use_changes) or "—")
@@ -399,19 +401,19 @@ def _render_phase_diff(diff: PhaseDiff, console: Console) -> None:
 def _render_factory_stepwise_pretty(
     result: FactoryResult, arch: str, flavor: str, init: str
 ) -> None:
-    """Renderiza o relatório final do build stepwise (R1.x/R2.x).
+    """Render the final report of the stepwise build (R1.x/R2.x).
 
-    Reusa :func:`_render_factory_pretty` (pkgdir/fases/fork-point/átomos/settle) e
-    complementa com o ``stopped_at`` (o rótulo onde parou, ou ``completed`` quando
-    ``None``) e os diffs por fase de ``phase_diffs``. O caminho de stop limpo
-    imprime o valor de ``stopped_at`` (ex.: ``minimal``) em stdout.
+    Reuses :func:`_render_factory_pretty` (pkgdir/phases/fork point/atoms/settle) and
+    adds the ``stopped_at`` (the label where it stopped, or ``completed`` when
+    ``None``) and the per-phase diffs from ``phase_diffs``. The clean stop path
+    prints the value of ``stopped_at`` (e.g. ``minimal``) to stdout.
     """
     _render_factory_pretty(result, arch, flavor, init)
     console = Console()
     label = result.stopped_at if result.stopped_at is not None else "completed"
     status = Table(title="stepwise")
-    status.add_column("campo", style="bold cyan")
-    status.add_column("valor")
+    status.add_column("field", style="bold cyan")
+    status.add_column("value")
     status.add_row("stopped_at", label)
     status.add_row("completed_phases", " → ".join(result.completed_phases) or "—")
     console.print(status)
@@ -420,27 +422,27 @@ def _render_factory_stepwise_pretty(
 
 
 def _prompt_choice(prompt: str, choices: list[str], default: str) -> str:
-    """Pergunta uma escolha entre ``choices`` via ``rich`` (default em não-resposta).
+    """Ask for a choice among ``choices`` via ``rich`` (the default on no answer).
 
-    Wrapper fino sobre :meth:`rich.prompt.Prompt.ask` — restringe a entrada a
-    ``choices`` e devolve o default quando o usuário só aperta Enter. Isolado para
-    manter os callbacks interativos (checkpoint/falha) curtos e testáveis.
+    Thin wrapper over :meth:`rich.prompt.Prompt.ask` -- restricts the input to
+    ``choices`` and returns the default when the user just presses Enter. Kept apart
+    so that the interactive callbacks (checkpoint/failure) stay short and testable.
     """
     return Prompt.ask(prompt, choices=choices, default=default)
 
 
 def _on_checkpoint(phase: str, diff: PhaseDiff) -> CheckpointDecision:
-    """Checkpoint pós-fase: renderiza o diff e pergunta continuar/parar/shell (R2.2/R2.3).
+    """Post-phase checkpoint: render the diff and ask continue/stop/shell (R2.2/R2.3).
 
-    Mostra o :class:`~shidashi.state.PhaseDiff` da fase e mapeia a escolha do usuário
-    em :class:`~shidashi.factory.CheckpointDecision`: ``c`` → ``CONTINUE`` (segue),
-    ``s`` → ``STOP`` (interrompe sem settle), ``sh`` → ``SHELL`` (a camada de build
-    abre o shell e re-apresenta o MESMO checkpoint).
+    Shows the phase's :class:`~shidashi.state.PhaseDiff` and maps the user's choice
+    to :class:`~shidashi.factory.CheckpointDecision`: ``c`` → ``CONTINUE`` (go on),
+    ``s`` → ``STOP`` (stop without settle), ``sh`` → ``SHELL`` (the build layer
+    opens the shell and presents the SAME checkpoint again).
     """
     console = Console()
-    console.print(f"[bold green]checkpoint[/bold green] após a fase {phase}")
+    console.print(f"[bold green]checkpoint[/bold green] after phase {phase}")
     _render_phase_diff(diff, console)
-    choice = _prompt_choice("continuar/parar/shell", ["c", "s", "sh"], "c")
+    choice = _prompt_choice("continue/stop/shell", ["c", "s", "sh"], "c")
     if choice == "s":
         return CheckpointDecision.STOP
     if choice == "sh":
@@ -449,17 +451,17 @@ def _on_checkpoint(phase: str, diff: PhaseDiff) -> CheckpointDecision:
 
 
 def _on_failure(phase: str, err: Exception) -> FailureDecision:
-    """Callback de falha de fase: imprime a saída do emerge e pergunta retry/abort (R3.1–R3.3).
+    """Phase failure callback: print the emerge output and ask retry/abort (R3.1–R3.3).
 
-    ``err`` é a :class:`~shidashi.factory.FactoryError` da fase; imprime ``err.phase`` e
-    ``err.output`` (a saída crua do ``emerge``) em stderr e mapeia a escolha em
-    :class:`~shidashi.factory.FailureDecision`: ``r`` → ``RETRY`` (re-roda a mesma fase),
-    qualquer outra → ``ABORT``. A abertura do shell de falha é da camada de
-    build/driver — o callback apenas imprime e pergunta (R3.4: nunca pula a fase).
+    ``err`` is the phase's :class:`~shidashi.factory.FactoryError`; prints ``err.phase`` and
+    ``err.output`` (the raw ``emerge`` output) to stderr and maps the choice to
+    :class:`~shidashi.factory.FailureDecision`: ``r`` → ``RETRY`` (re-runs the same phase),
+    anything else → ``ABORT``. Opening the failure shell belongs to the build/driver
+    layer -- the callback only prints and asks (R3.4: it never skips the phase).
     """
     failing = getattr(err, "phase", None) or phase
     output = getattr(err, "output", "")
-    _err_console.print(f"[bold red]falha na fase[/bold red] {failing}: {escape(str(err))}")
+    _err_console.print(f"[bold red]phase failed[/bold red] {failing}: {escape(str(err))}")
     if output:
         _err_console.print(output, markup=False, highlight=False)
     choice = _prompt_choice("retry/abort", ["r", "a"], "a")
@@ -475,46 +477,48 @@ def factory(
     init: str,
     output_format: Annotated[
         OutputFormat,
-        typer.Option("--format", help="Formato de saída: pretty (default) ou json."),
+        typer.Option("--format", help="Output format: pretty (default) or json."),
     ] = OutputFormat.pretty,
     emptytree: Annotated[
         bool,
         typer.Option(
             "--emptytree/--no-emptytree",
-            help="Reconstruir a árvore inteira (--emptytree, default) ou reaproveitar binpkgs.",
+            help="Rebuild the whole tree (--emptytree, default) or reuse binpkgs.",
         ),
     ] = True,
     pkgdir_opt: Annotated[
         Path | None,
-        typer.Option("--pkgdir", help="PKGDIR host-side de saída (default: por arch)."),
+        typer.Option("--pkgdir", help="Host-side output PKGDIR (default: per arch)."),
     ] = None,
     keep: Annotated[
-        bool, typer.Option("--keep", help="Preservar o rootfs de scratch após o build.")
+        bool, typer.Option("--keep", help="Keep the scratch rootfs after the build.")
     ] = False,
     no_download: Annotated[
-        bool, typer.Option("--no-download", help="Usar só o cache; nunca tocar a rede.")
+        bool, typer.Option("--no-download", help="Use the cache only; never touch the network.")
     ] = False,
     step: Annotated[
         bool,
-        typer.Option("--step", help="Build interativo: pausa num checkpoint após cada fase."),
+        typer.Option("--step", help="Interactive build: pause at a checkpoint after each phase."),
     ] = False,
     until: Annotated[
         str | None,
-        typer.Option("--until", help="Para após a fase nomeada (seed + fases da receita)."),
+        typer.Option("--until", help="Stop after the named phase (seed + the recipe's phases)."),
     ] = None,
     reset: Annotated[
         bool,
-        typer.Option("--reset", help="Descarta o estado/rootfs persistido e recomeça do zero."),
+        typer.Option(
+            "--reset", help="Discard the persisted state/rootfs and start over from scratch."
+        ),
     ] = False,
     force_resume: Annotated[
         bool,
-        typer.Option("--force-resume", help="Retoma um estado obsoleto sem recomeçar."),
+        typer.Option("--force-resume", help="Resume a stale state without starting over."),
     ] = False,
     work_dir: Annotated[
         Path | None,
         typer.Option(
             "--work-dir",
-            help="Raiz de trabalho: cache+scratch sob <DIR> (vence SHIDASHI_CACHE/_SCRATCH).",
+            help="Work root: cache+scratch under <DIR> (beats SHIDASHI_CACHE/_SCRATCH).",
         ),
     ] = None,
     jobs: Annotated[
@@ -541,16 +545,16 @@ def factory(
         ),
     ] = False,
 ) -> None:
-    """Constrói os binpkgs (stage4) da receita num container nspawn (R1.1–R1.5/R8.x).
+    """Build the recipe's binpkgs (stage4) in an nspawn container (R1.1–R1.5/R8.x).
 
-    Sem ``--step``/``--until``/``--reset`` roda o one-shot da story 003 (R8.2);
-    qualquer um deles roteia para o build passo-a-passo resumível (``--step`` o
-    torna interativo, com checkpoints e prompts de falha). Sucesso → relatório de
-    fases/átomos/fork-point (+ ``stopped_at``/diffs no stepwise) + exit 0. Erros
-    conhecidos (``FactoryError``/``StaleStateError``/``SeedError``/``ResolveError``/
-    eixo desconhecido/conflito de receita/``--until`` inválido), incluindo a guarda
-    de root, viram mensagem amigável + exit 1, sem traceback; uma ``FactoryError``
-    imprime a fase que falhou e a ``output`` do emerge.
+    Without ``--step``/``--until``/``--reset`` it runs story 003's one-shot (R8.2);
+    any of them routes to the resumable step-by-step build (``--step`` makes it
+    interactive, with checkpoints and failure prompts). Success → report of
+    phases/atoms/fork point (+ ``stopped_at``/diffs in stepwise) + exit 0. Known
+    errors (``FactoryError``/``StaleStateError``/``SeedError``/``ResolveError``/
+    unknown axis/recipe conflict/invalid ``--until``), including the root guard,
+    become a friendly message + exit 1, no traceback; a ``FactoryError`` prints
+    the phase that failed and the emerge ``output``.
     """
     _apply_work_dir(work_dir)
     if jobs is not None:
@@ -558,30 +562,30 @@ def factory(
     try:
         resolved = _resolve(arch, flavor, init)
     except (config.UnknownAxisError, RecipeChainError) as err:
-        _err_console.print(f"[bold red]erro:[/bold red] {escape(str(err))}")
+        _err_console.print(f"[bold red]error:[/bold red] {escape(str(err))}")
         raise typer.Exit(1) from err
 
     try:
         pkgdir = pkgdir_opt if pkgdir_opt is not None else _generation_pkgdir(arch, init)
     except SeedError as err:
-        _err_console.print(f"[bold red]erro:[/bold red] {escape(str(err))}")
+        _err_console.print(f"[bold red]error:[/bold red] {escape(str(err))}")
         raise typer.Exit(1) from err
 
     if stop_after is not None and stop_after not in resolved.stages:
         _err_console.print(
-            f"[bold red]erro:[/bold red] --stop-after {stop_after!r} is not a stage of "
+            f"[bold red]error:[/bold red] --stop-after {stop_after!r} is not a stage of "
             f"{arch}×{flavor}×{init}; stages: {' → '.join(resolved.stages)}"
         )
         raise typer.Exit(1)
     if stop_after is not None and (update or step or until is not None or reset or force_resume):
         _err_console.print(
-            "[bold red]erro:[/bold red] --stop-after belongs to a normal build; it does not "
+            "[bold red]error:[/bold red] --stop-after belongs to a normal build; it does not "
             "combine with --update/--step/--until/--reset/--force-resume"
         )
         raise typer.Exit(1)
     if update and (step or until is not None or reset or force_resume):
         _err_console.print(
-            "[bold red]erro:[/bold red] --update updates a built image in one run; it "
+            "[bold red]error:[/bold red] --update updates a built image in one run; it "
             "does not combine with --step/--until/--reset/--force-resume"
         )
         raise typer.Exit(1)
@@ -604,14 +608,14 @@ def factory(
 
     if step and not _stdin_isatty():
         _err_console.print(
-            "[bold red]erro:[/bold red] --step exige um terminal interativo (TTY); "
-            "para runs não-interativos use --until <fase> ou retome com --reset/--force-resume"
+            "[bold red]error:[/bold red] --step requires an interactive terminal (TTY); "
+            "for non-interactive runs use --until <phase> or resume with --reset/--force-resume"
         )
         raise typer.Exit(1)
     if step and output_format is OutputFormat.json:
         _err_console.print(
-            "[bold red]erro:[/bold red] --step (checkpoints interativos) é incompatível "
-            "com --format json; use o formato pretty (default)"
+            "[bold red]error:[/bold red] --step (interactive checkpoints) is incompatible "
+            "with --format json; use the pretty format (default)"
         )
         raise typer.Exit(1)
 
@@ -645,7 +649,7 @@ def _run_factory_oneshot(
     update: bool = False,
     stop_after: str | None = None,
 ) -> None:
-    """Caminho one-shot da story 003 — comportamento byte-a-byte inalterado (R8.2).
+    """Story 003's one-shot path -- behavior unchanged byte for byte (R8.2).
 
     With ``update`` it runs :meth:`Factory.update` instead of a build (D26).
     """
@@ -668,17 +672,17 @@ def _run_factory_oneshot(
     except FactoryError as err:
         if err.phase:
             _err_console.print(
-                f"[bold red]falha na fase[/bold red] {escape(str(err.phase))}: {escape(str(err))}"
+                f"[bold red]phase failed[/bold red] {escape(str(err.phase))}: {escape(str(err))}"
             )
         else:
-            _err_console.print(f"[bold red]erro:[/bold red] {escape(str(err))}")
+            _err_console.print(f"[bold red]error:[/bold red] {escape(str(err))}")
         if err.output:
             _err_console.print(err.output, markup=False, highlight=False)
         raise typer.Exit(1) from err
     except (SeedError, ResolveError, config.UnknownAxisError, RecipeChainError) as err:
         if isinstance(err, ResolveError) and err.raw_output:
             _err_console.print(err.raw_output, markup=False, highlight=False)
-        _err_console.print(f"[bold red]erro:[/bold red] {escape(str(err))}")
+        _err_console.print(f"[bold red]error:[/bold red] {escape(str(err))}")
         raise typer.Exit(1) from err
 
     if output_format is OutputFormat.json:
@@ -702,22 +706,22 @@ def _run_factory_stepwise(
     reset: bool,
     force_resume: bool,
 ) -> None:
-    """Caminho stepwise/resumível (R1.x/R2.x/R3.x/R6.3).
+    """Stepwise/resumable path (R1.x/R2.x/R3.x/R6.3).
 
-    Constrói os callbacks interativos só quando ``--step``; mapeia
-    ``StaleStateError`` (antes do ``FactoryError`` genérico) para o prompt/diagnóstico
-    de estado obsoleto (R6.3), ``ValueError`` (``--until`` inválido) e
-    ``FactoryError`` (abort/falha de build) para exit 1 amigável.
+    Builds the interactive callbacks only with ``--step``; maps
+    ``StaleStateError`` (before the generic ``FactoryError``) to the stale-state
+    prompt/diagnosis (R6.3), and ``ValueError`` (invalid ``--until``) and
+    ``FactoryError`` (abort/build failure) to a friendly exit 1.
     """
     factory_obj = Factory(resolved, pkgdir)
     on_checkpoint = _on_checkpoint if step else None
     on_failure = _on_failure if step else None
 
-    # Laço de no máximo duas iterações: a 1ª invocação e, se ela levantar
-    # StaleStateError e o usuário escolher reset/proceed num TTY, a re-invocação com
-    # a flag resolvida. Manter a re-invocação DENTRO do mesmo try garante que uma
-    # falha de build/`--until` inválido depois do reset também mapeie para exit 1
-    # amigável (R3.3/R1.5) — nunca um traceback.
+    # A loop of at most two iterations: the 1st invocation and, if it raises
+    # StaleStateError and the user picks reset/proceed on a TTY, the re-invocation with
+    # the resolved flag. Keeping the re-invocation INSIDE the same try ensures that a
+    # build failure/invalid `--until` after the reset also maps to a friendly exit 1
+    # (R3.3/R1.5) -- never a traceback.
     while True:
         try:
             with _audited(
@@ -744,23 +748,23 @@ def _run_factory_stepwise(
             reset, force_resume = _resolve_stale_state(err)
             continue
         except ValueError as err:
-            _err_console.print(f"[bold red]erro:[/bold red] {escape(str(err))}")
+            _err_console.print(f"[bold red]error:[/bold red] {escape(str(err))}")
             raise typer.Exit(1) from err
         except FactoryError as err:
             if err.phase:
                 _err_console.print(
-                    f"[bold red]falha na fase[/bold red] "
+                    f"[bold red]phase failed[/bold red] "
                     f"{escape(str(err.phase))}: {escape(str(err))}"
                 )
             else:
-                _err_console.print(f"[bold red]erro:[/bold red] {escape(str(err))}")
+                _err_console.print(f"[bold red]error:[/bold red] {escape(str(err))}")
             if err.output:
                 _err_console.print(err.output, markup=False, highlight=False)
             raise typer.Exit(1) from err
         except (SeedError, ResolveError, config.UnknownAxisError, RecipeChainError) as err:
             if isinstance(err, ResolveError) and err.raw_output:
                 _err_console.print(err.raw_output, markup=False, highlight=False)
-            _err_console.print(f"[bold red]erro:[/bold red] {escape(str(err))}")
+            _err_console.print(f"[bold red]error:[/bold red] {escape(str(err))}")
             raise typer.Exit(1) from err
 
     if output_format is OutputFormat.json:
@@ -781,7 +785,7 @@ def _invoke_stepwise(
     on_checkpoint: object,
     on_failure: object,
 ) -> FactoryResult:
-    """Chama :meth:`Factory.build_stepwise` com a assinatura keyword-only da Task 6."""
+    """Call :meth:`Factory.build_stepwise` with Task 6's keyword-only signature."""
     return factory_obj.build_stepwise(
         until=until,
         interactive=interactive,
@@ -795,19 +799,19 @@ def _invoke_stepwise(
 
 
 def _resolve_stale_state(err: StaleStateError) -> tuple[bool, bool]:
-    """Resolve um ``StaleStateError`` nas flags ``(reset, force_resume)`` de retomada (R6.3).
+    """Resolve a ``StaleStateError`` into the resume flags ``(reset, force_resume)`` (R6.3).
 
-    Sem TTY → exit 1 instruindo a passar ``--reset`` ou ``--force-resume`` (nunca
-    prossegue silenciosamente sobre estado obsoleto). Num TTY, pergunta
+    Without a TTY → exit 1 telling the user to pass ``--reset`` or ``--force-resume``
+    (it never proceeds silently over stale state). On a TTY, asks
     ``reset``/``proceed``/``cancel``: ``cancel`` → exit 1; ``reset`` → ``(True, False)``
-    (recomeça do zero); ``proceed`` → ``(False, True)`` (retoma assim mesmo). O
-    chamador re-invoca :meth:`Factory.build_stepwise` com as flags devolvidas.
+    (start over from scratch); ``proceed`` → ``(False, True)`` (resume anyway). The
+    caller re-invokes :meth:`Factory.build_stepwise` with the returned flags.
     """
-    _err_console.print(f"[bold yellow]estado obsoleto:[/bold yellow] {escape(str(err))}")
+    _err_console.print(f"[bold yellow]stale state:[/bold yellow] {escape(str(err))}")
     if not _stdin_isatty():
         _err_console.print(
-            "[bold red]erro:[/bold red] estado de build obsoleto; rode com --reset "
-            "(recomeça do zero) ou --force-resume (retoma assim mesmo)"
+            "[bold red]error:[/bold red] stale build state; run with --reset "
+            "(start over from scratch) or --force-resume (resume anyway)"
         )
         raise typer.Exit(1) from err
 
@@ -817,15 +821,15 @@ def _resolve_stale_state(err: StaleStateError) -> tuple[bool, bool]:
     return (choice == "reset", choice == "proceed")
 
 
-_STUB_MSG = "não implementado na Fase 0"
+_STUB_MSG = "not implemented in Phase 0"
 
 
 def _render_assemble_pretty(result: AssembleResult, arch: str, flavor: str, init: str) -> None:
     """The ``assemble`` result as a ``rich`` table: the ISOs, then every artifact."""
     console = Console()
     table = Table(title=f"ISO {arch} × {flavor} × {init} -- {result.name}")
-    table.add_column("campo", style="bold cyan")
-    table.add_column("valor")
+    table.add_column("field", style="bold cyan")
+    table.add_column("value")
     for iso in result.isos:
         table.add_row("iso", str(iso))
     for artifact in result.artifacts:
@@ -840,7 +844,7 @@ def assemble(
     init: str,
     output_format: Annotated[
         OutputFormat,
-        typer.Option("--format", help="Formato de saída: pretty (default) ou json."),
+        typer.Option("--format", help="Output format: pretty (default) or json."),
     ] = OutputFormat.pretty,
     output_dir: Annotated[
         Path,
@@ -873,20 +877,20 @@ def assemble(
     binhost_opt: Annotated[
         Path | None,
         typer.Option(
-            "--binhost", help="Binhost (publish-pool) host-side de saída (default: por arch)."
+            "--binhost", help="Host-side output binhost (publish-pool) (default: per arch)."
         ),
     ] = None,
     no_download: Annotated[
-        bool, typer.Option("--no-download", help="Usar só o cache; nunca tocar a rede.")
+        bool, typer.Option("--no-download", help="Use the cache only; never touch the network.")
     ] = False,
     keep: Annotated[
-        bool, typer.Option("--keep", help="Preservar o rootfs de scratch após a montagem.")
+        bool, typer.Option("--keep", help="Keep the scratch rootfs after the assembly.")
     ] = False,
     work_dir: Annotated[
         Path | None,
         typer.Option(
             "--work-dir",
-            help="Raiz de trabalho: cache+scratch sob <DIR> (vence SHIDASHI_CACHE/_SCRATCH).",
+            help="Work root: cache+scratch under <DIR> (beats SHIDASHI_CACHE/_SCRATCH).",
         ),
     ] = None,
     jobs: Annotated[
@@ -899,29 +903,29 @@ def assemble(
         ),
     ] = None,
 ) -> None:
-    """Monta a ISO live da receita a partir do binhost (OVERVIEW §7).
+    """Assemble the recipe's live ISO from the binhost (OVERVIEW §7).
 
-    Semeia um stage3, sobrepõe os layers da receita (USE final = a dos binpkgs,
-    §18.6), puxa a fatia do flavor com ``emerge --usepkgonly`` e produz a ISO
-    híbrida (squashfs + dracut ``dmsquash-live`` + grub-mkrescue). Sucesso →
-    caminho da ISO + exit 0. Erros conhecidos (guarda de root, kernel ausente,
-    eixo desconhecido/conflito de receita, seed/resolve, falha de emerge/dracut,
-    falha de squashfs/ISO) viram mensagem amigável + exit 1, sem traceback.
+    Seeds a stage3, overlays the recipe's layers (final USE = that of the binpkgs,
+    §18.6), pulls the flavor's slice with ``emerge --usepkgonly`` and produces the
+    hybrid ISO (squashfs + dracut ``dmsquash-live`` + grub-mkrescue). Success →
+    ISO path + exit 0. Known errors (root guard, missing kernel, unknown
+    axis/recipe conflict, seed/resolve, emerge/dracut failure, squashfs/ISO
+    failure) become a friendly message + exit 1, no traceback.
     """
     _apply_work_dir(work_dir)
     try:
         resolved = _resolve(arch, flavor, init)
     except (config.UnknownAxisError, RecipeChainError) as err:
-        _err_console.print(f"[bold red]erro:[/bold red] {escape(str(err))}")
+        _err_console.print(f"[bold red]error:[/bold red] {escape(str(err))}")
         raise typer.Exit(1) from err
 
     try:
         binhost = binhost_opt if binhost_opt is not None else _generation_pkgdir(arch, init)
     except SeedError as err:
-        _err_console.print(f"[bold red]erro:[/bold red] {escape(str(err))}")
+        _err_console.print(f"[bold red]error:[/bold red] {escape(str(err))}")
         raise typer.Exit(1) from err
     if compression not in ("zstd", "xz", "both"):
-        _err_console.print("[bold red]erro:[/bold red] --compression is zstd, xz or both")
+        _err_console.print("[bold red]error:[/bold red] --compression is zstd, xz or both")
         raise typer.Exit(1)
     compressions = ("zstd", "xz") if compression == "both" else (compression,)
 
@@ -960,11 +964,11 @@ def assemble(
     ) as err:
         if isinstance(err, ResolveError) and err.raw_output:
             _err_console.print(err.raw_output, markup=False, highlight=False)
-        _err_console.print(f"[bold red]erro:[/bold red] {escape(str(err))}")
+        _err_console.print(f"[bold red]error:[/bold red] {escape(str(err))}")
         raise typer.Exit(1) from err
     except subprocess.CalledProcessError as err:
         _err_console.print(
-            f"[bold red]falha de emerge/dracut na ISO[/bold red] (exit {err.returncode})"
+            f"[bold red]emerge/dracut failure in the ISO[/bold red] (exit {err.returncode})"
         )
         if err.stderr:
             _err_console.print(err.stderr, markup=False, highlight=False)
@@ -1068,7 +1072,7 @@ def build(
     if jobs is not None:
         os.environ["SHIDASHI_JOBS"] = str(jobs)
     if compression not in ("zstd", "xz", "both"):
-        _err_console.print("[bold red]erro:[/bold red] --compression is zstd, xz or both")
+        _err_console.print("[bold red]error:[/bold red] --compression is zstd, xz or both")
         raise typer.Exit(1)
     compressions = ("zstd", "xz") if compression == "both" else (compression,)
     wanted = (
@@ -1081,7 +1085,7 @@ def build(
         recipes = {t: _resolve(arch, t, init) for t in {*factory_targets, *iso_targets}}
         pkgdir = _generation_pkgdir(arch, init)
     except (typer.BadParameter, config.UnknownAxisError, RecipeChainError, SeedError) as err:
-        _err_console.print(f"[bold red]erro:[/bold red] {escape(str(err))}")
+        _err_console.print(f"[bold red]error:[/bold red] {escape(str(err))}")
         raise typer.Exit(1) from err
 
     results: list[AssembleResult] = []
@@ -1135,7 +1139,7 @@ def build(
                             )
     except FactoryError as err:
         where = f" {escape(str(err.phase))}" if err.phase else ""
-        _err_console.print(f"[bold red]falha na fase[/bold red]{where}: {escape(str(err))}")
+        _err_console.print(f"[bold red]phase failed[/bold red]{where}: {escape(str(err))}")
         if err.output:
             _err_console.print(err.output, markup=False, highlight=False)
         raise typer.Exit(1) from err
@@ -1147,10 +1151,10 @@ def build(
         ConfigurationError,
         StaleWorldError,
     ) as err:
-        _err_console.print(f"[bold red]erro:[/bold red] {escape(str(err))}")
+        _err_console.print(f"[bold red]error:[/bold red] {escape(str(err))}")
         raise typer.Exit(1) from err
     except subprocess.CalledProcessError as err:
-        _err_console.print(f"[bold red]falha de emerge/dracut[/bold red] (exit {err.returncode})")
+        _err_console.print(f"[bold red]emerge/dracut failure[/bold red] (exit {err.returncode})")
         raise typer.Exit(1) from err
 
     if trail.root is not None:
@@ -1236,7 +1240,7 @@ def _show_world(target: str, inits: list[str]) -> None:
             )
             kits = kit_view(recipe, optional=optional)
         except (ResolveError, RecipeFileError) as err:
-            _err_console.print(f"[bold red]erro:[/bold red] {err}")
+            _err_console.print(f"[bold red]error:[/bold red] {err}")
             raise typer.Exit(1) from err
         if i:
             typer.echo()
@@ -1290,7 +1294,7 @@ def world(
         images = config.stage_names()
         if target not in images or (init is not None and init not in inits):
             _err_console.print(
-                f"[bold red]erro:[/bold red] unknown image {target}"
+                f"[bold red]error:[/bold red] unknown image {target}"
                 f"{'/' + init if init else ''}; images: {', '.join(images)}; "
                 f"inits: {', '.join(inits)}"
             )
@@ -1305,14 +1309,14 @@ def world(
     try:
         recipes = _world_recipes()
     except (RecipeFileError, RecipeChainError) as err:
-        _err_console.print(f"[bold red]erro:[/bold red] {err}")
+        _err_console.print(f"[bold red]error:[/bold red] {err}")
         raise typer.Exit(1) from err
     for recipe in recipes:
         path = world_mod.world_file(recipe, config.variants_dir())
         try:
             text = world_mod.render(recipe)
         except ResolveError as err:
-            _err_console.print(f"[bold red]erro:[/bold red] {recipe.flavor}/{recipe.init}: {err}")
+            _err_console.print(f"[bold red]error:[/bold red] {recipe.flavor}/{recipe.init}: {err}")
             raise typer.Exit(1) from err
         current = path.read_text(encoding="utf-8") if path.is_file() else None
         rel = path.relative_to(config.variants_dir().parent)
@@ -1327,7 +1331,7 @@ def world(
             typer.echo(f"written {rel} ({len(world_mod.read(path))} packages)")
     if stale:
         _err_console.print(
-            f"[bold red]erro:[/bold red] {len(stale)} world file(s) out of date; "
+            f"[bold red]error:[/bold red] {len(stale)} world file(s) out of date; "
             "run `shidashi world` and commit the result"
         )
         raise typer.Exit(1)
@@ -1335,14 +1339,12 @@ def world(
 
 @app.command("release")
 def release(
-    arch: Annotated[str, typer.Argument(help="Eixo arch (ignorado no stub).")] = "",
-    flavor: Annotated[str, typer.Argument(help="Eixo flavor (ignorado no stub).")] = "",
-    init: Annotated[str, typer.Argument(help="Eixo init (ignorado no stub).")] = "",
-    all_variants: Annotated[
-        bool, typer.Option("--all", help="Liberar todas as variantes.")
-    ] = False,
+    arch: Annotated[str, typer.Argument(help="Arch axis (ignored by the stub).")] = "",
+    flavor: Annotated[str, typer.Argument(help="Flavor axis (ignored by the stub).")] = "",
+    init: Annotated[str, typer.Argument(help="Init axis (ignored by the stub).")] = "",
+    all_variants: Annotated[bool, typer.Option("--all", help="Release every variant.")] = False,
 ) -> None:
-    """Stub: publicação de release (não implementado na Fase 0) (R6.2)."""
+    """Stub: release publishing (not implemented in Phase 0) (R6.2)."""
     typer.echo(f"release: {_STUB_MSG}")
     raise typer.Exit(2)
 
@@ -1382,7 +1384,7 @@ def kits_check(
 
 
 def _vm_error(err: Exception) -> typer.Exit:
-    _err_console.print(f"[bold red]erro:[/bold red] {escape(str(err))}")
+    _err_console.print(f"[bold red]error:[/bold red] {escape(str(err))}")
     return typer.Exit(1)
 
 

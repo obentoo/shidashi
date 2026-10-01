@@ -1,17 +1,17 @@
-"""Aquisição verificada do stage3 do Shidashi (OVERVIEW §10/§11).
+"""Verified acquisition of Shidashi's stage3 (OVERVIEW §10/§11).
 
-Separa a lógica **pura** (parse do pointer pinado, montagem da URL do mirror,
-verificação de digest) da execução **privilegiada** (download, verificação GPG
-por shell-out a ``gpg``, extração preservando ownership). A lógica pura é
-unit-testada em CI não-Gentoo; o download/extração são exercidos pelos testes
-de integração host-gated.
+Separates the **pure** logic (parsing the pinned pointer, building the mirror URL,
+digest verification) from the **privileged** execution (download, GPG verification
+by shelling out to ``gpg``, extraction preserving ownership). The pure logic is
+unit-tested on non-Gentoo CI; download/extraction are exercised by the
+host-gated integration tests.
 
-Reprodutibilidade: o stage3 é pinado por ``seeds/stage3.toml`` (filename +
-sha512 por init) e verificado por SHA-512 **e** assinatura GPG do ``.DIGESTS``
-(cleartext-signed, assinatura PGP inline — o layout atual dos autobuilds da
-Gentoo, que não publica mais SHA-256 nem um ``.DIGESTS.asc`` separado) antes de
-qualquer extração. Usa apenas stdlib (``tomllib``/``urllib``/``hashlib``/
-GNU ``tar``) mais o ``gpg`` do host.
+Reproducibility: the stage3 is pinned by ``seeds/stage3.toml`` (filename +
+sha512 per init) and verified by SHA-512 **and** the GPG signature of the ``.DIGESTS``
+(cleartext-signed, inline PGP signature — the current layout of Gentoo's
+autobuilds, which no longer publishes SHA-256 nor a separate ``.DIGESTS.asc``) before
+any extraction. Uses only the stdlib (``tomllib``/``urllib``/``hashlib``/
+GNU ``tar``) plus the host's ``gpg``.
 """
 
 import hashlib
@@ -27,24 +27,24 @@ from pydantic import BaseModel, ConfigDict
 
 _STRICT = ConfigDict(frozen=True, extra="forbid")
 
-# Limite defensivo ao ler o pointer TOML (arquivo pequeno e checado-in).
+# Defensive limit when reading the TOML pointer (small, checked-in file).
 _MAX_POINTER_BYTES = 64 * 1024
 
 
 class SeedError(Exception):
-    """Falha ao adquirir/verificar um stage3 (R2.2/R2.4/R2.6).
+    """Failure to acquire/verify a stage3 (R2.2/R2.4/R2.6).
 
-    Levantada quando o init não tem entrada pinada, quando a verificação de
-    digest/assinatura falha, ou quando ``--no-download`` é usado sem cache.
+    Raised when the init has no pinned entry, when digest/signature
+    verification fails, or when ``--no-download`` is used without a cache.
     """
 
 
 class Stage3Pointer(BaseModel):
-    """Entrada pinada de um stage3 por init (R2.1).
+    """Pinned stage3 entry per init (R2.1).
 
-    Frozen pydantic v2 (``extra="forbid"``, idioma de ``recipe.py``). Carrega o
-    ``init`` resolvido, a ``base_url`` do mirror, o ``snapshot`` (diretório de
-    autobuild), o ``filename`` do tarball e seu ``sha512`` pinado.
+    Frozen pydantic v2 (``extra="forbid"``, the ``recipe.py`` idiom). Carries the
+    resolved ``init``, the mirror's ``base_url``, the ``snapshot`` (autobuild
+    directory), the tarball ``filename`` and its pinned ``sha512``.
     """
 
     model_config = _STRICT
@@ -56,37 +56,37 @@ class Stage3Pointer(BaseModel):
 
 
 def load_pointer(init: str, *, seeds_dir: Path) -> Stage3Pointer:
-    """Lê a entrada pinada de ``init`` em ``seeds/stage3.toml`` (R2.1/R2.2).
+    """Read the pinned entry for ``init`` from ``seeds/stage3.toml`` (R2.1/R2.2).
 
-    ``snapshot`` e ``base_url`` são chaves de topo compartilhadas; cada init é
-    uma tabela com ``filename`` + ``sha512``. Se ``init`` não tiver tabela,
-    levanta :class:`SeedError` nomeando o init e as entradas disponíveis.
+    ``snapshot`` and ``base_url`` are shared top-level keys; each init is
+    a table with ``filename`` + ``sha512``. If ``init`` has no table, it
+    raises :class:`SeedError` naming the init and the available entries.
     """
     toml_path = seeds_dir / "stage3.toml"
     try:
         raw = toml_path.read_bytes()
     except OSError as err:
-        raise SeedError(f"não foi possível ler {toml_path}: {err}") from err
+        raise SeedError(f"could not read {toml_path}: {err}") from err
     if len(raw) > _MAX_POINTER_BYTES:
-        raise SeedError(f"{toml_path} excede o tamanho esperado de pointer")
+        raise SeedError(f"{toml_path} exceeds the expected pointer size")
     data = tomllib.loads(raw.decode("utf-8"))
 
     snapshot = data.get("snapshot")
     base_url = data.get("base_url")
     if not isinstance(snapshot, str) or not isinstance(base_url, str):
-        raise SeedError(f"{toml_path} sem 'snapshot'/'base_url' de topo válidos")
+        raise SeedError(f"{toml_path} lacks valid top-level 'snapshot'/'base_url'")
 
-    # tabelas de init = todas as chaves cujo valor é um mapeamento
+    # init tables = every key whose value is a mapping
     inits = sorted(k for k, v in data.items() if isinstance(v, dict))
     entry = data.get(init)
     if not isinstance(entry, dict):
-        disponiveis = ", ".join(inits) if inits else "(nenhuma)"
-        raise SeedError(f"init {init!r} sem entrada em {toml_path}; disponíveis: {disponiveis}")
+        disponiveis = ", ".join(inits) if inits else "(none)"
+        raise SeedError(f"init {init!r} has no entry in {toml_path}; available: {disponiveis}")
 
     filename = entry.get("filename")
     sha512 = entry.get("sha512")
     if not isinstance(filename, str) or not isinstance(sha512, str):
-        raise SeedError(f"entrada {init!r} em {toml_path} sem 'filename'/'sha512'")
+        raise SeedError(f"entry {init!r} in {toml_path} lacks 'filename'/'sha512'")
 
     return Stage3Pointer(
         init=init,
@@ -98,20 +98,20 @@ def load_pointer(init: str, *, seeds_dir: Path) -> Stage3Pointer:
 
 
 def stage3_url(pointer: Stage3Pointer) -> str:
-    """Monta a URL do tarball no mirror (R2.1). Pura, sem barras duplicadas.
+    """Build the tarball URL on the mirror (R2.1). Pure, no doubled slashes.
 
-    ``<base_url>/<snapshot>/<filename>`` (o layout de autobuilds da Gentoo).
+    ``<base_url>/<snapshot>/<filename>`` (Gentoo's autobuild layout).
     """
     base = pointer.base_url.rstrip("/")
     return f"{base}/{pointer.snapshot}/{pointer.filename}"
 
 
 def verify_digest(tarball: Path, sha512: str) -> None:
-    """Compara o SHA-512 de ``tarball`` ao digest pinado (R2.3/R2.4). Pura.
+    """Compare the SHA-512 of ``tarball`` with the pinned digest (R2.3/R2.4). Pure.
 
-    Lê em blocos para não carregar o tarball inteiro em memória. Em divergência
-    levanta :class:`SeedError` nomeando o esperado e o obtido. SHA-512 é o digest
-    publicado (e assinado) pelos autobuilds atuais da Gentoo no ``.DIGESTS``.
+    Reads in chunks so the whole tarball is not loaded into memory. On mismatch it
+    raises :class:`SeedError` naming the expected and the actual value. SHA-512 is the digest
+    published (and signed) by Gentoo's current autobuilds in the ``.DIGESTS``.
     """
     h = hashlib.sha512()
     with tarball.open("rb") as fh:
@@ -119,27 +119,25 @@ def verify_digest(tarball: Path, sha512: str) -> None:
             h.update(chunk)
     actual = h.hexdigest()
     if actual != sha512:
-        raise SeedError(
-            f"sha512 divergente para {tarball.name}: esperado {sha512}, obtido {actual}"
-        )
+        raise SeedError(f"sha512 mismatch for {tarball.name}: expected {sha512}, got {actual}")
 
 
 def verify_signature(digests: Path) -> None:
-    """Verifica a assinatura GPG inline do ``.DIGESTS`` do stage3 (R2.3/R2.4).
+    """Verify the inline GPG signature of the stage3 ``.DIGESTS`` (R2.3/R2.4).
 
-    Os autobuilds atuais da Gentoo assinam o ``.DIGESTS`` em *cleartext* (PGP
-    SIGNED MESSAGE inline) — não há mais um ``.DIGESTS.asc`` separado. Logo a
-    verificação é ``gpg --verify <.DIGESTS>`` com **um único** argumento (o
-    arquivo cleartext-signed valida a si próprio; passar um segundo arquivo de
-    dados seria errado para esse formato). A confiança vem da chave de release da
-    Gentoo no keyring do host. Levanta :class:`SeedError` se o arquivo estiver
-    ausente, se o ``gpg`` não estiver disponível, ou se a verificação retornar
-    não-zero. Nunca ignora o código de retorno.
+    Gentoo's current autobuilds sign the ``.DIGESTS`` in *cleartext* (inline PGP
+    SIGNED MESSAGE) — there is no separate ``.DIGESTS.asc`` anymore. So the
+    verification is ``gpg --verify <.DIGESTS>`` with **a single** argument (the
+    cleartext-signed file validates itself; passing a second data
+    file would be wrong for this format). Trust comes from Gentoo's release key
+    in the host keyring. Raises :class:`SeedError` if the file is
+    missing, if ``gpg`` is not available, or if the verification returns
+    non-zero. Never ignores the return code.
     """
     if not digests.is_file():
-        raise SeedError(f".DIGESTS ausente: {digests}")
+        raise SeedError(f".DIGESTS missing: {digests}")
     if shutil.which("gpg") is None:
-        raise SeedError("gpg indisponível no host; impossível verificar a assinatura")
+        raise SeedError("gpg unavailable on the host; cannot verify the signature")
     try:
         result = subprocess.run(
             ["gpg", "--verify", str(digests)],
@@ -148,49 +146,49 @@ def verify_signature(digests: Path) -> None:
             check=False,
         )
     except OSError as err:
-        raise SeedError(f"falha ao executar gpg --verify: {err}") from err
+        raise SeedError(f"failed to run gpg --verify: {err}") from err
     if result.returncode != 0:
-        raise SeedError(f"verificação GPG falhou para {digests.name}:\n{result.stderr.strip()}")
+        raise SeedError(f"GPG verification failed for {digests.name}:\n{result.stderr.strip()}")
 
 
 def _download(url: str, dest: Path) -> None:
-    """Baixa ``url`` para ``dest`` via stdlib ``urllib`` (privilegiado/rede).
+    """Download ``url`` to ``dest`` via the stdlib ``urllib`` (privileged/network).
 
-    Isolado num helper nomeado para que os testes possam monkeypatchar
-    ``seed._download`` e garantir que o caminho de cache-hit não toque a rede.
+    Isolated in a named helper so tests can monkeypatch
+    ``seed._download`` and ensure the cache-hit path does not touch the network.
     """
     try:
         with urllib.request.urlopen(url) as resp, dest.open("wb") as out:  # noqa: S310
             shutil.copyfileobj(resp, out)
     except (urllib.error.URLError, OSError) as err:
-        raise SeedError(f"falha ao baixar {url}: {err}") from err
+        raise SeedError(f"failed to download {url}: {err}") from err
 
 
 def fetch_stage3(pointer: Stage3Pointer, *, cache_dir: Path, download: bool = True) -> Path:
-    """Devolve o tarball verificado, baixando-o uma vez se preciso (R2.5/R2.6).
+    """Return the verified tarball, downloading it once if needed (R2.5/R2.6).
 
-    - Se ``cache_dir/<filename>`` já existe e bate o digest pinado, reusa sem
-      tocar a rede (R2.5).
-    - Caso contrário, se ``download`` for ``False``, levanta :class:`SeedError`
-      acionável sem rede (R2.6).
-    - Senão baixa tarball **e** sibling ``<filename>.DIGESTS`` (cleartext-signed)
-      para arquivos temporários, verifica digest (SHA-512) + assinatura GPG inline
-      (apagando os parciais em falha), e só então move atomicamente o tarball para
-      o cache.
+    - If ``cache_dir/<filename>`` already exists and matches the pinned digest, reuse it
+      without touching the network (R2.5).
+    - Otherwise, if ``download`` is ``False``, raise an actionable :class:`SeedError`
+      without network access (R2.6).
+    - Else download the tarball **and** the sibling ``<filename>.DIGESTS`` (cleartext-signed)
+      to temporary files, verify the digest (SHA-512) + inline GPG signature
+      (deleting the partials on failure), and only then atomically move the tarball into
+      the cache.
     """
     cached = cache_dir / pointer.filename
     if cached.is_file():
         try:
             verify_digest(cached, pointer.sha512)
         except SeedError:
-            pass  # cache corrompido/desatualizado → rebaixa abaixo
+            pass  # corrupt/stale cache → re-download below
         else:
             return cached
 
     if not download:
         raise SeedError(
-            f"--no-download: stage3 {pointer.filename!r} ausente do cache {cache_dir} "
-            f"e download desabilitado; rode sem --no-download para obtê-lo"
+            f"--no-download: stage3 {pointer.filename!r} missing from cache {cache_dir} "
+            f"and download disabled; run without --no-download to fetch it"
         )
 
     cache_dir.mkdir(parents=True, exist_ok=True)
@@ -220,10 +218,10 @@ ROOTFS_TAR_FLAGS = ("--numeric-owner", "--preserve-permissions", "--xattrs", "--
 
 
 def extract_stage3(tarball: Path, rootfs: Path) -> None:
-    """Extrai o tarball verificado em ``rootfs`` preservando ownership.
+    """Extract the verified tarball into ``rootfs`` preserving ownership.
 
-    **Privilegiado** (requer root): preserva donos/permissões/devices do
-    stage3. Cria ``rootfs`` sob o scratch. Em erro de extração levanta
+    **Privileged** (requires root): preserves the stage3's owners/permissions/devices.
+    Creates ``rootfs`` under the scratch. On an extraction error raises
     :class:`SeedError`.
 
     GNU tar, not Python's ``tarfile``: its ``filter="tar"`` clears the setuid,
@@ -239,4 +237,4 @@ def extract_stage3(tarball: Path, rootfs: Path) -> None:
         check=False,
     )
     if result.returncode != 0:
-        raise SeedError(f"falha ao extrair {tarball.name} em {rootfs}: {result.stderr.strip()}")
+        raise SeedError(f"failed to extract {tarball.name} into {rootfs}: {result.stderr.strip()}")

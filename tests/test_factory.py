@@ -1,22 +1,22 @@
-"""UNIT + INTEGRAÇÃO de shidashi.factory (story 003 grupos 5 e 6).
+"""UNIT + INTEGRATION tests of shidashi.factory (story 003 groups 5 and 6).
 
-UNIT (determinista, CI não-Gentoo):
-* 6.1 ``_build_binds`` mapeia pkgdir/ccache/sccache/distdir → caminhos fixos do
-  container como RW e os repos como RO (``resolve.bind_repos`` monkeypatched);
-  ``FactoryResult``/``FactoryError`` são frozen/tipados;
-* 6.2 (unit) ``Factory.build`` levanta antes de qualquer trabalho quando
-  não-root (``os.geteuid`` monkeypatched);
-* 5.2 (unit) ``settle_pass`` com ``breaks`` vazio é no-op (o container é
-  monkeypatched p/ garantir que nenhum emerge é chamado).
+UNIT (deterministic, non-Gentoo CI):
+* 6.1 ``_build_binds`` maps pkgdir/ccache/sccache/distdir → the container's fixed
+  paths as RW and the repos as RO (``resolve.bind_repos`` monkeypatched);
+  ``FactoryResult``/``FactoryError`` are frozen/typed;
+* 6.2 (unit) ``Factory.build`` raises before any work when
+  not root (``os.geteuid`` monkeypatched);
+* 5.2 (unit) ``settle_pass`` with empty ``breaks`` is a no-op (the container is
+  monkeypatched to guarantee no emerge is called).
 
-INTEGRAÇÃO (host-gated, ``@pytest.mark.skipif`` não-root/não-Gentoo): exercitam o
-caminho privilegiado real (nspawn + emerge + snapshot). Em CI/sandbox PULAM —
-Red DIFERIDO ao host privilegiado real (4.1-int, 5.1, 5.2-int, 5.3, 6.2-int).
+INTEGRATION (host-gated, ``@pytest.mark.skipif`` non-root/non-Gentoo): they exercise the
+real privileged path (nspawn + emerge + snapshot). In CI/sandbox they are SKIPPED —
+Red DEFERRED to the real privileged host (4.1-int, 5.1, 5.2-int, 5.3, 6.2-int).
 
-Símbolos novos (``Factory``/``FactoryError``/``FactoryResult``/``_build_binds``/
-``settle_pass``) são importados de forma tolerante para não abortar a coleção do
-pytest enquanto a impl não existe; cada teste unit fica Red no uso, nomeando o
-símbolo pendente (Red esperado da story 003).
+New symbols (``Factory``/``FactoryError``/``FactoryResult``/``_build_binds``/
+``settle_pass``) are imported tolerantly so as not to abort pytest's
+collection while the impl does not exist; each unit test goes Red on use, naming the
+pending symbol (expected Red of story 003).
 """
 
 import os
@@ -36,7 +36,7 @@ FactoryResult: Any = try_import("shidashi.factory", "FactoryResult")
 
 _NEEDS_HOST = os.geteuid() != 0 or shutil.which("systemd-nspawn") is None
 _skip_privileged = pytest.mark.skipif(
-    _NEEDS_HOST, reason="exige root + systemd-nspawn + stage3 seedado (host Gentoo)"
+    _NEEDS_HOST, reason="requires root + systemd-nspawn + a seeded stage3 (Gentoo host)"
 )
 
 
@@ -106,7 +106,7 @@ def test_factory_error_carries_phase_and_output() -> None:
     err = FactoryError("emerge failed", phase="graphics", output="!!! error log")
     assert err.phase == "graphics"
     assert err.output == "!!! error log"
-    assert isinstance(err, Exception)  # narrow só ao final: err é Any (try_import)
+    assert isinstance(err, Exception)  # narrow only at the end: err is Any (try_import)
 
 
 # --- 6.1 _build_binds --------------------------------------------------------
@@ -123,14 +123,14 @@ def test_build_binds_maps_caches_rw_and_repos_ro(
     pkgdir = tmp_path / "cache" / "binpkgs" / "v3"
     binds_ro, binds_rw = build_binds(_recipe(), pkgdir=pkgdir)
 
-    # repos vêm de bind_repos (RO)
+    # repos come from bind_repos (RO)
     assert repo_ro in binds_ro
-    # PKGDIR host → /var/cache/binpkgs no container (RW)
+    # host PKGDIR → /var/cache/binpkgs in the container (RW)
     rw_dsts = {dst for _src, dst in binds_rw}
     assert Path("/var/cache/binpkgs") in rw_dsts
     rw_by_dst = {dst: src for src, dst in binds_rw}
     assert rw_by_dst[Path("/var/cache/binpkgs")] == pkgdir
-    # ccache/sccache/distdir host (sob cache_dir) também são RW
+    # host ccache/sccache/distdir (under cache_dir) are RW too
     rw_srcs = {src for src, _dst in binds_rw}
     assert tmp_path / "cache" / "ccache" in rw_srcs
     assert tmp_path / "cache" / "sccache" in rw_srcs
@@ -138,8 +138,8 @@ def test_build_binds_maps_caches_rw_and_repos_ro(
 
 
 def test_ensure_bind_dirs_creates_host_side_sources(tmp_path: Path) -> None:
-    # Regressão (pilot Gate 8): systemd-nspawn exige que o source de cada
-    # --bind= exista; sem isto o spawn aborta com "Failed to clone …".
+    # Regression (pilot Gate 8): systemd-nspawn requires the source of each
+    # --bind= to exist; without this the spawn aborts with "Failed to clone …".
     ensure: Any = try_import("shidashi.factory", "_ensure_bind_dirs")
     binds_rw = [
         (tmp_path / "binpkgs" / "v3", Path("/var/cache/binpkgs")),
@@ -148,7 +148,7 @@ def test_ensure_bind_dirs_creates_host_side_sources(tmp_path: Path) -> None:
     ensure(binds_rw)
     assert (tmp_path / "binpkgs" / "v3").is_dir()
     assert (tmp_path / "ccache").is_dir()
-    # idempotente: rodar de novo não levanta
+    # idempotent: running it again does not raise
     ensure(binds_rw)
 
 
@@ -159,7 +159,7 @@ def test_factory_build_non_root_raises_before_work(monkeypatch: pytest.MonkeyPat
     monkeypatch.setattr(os, "geteuid", lambda: 1000)
 
     def _boom(*_a: object, **_k: object) -> object:
-        raise AssertionError("trabalho executado antes da guarda de root")
+        raise AssertionError("work done before the root guard")
 
     monkeypatch.setattr(factory, "fetch_stage3", _boom, raising=False)
     monkeypatch.setattr(factory, "extract_stage3", _boom, raising=False)
@@ -173,28 +173,28 @@ def test_factory_build_non_root_raises_before_work(monkeypatch: pytest.MonkeyPat
 
 
 class _NoEmergeContainer:
-    """Container falso: qualquer ``run`` falha o teste (settle vazio não emerge)."""
+    """Fake container: any ``run`` fails the test (an empty settle does not emerge)."""
 
     rootfs = Path("/r")
 
     def run(self, *_a: object, **_k: object) -> object:
-        raise AssertionError("settle_pass com breaks vazio NÃO deve chamar emerge")
+        raise AssertionError("settle_pass with empty breaks must NOT call emerge")
 
 
 def test_settle_pass_empty_breaks_is_noop() -> None:
     settle_pass: Any = try_import("shidashi.phases", "settle_pass")
     container = _NoEmergeContainer()
     result = settle_pass(container, _recipe(flavor="minimal"), ())
-    # no-op: sem átomos de settle (R4.4)
+    # no-op: no settle atoms (R4.4)
     assert result.built_atoms == ()
 
 
-# --- INTEGRAÇÃO host-gated (Red DIFERIDO ao host privilegiado real) ----------
+# --- host-gated INTEGRATION (Red DEFERRED to the real privileged host) -------
 
 
 @_skip_privileged
 def test_snapshot_restore_real_rootfs_preserves_ownership(tmp_path: Path) -> None:
-    # 4.1 (int): snapshot/restore de um rootfs real preservando ownership.
+    # 4.1 (int): snapshot/restore of a real rootfs preserving ownership.
     src = tmp_path / "rootfs"
     (src / "etc").mkdir(parents=True)
     (src / "etc" / "f").write_text("x", encoding="utf-8")
@@ -204,34 +204,34 @@ def test_snapshot_restore_real_rootfs_preserves_ownership(tmp_path: Path) -> Non
     restored.mkdir()
     phases.restore_fork_point(dest, restored)
     st = (restored / "etc" / "f").stat()
-    assert st.st_uid == 0  # ownership preservado (root) num host privilegiado
+    assert st.st_uid == 0  # ownership preserved (root) on a privileged host
 
 
 @_skip_privileged
 def test_run_phase_executes_and_wraps_failure() -> None:
-    # 5.1 (int): run_phase roda um emerge trivial e devolve átomos; não-zero →
-    # FactoryError. Exige rootfs seedado real — diferido ao host.
-    pytest.skip("integração privilegiada: requer rootfs seedado real (Red diferido)")
+    # 5.1 (int): run_phase runs a trivial emerge and returns atoms; non-zero →
+    # FactoryError. Requires a real seeded rootfs — deferred to the host.
+    pytest.skip("privileged integration: requires a real seeded rootfs (deferred Red)")
 
 
 @_skip_privileged
 def test_settle_pass_reemerges_ffmpeg_with_use_on() -> None:
-    # 5.2 (int): settle_pass re-emerge ffmpeg com USE ligado após o break-pass.
-    pytest.skip("integração privilegiada: requer rootfs seedado real (Red diferido)")
+    # 5.2 (int): settle_pass re-emerges ffmpeg with the USE on after the break-pass.
+    pytest.skip("privileged integration: requires a real seeded rootfs (deferred Red)")
 
 
 @_skip_privileged
 def test_run_phases_minimal_and_kde() -> None:
-    # 5.3 (int): run_phases minimal (trunk+snapshot, sem settle) e kde
+    # 5.3 (int): run_phases minimal (trunk+snapshot, no settle) and kde
     # (resume + settle).
-    pytest.skip("integração privilegiada: requer rootfs seedado real (Red diferido)")
+    pytest.skip("privileged integration: requires a real seeded rootfs (deferred Red)")
 
 
 @_skip_privileged
 def test_full_factory_build_v3_minimal_systemd() -> None:
-    # 6.2 (int): shidashi factory v3 minimal systemd produz pkgdir não-vazio +
-    # fork-point. Diferido ao host privilegiado real.
-    pytest.skip("integração privilegiada: requer host Gentoo seedado (Red diferido)")
+    # 6.2 (int): shidashi factory v3 minimal systemd produces a non-empty pkgdir +
+    # fork point. Deferred to the real privileged host.
+    pytest.skip("privileged integration: requires a seeded Gentoo host (deferred Red)")
 
 
 # --- seed_source seam: download vs catalyst (R5.1–R5.3, R4.1; story 005) ------
@@ -240,7 +240,7 @@ def test_full_factory_build_v3_minimal_systemd() -> None:
 def test_fresh_seed_download_branch_unchanged(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # R5.2 — seed_source=download: fetch+extract como antes, catalyst nunca tocado.
+    # R5.2 — seed_source=download: fetch+extract as before, catalyst never touched.
     generic = tmp_path / "generic.tar.xz"
     extracted: dict[str, Any] = {}
     monkeypatch.setattr(factory, "fetch_stage3", lambda p, **k: generic, raising=False)
@@ -249,7 +249,7 @@ def test_fresh_seed_download_branch_unchanged(
     )
 
     def _no_catalyst(*_a: Any, **_k: Any) -> Any:
-        raise AssertionError("build_stage3_catalyst não deve ser chamado no download")
+        raise AssertionError("build_stage3_catalyst must not be called on download")
 
     monkeypatch.setattr(factory, "build_stage3_catalyst", _no_catalyst, raising=False)
     sha = factory._fresh_seed(
@@ -262,7 +262,7 @@ def test_fresh_seed_download_branch_unchanged(
 def test_fresh_seed_catalyst_branch_builds_then_extracts(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # R5.1 — seed_source=catalyst: fetch (semente) → build → extract do tarball gerado.
+    # R5.1 — seed_source=catalyst: fetch (seed) → build → extract of the generated tarball.
     order: list[str] = []
     generic = tmp_path / "generic.tar.xz"
     cat_tarball = tmp_path / "cat-stage3.tar.xz"
@@ -273,7 +273,7 @@ def test_fresh_seed_catalyst_branch_builds_then_extracts(
 
     def _build(recipe: Any, seed: Any, **k: Any) -> tuple[Path, str]:
         order.append("build")
-        assert seed == generic  # a semente buildada é o stage3 genérico
+        assert seed == generic  # the seed that gets built is the generic stage3
         return cat_tarball, "ab" * 64
 
     monkeypatch.setattr(factory, "fetch_stage3", _fetch, raising=False)
@@ -291,8 +291,8 @@ def test_fresh_seed_catalyst_branch_builds_then_extracts(
 def test_stepwise_persists_catalyst_seed_sha512(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # R5.3/R4.1 — no driver stepwise (caso sem estado), o sha do stage3 buildado é
-    # persistido no BuildState.
+    # R5.3/R4.1 — in the stepwise driver (no-state case), the sha of the built stage3 is
+    # persisted in the BuildState.
     from shidashi import state
 
     monkeypatch.setattr(

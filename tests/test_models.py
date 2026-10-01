@@ -1,13 +1,13 @@
-"""Testes dos modelos de receita e loaders YAML (shidashi.recipe).
+"""Tests of the recipe models and YAML loaders (shidashi.recipe).
 
-Story 003 (1.1): novo modelo ``UseBreak`` (frozen, ``extra="forbid"``),
-``Phase.use_break`` passa de ``tuple[UseToken]`` para ``tuple[UseBreak]`` e
-``FlavorFragment`` ganha ``use_break: dict[str, tuple[UseBreak, ...]]`` (mapa
-phase-name → breaks). As fixtures abaixo já refletem a NOVA forma. ``UseBreak``
-é importado de forma tolerante (``try_import``) só para não abortar a coleção do
-pytest inteiro enquanto o símbolo não existe — cada teste falha (Red) no uso,
-nomeando o símbolo pendente; os casos que tocam Phase/FlavorFragment com a nova
-forma falham naturalmente (ValidationError) sob a forma antiga.
+Story 003 (1.1): new ``UseBreak`` model (frozen, ``extra="forbid"``),
+``Phase.use_break`` goes from ``tuple[UseToken]`` to ``tuple[UseBreak]`` and
+``FlavorFragment`` gains ``use_break: dict[str, tuple[UseBreak, ...]]`` (a
+phase-name → breaks map). The fixtures below already reflect the NEW shape.
+``UseBreak`` is imported tolerantly (``try_import``) only so as not to abort the
+whole pytest collection while the symbol does not exist — each test fails (Red)
+on use, naming the pending symbol; the cases that touch Phase/FlavorFragment with
+the new shape fail naturally (ValidationError) under the old shape.
 """
 
 from pathlib import Path
@@ -35,7 +35,7 @@ from tests._pending import try_import
 
 UseBreak: Any = try_import("shidashi.recipe", "UseBreak")
 
-# --- dicts válidos representativos por modelo ---------------------------------
+# --- representative valid dicts per model ------------------------------------
 
 VALID: dict[Any, dict[str, Any]] = {
     Phase: {
@@ -86,7 +86,7 @@ VALID: dict[Any, dict[str, Any]] = {
     },
 }
 
-# Modelos que existem hoje (parametrizáveis sem depender de UseBreak).
+# Models that exist today (parametrizable without depending on UseBreak).
 EXISTING_MODELS = [
     BaseFragment,
     ArchFragment,
@@ -97,7 +97,7 @@ EXISTING_MODELS = [
 ]
 
 
-# --- (a) cada modelo constrói a partir de um dict válido ----------------------
+# --- (a) each model builds from a valid dict ---------------------------------
 
 
 @pytest.mark.parametrize("model", EXISTING_MODELS)
@@ -107,7 +107,7 @@ def test_constructs_from_valid_dict(model: type) -> None:
 
 
 def test_tuple_coercion_from_list() -> None:
-    # listas YAML/dict coagem automaticamente para tuplas
+    # YAML/dict lists are coerced to tuples automatically
     frag = ArchFragment(**VALID[ArchFragment])
     assert frag.cpu_flags_x86 == ("sse2", "avx")
     assert isinstance(frag.cpu_flags_x86, tuple)
@@ -181,7 +181,7 @@ def test_stage_fragment_parses_its_own_cuts() -> None:
     assert breaks[0].enable is False
 
 
-# --- (b) chave desconhecida levanta ValidationError ---------------------------
+# --- (b) an unknown key raises ValidationError -------------------------------
 
 
 @pytest.mark.parametrize("model", EXISTING_MODELS)
@@ -191,7 +191,7 @@ def test_unknown_key_rejected(model: type) -> None:
         model(**payload)
 
 
-# --- (c) instâncias são imutáveis (frozen) ------------------------------------
+# --- (c) instances are immutable (frozen) ------------------------------------
 
 
 @pytest.mark.parametrize("model", EXISTING_MODELS)
@@ -202,7 +202,7 @@ def test_instances_are_frozen(model: type) -> None:
         setattr(instance, field, getattr(instance, field))
 
 
-# --- (d) cada loader parseia um YAML representativo em tmp_path ---------------
+# --- (d) each loader parses a representative YAML in tmp_path ----------------
 
 
 def _write_yaml(path: Path, data: dict[str, Any]) -> Path:
@@ -291,7 +291,7 @@ def test_load_init(tmp_path: Path) -> None:
     assert frag.phases_prepend[0].name == "early"
 
 
-# --- (e) YAML malformado / chave desconhecida é rejeitado ---------------------
+# --- (e) malformed YAML / unknown key is rejected ----------------------------
 
 
 def test_loader_rejects_unknown_key(tmp_path: Path) -> None:

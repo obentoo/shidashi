@@ -1,7 +1,7 @@
 [project]
 name = "shidashi"
 version = "0.0.1"
-description = "Shidashi — catering de builds e ISOs do bentoo (Gentoo stage4) a partir de um stage3."
+description = "Shidashi: builds Bentoo (Gentoo stage5) images and live ISOs from a stage3, phase by phase."
 readme = "README.md"
 requires-python = ">=3.14"
 license = "MIT"
@@ -13,8 +13,8 @@ dependencies = [
     "pyyaml>=6.0",
     "rich>=13.7",
 ]
-# NB: `portage` é fornecido pelo sistema (sys-apps/portage), não via pip.
-# O Shidashi roda num host Gentoo e usa `import portage` (ver shidashi/portage_api.py).
+# NB: `portage` comes from the system (sys-apps/portage), not from pip.
+# Shidashi runs on a Gentoo host and uses `import portage` (see shidashi/portage_api.py).
 
 [project.optional-dependencies]
 dev = ["ruff>=0.5", "mypy>=1.10", "types-PyYAML", "pytest>=8"]

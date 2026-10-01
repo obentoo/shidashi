@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="pt-BR">
+<html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Shidashi 仕出し — Canvas de Fluxos</title>
+<title>Shidashi 仕出し — Flow Canvas</title>
 <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/dist/svg-pan-zoom.min.js"></script>
 <style>
@@ -40,8 +40,8 @@
   .counter{color:var(--muted); font-size:.8rem; font-variant-numeric:tabular-nums; white-space:nowrap}
   .group{display:flex; align-items:center; gap:.35rem}
   main{flex:1; position:relative; overflow:hidden}
-  /* boards ficam SEMPRE com dimensão real (display:flex) para o Mermaid medir o texto;
-     a troca é por opacity/z-index — render em display:none gera translate(NaN). */
+  /* boards ALWAYS keep a real size (display:flex) so Mermaid can measure the text;
+     switching is done via opacity/z-index — rendering under display:none yields translate(NaN). */
   .board{position:absolute; inset:0; display:flex; flex-direction:column; opacity:0; pointer-events:none; z-index:0}
   .board.active{opacity:1; pointer-events:auto; z-index:1}
   .board .caption{padding:.7rem 1rem .2rem; flex:0 0 auto}
@@ -73,42 +73,42 @@
 <header>
   <span class="brand"><span class="kanji">仕出し</span> Shidashi · Canvas</span>
   <div class="group">
-    <button class="nav-btn" id="prev" title="Anterior (←)">‹</button>
-    <select id="topic" aria-label="Selecionar fluxo"></select>
-    <button class="nav-btn" id="next" title="Próximo (→)">›</button>
+    <button class="nav-btn" id="prev" title="Previous (←)">‹</button>
+    <select id="topic" aria-label="Select flow"></select>
+    <button class="nav-btn" id="next" title="Next (→)">›</button>
     <span class="counter" id="counter"></span>
   </div>
   <span class="spacer"></span>
   <div class="group">
-    <button class="zoom-btn" id="zoomOut" title="Menos zoom (−)">−</button>
-    <button class="zoom-btn" id="zoomReset" title="Reenquadrar (0)">reset</button>
-    <button class="zoom-btn" id="zoomIn" title="Mais zoom (+)">+</button>
+    <button class="zoom-btn" id="zoomOut" title="Zoom out (−)">−</button>
+    <button class="zoom-btn" id="zoomReset" title="Refit (0)">reset</button>
+    <button class="zoom-btn" id="zoomIn" title="Zoom in (+)">+</button>
   </div>
-  <a class="home" href="index.html" title="Voltar à documentação">📄 docs</a>
+  <a class="home" href="index.html" title="Back to the documentation">📄 docs</a>
 </header>
 
 <main id="main"></main>
 
-<footer>arraste para mover · roda do mouse para zoom · ← → troca de fluxo · diagramas Mermaid + svg-pan-zoom</footer>
+<footer>drag to move · mouse wheel to zoom · ← → switch flow · Mermaid diagrams + svg-pan-zoom</footer>
 
 <script>
-/* ---- definição dos fluxos (um "board" por tópico) ---- */
+/* ---- flow definitions (one "board" per topic) ---- */
 const BOARDS = [
   {
-    num: "1", title: "Visão geral — dois subsistemas",
-    desc: "A Factory carrega o custo de compilação (horas); o Assembler apenas seleciona binários prontos (segundos). O binhost é a fronteira.",
+    num: "1", title: "Overview — two subsystems",
+    desc: "The Factory carries the compilation cost (hours); the Assembler only selects ready-made binaries (seconds). The binhost is the boundary.",
     code: `flowchart LR
-    S["stage3 oficial<br/>(seed no-multilib)"]:::seed --> F
-    subgraph FAC["PACKAGE FACTORY · por (arch × flavor × init)"]
+    S["official stage3<br/>(no-multilib seed)"]:::seed --> F
+    subgraph FAC["PACKAGE FACTORY · per (arch × flavor × init)"]
       direction TB
-      F["container isolado<br/>systemd-nspawn"]:::proc --> F2["emerge em FASES<br/>ccache / sccache / mold"]:::proc
+      F["isolated container<br/>systemd-nspawn"]:::proc --> F2["emerge in PHASES<br/>ccache / sccache / mold"]:::proc
       F2 --> F3["binpkgs gpkg<br/>multi-instance"]:::art
     end
-    F3 --> BH[("BINHOST<br/>por arch")]:::store
+    F3 --> BH[("BINHOST<br/>per arch")]:::store
     BH --> A
-    subgraph ASM["ISO ASSEMBLER · por (arch × init × desktop)"]
+    subgraph ASM["ISO ASSEMBLER · per (arch × init × desktop)"]
       direction TB
-      A["emerge --usepkgonly<br/>(sem compilar)"]:::proc --> A2["mksquashfs zstd<br/>+ dracut dmsquash-live"]:::proc
+      A["emerge --usepkgonly<br/>(no compiling)"]:::proc --> A2["mksquashfs zstd<br/>+ dracut dmsquash-live"]:::proc
       A2 --> A3["grub-mkrescue / xorriso"]:::proc
     end
     A3 --> ISO["ISO live<br/>+ .sha256 + .asc"]:::art
@@ -118,20 +118,20 @@ const BOARDS = [
     classDef store fill:#13261a,stroke:#3fb950,color:#7ee787;`
   },
   {
-    num: "2", title: "Fluxo de release semanal (cron: domingo 00:00)",
-    desc: "Decisão crítica: toolchain-bump. Semana normal reusa o tronco (delta rápido); bump recria tudo limpo (--emptytree), sem resíduo.",
+    num: "2", title: "Weekly release flow (cron: Sunday 00:00)",
+    desc: "Critical decision: toolchain-bump. A normal week reuses the trunk (fast delta); a bump rebuilds everything clean (--emptytree), with no residue.",
     code: `flowchart TD
-    T["⏰ Trigger — cron domingo 00:00"]:::trig --> P["Lê pointer-files no-multilib<br/>latest-stage3-amd64-nomultilib-{systemd,openrc}.txt"]:::proc
-    P --> C{"Mudou desde<br/>o último build?"}:::dec
-    C -->|"Não"| Z["Encerra — nada a fazer"]:::stop
-    C -->|"Sim"| D{"Toolchain-bump?<br/>GCC / glibc / binutils major<br/>ou novo pin de snapshot"}:::dec
-    D -->|"Sim"| W["WIPE TOTAL · emerge --emptytree<br/>+ @preserved-rebuild + subslots<br/>(build limpo, sem resíduo)"]:::wipe
-    D -->|"Não"| DL["DELTA · emerge --newuse<br/>(reusa tronco persistente)"]:::delta
-    W --> FAC["PACKAGE FACTORY<br/>matriz arch × flavor × init"]:::proc
+    T["⏰ Trigger — cron Sunday 00:00"]:::trig --> P["Reads the no-multilib pointer files<br/>latest-stage3-amd64-nomultilib-{systemd,openrc}.txt"]:::proc
+    P --> C{"Changed since<br/>the last build?"}:::dec
+    C -->|"No"| Z["Stops — nothing to do"]:::stop
+    C -->|"Yes"| D{"Toolchain-bump?<br/>GCC / glibc / binutils major<br/>or new snapshot pin"}:::dec
+    D -->|"Yes"| W["FULL WIPE · emerge --emptytree<br/>+ @preserved-rebuild + subslots<br/>(clean build, no residue)"]:::wipe
+    D -->|"No"| DL["DELTA · emerge --newuse<br/>(reuses the persistent trunk)"]:::delta
+    W --> FAC["PACKAGE FACTORY<br/>arch × flavor × init matrix"]:::proc
     DL --> FAC
-    FAC --> ASM["ISO ASSEMBLER<br/>matriz arch × init × desktop"]:::proc
-    ASM --> PUB["PUBLISH<br/>checksum SHA256 + assinatura GPG + upload"]:::art
-    PUB --> REG["Registra hashes:<br/>stage3 · snapshot · receitas · toolchain"]:::store
+    FAC --> ASM["ISO ASSEMBLER<br/>arch × init × desktop matrix"]:::proc
+    ASM --> PUB["PUBLISH<br/>SHA256 checksum + GPG signature + upload"]:::art
+    PUB --> REG["Records hashes:<br/>stage3 · snapshot · recipes · toolchain"]:::store
     classDef trig fill:#1f6feb,stroke:#388bfd,color:#fff;
     classDef proc fill:#21262d,stroke:#30363d,color:#e6edf3;
     classDef dec fill:#2b2517,stroke:#f0883e,color:#f0c08e;
@@ -142,17 +142,17 @@ const BOARDS = [
     classDef stop fill:#161b22,stroke:#30363d,color:#8b949e;`
   },
   {
-    num: "3", title: "Package Factory — build em fases",
-    desc: "Cada fase é um emerge próprio, ordenado, com o /etc/portage do flavor aplicado. A ordenação resolve deterministicamente os ciclos.",
+    num: "3", title: "Package Factory — build in phases",
+    desc: "Each phase is its own ordered emerge, with the flavor's /etc/portage applied. The ordering deterministically resolves the cycles.",
     code: `flowchart TD
-    P0["Fase 0 · stage3 base<br/>(já pronto)"]:::done --> P1["Fase 1 · rebuild<br/>emerge --newuse @world<br/>reflete make.conf (flavor/arch)"]:::proc
-    P1 --> P2["Fase 2 · graphics<br/>@graphics — wayland, mesa,<br/>pipewire, dbus, seat"]:::proc
-    P2 --> FK{"Flavor tem<br/>desktop?"}:::dec
-    FK -->|"minimal"| SKIP["(pula a fase de desktop)"]:::skip
-    FK -->|"kde / gnome / wm"| P3["Fase 3 · desktop<br/>@kde | @gnome | @wm"]:::proc
-    SKIP --> P4["Fase 4 · apps<br/>@bentoo-apps"]:::proc
+    P0["Phase 0 · base stage3<br/>(ready-made)"]:::done --> P1["Phase 1 · rebuild<br/>emerge --newuse @world<br/>reflects make.conf (flavor/arch)"]:::proc
+    P1 --> P2["Phase 2 · graphics<br/>@graphics — wayland, mesa,<br/>pipewire, dbus, seat"]:::proc
+    P2 --> FK{"Flavor has a<br/>desktop?"}:::dec
+    FK -->|"minimal"| SKIP["(skips the desktop phase)"]:::skip
+    FK -->|"kde / gnome / wm"| P3["Phase 3 · desktop<br/>@kde | @gnome | @wm"]:::proc
+    SKIP --> P4["Phase 4 · apps<br/>@bentoo-apps"]:::proc
     P3 --> P4
-    P4 --> OUT["binpkgs do flavor<br/>→ binhost (arch)"]:::art
+    P4 --> OUT["flavor binpkgs<br/>→ binhost (arch)"]:::art
     classDef done fill:#13261a,stroke:#3fb950,color:#7ee787;
     classDef proc fill:#21262d,stroke:#30363d,color:#e6edf3;
     classDef dec fill:#2b2517,stroke:#f0883e,color:#f0c08e;
@@ -160,15 +160,15 @@ const BOARDS = [
     classDef art fill:#2d2114,stroke:#f0883e,color:#f0c08e;`
   },
   {
-    num: "4", title: "Quebra de dependência circular (use_break)",
-    desc: "Ciclo real: libsdl2 → pipewire → ffmpeg → libsdl2. Curado manualmente por flavor: compila com a USE desligada, depois religa.",
+    num: "4", title: "Breaking a circular dependency (use_break)",
+    desc: "Real cycle: libsdl2 → pipewire → ffmpeg → libsdl2. Curated manually per flavor: compile with the USE turned off, then turn it back on.",
     code: `flowchart LR
-    PR["pretend-resolve.sh<br/>(emerge --pretend)"]:::tool --> CUR["curadoria manual<br/>do use_break na recipe"]:::dec
-    CUR --> BP["BREAK-PASS<br/>ffmpeg#91;-sdl#93;<br/>(binpkg transiente)"]:::trans
-    BP --> SP["SETTLE-PASS<br/>ffmpeg#91;sdl#93; final<br/>(parceiro do ciclo ja presente)"]:::art
-    SP --> GC{"GC ciente de USE"}:::dec
-    GC -->|"transiente"| PODA["podar (só build-pool)"]:::stop
-    GC -->|"final"| KEEP["publicar (publish-pool)"]:::art
+    PR["pretend-resolve.sh<br/>(emerge --pretend)"]:::tool --> CUR["manual curation<br/>of use_break in the recipe"]:::dec
+    CUR --> BP["BREAK-PASS<br/>ffmpeg#91;-sdl#93;<br/>(transient binpkg)"]:::trans
+    BP --> SP["SETTLE-PASS<br/>ffmpeg#91;sdl#93; final<br/>(cycle partner already present)"]:::art
+    SP --> GC{"USE-aware GC"}:::dec
+    GC -->|"transient"| PODA["prune (build-pool only)"]:::stop
+    GC -->|"final"| KEEP["publish (publish-pool)"]:::art
     classDef tool fill:#1f6feb,stroke:#388bfd,color:#fff;
     classDef dec fill:#2b2517,stroke:#f0883e,color:#f0c08e;
     classDef trans fill:#3d1518,stroke:#f85149,color:#ffb3ad;
@@ -176,45 +176,45 @@ const BOARDS = [
     classDef stop fill:#161b22,stroke:#30363d,color:#8b949e;`
   },
   {
-    num: "5", title: "Fork-point & particionamento do binhost",
-    desc: "As fases iniciais dependem só do init. O fork por desktop ocorre tarde — o tronco compila uma vez por init; só a fase de desktop ramifica.",
+    num: "5", title: "Fork-point & binhost partitioning",
+    desc: "The early phases depend only on the init. The per-desktop fork happens late — the trunk compiles once per init; only the desktop phase branches.",
     code: `flowchart LR
-    S3["stage3"]:::seed --> RB["rebuild"]:::proc --> SE["seat<br/>(por init)"]:::proc --> GR["graphics"]:::proc
-    GR --> M["minimal<br/>(= tronco)"]:::art
+    S3["stage3"]:::seed --> RB["rebuild"]:::proc --> SE["seat<br/>(per init)"]:::proc --> GR["graphics"]:::proc
+    GR --> M["minimal<br/>(= trunk)"]:::art
     GR --> K["+kde → binpkgs kde"]:::art
     GR --> G["+gnome → binpkgs gnome"]:::art
     GR --> WM["+wm → binpkgs Hyprland/Sway/niri"]:::art
     M --> BH
     K --> BH
     G --> BH
-    WM --> BH[("BINHOST por arch<br/>v3 · znver5 · arrowlake")]:::store
+    WM --> BH[("BINHOST per arch<br/>v3 · znver5 · arrowlake")]:::store
     classDef seed fill:#1f6feb,stroke:#388bfd,color:#fff;
     classDef proc fill:#21262d,stroke:#30363d,color:#e6edf3;
     classDef art fill:#2d2114,stroke:#f0883e,color:#f0c08e;
     classDef store fill:#13261a,stroke:#3fb950,color:#7ee787;`
   },
   {
-    num: "6", title: "ISO Assembler — imune a ciclo",
-    desc: "Ciclo é fenômeno de build-time. O Assembler navega o grafo multi-instance e extrai a fatia do flavor pela USE final.",
+    num: "6", title: "ISO Assembler — immune to cycles",
+    desc: "A cycle is a build-time phenomenon. The Assembler navigates the multi-instance graph and extracts the flavor's slice by the final USE.",
     code: `flowchart TD
-    SEED["container seeda stage3"]:::seed --> RES["resolve USE final do flavor"]:::proc
-    RES --> MATCH{"match multi-instance<br/>no binhost"}:::dec
+    SEED["container seeds stage3"]:::seed --> RES["resolves the flavor's final USE"]:::proc
+    RES --> MATCH{"multi-instance match<br/>in the binhost"}:::dec
     MATCH -->|"poppler#91;qt6#93;"| KDE["ISO KDE"]:::art
     MATCH -->|"poppler#91;gtk#93;"| GN["ISO GNOME"]:::art
-    MATCH -->|"sem DE"| MIN["ISO minimal"]:::art
+    MATCH -->|"no DE"| MIN["ISO minimal"]:::art
     KDE --> SQ
     GN --> SQ
     MIN --> SQ["mksquashfs zstd -19<br/>(rootfs read-only)"]:::proc
-    SQ --> DR["dracut dmsquash-live<br/>(overlayfs em RAM)"]:::proc
-    DR --> ISO["grub-mkrescue / xorriso<br/>→ ISO híbrida BIOS+UEFI"]:::art
+    SQ --> DR["dracut dmsquash-live<br/>(overlayfs in RAM)"]:::proc
+    DR --> ISO["grub-mkrescue / xorriso<br/>→ hybrid BIOS+UEFI ISO"]:::art
     classDef seed fill:#1f6feb,stroke:#388bfd,color:#fff;
     classDef proc fill:#21262d,stroke:#30363d,color:#e6edf3;
     classDef dec fill:#2b2517,stroke:#f0883e,color:#f0c08e;
     classDef art fill:#2d2114,stroke:#f0883e,color:#f0c08e;`
   },
   {
-    num: "7", title: "Matriz de eixos componíveis",
-    desc: "Uma release é a tupla base + arch + flavor + init, resolvida por deep-merge. Os eixos não se multiplicam de forma ingênua (desktop ≈ flavor).",
+    num: "7", title: "Matrix of composable axes",
+    desc: "A release is the tuple base + arch + flavor + init, resolved by deep-merge. The axes do not multiply naively (desktop ≈ flavor).",
     code: `flowchart LR
     subgraph ARCH["arch"]
       direction TB
@@ -224,7 +224,7 @@ const BOARDS = [
     end
     subgraph FLV["flavor"]
       direction TB
-      f0["minimal (só TTY)"]
+      f0["minimal (TTY only)"]
       f1["kde (Qt)"]
       f2["gnome (GTK)"]
       f4["wm (Hyprland/Sway/niri)"]
@@ -243,7 +243,7 @@ const BOARDS = [
   }
 ];
 
-/* ---- montar os boards (DOM seguro, sem innerHTML) ---- */
+/* ---- build the boards (safe DOM, no innerHTML) ---- */
 const main = document.getElementById('main');
 const select = document.getElementById('topic');
 
@@ -266,9 +266,9 @@ BOARDS.forEach((b, i) => {
   caption.appendChild(el('p', null, b.desc));
 
   const stage = el('div', 'stage');
-  const graph = el('div', 'mermaid', b.code);   // textContent = definição Mermaid
+  const graph = el('div', 'mermaid', b.code);   // textContent = Mermaid definition
   stage.appendChild(graph);
-  stage.appendChild(el('div', 'hint', 'scroll = zoom · drag = mover'));
+  stage.appendChild(el('div', 'hint', 'scroll = zoom · drag = move'));
 
   board.appendChild(caption);
   board.appendChild(stage);
@@ -317,7 +317,7 @@ mermaid.initialize({
 
 mermaid.run({ querySelector:'.mermaid' }).then(() => activate(0));
 
-/* ---- controles ---- */
+/* ---- controls ---- */
 document.getElementById('prev').onclick = () => activate(current - 1);
 document.getElementById('next').onclick = () => activate(current + 1);
 select.onchange = e => activate(+e.target.value);

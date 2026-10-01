@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="pt-BR">
+<html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Shidashi 仕出し — Fluxograma de Execução</title>
+<title>Shidashi 仕出し — Execution Flowchart</title>
 <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
 <style>
   :root {
@@ -87,7 +87,7 @@
 <body>
 <header>
   <h1><span class="kanji">仕出し</span> Shidashi</h1>
-  <p>Fluxograma de execução — do stage3 oficial à ISO publicada</p>
+  <p>Execution flowchart — from the official stage3 to the published ISO</p>
 </header>
 
 <div class="wrap">
@@ -95,42 +95,42 @@
   <a href="canvas.html" style="display:flex;align-items:center;justify-content:space-between;gap:1rem;
      margin-top:1.5rem;padding:.9rem 1.2rem;background:var(--panel);border:1px solid var(--accent);
      border-radius:10px;text-decoration:none;color:var(--fg)">
-    <span><strong style="color:var(--accent)">🗺️ Canvas interativo</strong> — cada fluxo em página inteira, com zoom e navegação (estilo Miro)</span>
-    <span style="color:var(--accent2);white-space:nowrap">abrir →</span>
+    <span><strong style="color:var(--accent)">🗺️ Interactive canvas</strong> — each flow on a full page, with zoom and navigation (Miro style)</span>
+    <span style="color:var(--accent2);white-space:nowrap">open →</span>
   </a>
 
   <div class="toc">
-    <strong>Índice</strong>
+    <strong>Contents</strong>
     <ul>
-      <li><a href="#visao">1. Visão geral — dois subsistemas</a></li>
-      <li><a href="#release">2. Fluxo de release semanal</a></li>
-      <li><a href="#factory">3. Package Factory — build em fases</a></li>
-      <li><a href="#cycle">4. Quebra de ciclo (use_break)</a></li>
+      <li><a href="#visao">1. Overview — two subsystems</a></li>
+      <li><a href="#release">2. Weekly release flow</a></li>
+      <li><a href="#factory">3. Package Factory — build in phases</a></li>
+      <li><a href="#cycle">4. Cycle breaking (use_break)</a></li>
       <li><a href="#fork">5. Fork-point &amp; binhost</a></li>
       <li><a href="#assembler">6. ISO Assembler</a></li>
-      <li><a href="#matrix">7. Matriz de eixos</a></li>
+      <li><a href="#matrix">7. Axis matrix</a></li>
     </ul>
   </div>
 
   <!-- 1 -->
   <section id="visao">
-    <h2><span class="num">1.</span> Visão geral — dois subsistemas desacoplados</h2>
-    <p class="lead">A <strong>Factory</strong> carrega o custo de compilação (horas); o <strong>Assembler</strong>
-      apenas seleciona binários prontos (segundos). O binhost é a fronteira entre eles.</p>
+    <h2><span class="num">1.</span> Overview — two decoupled subsystems</h2>
+    <p class="lead">The <strong>Factory</strong> carries the compilation cost (hours); the <strong>Assembler</strong>
+      only selects ready-made binaries (seconds). The binhost is the boundary between them.</p>
     <div class="diagram">
       <pre class="mermaid">
 flowchart LR
-    S["stage3 oficial<br/>(seed)"]:::seed --> F
-    subgraph FAC["PACKAGE FACTORY · por (arch × flavor × init)"]
+    S["official stage3<br/>(seed)"]:::seed --> F
+    subgraph FAC["PACKAGE FACTORY · per (arch × flavor × init)"]
       direction TB
-      F["container isolado<br/>systemd-nspawn"]:::proc --> F2["emerge em FASES<br/>ccache / sccache / mold"]:::proc
+      F["isolated container<br/>systemd-nspawn"]:::proc --> F2["emerge in PHASES<br/>ccache / sccache / mold"]:::proc
       F2 --> F3["binpkgs gpkg<br/>multi-instance"]:::art
     end
-    F3 --> BH[("BINHOST<br/>por arch")]:::store
+    F3 --> BH[("BINHOST<br/>per arch")]:::store
     BH --> A
-    subgraph ASM["ISO ASSEMBLER · por (arch × init × desktop)"]
+    subgraph ASM["ISO ASSEMBLER · per (arch × init × desktop)"]
       direction TB
-      A["emerge --usepkgonly<br/>(sem compilar)"]:::proc --> A2["mksquashfs zstd<br/>+ dracut dmsquash-live"]:::proc
+      A["emerge --usepkgonly<br/>(no compiling)"]:::proc --> A2["mksquashfs zstd<br/>+ dracut dmsquash-live"]:::proc
       A2 --> A3["grub-mkrescue / xorriso"]:::proc
     end
     A3 --> ISO["ISO live<br/>+ .sha256 + .asc"]:::art
@@ -141,31 +141,31 @@ flowchart LR
       </pre>
     </div>
     <div class="grid">
-      <div class="card"><h3>Factory</h3><p>Compilação pesada e lenta. Produz binpkgs em variações de USE (multi-instance), publicados <strong>por arch</strong>.</p></div>
-      <div class="card"><h3>Binhost</h3><p>Grafo de nós <code>(CPV, USE)</code> — não um array. Dois pools: <code>build-pool</code> (com transientes) e <code>publish-pool</code> (só finais).</p></div>
-      <div class="card"><h3>Assembler</h3><p>Quase instantâneo. <code>--usepkgonly</code> instala binário pronto e monta a ISO. Imune a ciclo.</p></div>
+      <div class="card"><h3>Factory</h3><p>Heavy, slow compilation. Produces binpkgs in USE variations (multi-instance), published <strong>per arch</strong>.</p></div>
+      <div class="card"><h3>Binhost</h3><p>A graph of <code>(CPV, USE)</code> nodes — not an array. Two pools: <code>build-pool</code> (with transients) and <code>publish-pool</code> (finals only).</p></div>
+      <div class="card"><h3>Assembler</h3><p>Nearly instantaneous. <code>--usepkgonly</code> installs ready-made binaries and assembles the ISO. Immune to cycles.</p></div>
     </div>
   </section>
 
   <!-- 2 -->
   <section id="release">
-    <h2><span class="num">2.</span> Fluxo de release semanal (cron: domingo 00:00)</h2>
-    <p class="lead">A decisão crítica é <strong>toolchain-bump</strong>: semana normal reusa o tronco
-      (delta rápido); bump de toolchain recria tudo limpo (<code>--emptytree</code>), sem resíduo.</p>
+    <h2><span class="num">2.</span> Weekly release flow (cron: Sunday 00:00)</h2>
+    <p class="lead">The critical decision is the <strong>toolchain-bump</strong>: a normal week reuses the trunk
+      (fast delta); a toolchain bump rebuilds everything clean (<code>--emptytree</code>), with no residue.</p>
     <div class="diagram">
       <pre class="mermaid">
 flowchart TD
-    T["⏰ Trigger — cron domingo 00:00"]:::trig --> P["Lê pointer-file dos autobuilds Gentoo<br/>latest-stage3-amd64-*.txt"]:::proc
-    P --> C{"Mudou desde<br/>o último build?"}:::dec
-    C -->|"Não"| Z["Encerra — nada a fazer"]:::stop
-    C -->|"Sim"| D{"Toolchain-bump?<br/>GCC / glibc / binutils major<br/>ou novo pin de snapshot"}:::dec
-    D -->|"Sim"| W["WIPE TOTAL · emerge --emptytree<br/>+ @preserved-rebuild + subslots<br/>(build limpo, sem resíduo)"]:::wipe
-    D -->|"Não"| DL["DELTA · emerge --newuse<br/>(reusa tronco persistente)"]:::delta
-    W --> FAC["PACKAGE FACTORY<br/>matriz arch × flavor × init"]:::proc
+    T["⏰ Trigger — cron Sunday 00:00"]:::trig --> P["Reads the Gentoo autobuild pointer file<br/>latest-stage3-amd64-*.txt"]:::proc
+    P --> C{"Changed since<br/>the last build?"}:::dec
+    C -->|"No"| Z["Stops — nothing to do"]:::stop
+    C -->|"Yes"| D{"Toolchain-bump?<br/>GCC / glibc / binutils major<br/>or new snapshot pin"}:::dec
+    D -->|"Yes"| W["FULL WIPE · emerge --emptytree<br/>+ @preserved-rebuild + subslots<br/>(clean build, no residue)"]:::wipe
+    D -->|"No"| DL["DELTA · emerge --newuse<br/>(reuses the persistent trunk)"]:::delta
+    W --> FAC["PACKAGE FACTORY<br/>arch × flavor × init matrix"]:::proc
     DL --> FAC
-    FAC --> ASM["ISO ASSEMBLER<br/>matriz arch × init × desktop"]:::proc
-    ASM --> PUB["PUBLISH<br/>checksum SHA256 + assinatura GPG + upload"]:::art
-    PUB --> REG["Registra hashes:<br/>stage3 · snapshot · receitas · toolchain"]:::store
+    FAC --> ASM["ISO ASSEMBLER<br/>arch × init × desktop matrix"]:::proc
+    ASM --> PUB["PUBLISH<br/>SHA256 checksum + GPG signature + upload"]:::art
+    PUB --> REG["Records hashes:<br/>stage3 · snapshot · recipes · toolchain"]:::store
     classDef trig fill:#1f6feb,stroke:#388bfd,color:#fff;
     classDef proc fill:#21262d,stroke:#30363d,color:#e6edf3;
     classDef dec fill:#2b2517,stroke:#f0883e,color:#f0c08e;
@@ -176,26 +176,26 @@ flowchart TD
     classDef stop fill:#161b22,stroke:#30363d,color:#8b949e;
       </pre>
     </div>
-    <div class="note">A reprodutibilidade perseguida é <strong>de entrada</strong> (mesmo input → mesmo conjunto de
-      pacotes), não bit-a-bit. O <code>-march=native</code> é banido; cada arch usa <code>-march</code> explícito.</div>
+    <div class="note">The reproducibility pursued is <strong>of input</strong> (same input → same set of
+      packages), not bit-for-bit. <code>-march=native</code> is banned; each arch uses an explicit <code>-march</code>.</div>
   </section>
 
   <!-- 3 -->
   <section id="factory">
-    <h2><span class="num">3.</span> Package Factory — build em fases</h2>
-    <p class="lead">Cada fase é um <code>emerge</code> próprio, ordenado, com o <code>/etc/portage</code> do
-      flavor já aplicado. A ordenação resolve deterministicamente os ciclos de pacotes grandes.</p>
+    <h2><span class="num">3.</span> Package Factory — build in phases</h2>
+    <p class="lead">Each phase is its own ordered <code>emerge</code>, with the flavor's
+      <code>/etc/portage</code> already applied. The ordering deterministically resolves the cycles of large packages.</p>
     <div class="diagram">
       <pre class="mermaid">
 flowchart TD
-    P0["Fase 0 · stage3 base<br/>(já pronto)"]:::done --> P1["Fase 1 · rebuild<br/>emerge --newuse @world<br/>reflete make.conf (flavor/arch)"]:::proc
-    P1 --> P2["Fase 2 · graphics<br/>@graphics — wayland, mesa,<br/>pipewire, dbus, seat"]:::proc
-    P2 --> FK{"Flavor tem<br/>desktop?"}:::dec
-    FK -->|"minimal"| SKIP["(pula a fase de desktop)"]:::skip
-    FK -->|"kde / gnome / wm"| P3["Fase 3 · desktop<br/>@kde | @gnome | @wm"]:::proc
-    SKIP --> P4["Fase 4 · apps<br/>@bentoo-apps"]:::proc
+    P0["Phase 0 · base stage3<br/>(ready-made)"]:::done --> P1["Phase 1 · rebuild<br/>emerge --newuse @world<br/>reflects make.conf (flavor/arch)"]:::proc
+    P1 --> P2["Phase 2 · graphics<br/>@graphics — wayland, mesa,<br/>pipewire, dbus, seat"]:::proc
+    P2 --> FK{"Flavor has a<br/>desktop?"}:::dec
+    FK -->|"minimal"| SKIP["(skips the desktop phase)"]:::skip
+    FK -->|"kde / gnome / wm"| P3["Phase 3 · desktop<br/>@kde | @gnome | @wm"]:::proc
+    SKIP --> P4["Phase 4 · apps<br/>@bentoo-apps"]:::proc
     P3 --> P4
-    P4 --> OUT["binpkgs do flavor<br/>→ binhost (arch)"]:::art
+    P4 --> OUT["flavor binpkgs<br/>→ binhost (arch)"]:::art
     classDef done fill:#13261a,stroke:#3fb950,color:#7ee787;
     classDef proc fill:#21262d,stroke:#30363d,color:#e6edf3;
     classDef dec fill:#2b2517,stroke:#f0883e,color:#f0c08e;
@@ -203,25 +203,25 @@ flowchart TD
     classDef art fill:#2d2114,stroke:#f0883e,color:#f0c08e;
       </pre>
     </div>
-    <div class="note">A <strong>USE de completude</strong> (qt6/gtk/VIDEO_CARDS/L10N) é final desde a Fase 1.
-      Apenas a <strong>USE de quebra-de-ciclo</strong> (<code>use_break</code>) se estagia — ver diagrama 4.</div>
+    <div class="note"><strong>Completeness USE</strong> (qt6/gtk/VIDEO_CARDS/L10N) is final from Phase 1.
+      Only <strong>cycle-breaking USE</strong> (<code>use_break</code>) is staged — see diagram 4.</div>
   </section>
 
   <!-- 4 -->
   <section id="cycle">
-    <h2><span class="num">4.</span> Quebra de dependência circular (<code>use_break</code>)</h2>
-    <p class="lead">Ciclo real medido por <code>pretend-resolve</code>:
-      <code>libsdl2 → pipewire → ffmpeg → libsdl2</code>. A quebra é curada <strong>manualmente</strong>
-      por flavor: compila com a USE desligada, depois religa.</p>
+    <h2><span class="num">4.</span> Breaking a circular dependency (<code>use_break</code>)</h2>
+    <p class="lead">A real cycle measured by <code>pretend-resolve</code>:
+      <code>libsdl2 → pipewire → ffmpeg → libsdl2</code>. The break is curated <strong>manually</strong>
+      per flavor: compile with the USE turned off, then turn it back on.</p>
     <div class="diagram">
       <pre class="mermaid">
 flowchart LR
-    PR["pretend-resolve.sh<br/>(emerge --pretend)"]:::tool --> CUR["curadoria manual<br/>do use_break na recipe"]:::dec
-    CUR --> BP["BREAK-PASS<br/>ffmpeg#91;-sdl#93;<br/>(binpkg transiente)"]:::trans
-    BP --> SP["SETTLE-PASS<br/>ffmpeg#91;sdl#93; final<br/>(parceiro do ciclo ja presente)"]:::art
-    SP --> GC{"GC ciente de USE"}:::dec
-    GC -->|"transiente"| PODA["podar (só build-pool)"]:::stop
-    GC -->|"final"| KEEP["publicar (publish-pool)"]:::art
+    PR["pretend-resolve.sh<br/>(emerge --pretend)"]:::tool --> CUR["manual curation<br/>of use_break in the recipe"]:::dec
+    CUR --> BP["BREAK-PASS<br/>ffmpeg#91;-sdl#93;<br/>(transient binpkg)"]:::trans
+    BP --> SP["SETTLE-PASS<br/>ffmpeg#91;sdl#93; final<br/>(cycle partner already present)"]:::art
+    SP --> GC{"USE-aware GC"}:::dec
+    GC -->|"transient"| PODA["prune (build-pool only)"]:::stop
+    GC -->|"final"| KEEP["publish (publish-pool)"]:::art
     classDef tool fill:#1f6feb,stroke:#388bfd,color:#fff;
     classDef dec fill:#2b2517,stroke:#f0883e,color:#f0c08e;
     classDef trans fill:#3d1518,stroke:#f85149,color:#ffb3ad;
@@ -229,28 +229,28 @@ flowchart LR
     classDef stop fill:#161b22,stroke:#30363d,color:#8b949e;
       </pre>
     </div>
-    <div class="note">O <strong>binpkg transiente</strong> existe só para quebrar o ciclo e
-      <strong>nunca chega à ISO</strong>. O <code>binhost.gc()</code> distingue variante-de-flavor (manter todas),
-      versão antiga (keep-N) e transiente (podar).</div>
+    <div class="note">The <strong>transient binpkg</strong> exists only to break the cycle and
+      <strong>never reaches the ISO</strong>. <code>binhost.gc()</code> tells apart a flavor variant (keep all),
+      an old version (keep-N) and a transient (prune).</div>
   </section>
 
   <!-- 5 -->
   <section id="fork">
-    <h2><span class="num">5.</span> Fork-point &amp; particionamento do binhost</h2>
-    <p class="lead">As fases iniciais dependem só do <strong>init</strong>. O fork por desktop ocorre tarde —
-      o tronco compila uma vez por init; só a fase de desktop ramifica.</p>
+    <h2><span class="num">5.</span> Fork-point &amp; binhost partitioning</h2>
+    <p class="lead">The early phases depend only on the <strong>init</strong>. The per-desktop fork happens late —
+      the trunk compiles once per init; only the desktop phase branches.</p>
     <div class="diagram">
       <pre class="mermaid">
 flowchart LR
-    S3["stage3"]:::seed --> RB["rebuild"]:::proc --> SE["seat<br/>(por init)"]:::proc --> GR["graphics"]:::proc
-    GR --> M["minimal<br/>(= tronco)"]:::art
+    S3["stage3"]:::seed --> RB["rebuild"]:::proc --> SE["seat<br/>(per init)"]:::proc --> GR["graphics"]:::proc
+    GR --> M["minimal<br/>(= trunk)"]:::art
     GR --> K["+kde → binpkgs kde"]:::art
     GR --> G["+gnome → binpkgs gnome"]:::art
     GR --> WM["+wm → binpkgs Hyprland/Sway/niri"]:::art
     M --> BH
     K --> BH
     G --> BH
-    WM --> BH[("BINHOST por arch<br/>v3 · znver5 · arrowlake")]:::store
+    WM --> BH[("BINHOST per arch<br/>v3 · znver5 · arrowlake")]:::store
     classDef seed fill:#1f6feb,stroke:#388bfd,color:#fff;
     classDef proc fill:#21262d,stroke:#30363d,color:#e6edf3;
     classDef art fill:#2d2114,stroke:#f0883e,color:#f0c08e;
@@ -258,45 +258,45 @@ flowchart LR
       </pre>
     </div>
     <div class="grid">
-      <div class="card"><h3>Por arch (físico)</h3><p>Obrigatório: binpkg <code>znver5</code> (AVX-512) não roda em <code>v3</code>. Um tree por arch.</p></div>
-      <div class="card"><h3>Por USE (lógico)</h3><p>multi-instance + <code>BUILD_ID</code> absorve as variações de flavor/init dentro de cada arch.</p></div>
-      <div class="card"><h3>Cache compartilhado</h3><p>ccache/sccache são keyed por flags → seguros entre flavors sem violar a pureza do container.</p></div>
+      <div class="card"><h3>Per arch (physical)</h3><p>Mandatory: a <code>znver5</code> binpkg (AVX-512) does not run on <code>v3</code>. One tree per arch.</p></div>
+      <div class="card"><h3>Per USE (logical)</h3><p>multi-instance + <code>BUILD_ID</code> absorbs the flavor/init variations within each arch.</p></div>
+      <div class="card"><h3>Shared cache</h3><p>ccache/sccache are keyed by flags → safe across flavors without breaking container purity.</p></div>
     </div>
   </section>
 
   <!-- 6 -->
   <section id="assembler">
-    <h2><span class="num">6.</span> ISO Assembler — imune a ciclo</h2>
-    <p class="lead">Ciclo é fenômeno de <em>build-time</em>. O Assembler navega o grafo multi-instance e
-      extrai a fatia do flavor pela <strong>USE final</strong> — toda a complexidade fica na Factory.</p>
+    <h2><span class="num">6.</span> ISO Assembler — immune to cycles</h2>
+    <p class="lead">A cycle is a <em>build-time</em> phenomenon. The Assembler navigates the multi-instance graph and
+      extracts the flavor's slice by the <strong>final USE</strong> — all the complexity stays in the Factory.</p>
     <div class="diagram">
       <pre class="mermaid">
 flowchart TD
-    SEED["container seeda stage3"]:::seed --> RES["resolve USE final do flavor"]:::proc
-    RES --> MATCH{"match multi-instance<br/>no binhost"}:::dec
+    SEED["container seeds stage3"]:::seed --> RES["resolves the flavor's final USE"]:::proc
+    RES --> MATCH{"multi-instance match<br/>in the binhost"}:::dec
     MATCH -->|"poppler#91;qt6#93;"| KDE["ISO KDE"]:::art
     MATCH -->|"poppler#91;gtk#93;"| GN["ISO GNOME"]:::art
-    MATCH -->|"sem DE"| MIN["ISO minimal"]:::art
+    MATCH -->|"no DE"| MIN["ISO minimal"]:::art
     KDE --> SQ
     GN --> SQ
     MIN --> SQ["mksquashfs zstd -19<br/>(rootfs read-only)"]:::proc
-    SQ --> DR["dracut dmsquash-live<br/>(overlayfs em RAM)"]:::proc
-    DR --> ISO["grub-mkrescue / xorriso<br/>→ ISO híbrida BIOS+UEFI"]:::art
+    SQ --> DR["dracut dmsquash-live<br/>(overlayfs in RAM)"]:::proc
+    DR --> ISO["grub-mkrescue / xorriso<br/>→ hybrid BIOS+UEFI ISO"]:::art
     classDef seed fill:#1f6feb,stroke:#388bfd,color:#fff;
     classDef proc fill:#21262d,stroke:#30363d,color:#e6edf3;
     classDef dec fill:#2b2517,stroke:#f0883e,color:#f0c08e;
     classDef art fill:#2d2114,stroke:#f0883e,color:#f0c08e;
       </pre>
     </div>
-    <div class="note"><strong>Requisito de consistência:</strong> a USE final do <em>settle-pass</em> da Factory
-      deve ser idêntica à USE que o Assembler resolve — senão <code>--usepkgonly</code> falha sem match.</div>
+    <div class="note"><strong>Consistency requirement:</strong> the final USE of the Factory's <em>settle-pass</em>
+      must be identical to the USE the Assembler resolves — otherwise <code>--usepkgonly</code> fails with no match.</div>
   </section>
 
   <!-- 7 -->
   <section id="matrix">
-    <h2><span class="num">7.</span> Matriz de eixos componíveis</h2>
-    <p class="lead">Uma release é a tupla <code>base + arch + flavor + init</code>, resolvida por deep-merge.
-      Os eixos não se multiplicam de forma ingênua (desktop ≈ flavor).</p>
+    <h2><span class="num">7.</span> Matrix of composable axes</h2>
+    <p class="lead">A release is the tuple <code>base + arch + flavor + init</code>, resolved by deep-merge.
+      The axes do not multiply naively (desktop ≈ flavor).</p>
     <div class="diagram">
       <pre class="mermaid">
 flowchart LR
@@ -308,7 +308,7 @@ flowchart LR
     end
     subgraph FLV["flavor"]
       direction TB
-      f0["minimal (só TTY)"]
+      f0["minimal (TTY only)"]
       f1["kde (Qt)"]
       f2["gnome (GTK)"]
       f4["wm (Hyprland/Sway/niri)"]
@@ -327,17 +327,17 @@ flowchart LR
       </pre>
     </div>
     <div class="legend">
-      <span><span class="dot" style="background:#3fb950"></span> Tier 1 — boot nativo no host 9950X (Zen 5)</span>
+      <span><span class="dot" style="background:#3fb950"></span> Tier 1 — native boot on the 9950X host (Zen 5)</span>
       <span><span class="dot" style="background:#f0883e"></span> Tier 2 — build-only / QEMU (arrowlake)</span>
     </div>
-    <div class="note">Piloto inicial: <code>v3 × minimal × systemd</code>, depois <code>v3 × kde × systemd</code>.</div>
+    <div class="note">Initial pilot: <code>v3 × minimal × systemd</code>, then <code>v3 × kde × systemd</code>.</div>
   </section>
 
 </div>
 
 <footer>
-  Shidashi 仕出し — documentação de arquitetura · gerado a partir de <code>OVERVIEW.md</code> ·
-  diagramas <a href="https://mermaid.js.org" style="color:var(--accent2)">Mermaid</a>
+  Shidashi 仕出し — architecture documentation · generated from <code>OVERVIEW.md</code> ·
+  diagrams <a href="https://mermaid.js.org" style="color:var(--accent2)">Mermaid</a>
 </footer>
 
 <script>

@@ -1,23 +1,23 @@
-"""UNIT da camada de planejamento PURO de shidashi.phases (story 003 grupo 3 + 4.1).
+"""UNIT tests of the PURE planning layer of shidashi.phases (story 003 group 3 + 4.1).
 
-Todas as funções testadas aqui são puras ou fazem apenas I/O contra um tmp dir
-(sem root, sem nspawn, sem portage):
+Every function tested here is pure or does I/O only against a tmp dir
+(no root, no nspawn, no portage):
 
-* 3.1 ``phase_target`` (rebuild→@world, desktop→@<flavor>, ``phase.sets``
-  declarados→``@<nome>`` intersectados com ``recipe.sets``, senão
-  ``phase.packages``) e ``phase_emerge_argv`` (--emptytree só em rebuild);
-* 3.2 ``use_break_lines`` / ``write_use_break`` / ``clear_use_break`` contra um
-  rootfs em tmp_path;
-* 3.3 ``parse_built_atoms`` sobre saída ``emerge --verbose`` capturada;
-* 3.4 ``fork_point`` (presença/ausência do tarball + composição da chave) e
-  ``trunk_phase_names`` (exclui ``desktop`` no kde; todas as phases no minimal);
-* 4.1 (unit) ``snapshot_fork_point`` → ``restore_fork_point`` round-trip de uma
-  árvore tmp simples (conteúdo + layout preservados, escrita atômica do dest).
+* 3.1 ``phase_target`` (rebuild→@world, desktop→@<flavor>, declared
+  ``phase.sets``→``@<name>`` intersected with ``recipe.sets``, otherwise
+  ``phase.packages``) and ``phase_emerge_argv`` (--emptytree only on rebuild);
+* 3.2 ``use_break_lines`` / ``write_use_break`` / ``clear_use_break`` against a
+  rootfs in tmp_path;
+* 3.3 ``parse_built_atoms`` over captured ``emerge --verbose`` output;
+* 3.4 ``fork_point`` (presence/absence of the tarball + the key's composition) and
+  ``trunk_phase_names`` (excludes ``desktop`` on kde; every phase on minimal);
+* 4.1 (unit) ``snapshot_fork_point`` → ``restore_fork_point`` round trip of a
+  simple tmp tree (content + layout preserved, atomic write of the dest).
 
-Contrato derivado de design.md §phases. Os símbolos de ``shidashi.phases`` e
-``shidashi.recipe.UseBreak`` são importados de forma tolerante (``try_import``) só
-para não abortar a coleção do pytest inteiro enquanto a impl não existe; cada
-teste fica Red no uso, nomeando o símbolo pendente (Red esperado da story 003).
+Contract derived from design.md §phases. The symbols of ``shidashi.phases`` and
+``shidashi.recipe.UseBreak`` are imported tolerantly (``try_import``) only so the
+whole pytest collection does not abort while the implementation does not exist;
+each test goes Red on use, naming the pending symbol (the expected Red of story 003).
 """
 
 from pathlib import Path
@@ -75,7 +75,7 @@ def _ffmpeg() -> Any:
 
 
 def _phase(name: str, *, packages: tuple[str, ...] = (), breaks: tuple[Any, ...] = ()) -> Phase:
-    # Phase ganha use_break: tuple[UseBreak] na 1.1; sob a forma antiga isto é Red.
+    # Phase gains use_break: tuple[UseBreak] in 1.1; under the old shape this is Red.
     return Phase(name=name, packages=packages, use_break=breaks)
 
 
@@ -117,7 +117,7 @@ def test_phase_target_is_the_stages_own_sets_whatever_the_phase_is_called() -> N
 
 
 def test_phase_target_uses_declared_sets() -> None:
-    # A fase DECLARA os sets que instala; o nome da fase não importa mais.
+    # The phase DECLARES the sets it installs; the phase's name no longer matters.
     phase = Phase(name="qualquer-nome", sets=("base", "graphics"))
     assert phase_target(phase, _recipe()) == ("@base", "@graphics")
 
@@ -217,7 +217,7 @@ def test_clear_use_break_idempotent(tmp_path: Path) -> None:
     assert written is not None and written.exists()
     clear_use_break(tmp_path)
     assert not written.exists()
-    # idempotente: limpar de novo não levanta
+    # idempotent: clearing again does not raise
     clear_use_break(tmp_path)
     assert not written.exists()
 
@@ -469,7 +469,7 @@ def test_snapshot_writes_atomically_no_partial_temp(tmp_path: Path) -> None:
     (src / "file").write_text("x", encoding="utf-8")
     dest = tmp_path / "out.tar"
     snapshot_fork_point(src, dest)
-    # escrita atômica: o destino existe e nenhum temp pendente fica ao lado
+    # atomic write: the destination exists and no pending temp is left beside it
     assert dest.exists()
     leftovers = [p for p in tmp_path.iterdir() if p != dest and p != src]
     assert leftovers == []

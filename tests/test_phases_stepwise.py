@@ -1,27 +1,27 @@
-"""UNIT + INTEGRAÇÃO de shidashi.phases (story 004 — planejamento stepwise PURO +
-orquestração privilegiada).
+"""UNIT + INTEGRATION tests of shidashi.phases (story 004 — PURE stepwise planning +
+privileged orchestration).
 
-UNIT (determinista, CI não-Gentoo):
-* 2.1 ``checkpoint_sequence`` (= ("seed", *phases, "settle")) e ``plan_phase_run``
-  (pula completed, para após ``until`` inclusive, ``until="seed"`` ⇒ vazio,
-  ``until`` inválido ⇒ ValueError listando os nomes válidos) — R1.1/R1.2/R1.4/
+UNIT (deterministic, non-Gentoo CI):
+* 2.1 ``checkpoint_sequence`` (= ("seed", *phases, "settle")) and ``plan_phase_run``
+  (skips completed, stops after ``until`` inclusive, ``until="seed"`` ⇒ empty,
+  invalid ``until`` ⇒ ValueError listing the valid names) — R1.1/R1.2/R1.4/
   R1.5/R2.5;
-* 2.2 ``phase_snapshot_path`` (chave a-f-i-snapshot-phase) e ``latest_resumable``
-  (última phase completed com tarball em disco, senão (None,None)) — R5.1/R5.2;
-* 3.1 ``parse_emerge_plan`` (ops N/R/rR/U, deltas USE, [blocks], vazio em no-merge)
+* 2.2 ``phase_snapshot_path`` (key a-f-i-snapshot-phase) and ``latest_resumable``
+  (last completed phase with a tarball on disk, else (None,None)) — R5.1/R5.2;
+* 3.1 ``parse_emerge_plan`` (ops N/R/rR/U, USE deltas, [blocks], empty on no-merge)
   — R4.1/R4.3;
 * 3.2 ``compute_phase_diff`` (unexpected rebuild via prior_atoms, use_changes,
-  blockers passthrough, phase limpa ⇒ listas vazias) — R4.1/R4.2;
-* 5.1/5.2 (unit) routing de ``run_phases_stepwise`` com o Container monkeypatched
-  e ``run_phase`` injetado: STOP após uma phase interrompe o laço; on_failure
-  RETRY re-roda a mesma phase e ABORT levanta FactoryError; nenhum settle quando
-  o stop é antecipado — R1.3/R2.2/R2.3/R3.1/R3.2/R3.3/R3.5/R5.3.
+  blockers passthrough, clean phase ⇒ empty lists) — R4.1/R4.2;
+* 5.1/5.2 (unit) routing of ``run_phases_stepwise`` with the Container monkeypatched
+  and ``run_phase`` injected: STOP after a phase breaks the loop; on_failure
+  RETRY re-runs the same phase and ABORT raises FactoryError; no settle when
+  the stop comes early — R1.3/R2.2/R2.3/R3.1/R3.2/R3.3/R3.5/R5.3.
 
-INTEGRAÇÃO (host-gated, Red DIFERIDO): o caminho privilegiado real
-(nspawn + emerge + snapshot por fase) PULA em CI/sandbox não-root.
+INTEGRATION (host-gated, DEFERRED Red): the real privileged path
+(nspawn + emerge + per-phase snapshot) is SKIPPED in non-root CI/sandbox.
 
-Contrato derivado de design.md §phases. Símbolos novos importados de forma
-tolerante (``try_import``); cada teste unit fica Red no uso (Red esperado 004).
+Contract derived from design.md §phases. New symbols imported
+tolerantly (``try_import``); each unit test goes Red on use (expected Red 004).
 """
 
 import os
@@ -51,7 +51,7 @@ EmergePlanEntry: Any = try_import("shidashi.state", "EmergePlanEntry")
 
 _NEEDS_HOST = os.geteuid() != 0 or shutil.which("systemd-nspawn") is None
 _skip_privileged = pytest.mark.skipif(
-    _NEEDS_HOST, reason="exige root + systemd-nspawn + stage3 seedado (host Gentoo)"
+    _NEEDS_HOST, reason="requires root + systemd-nspawn + a seeded stage3 (Gentoo host)"
 )
 
 
@@ -128,7 +128,7 @@ def test_plan_phase_run_invalid_until_raises_valueerror_listing_names() -> None:
     with pytest.raises(ValueError) as exc:
         plan_phase_run(_recipe(), completed=(), until="bogus")
     msg = str(exc.value)
-    # mensagem lista os nomes válidos (seed + phases) para o usuário
+    # the message lists the valid names (seed + phases) for the user
     assert "rebuild" in msg
     assert "graphics" in msg
     assert "seed" in msg
@@ -162,7 +162,7 @@ def test_latest_resumable_none_when_no_tarball(tmp_path: Path) -> None:
 
 
 def test_latest_resumable_picks_last_completed_with_tarball(tmp_path: Path) -> None:
-    # snapshots de rebuild e graphics existem; o último completed com tarball é graphics
+    # snapshots of rebuild and graphics exist; the last completed one with a tarball is graphics
     (tmp_path / "v3-minimal-systemd-S-rebuild.tar").write_bytes(b"")
     (tmp_path / "v3-minimal-systemd-S-graphics.tar").write_bytes(b"")
     phase, path = latest_resumable(
@@ -173,7 +173,7 @@ def test_latest_resumable_picks_last_completed_with_tarball(tmp_path: Path) -> N
 
 
 def test_latest_resumable_skips_completed_without_tarball(tmp_path: Path) -> None:
-    # só rebuild tem tarball; graphics completed mas sem snapshot → cai para rebuild
+    # only rebuild has a tarball; graphics completed but without a snapshot → falls back to rebuild
     (tmp_path / "v3-minimal-systemd-S-rebuild.tar").write_bytes(b"")
     phase, path = latest_resumable(
         _recipe(), snapshot="S", completed=("rebuild", "graphics"), fork_points_dir=tmp_path
@@ -210,15 +210,15 @@ def test_parse_emerge_plan_extracts_ops_per_atom() -> None:
 def test_parse_emerge_plan_captures_use_deltas() -> None:
     entries, _blockers = parse_emerge_plan(_EMERGE_VERBOSE)
     with_use = [e for e in entries if e.use_changes]
-    # ao menos um entry carrega deltas de USE (sound% / -wayland* / rsync-verify%*)
-    assert with_use, "esperado ao menos um EmergePlanEntry com use_changes"
+    # at least one entry carries USE deltas (sound% / -wayland* / rsync-verify%*)
+    assert with_use, "expected at least one EmergePlanEntry with use_changes"
     joined = " ".join(flag for e in with_use for flag in e.use_changes)
     assert "sound" in joined or "wayland" in joined or "rsync-verify" in joined
 
 
 def test_parse_emerge_plan_captures_blockers() -> None:
     _entries, blockers = parse_emerge_plan(_EMERGE_VERBOSE)
-    assert blockers, "esperado ao menos um blocker da linha [blocks B ...]"
+    assert blockers, "expected at least one blocker from the [blocks B ...] line"
     assert any("foo" in b for b in blockers)
 
 
@@ -237,7 +237,7 @@ def test_compute_phase_diff_flags_unexpected_rebuild() -> None:
         EmergePlanEntry(atom="media-video/ffmpeg-6.1.1", op="N"),
     )
     diff = compute_phase_diff("graphics", entries, (), prior_atoms=("media-libs/mesa-24.0.5",))
-    # mesa foi construída numa phase anterior (mesma category/PN) e agora rebuild → unexpected
+    # mesa was built in an earlier phase (same category/PN) and is now rebuilt → unexpected
     assert any("mesa" in a for a in diff.unexpected_rebuilds)
     assert diff.phase == "graphics"
 
@@ -272,11 +272,11 @@ def test_failure_decision_members() -> None:
     assert FailureDecision.ABORT == "ABORT"
 
 
-# --- 5.2 (unit) routing de run_phases_stepwise (Container monkeypatched) -----
+# --- 5.2 (unit) routing of run_phases_stepwise (Container monkeypatched) -----
 
 
 class _FakeContainer:
-    """Container falso: registra cada ``emerge`` chamado; ``shell`` é no-op."""
+    """Fake container: records each ``emerge`` called; ``shell`` is a no-op."""
 
     def __init__(self, *, fail_first: int = 0) -> None:
         self.rootfs = Path("/r")
@@ -301,7 +301,7 @@ class _FakeContainer:
 
 
 def _stepwise(container: Any, recipe: Any, monkeypatch: pytest.MonkeyPatch, **kw: Any) -> Any:
-    # evita snapshot real + state I/O: monkeypatcha snapshot_fork_point e save_state.
+    # avoids a real snapshot + state I/O: monkeypatches snapshot_fork_point and save_state.
     monkeypatch.setattr(phases, "snapshot_fork_point", lambda *_a, **_k: Path("/snap.tar"))
     import shidashi.state as state_mod
 
@@ -330,7 +330,7 @@ def test_stepwise_checkpoint_stop_halts_loop_and_skips_settle(
         return CheckpointDecision.STOP if phase == "rebuild" else CheckpointDecision.CONTINUE
 
     results = _stepwise(container, _recipe(), monkeypatch, on_checkpoint=on_checkpoint)
-    # parou em rebuild: graphics/apps NÃO rodaram e NENHUM settle (R1.3/R2.3)
+    # stopped at rebuild: graphics/apps did NOT run and NO settle (R1.3/R2.3)
     assert seen == ["rebuild"]
     assert all("--newuse" not in c for c in container.emerge_calls)
     ran = [r.phase.name for r in results]
@@ -339,7 +339,7 @@ def test_stepwise_checkpoint_stop_halts_loop_and_skips_settle(
 
 
 def test_stepwise_failure_retry_then_continue(monkeypatch: pytest.MonkeyPatch) -> None:
-    container = _FakeContainer(fail_first=1)  # 1ª emerge falha, 2ª passa
+    container = _FakeContainer(fail_first=1)  # 1st emerge fails, 2nd passes
     failures: list[str] = []
 
     def on_failure(phase: str, _err: Any) -> Any:
@@ -353,14 +353,14 @@ def test_stepwise_failure_retry_then_continue(monkeypatch: pytest.MonkeyPatch) -
         on_failure=on_failure,
         on_checkpoint=lambda *_a: CheckpointDecision.CONTINUE,
     )
-    # on_failure foi consultado e o emerge da MESMA phase foi re-rodado
+    # on_failure was consulted and the emerge of the SAME phase was re-run
     assert failures == ["rebuild"]
     assert container.emerge_calls[0] == container.emerge_calls[1]
     assert any(r.phase.name == "rebuild" for r in results)
 
 
 def test_stepwise_failure_abort_raises_factory_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    container = _FakeContainer(fail_first=99)  # sempre falha
+    container = _FakeContainer(fail_first=99)  # always fails
     monkeypatch.setattr(phases, "snapshot_fork_point", lambda *_a, **_k: Path("/snap.tar"))
     import shidashi.state as state_mod
 
@@ -428,17 +428,17 @@ def test_stepwise_with_no_shipped_stage_never_settles(monkeypatch: pytest.Monkey
     assert [r.phase.name for r in results] == ["rebuild"]
 
 
-# --- INTEGRAÇÃO host-gated (Red DIFERIDO ao host privilegiado real) ----------
+# --- host-gated INTEGRATION (Red DEFERRED to the real privileged host) -------
 
 
 @_skip_privileged
 def test_run_phases_stepwise_until_rebuild_persists_and_no_settle() -> None:
-    # 5.2/5.1 (int): seed+rebuild reais, snapshot por fase escrito, state com
-    # completed=("rebuild",), SEM settle, exit 0. Diferido ao host.
-    pytest.skip("integração privilegiada: requer rootfs seedado real (Red diferido)")
+    # 5.2/5.1 (int): real seed+rebuild, per-phase snapshot written, state with
+    # completed=("rebuild",), NO settle, exit 0. Deferred to the host.
+    pytest.skip("privileged integration: requires a real seeded rootfs (deferred Red)")
 
 
 @_skip_privileged
 def test_run_phases_stepwise_resume_restores_and_runs_next() -> None:
-    # R5.2 (int): resume restaura o snapshot da última phase completed e roda a próxima.
-    pytest.skip("integração privilegiada: requer rootfs seedado real (Red diferido)")
+    # R5.2 (int): resume restores the snapshot of the last completed phase and runs the next.
+    pytest.skip("privileged integration: requires a real seeded rootfs (deferred Red)")

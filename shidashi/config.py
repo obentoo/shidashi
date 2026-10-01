@@ -1,11 +1,11 @@
-"""Resolução de caminhos da árvore ``variants/`` do Shidashi.
+"""Path resolution for Shidashi's ``variants/`` tree.
 
-Este módulo descobre o diretório ``variants/`` (com override por variável de
-ambiente ``SHIDASHI_VARIANTS_DIR``) e resolve os caminhos de cada eixo
-(``arch``/``flavor``/``init``) e do fragmento ``base``. Não parseia YAML — isso
-é responsabilidade de :mod:`shidashi.recipe`, cujos loaders recebem um ``Path``
-explícito. Mantém-se puro: sem estado mutável global; a variável de ambiente é
-lida a cada chamada para que testes possam fazer ``monkeypatch``.
+This module finds the ``variants/`` directory (overridable through the
+``SHIDASHI_VARIANTS_DIR`` environment variable) and resolves the paths of each
+axis (``arch``/``flavor``/``init``) and of the ``base`` fragment. It does not
+parse YAML -- that is the job of :mod:`shidashi.recipe`, whose loaders take an
+explicit ``Path``. It stays pure: no global mutable state; the environment
+variable is read on every call so that tests can ``monkeypatch`` it.
 """
 
 import os
@@ -26,29 +26,27 @@ _RUNS_ENV = "SHIDASHI_RUNS"
 
 
 class UnknownAxisError(Exception):
-    """Eixo/valor desconhecido ao resolver um diretório de ``variants/`` (R1.4).
+    """Unknown axis/value while resolving a ``variants/`` directory (R1.4).
 
-    Carrega o ``axis`` consultado, o ``name`` inexistente e a lista de
-    ``available`` (nomes válidos para esse eixo). A mensagem embute os nomes
-    disponíveis para que a CLI (tarefa posterior) os exiba ao usuário.
+    Carries the queried ``axis``, the missing ``name`` and the list of
+    ``available`` names (valid names for that axis). The message embeds the
+    available names so that the CLI (a later task) can show them to the user.
     """
 
     def __init__(self, axis: str, name: str, available: list[str]) -> None:
         self.axis = axis
         self.name = name
         self.available = available
-        disponiveis = ", ".join(available) if available else "(nenhum)"
-        super().__init__(
-            f"valor {name!r} desconhecido para o eixo {axis!r}; disponíveis: {disponiveis}"
-        )
+        disponiveis = ", ".join(available) if available else "(none)"
+        super().__init__(f"unknown value {name!r} for axis {axis!r}; available: {disponiveis}")
 
 
 def variants_dir() -> Path:
-    """Devolve o diretório ``variants/`` (R6.1).
+    """Return the ``variants/`` directory (R6.1).
 
-    Se ``SHIDASHI_VARIANTS_DIR`` estiver definida, usa-a; caso contrário localiza
-    ``variants/`` relativo ao pacote: a raiz do projeto é o diretório-pai do
-    pacote ``shidashi`` e ``variants/`` vive em ``<raiz>/variants``.
+    If ``SHIDASHI_VARIANTS_DIR`` is set, use it; otherwise locate ``variants/``
+    relative to the package: the project root is the parent directory of the
+    ``shidashi`` package and ``variants/`` lives at ``<root>/variants``.
     """
     override = os.environ.get(_ENV_VAR)
     if override:
@@ -58,10 +56,10 @@ def variants_dir() -> Path:
 
 
 def available_names(axis: str) -> list[str]:
-    """Lista ordenada dos subdiretórios sob ``variants_dir()/axis``.
+    """Sorted list of the subdirectories under ``variants_dir()/axis``.
 
-    Cada subdiretório representa um valor do eixo. Devolve lista vazia se o
-    diretório do eixo não existir.
+    Each subdirectory stands for one value of the axis. Return an empty list if
+    the axis directory does not exist.
     """
     axis_root = variants_dir() / axis
     if not axis_root.is_dir():
@@ -70,10 +68,10 @@ def available_names(axis: str) -> list[str]:
 
 
 def axis_dir(axis: str, name: str) -> Path:
-    """Devolve ``variants_dir()/axis/name`` (R1.3).
+    """Return ``variants_dir()/axis/name`` (R1.3).
 
-    Levanta :class:`UnknownAxisError` (com os nomes disponíveis) se o diretório
-    resolvido não existir.
+    Raise :class:`UnknownAxisError` (with the available names) if the resolved
+    directory does not exist.
     """
     candidate = variants_dir() / axis / name
     if not candidate.is_dir():
@@ -82,15 +80,15 @@ def axis_dir(axis: str, name: str) -> Path:
 
 
 def recipe_path(axis: str, name: str) -> Path:
-    """Devolve ``axis_dir(axis, name)/"recipe.yaml"`` (R1.3).
+    """Return ``axis_dir(axis, name)/"recipe.yaml"`` (R1.3).
 
-    Valida primeiro a existência do diretório do eixo via :func:`axis_dir`.
+    First checks that the axis directory exists, via :func:`axis_dir`.
     """
     return axis_dir(axis, name) / "recipe.yaml"
 
 
 def base_path() -> Path:
-    """Devolve ``variants_dir()/"base"/"recipe.yaml"`` (R1.3)."""
+    """Return ``variants_dir()/"base"/"recipe.yaml"`` (R1.3)."""
     return variants_dir() / "base" / "recipe.yaml"
 
 
@@ -150,21 +148,21 @@ def load_recipe(arch: str, target: str, init: str, *, any_stage: bool = False) -
 
 
 def kits_dir() -> Path:
-    """Devolve ``variants_dir()/"kits"``: a biblioteca de TODOS os sets (D25).
+    """Return ``variants_dir()/"kits"``: the library of ALL sets (D25).
 
-    Não é um eixo nem uma camada: não tem ``portage/`` nem receita. As camadas
-    (base, flavor, …) só DECLARAM quais sets instalam; o conteúdo mora aqui, em
-    ``kits/<categoria>/<set>``. As categorias são só para pessoas.
+    It is neither an axis nor a layer: it has no ``portage/`` and no recipe. The
+    layers (base, flavor, …) only DECLARE which sets they install; the content
+    lives here, in ``kits/<category>/<set>``. The categories are for people only.
     """
     return variants_dir() / "kits"
 
 
 def scratch_dir() -> Path:
-    """Devolve o diretório de scratch do fluxo *pretend* (R6.2).
+    """Return the scratch directory of the *pretend* flow (R6.2).
 
-    Honra ``SHIDASHI_SCRATCH`` (lida a cada chamada, como :func:`variants_dir`);
-    na ausência usa o default ``/var/tmp/shidashi-pretend``. Todo estado efêmero
-    da resolução (rootfs seedado) é confinado aqui.
+    Honors ``SHIDASHI_SCRATCH`` (read on every call, like :func:`variants_dir`);
+    when unset, uses the default ``/var/tmp/shidashi-pretend``. All ephemeral
+    resolution state (the seeded rootfs) is confined here.
     """
     override = os.environ.get(_SCRATCH_ENV)
     if override:
@@ -173,10 +171,10 @@ def scratch_dir() -> Path:
 
 
 def cache_dir() -> Path:
-    """Devolve o diretório de cache de stage3 baixados (R2.5).
+    """Return the cache directory for downloaded stage3 tarballs (R2.5).
 
-    Honra ``SHIDASHI_CACHE`` (lida a cada chamada); default ``/var/cache/shidashi``.
-    O tarball verificado é guardado aqui para reuso entre execuções.
+    Honors ``SHIDASHI_CACHE`` (read on every call); default ``/var/cache/shidashi``.
+    The verified tarball is kept here for reuse across runs.
     """
     override = os.environ.get(_CACHE_ENV)
     if override:
@@ -198,11 +196,11 @@ def runs_dir() -> Path:
 
 
 def seeds_dir() -> Path:
-    """Devolve o diretório ``seeds/`` do repo (pointer pinado) (R2.1).
+    """Return the repo's ``seeds/`` directory (the pinned pointer) (R2.1).
 
-    Honra ``SHIDASHI_SEEDS_DIR`` (lida a cada chamada); na ausência resolve
-    ``seeds/`` relativo à raiz do projeto (mesma resolução de
-    :func:`variants_dir`: o diretório-pai do pacote ``shidashi``).
+    Honors ``SHIDASHI_SEEDS_DIR`` (read on every call); when unset, resolves
+    ``seeds/`` relative to the project root (same resolution as
+    :func:`variants_dir`: the parent directory of the ``shidashi`` package).
     """
     override = os.environ.get(_SEEDS_ENV)
     if override:
@@ -212,20 +210,21 @@ def seeds_dir() -> Path:
 
 
 def build_root() -> Path:
-    """Devolve a raiz dos rootfs de build (R5.1/R8.2): ``scratch_dir()/build``.
+    """Return the root of the build rootfs trees (R5.1/R8.2): ``scratch_dir()/build``.
 
-    Cada flavor/arch monta seu rootfs efêmero sob este diretório. Herda o
-    override ``SHIDASHI_SCRATCH`` (lido por chamada) de :func:`scratch_dir`.
+    Each flavor/arch assembles its ephemeral rootfs under this directory.
+    Inherits the ``SHIDASHI_SCRATCH`` override (read per call) from
+    :func:`scratch_dir`.
     """
     return scratch_dir() / "build"
 
 
 def pkgdir(arch: str, generation: str | None = None) -> Path:
-    """Devolve o ``PKGDIR`` de pacotes binários por arch (R6.2): ``cache_dir()/binpkgs/<arch>``.
+    """Return the per-arch binary package ``PKGDIR`` (R6.2): ``cache_dir()/binpkgs/<arch>``.
 
-    Particionado por ``arch`` para que variantes de microarquitetura (``v3``,
-    ``znver5``, …) não compartilhem binpkgs incompatíveis. Herda o override
-    ``SHIDASHI_CACHE`` (lido por chamada) de :func:`cache_dir`.
+    Partitioned by ``arch`` so that microarchitecture variants (``v3``,
+    ``znver5``, …) do not share incompatible binpkgs. Inherits the
+    ``SHIDASHI_CACHE`` override (read per call) from :func:`cache_dir`.
 
     With ``generation`` -- the pinned stage3's snapshot -- one more level:
     ``binpkgs/<arch>/<generation>``. A new stage3 pin therefore starts an empty
@@ -237,12 +236,12 @@ def pkgdir(arch: str, generation: str | None = None) -> Path:
 
 
 def catalyst_dir(arch: str) -> Path:
-    """Devolve o diretório do storedir/saída do Catalyst por arch (story 005).
+    """Return the per-arch Catalyst storedir/output directory (story 005).
 
-    Particionado por ``arch`` (como :func:`pkgdir`) para que stage3 de
-    microarquiteturas distintas não colidam. Honra o override dedicado
-    ``SHIDASHI_CATALYST_DIR`` (lido por chamada); na ausência usa
-    ``cache_dir()/catalyst`` — herdando assim o override ``SHIDASHI_CACHE``.
+    Partitioned by ``arch`` (like :func:`pkgdir`) so that stage3 tarballs of
+    different microarchitectures do not collide. Honors the dedicated
+    ``SHIDASHI_CATALYST_DIR`` override (read per call); when unset, uses
+    ``cache_dir()/catalyst`` -- thus inheriting the ``SHIDASHI_CACHE`` override.
     """
     override = os.environ.get(_CATALYST_ENV)
     base = Path(override) if override else cache_dir() / "catalyst"
@@ -250,72 +249,73 @@ def catalyst_dir(arch: str) -> Path:
 
 
 def catalyst_spec_dir(arch: str) -> Path:
-    """Devolve o diretório de specs efêmeros do Catalyst por arch (story 005).
+    """Return the per-arch directory of ephemeral Catalyst specs (story 005).
 
-    Os specs stage1/2/3 são regeneráveis a cada build, logo vivem sob o scratch:
-    ``scratch_dir()/catalyst/<arch>``. Herda o override ``SHIDASHI_SCRATCH``
-    (lido por chamada) de :func:`scratch_dir`.
+    The stage1/2/3 specs are regenerated on every build, so they live under
+    scratch: ``scratch_dir()/catalyst/<arch>``. Inherits the ``SHIDASHI_SCRATCH``
+    override (read per call) from :func:`scratch_dir`.
     """
     return scratch_dir() / "catalyst" / arch
 
 
 def ccache_dir() -> Path:
-    """Devolve o diretório ``ccache`` compartilhado (R6.2): ``cache_dir()/ccache``.
+    """Return the shared ``ccache`` directory (R6.2): ``cache_dir()/ccache``.
 
-    Compartilhado entre flavors/archs (cache de compilação C/C++). Herda o
-    override ``SHIDASHI_CACHE`` (lido por chamada).
+    Shared across flavors/archs (C/C++ compilation cache). Inherits the
+    ``SHIDASHI_CACHE`` override (read per call).
     """
     return cache_dir() / "ccache"
 
 
 def sccache_dir() -> Path:
-    """Devolve o diretório ``sccache`` compartilhado (R6.2): ``cache_dir()/sccache``.
+    """Return the shared ``sccache`` directory (R6.2): ``cache_dir()/sccache``.
 
-    Compartilhado entre flavors/archs (cache de compilação Rust). Herda o
-    override ``SHIDASHI_CACHE`` (lido por chamada).
+    Shared across flavors/archs (Rust compilation cache). Inherits the
+    ``SHIDASHI_CACHE`` override (read per call).
     """
     return cache_dir() / "sccache"
 
 
 def distdir() -> Path:
-    """Devolve o ``DISTDIR`` compartilhado (R6.2): ``cache_dir()/distfiles``.
+    """Return the shared ``DISTDIR`` (R6.2): ``cache_dir()/distfiles``.
 
-    Compartilhado entre flavors/archs (tarballs de fonte baixados). Herda o
-    override ``SHIDASHI_CACHE`` (lido por chamada).
+    Shared across flavors/archs (downloaded source tarballs). Inherits the
+    ``SHIDASHI_CACHE`` override (read per call).
     """
     return cache_dir() / "distfiles"
 
 
 def fork_points_dir() -> Path:
-    """Devolve o diretório de *fork points* (R6.2): ``cache_dir()/fork-points``.
+    """Return the *fork points* directory (R6.2): ``cache_dir()/fork-points``.
 
-    Guarda os marcos de fork entre estágios de build. Herda o override
-    ``SHIDASHI_CACHE`` (lido por chamada).
+    Holds the fork markers between build stages. Inherits the
+    ``SHIDASHI_CACHE`` override (read per call).
     """
     return cache_dir() / "fork-points"
 
 
 def state_dir() -> Path:
-    """Devolve o diretório de estado de build persistido (R6.1): ``cache_dir()/state``.
+    """Return the persisted build state directory (R6.1): ``cache_dir()/state``.
 
-    O estado de progresso de cada build vive aqui, sob o cache, para sobreviver ao
-    teardown do rootfs efêmero. Herda o override ``SHIDASHI_CACHE`` (lido por chamada).
+    Each build's progress state lives here, under the cache, so that it survives
+    the teardown of the ephemeral rootfs. Inherits the ``SHIDASHI_CACHE`` override
+    (read per call).
     """
     return cache_dir() / "state"
 
 
 def build_state_path(recipe: ResolvedRecipe) -> Path:
-    """Devolve o caminho do estado de uma receita (R6.1): ``state_dir()/<chave>.json``.
+    """Return the state path of a recipe (R6.1): ``state_dir()/<key>.json``.
 
-    A chave ``<arch>-<flavor>-<init>`` espelha a convenção de rootfs/fork-point,
-    isolando o progresso por variante. Herda o override ``SHIDASHI_CACHE`` (lido por
-    chamada) de :func:`state_dir`.
+    The ``<arch>-<flavor>-<init>`` key mirrors the rootfs/fork-point convention,
+    isolating progress per variant. Inherits the ``SHIDASHI_CACHE`` override (read
+    per call) from :func:`state_dir`.
     """
     return state_dir() / f"{recipe.arch}-{recipe.flavor}-{recipe.init}.json"
 
 
 def build_log_path(recipe: ResolvedRecipe) -> Path:
-    """Where a factory run streams its container output: ``scratch_dir()/logs/<chave>.log``.
+    """Where a factory run streams its container output: ``scratch_dir()/logs/<key>.log``.
 
     Appended to across runs (each command is stamped), and kept outside the
     rootfs so that a discarded or restored rootfs does not take it along.

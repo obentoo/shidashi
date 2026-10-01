@@ -1,7 +1,7 @@
-"""Pacote de testes do Shidashi.
+"""Shidashi test package.
 
-Torna ``tests`` um pacote real para que os imports já usados pelos testes
+Makes ``tests`` a real package so that the imports the tests already use
 (``from tests._pending import try_import``, ``from tests.test_merge import …``)
-resolvam de forma canônica — e para que ``mypy .`` mapeie cada arquivo a um
-único nome de módulo (``tests.test_*``) em vez de descobri-lo duas vezes.
+resolve canonically — and so that ``mypy .`` maps each file to a
+single module name (``tests.test_*``) instead of discovering it twice.
 """

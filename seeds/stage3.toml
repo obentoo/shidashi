@@ -1,18 +1,18 @@
-# Pointer pinado do stage3 (OVERVIEW §10/§11) — consumido por shidashi.seed.load_pointer.
+# Pinned stage3 pointer (OVERVIEW §10/§11) — consumed by shidashi.seed.load_pointer.
 #
-# Um único snapshot compartilhado por init; uma tabela por init com o filename
-# do tarball nomultilib e seu SHA-512. A URL do mirror é montada por stage3_url
-# como <base_url>/<snapshot>/<filename>, e o sibling <filename>.DIGESTS
-# (cleartext-signed, assinatura PGP inline) é baixado junto para a verificação GPG.
+# A single snapshot shared across inits; one table per init with the filename
+# of the nomultilib tarball and its SHA-512. The mirror URL is built by stage3_url
+# as <base_url>/<snapshot>/<filename>, and the sibling <filename>.DIGESTS
+# (cleartext-signed, inline PGP signature) is downloaded alongside for GPG verification.
 #
-# NOTA(host): os autobuilds da Gentoo rotacionam — só os snapshots recentes
-# ficam no mirror; um pin antigo expira (404). O .DIGESTS publica BLAKE2B e
-# SHA512 (não SHA256); pinamos o SHA512, lido do próprio .DIGESTS ou computado
-# sobre o tarball baixado do snapshot pinado, p.ex.:
+# NOTE(host): Gentoo's autobuilds rotate — only recent snapshots
+# stay on the mirror; an old pin expires (404). The .DIGESTS publishes BLAKE2B and
+# SHA512 (not SHA256); we pin the SHA512, read from the .DIGESTS itself or computed
+# over the tarball downloaded from the pinned snapshot, e.g.:
 #   F=<filename>; curl -fsSLO <base_url>/<snapshot>/$F && sha512sum $F
-# A autenticidade vem do GPG sobre o .DIGESTS inline-signed (shidashi.seed.
-# verify_signature); o sha512 pino trava os bytes exatos (reprodução).
-# Ao re-pinar, atualize snapshot + os dois filename + os dois sha512 juntos.
+# Authenticity comes from GPG over the inline-signed .DIGESTS (shidashi.seed.
+# verify_signature); the pinned sha512 locks the exact bytes (reproduction).
+# When re-pinning, update snapshot + both filenames + both sha512s together.
 
 # 2026-09-16: 20260524T170105Z rotated off the mirror (404). Re-pinned to the
 # snapshot the laboratory bootstrapped from; both .DIGESTS verified against the

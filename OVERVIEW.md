@@ -1,97 +1,97 @@
-# Shidashi 仕出し — Proposta de Desenvolvimento
+# Shidashi 仕出し — Development Proposal
 
-> Documento de visão e arquitetura do **Shidashi**, a ferramenta de automação de builds e ISOs do **bentoo**.
-> Status: **Fases 0 e 1 concluídas** (scaffold + recipe + `pretend` + `factory` + Assembler/ISO, validados off-host; boot da ISO validado em QEMU/KVM; pilots de build em host root diferidos) · **Fase 2 (Factory faseada + binhost) em andamento** · Linguagem: **Python ≥ 3.14** · Última atualização: 2026-07-05
-
----
-
-## 1. Sumário Executivo
-
-**bentoo** é uma distribuição derivada do Gentoo — formalmente um *stage4*, apelidada de *"stage5"* — construída **por cima de um stage3 oficial**, com configurações curadas e um conjunto adicional de pacotes.
-
-O **Shidashi** (`仕出し`, "catering — produz lotes sob encomenda e entrega") é a ferramenta que automatiza todo o ciclo: detecta o stage3 mais recente, aplica a camada bentoo em ambientes isolados, compila pacotes em variações de USE, serve esses pacotes via binhost, monta as ISOs live e publica **lançamentos semanais** (cadência fixa: **todo domingo às 00:00**) — em múltiplas **arquiteturas otimizadas** e múltiplos **flavors** (desktop + init system).
-
-### Pilares
-
-1. **Layering, não seed chain** — por **padrão** parte de um stage3 pronto e não recompila stage1→2→3; opcionalmente (`seed_source: catalyst`) gera a seed chain microarch via Catalyst (ver §5.1).
-2. **Dois subsistemas desacoplados** — *Package Factory* (compila) e *ISO Assembler* (monta).
-3. **Composição em três eixos** — `arch × flavor × init`, sem explosão combinatória.
-4. **Ambientes limpos por flavor** — KDE/Qt e GNOME/GTK nunca coexistem no mesmo build.
-5. **Reprodutível por entrada** — pin de snapshot do `::gentoo` por release; mesmo input → mesmo conjunto de pacotes.
-6. **Tronco persistente + wipe na toolchain** — semana normal reusa o binhost (delta); bump de toolchain recria tudo limpo.
+> Vision and architecture document for **Shidashi**, the build and ISO automation tool of **bentoo**.
+> Status: **Phases 0 and 1 complete** (scaffold + recipe + `pretend` + `factory` + Assembler/ISO, validated off-host; ISO boot validated on QEMU/KVM; root-host build pilots deferred) · **Phase 2 (phased Factory + binhost) in progress** · Language: **Python ≥ 3.14** · Last updated: 2026-07-05
 
 ---
 
-## 2. Glossário
+## 1. Executive Summary
 
-| Termo | Definição |
+**bentoo** is a Gentoo-derived distribution — formally a *stage4*, nicknamed *"stage5"* — built **on top of an official stage3**, with curated configuration and an additional set of packages.
+
+**Shidashi** (`仕出し`, "catering — produces batches to order and delivers them") is the tool that automates the whole cycle: it detects the latest stage3, applies the bentoo layer in isolated environments, compiles packages in USE variations, serves those packages via a binhost, assembles the live ISOs and publishes **weekly releases** (fixed cadence: **every Sunday at 00:00**) — across multiple **optimized architectures** and multiple **flavors** (desktop + init system).
+
+### Pillars
+
+1. **Layering, not a seed chain** — by **default** it starts from a ready-made stage3 and does not recompile stage1→2→3; optionally (`seed_source: catalyst`) it generates the microarch seed chain via Catalyst (see §5.1).
+2. **Two decoupled subsystems** — *Package Factory* (compiles) and *ISO Assembler* (assembles).
+3. **Composition along three axes** — `arch × flavor × init`, without combinatorial explosion.
+4. **Clean environments per flavor** — KDE/Qt and GNOME/GTK never coexist in the same build.
+5. **Reproducible by input** — `::gentoo` snapshot pin per release; same input → same set of packages.
+6. **Persistent trunk + wipe on toolchain** — a normal week reuses the binhost (delta); a toolchain bump rebuilds everything clean.
+
+---
+
+## 2. Glossary
+
+| Term | Definition |
 |---|---|
-| **stage3** | Tarball base oficial do Gentoo (sistema mínimo + toolchain). Ponto de partida. |
-| **stage4** | stage3 + pacotes/config adicionais. O artefato "sistema bentoo". |
-| **flavor** | Ecossistema-alvo: `minimal` (sem DE, só TTY), `kde` (Qt), `gnome` (GTK), `wm` (Wayland-only: Hyprland/Sway/niri). |
-| **init** | Sistema de init: `systemd` ou `openrc` (com elogind/seatd). |
-| **arch** | Alvo de microarquitetura: `v3` (baseline), `znver5`, `arrowlake`. |
-| **recipe** | Receita YAML componível que descreve uma release (`base + arch + flavor + init`). |
-| **estágio** / fase | Um degrau da cadeia `base → minimal → desktop → <flavor>` (D24); cada estágio vira uma fase de `emerge`, com a própria config, sets e `use_break`. |
-| **use_break** | USE transiente, por step, que quebra dependência circular de *build* (≠ USE final do flavor). Curado **manualmente** por flavor. |
-| **binhost** | Repositório HTTP de pacotes binários (binpkgs) servidos a clientes. |
-| **multi-instance** | Recurso do Portage: múltiplos binpkgs do mesmo pacote/versão com USE diferentes. |
-| **binpkg transiente** | binpkg construído só para quebrar um ciclo (ex.: `ffmpeg[-sdl]`); descartado após o *settle-pass*, nunca chega à ISO. |
-| **build-pool / publish-pool** | Duas vistas do binhost: build-pool inclui transientes (reuso entre semanas); publish-pool só finais (Assembler/usuários). |
-| **fork-point** | Snapshot de um **estágio** (`<arch>-<init>-<stage3>-<estágio>.tar`), reusado por toda imagem que passa por ele. |
-| **toolchain-bump** | Mudança de major em GCC/glibc/binutils (ou novo pin de snapshot) que dispara rebuild total limpo (`--emptytree`). |
+| **stage3** | Official Gentoo base tarball (minimal system + toolchain). Starting point. |
+| **stage4** | stage3 + additional packages/config. The "bentoo system" artifact. |
+| **flavor** | Target ecosystem: `minimal` (no DE, TTY only), `kde` (Qt), `gnome` (GTK), `wm` (Wayland-only: Hyprland/Sway/niri). |
+| **init** | Init system: `systemd` or `openrc` (with elogind/seatd). |
+| **arch** | Microarchitecture target: `v3` (baseline), `znver5`, `arrowlake`. |
+| **recipe** | Composable YAML recipe describing a release (`base + arch + flavor + init`). |
+| **stage** / phase | One step of the `base → minimal → desktop → <flavor>` chain (D24); each stage becomes an `emerge` phase, with its own config, sets and `use_break`. |
+| **use_break** | Transient, per-step USE that breaks a *build* circular dependency (≠ the flavor's final USE). Curated **manually** per flavor. |
+| **binhost** | HTTP repository of binary packages (binpkgs) served to clients. |
+| **multi-instance** | Portage feature: multiple binpkgs of the same package/version with different USE. |
+| **transient binpkg** | binpkg built only to break a cycle (e.g. `ffmpeg[-sdl]`); discarded after the *settle-pass*, never reaches the ISO. |
+| **build-pool / publish-pool** | Two views of the binhost: the build-pool includes transients (reuse across weeks); the publish-pool only finals (Assembler/users). |
+| **fork-point** | Snapshot of a **stage** (`<arch>-<init>-<stage3>-<stage>.tar`), reused by every image that passes through it. |
+| **toolchain-bump** | Major change in GCC/glibc/binutils (or a new snapshot pin) that triggers a full clean rebuild (`--emptytree`). |
 
 ---
 
-## 3. Objetivos e Não-objetivos
+## 3. Goals and Non-goals
 
-### Objetivos
-- Automação **end-to-end**: do stage3 à ISO publicada, sem intervenção manual.
-- **Lançamentos semanais** fixos (domingo 00:00), sincronizados com os autobuilds do Gentoo.
-- ISOs **otimizadas por microarquitetura** (Zen 5, Intel moderno) além do baseline.
-- **Binhost** servindo pacotes em **variações de USE** (ex.: LibreOffice Qt vs GTK).
-- **Reprodutibilidade de entrada** auditável (mesmo input → mesmo conjunto de pacotes/USE).
-- Suporte a múltiplos **flavors** (minimal, KDE, GNOME, WM) e **inits** (systemd, openrc).
-- **Extensibilidade por terceiros**: "receita é dado" — qualquer pessoa adiciona sua arch/init/desktop em YAML.
+### Goals
+- **End-to-end** automation: from stage3 to the published ISO, with no manual intervention.
+- Fixed **weekly releases** (Sunday 00:00), synchronized with the Gentoo autobuilds.
+- ISOs **optimized per microarchitecture** (Zen 5, modern Intel) in addition to the baseline.
+- **Binhost** serving packages in **USE variations** (e.g. LibreOffice Qt vs GTK).
+- Auditable **input reproducibility** (same input → same set of packages/USE).
+- Support for multiple **flavors** (minimal, KDE, GNOME, WM) and **inits** (systemd, openrc).
+- **Third-party extensibility**: "recipe is data" — anyone adds their own arch/init/desktop in YAML.
 
-### Não-objetivos (escopo explicitamente fora)
-- Por **padrão** (`seed_source: download`) parte de um stage3 oficial pronto e **não** recompila a seed chain. **Opcionalmente**, por arch (`seed_source: catalyst` em `recipe.yaml`), o Shidashi *gera* um stage3 com o `-march` do alvo via **Catalyst** (recompila stage1→2→3), usando o stage3 genérico já verificado como semente de bootstrap — produzir microarquiteturas sob encomenda (仕出し). Ver §5.1.
-- **Não** é um instalador gráfico (Calamares/etc. é um componente *do live medium*, não do builder).
-- **Não** persegue **reprodutibilidade bit-a-bit** (ISO byte-idêntica) — apenas reprodutibilidade *de entrada*.
-  Bit-a-bit em Gentoo (timestamps, build paths) custaria desproporcionalmente; fora de escopo por ora.
-- **Não** é um binário standalone para host arbitrário. O Shidashi **exige um host Gentoo com Portage**
-  (`import portage`) e é **distribuído como ebuild** (`app-misc/shidashi` no overlay) ou `pip install` — nunca
-  como single-binary. *(É isto, e não "produto a terceiros", que fixa a linguagem em Python — ver §12.)*
-- **Não** é multilib por padrão. O bentoo é **no-multilib** (puro 64-bit); 32-bit (Steam, wine, alguns
-  drivers) fica para uma fase futura de **suporte avançado a jogos**, habilitado **por-pacote via
-  `ABI_X86="32 64"`** em `package.use` — nunca pelo profile multilib global. Migrar `no-multilib →
-  multilib` é custoso e está fora de escopo agora (ver §11 e §19).
-
----
-
-## 4. Princípios de Design
-
-1. **Receita é dado, código é burro.** Toda variação vive em arquivos YAML/Portage versionados; o orquestrador apenas executa. É isto que viabiliza terceiros criarem suas variantes sem tocar em código.
-2. **Fonte única de verdade.** Cada fragmento de flavor define o USE **uma vez**, consumido tanto pela Factory (build) quanto pelo Assembler (consumo) — elimina drift.
-3. **Pureza de ambiente.** Cada flavor compila no seu próprio container; closures de dependência nunca se misturam.
-4. **Cache agressivo.** Fases são camadas cacheáveis (estilo Docker layers); só recompila o que mudou.
-5. **Delegue ao Portage.** Profiles, resolução de deps e USE são responsabilidade do Portage — o builder não reimplementa.
+### Non-goals (explicitly out of scope)
+- By **default** (`seed_source: download`) it starts from a ready-made official stage3 and does **not** recompile the seed chain. **Optionally**, per arch (`seed_source: catalyst` in `recipe.yaml`), Shidashi *generates* a stage3 with the target's `-march` via **Catalyst** (recompiles stage1→2→3), using the already verified generic stage3 as the bootstrap seed — producing microarchitectures to order (仕出し). See §5.1.
+- It is **not** a graphical installer (Calamares/etc. is a component *of the live medium*, not of the builder).
+- It does **not** pursue **bit-for-bit reproducibility** (byte-identical ISO) — only *input* reproducibility.
+  Bit-for-bit on Gentoo (timestamps, build paths) would cost disproportionately; out of scope for now.
+- It is **not** a standalone binary for an arbitrary host. Shidashi **requires a Gentoo host with Portage**
+  (`import portage`) and is **distributed as an ebuild** (`app-misc/shidashi` in the overlay) or via `pip install` — never
+  as a single binary. *(It is this, and not "a product for third parties", that pins the language to Python — see §12.)*
+- It is **not** multilib by default. bentoo is **no-multilib** (pure 64-bit); 32-bit (Steam, wine, some
+  drivers) is left to a future **advanced gaming support** phase, enabled **per package via
+  `ABI_X86="32 64"`** in `package.use` — never through the global multilib profile. Migrating `no-multilib →
+  multilib` is costly and out of scope now (see §11 and §19).
 
 ---
 
-## 5. Conceitos Centrais
+## 4. Design Principles
 
-### 5.1 Layering sobre stage3
+1. **Recipe is data, code is dumb.** Every variation lives in versioned YAML/Portage files; the orchestrator only executes. This is what lets third parties create their own variants without touching code.
+2. **Single source of truth.** Each flavor fragment defines USE **once**, consumed both by the Factory (build) and by the Assembler (consumption) — eliminates drift.
+3. **Environment purity.** Each flavor compiles in its own container; dependency closures never mix.
+4. **Aggressive caching.** Phases are cacheable layers (Docker-layer style); only what changed is recompiled.
+5. **Delegate to Portage.** Profiles, dependency resolution and USE are Portage's responsibility — the builder does not reimplement them.
+
+---
+
+## 5. Core Concepts
+
+### 5.1 Layering on top of stage3
 
 ```
-stage3 (oficial) ──▶ [camada bentoo: config + pacotes] ──▶ stage4 bentoo ──▶ ISO
+stage3 (official) ──▶ [bentoo layer: config + packages] ──▶ bentoo stage4 ──▶ ISO
 ```
 
-Diferente de Catalyst/Metro (que fazem `seed → stage1 → stage2 → stage3`), o bentoo-builder **por padrão parte de um stage3 pronto** e aplica uma camada. Modelo conceitualmente próximo ao **Calculate Linux** (`cl-builder`/`cl-image`), mas sem o acoplamento ao ecossistema Calculate.
+Unlike Catalyst/Metro (which do `seed → stage1 → stage2 → stage3`), the bentoo-builder **by default starts from a ready-made stage3** and applies a layer. Conceptually close to **Calculate Linux** (`cl-builder`/`cl-image`), but without the coupling to the Calculate ecosystem.
 
-**Fonte de seed opcional por arch (story 005).** Quando um arch declara `seed_source: catalyst`, o Shidashi inverte essa premissa *para aquele alvo*: invoca o **Catalyst** para produzir um stage3 com o `-march` específico (`seed → stage1 → stage2 → stage3`), tendo o stage3 genérico (já baixado e verificado por GPG+SHA-512) como **semente de bootstrap**. O `-march`/GOAMD64/CPU_FLAGS entram pelo `portage_confdir` do Catalyst — que reusa o `variants/arch/<arch>/portage/` existente — e não pelo `subarch` (que fica no baseline `amd64`). O stage3 resultante é pinado por SHA-512 no `BuildState` e segue pelo mesmo pipeline de extração → camada stage4. O default (`download`) permanece inalterado.
+**Optional per-arch seed source (story 005).** When an arch declares `seed_source: catalyst`, Shidashi inverts that premise *for that target*: it invokes **Catalyst** to produce a stage3 with the specific `-march` (`seed → stage1 → stage2 → stage3`), using the generic stage3 (already downloaded and verified by GPG+SHA-512) as the **bootstrap seed**. The `-march`/GOAMD64/CPU_FLAGS come in through Catalyst's `portage_confdir` — which reuses the existing `variants/arch/<arch>/portage/` — and not through `subarch` (which stays at the `amd64` baseline). The resulting stage3 is pinned by SHA-512 in the `BuildState` and continues down the same extraction → stage4 layer pipeline. The default (`download`) stays unchanged.
 
-### 5.2 Os três eixos de variação
+### 5.2 The three axes of variation
 
 ```
             arch                 flavor                init
@@ -103,66 +103,66 @@ Diferente de Catalyst/Metro (que fazem `seed → stage1 → stage2 → stage3`),
                             └─────────────┘
 ```
 
-O **desktop ≈ flavor** (KDE→Qt, GNOME→GTK, WM→Wayland/Hyprland·Sway·niri, minimal→sem DE/só TTY), então os eixos não se multiplicam de forma ingênua. A composição evita escrever N×M×K receitas completas.
+The **desktop ≈ flavor** (KDE→Qt, GNOME→GTK, WM→Wayland/Hyprland·Sway·niri, minimal→no DE/TTY only), so the axes do not multiply naively. Composition avoids writing N×M×K complete recipes.
 
-### 5.3 Dois subsistemas
+### 5.3 Two subsystems
 
 ```
 ┌─ PACKAGE FACTORY ───────────────────┐      ┌─ ISO ASSEMBLER ────────────────────┐
-│ Para cada (arch × flavor × init):   │      │ Para cada (arch × init × desktop): │
+│ For each (arch × flavor × init):    │      │ For each (arch × init × desktop):  │
 │                                     │      │                                    │
-│  container isolado (systemd-nspawn) │      │  container seeda stage3            │
-│   ├─ aplica profile + USE do flavor │ ───▶ │   ├─ emerge --usepkgonly do         │
-│   ├─ emerge em FASES (com ccache)   │binhost│   │   binhost (arch,flavor) certo   │
-│   └─ produz binpkgs (multi-instance)│      │   ├─ mksquashfs (zstd)             │
+│  isolated container (systemd-nspawn)│      │  container seeds stage3            │
+│   ├─ applies flavor profile + USE   │ ───▶ │   ├─ emerge --usepkgonly from the  │
+│   ├─ emerge in PHASES (with ccache) │binhost│   │   right (arch,flavor) binhost  │
+│   └─ produces binpkgs (multi-inst.) │      │   ├─ mksquashfs (zstd)             │
 │                                     │      │   ├─ dracut (dmsquash-live)        │
-│  publica no binhost POR ARCH        │      │   └─ grub-mkrescue/xorriso → ISO   │
+│  publishes to the binhost PER ARCH  │      │   └─ grub-mkrescue/xorriso → ISO   │
 └─────────────────────────────────────┘      └────────────────────────────────────┘
-       (compilação pesada, lenta)                  (seleção + empacote, rápido)
+       (heavy compilation, slow)                  (selection + packaging, fast)
 ```
 
-**Por que desacoplar:** a Factory carrega o custo de compilação (horas, com ccache/sccache); o Assembler vira quase instantâneo (`--usepkgonly`). ISO semanal fica barata.
+**Why decouple:** the Factory carries the compilation cost (hours, with ccache/sccache); the Assembler becomes nearly instantaneous (`--usepkgonly`). The weekly ISO becomes cheap.
 
-> **Por que NÃO modelar pelos passos do Handbook do Gentoo:** o Handbook descreve uma instalação
-> interativa bare-metal humana (disks, network, bootloader…), misturando *build de pacotes* e
-> *montagem de imagem* numa sequência linear. O Shidashi separa esses dois mundos (Factory/Assembler) de
-> propósito. O Handbook serve como **checklist de cobertura** (nenhum passo essencial esquecido),
-> **não** como estrutura de execução — porque os ciclos são fenômeno de *ordem de build de pacotes*,
-> não de *etapa de instalação* (ver §6.4 e §18).
+> **Why NOT model it on the Gentoo Handbook steps:** the Handbook describes an interactive,
+> human, bare-metal installation (disks, network, bootloader…), mixing *package build* and
+> *image assembly* in one linear sequence. Shidashi separates those two worlds (Factory/Assembler) on
+> purpose. The Handbook serves as a **coverage checklist** (no essential step forgotten),
+> **not** as the execution structure — because cycles are a phenomenon of *package build order*,
+> not of an *installation step* (see §6.4 and §18).
 
 ---
 
-## 6. Package Factory (detalhado)
+## 6. Package Factory (in detail)
 
-### 6.1 Ambientes limpos por flavor
+### 6.1 Clean environments per flavor
 
-O requisito central: **a versão Qt de um pacote é compilada onde GTK/GNOME nem está instalado, e vice-versa.**
+The central requirement: **the Qt version of a package is compiled where GTK/GNOME is not even installed, and vice versa.**
 
-- Container `kde/qt`: profile + `USE="qt6 kde -gnome -gtk"` → closure puro Qt.
-- Container `gnome/gtk`: profile + `USE="gtk gnome -qt6 -kde"` → closure puro GTK.
-- Container `minimal`: USE de sistema, **sem DE / só TTY**, `-qt6 -gnome -kde -gtk` agressivo.
-- Container `wm`: `wayland` + Hyprland/Sway/niri (Wayland-only), USE enxuta gráfica, **sem X11**.
+- `kde/qt` container: profile + `USE="qt6 kde -gnome -gtk"` → pure Qt closure.
+- `gnome/gtk` container: profile + `USE="gtk gnome -qt6 -kde"` → pure GTK closure.
+- `minimal` container: system USE, **no DE / TTY only**, aggressive `-qt6 -gnome -kde -gtk`.
+- `wm` container: `wayland` + Hyprland/Sway/niri (Wayland-only), lean graphical USE, **no X11**.
 
-A garantia de pureza vem do **container por flavor**, não do recurso de armazenamento.
+The purity guarantee comes from the **per-flavor container**, not from the storage feature.
 
-### 6.2 Binpkg multi-instance
+### 6.2 Multi-instance binpkg
 
-`FEATURES="buildpkg binpkg-multi-instance"` + `BINPKG_FORMAT="gpkg"` permite **N builds do mesmo pacote/versão com USE diferentes** coexistindo, distinguidos por `BUILD_ID`.
+`FEATURES="buildpkg binpkg-multi-instance"` + `BINPKG_FORMAT="gpkg"` lets **N builds of the same package/version with different USE** coexist, distinguished by `BUILD_ID`.
 
-Exemplo concreto — **LibreOffice**:
+Concrete example — **LibreOffice**:
 
 ```
-app-office/libreoffice-X.Y[gtk,-qt6,-kde]   ← BUILD_ID 1  (consumido por GNOME)
-app-office/libreoffice-X.Y[qt6,kde,-gtk]    ← BUILD_ID 2  (consumido por KDE)
+app-office/libreoffice-X.Y[gtk,-qt6,-kde]   ← BUILD_ID 1  (consumed by GNOME)
+app-office/libreoffice-X.Y[qt6,kde,-gtk]    ← BUILD_ID 2  (consumed by KDE)
 ```
 
-Quando o Assembler da ISO KDE roda `emerge --usepkgonly libreoffice`, o USE resolvido **casa** com a instância Qt → puxa a correta. A ISO GNOME casa com a GTK. **O fragmento de flavor é a fonte única que define esse USE nos dois lados.**
+When the KDE ISO Assembler runs `emerge --usepkgonly libreoffice`, the resolved USE **matches** the Qt instance → it pulls the right one. The GNOME ISO matches the GTK one. **The flavor fragment is the single source that defines that USE on both sides.**
 
-### 6.3 Particionamento do binhost
+### 6.3 Binhost partitioning
 
-- **Por arch (obrigatório):** binpkgs `znver5` (com AVX-512) **não rodam** em hardware `v3`. CFLAGS/ISA incompatíveis → **um tree de binhost por arch**.
-- **Dentro de cada arch:** multi-instance absorve as variações de USE (flavor + init).
-- **Não se particiona por step.** O step ordena o *build*, não o *armazenamento*; separar por step destruiria o reuso entre semanas.
+- **Per arch (mandatory):** `znver5` binpkgs (with AVX-512) **do not run** on `v3` hardware. Incompatible CFLAGS/ISA → **one binhost tree per arch**.
+- **Within each arch:** multi-instance absorbs the USE variations (flavor + init).
+- **No partitioning per step.** The step orders the *build*, not the *storage*; splitting per step would destroy reuse across weeks.
 
 ```
 binhost/
@@ -171,235 +171,235 @@ binhost/
 └── arrowlake/
 ```
 
-> **Cache de compilação é compartilhado, não segregado.** ccache (C/C++) e sccache (Rust) podem usar um
-> diretório físico único entre flavors **sem violar a pureza**: o hash de cada entrada **inclui as flags**
-> (`-march`, `CFLAGS`…), então `znver5` nunca colide com `v3`. A pureza é garantida pelo *container*, não
-> pela segregação de cache. `mold` é linker — não gera cache; é só um knob de `RUSTFLAGS`/`LDFLAGS` por arch.
+> **The compilation cache is shared, not segregated.** ccache (C/C++) and sccache (Rust) can use a
+> single physical directory across flavors **without breaking purity**: each entry's hash **includes the flags**
+> (`-march`, `CFLAGS`…), so `znver5` never collides with `v3`. Purity is guaranteed by the *container*, not
+> by cache segregation. `mold` is a linker — it produces no cache; it is just a per-arch `RUSTFLAGS`/`LDFLAGS` knob.
 
-### 6.4 Build em estágios (D24)
+### 6.4 Build in stages (D24)
 
-> **Onde ler e editar o processo** (2026-09-28): `variants/flow.yaml` descreve o
-> fluxo — os passos do **bootstrap** e os passos de **cada estágio** (config →
-> cortes → emerge → settle → fork-point), com as opções do emerge e do settle. O
-> código em `shidashi/` executa os *tipos* de passo (`shidashi/flow.py` os lista).
-> Os estágios e os sets/cortes de cada um estão nos YAMLs de `variants/` (base,
-> minimal, desktop, flavor), e as exceções por pacote em `variants/base/quirks.yaml`.
+> **Where to read and edit the process** (2026-09-28): `variants/flow.yaml` describes the
+> flow — the **bootstrap** steps and the steps of **each stage** (config →
+> cuts → emerge → settle → fork-point), with the emerge and settle options. The
+> code in `shidashi/` executes the step *types* (`shidashi/flow.py` lists them).
+> The stages and each one's sets/cuts are in the YAMLs under `variants/` (base,
+> minimal, desktop, flavor), and per-package exceptions in `variants/base/quirks.yaml`.
 
-Uma imagem é uma **cadeia de estágios**; cada estágio declara quem vem antes dele
-(`after:`) e vira uma fase de `emerge`, com a **configuração acumulada até ele**:
+An image is a **chain of stages**; each stage declares what comes before it
+(`after:`) and becomes an `emerge` phase, with the **configuration accumulated up to it**:
 
 ```
-estágio   após      emerge                                   camadas em vigor
-seed                 (stage3 verificado)          + rootfs/ das camadas
-bootstrap seed       --oneshot da toolchain (abaixo)          base arch init
+stage     after      emerge                                   layers in effect
+seed                 (verified stage3)            + rootfs/ of the layers
+bootstrap seed       --oneshot of the toolchain (below)       base arch init
 base      —          --emptytree @world @base                 base arch init
 minimal   base       -uDN @world @extra-system  → settle      + minimal
 desktop   minimal    -uDN @world @gpu …                       + desktop
 <flavor>  desktop    -uDN @world @<flavor> @extra-*  → settle + flavor/<f>
 ```
 
-- O **bootstrap** leva a toolchain do stage3 às versões da árvore, em ordem:
+- The **bootstrap** brings the stage3 toolchain up to the tree's versions, in order:
   locale → linux-headers + binutils → gcc → libtool → glibc →
-  `@preserved-rebuild` → ccache — os passos estão em `variants/flow.yaml` (executados por `shidashi/bootstrap.py`; BOOTSTRAP-PROCESS §1).
-  Tudo `--oneshot` (o world termina vazio) e com `FEATURES="-buildpkg -ccache"`
-  (D22); binutils e gcc são selecionados **pelo nome** lido de `/etc/env.d/`. Sem
-  ele a base compilaria `--emptytree @world` com o gcc do stage3.
-- A **base** é a única reconstrução completa: "cozinha" o stage3 para a
-  microarquitetura e o idioma. Os estágios seguintes usam `--update --deep
-  --newuse`: só recompila o que a configuração daquele estágio muda — o USE
-  gráfico entra no `desktop`, e só o que ele toca é refeito, uma vez para os
-  quatro flavors.
-- A config **cresce ao longo da cadeia**: cada fase aplica as camadas até o seu
-  estágio. A camada do kde não está em vigor enquanto a base compila (há teste
-  que roda a cadeia real e confere isso).
-- **Settle por imagem entregue** (`ships`: `minimal` e cada flavor): os cortes de
-  ciclo acumulados desde o último settle são desfeitos ali mesmo. O `minimal` é
-  assentado no meio do caminho do kde, e o `desktop` parte dele assentado.
+  `@preserved-rebuild` → ccache — the steps are in `variants/flow.yaml` (executed by `shidashi/bootstrap.py`; BOOTSTRAP-PROCESS §1).
+  All `--oneshot` (the world ends up empty) and with `FEATURES="-buildpkg -ccache"`
+  (D22); binutils and gcc are selected **by the name** read from `/etc/env.d/`. Without
+  it the base would compile `--emptytree @world` with the stage3's gcc.
+- The **base** is the only complete rebuild: it "cooks" the stage3 for the
+  microarchitecture and the language. The following stages use `--update --deep
+  --newuse`: only what that stage's configuration changes is recompiled — the graphical
+  USE comes in at `desktop`, and only what it touches is rebuilt, once for all
+  four flavors.
+- The config **grows along the chain**: each phase applies the layers up to its
+  stage. The kde layer is not in effect while the base compiles (there is a test
+  that runs the real chain and checks this).
+- **Settle per shipped image** (`ships`: `minimal` and each flavor): the cycle
+  cuts accumulated since the last settle are undone right there. `minimal` is
+  settled halfway along kde's path, and `desktop` starts from it settled.
 
-> **Cortes de ciclo (`use_break`):** alguns ciclos exigem compilar com uma USE
-> desligada e religá-la no settle (§18.3). Cada corte mora no estágio que cria o
-> ciclo; os três do tronco moram na base.
+> **Cycle cuts (`use_break`):** some cycles require compiling with a USE
+> turned off and turning it back on at the settle (§18.3). Each cut lives in the stage that creates the
+> cycle; the trunk's three live in the base.
 
-### 6.5 Fork-points por estágio
+### 6.5 Fork-points per stage
 
 ```
-seed ─ bootstrap ─ base ─ minimal ──┬── (imagem minimal)
+seed ─ bootstrap ─ base ─ minimal ──┬── (minimal image)
                                     └── desktop ──┬── kde
                                                   ├── gnome
                                                   └── wm
 ```
 
-Cada estágio grava um snapshot com chave **sem o alvo** —
-`<arch>-<init>-<stage3>-<estágio>.tar` — depois do settle quando é entregue. Um
-build retoma do **mais profundo que existir antes do alvo**: o kde construído
-depois do gnome parte do `desktop` que o gnome deixou. O estágio do próprio alvo
-é sempre reconstruído. Sem nenhum estágio gravado, o checkpoint
-`<arch>-<init>-<stage3>-bootstrap.tar` poupa o stage3 cru e a toolchain. (Até 2026-09-26 a chave carregava o flavor, e nenhuma
-imagem reusava o tronco de outra — F70.)
+Each stage writes a snapshot keyed **without the target** —
+`<arch>-<init>-<stage3>-<stage>.tar` — after the settle when it is shipped. A
+build resumes from the **deepest one that exists before the target**: kde built
+after gnome starts from the `desktop` that gnome left behind. The target's own stage
+is always rebuilt. With no stage written, the checkpoint
+`<arch>-<init>-<stage3>-bootstrap.tar` spares the raw stage3 and the toolchain. (Until 2026-09-26 the key carried the flavor, and no
+image reused another's trunk — F70.)
 
-### 6.6 Estratégia de build: tronco persistente + wipe na toolchain
+### 6.6 Build strategy: persistent trunk + wipe on toolchain
 
-Duas situações, duas estratégias (resolve a tensão "build barato" × "build limpo"):
+Two situations, two strategies (resolves the "cheap build" × "clean build" tension):
 
-| Situação | Estratégia |
+| Situation | Strategy |
 |---|---|
-| Semana normal (bumps de pacote) | **Update** (`factory --update`): restaura a imagem entregue e roda `-uDN --changed-deps @world` com `--usepkg` sobre a árvore `::gentoo` da semana (pinada, ≥ 7 dias). Rápido. |
-| **Nova geração** (novo pin do stage3; toolchain ou profile mudou) | **Build completo** num PKGDIR novo e vazio (`binpkgs/<arch>/<stage3>`): bootstrap, `--emptytree` na base, todos os estágios. **Sem resíduo.** |
+| Normal week (package bumps) | **Update** (`factory --update`): restores the shipped image and runs `-uDN --changed-deps @world` with `--usepkg` over the week's `::gentoo` tree (pinned, ≥ 7 days). Fast. |
+| **New generation** (new stage3 pin; toolchain or profile changed) | **Full build** in a new, empty PKGDIR (`binpkgs/<arch>/<stage3>`): bootstrap, `--emptytree` on the base, every stage. **No residue.** |
 
-Uma **geração** (D26) é tudo o que sai de um stage3 verificado com uma toolchain.
-Sua impressão digital (CFLAGS, CHOST, `LLVM_SLOT`, profile, versões de
-gcc/binutils/glibc) fica gravada no PKGDIR e é conferida antes de qualquer emerge
-— o Portage não compara nada disso ao reusar um binpkg. O update **recusa** um
-plano que mude gcc, binutils ou glibc: toolchain nova nunca entra por baixo de um
-sistema construído, ela abre uma geração. O update termina em
-`@preserved-rebuild`. (Ver §10 e §18.3.)
+A **generation** (D26) is everything that comes out of one verified stage3 with one toolchain.
+Its fingerprint (CFLAGS, CHOST, `LLVM_SLOT`, profile, gcc/binutils/glibc
+versions) is recorded in the PKGDIR and checked before any emerge
+— Portage compares none of this when reusing a binpkg. The update **refuses** a
+plan that changes gcc, binutils or glibc: a new toolchain never slips in underneath a
+built system, it opens a generation. The update ends with
+`@preserved-rebuild`. (See §10 and §18.3.)
 
 ---
 
-## 7. ISO Assembler (detalhado)
+## 7. ISO Assembler (in detail)
 
-| Etapa | Ferramenta | Notas |
+| Step | Tool | Notes |
 |---|---|---|
-| Seed do rootfs | stage3 + `emerge --usepkgonly` | Puxa tudo do binhost; não compila |
-| Compressão | `mksquashfs` (zstd -19) | rootfs read-only |
-| Live boot | **dracut** módulo `dmsquash-live` | overlayfs em RAM, padrão moderno |
-| Bootloader | `grub-mkrescue` / `xorriso` | ISO híbrida BIOS + UEFI |
-| Pós-processo | checksum SHA256 + assinatura GPG | publicação |
+| Rootfs seed | stage3 + `emerge --usepkgonly` | Pulls everything from the binhost; does not compile |
+| Compression | `mksquashfs` (zstd -19) | read-only rootfs |
+| Live boot | **dracut** `dmsquash-live` module | overlayfs in RAM, the modern standard |
+| Bootloader | `grub-mkrescue` / `xorriso` | hybrid BIOS + UEFI ISO |
+| Post-processing | SHA256 checksum + GPG signature | publishing |
 
-> Observação: o sistema *instalado* pode usar dist-kernel + UKI (como no `make.conf` de referência), mas o *live medium* usa dracut `dmsquash-live` clássico.
+> Note: the *installed* system may use dist-kernel + UKI (as in the reference `make.conf`), but the *live medium* uses classic dracut `dmsquash-live`.
 
-> **O Assembler é imune a ciclo (§18.6):** `--usepkgonly` instala binário pronto, **sem ordem de build** — o ciclo é fenômeno de *build-time*, resolvido na Factory. O Assembler apenas navega o grafo multi-instance e extrai a fatia do seu flavor pela **USE final** (não "o último compilado"). Toda a complexidade de ciclo fica na Factory.
+> **The Assembler is immune to cycles (§18.6):** `--usepkgonly` installs ready-made binaries, **with no build order** — the cycle is a *build-time* phenomenon, resolved in the Factory. The Assembler only navigates the multi-instance graph and extracts its flavor's slice by the **final USE** (not "the last one compiled"). All the cycle complexity stays in the Factory.
 
 ---
 
-## 8. Matriz de Variação
+## 8. Variation Matrix
 
 ### Flavors × Desktops × Inits
 
-| Flavor | Desktops | USE característica | Init compatível |
+| Flavor | Desktops | Characteristic USE | Compatible init |
 |---|---|---|---|
-| `minimal` | **nenhum (console-only)** | `-qt6 -gnome -kde -gtk` (sistema base) | systemd / openrc |
+| `minimal` | **none (console-only)** | `-qt6 -gnome -kde -gtk` (base system) | systemd / openrc |
 | `kde` | KDE Plasma | `qt6 kde wayland -gnome -gtk` | systemd / openrc |
 | `gnome` | GNOME | `gtk gnome wayland -qt6 -kde` | systemd / openrc |
 | `wm` | **Hyprland · Sway · niri** (Wayland-only) | `wayland -qt6 -gnome -kde` | systemd / openrc |
 
-> **`minimal` = stage4 base, sem ambiente gráfico, apenas TTY** (modelo Arch/Debian-netinst). É o "controle" mais
-> limpo contra a ISO KDE no piloto, e praticamente o tronco do fork-point — **sem compositor**, nem para smoke-test.
-> **`wm` = Wayland-only**: **Hyprland** (default, tiling dinâmico) + **Sway** (i3-compatível) + **niri**
-> (tiling *scrollable*) — o trio mais usado/moderno em distros, sem nenhuma dependência X11
-> (coerente com a base `wayland` + `seatd`/`elogind`). Vitrine, separada do minimal por carregar mais dependências.
+> **`minimal` = base stage4, no graphical environment, TTY only** (Arch/Debian-netinst model). It is the cleanest
+> "control" against the KDE ISO in the pilot, and practically the fork-point trunk — **no compositor**, not even for a smoke test.
+> **`wm` = Wayland-only**: **Hyprland** (default, dynamic tiling) + **Sway** (i3-compatible) + **niri**
+> (*scrollable* tiling) — the most used/modern trio across distros, with no X11 dependency at all
+> (consistent with the `wayland` + `seatd`/`elogind` base). A showcase, separate from minimal because it carries more dependencies.
 
-### Acoplamento init ↔ seat (a parte não-ortogonal)
+### init ↔ seat coupling (the non-orthogonal part)
 
 | | systemd | openrc |
 |---|---|---|
-| logind | `systemd` (nativo) | **`elogind`** |
+| logind | `systemd` (native) | **`elogind`** |
 | seat (WM/Wayland) | systemd-logind | elogind + `seatd` |
-| USE global | `systemd -elogind` | `elogind -systemd` |
+| global USE | `systemd -elogind` | `elogind -systemd` |
 
-O fragmento de **init** carrega o USE de seat; os fragmentos de **desktop** assumem "seat já resolvido" e permanecem agnósticos ao init.
+The **init** fragment carries the seat USE; the **desktop** fragments assume "seat already resolved" and stay init-agnostic.
 
 ---
 
-## 9. Otimização por Arquitetura
+## 9. Per-Architecture Optimization
 
-### 9.1 Tabela de alvos
+### 9.1 Target table
 
-| Alvo | `-march` | `GOAMD64` | `RUSTFLAGS target-cpu` | AVX-512 |
+| Target | `-march` | `GOAMD64` | `RUSTFLAGS target-cpu` | AVX-512 |
 |---|---|---|---|---|
-| **baseline** | `x86-64-v3` | `v3` | `x86-64-v3` | não |
-| **Zen 5** | `znver5` | `v4` | `znver5` | **sim** |
-| **Arrow Lake** | `arrowlake` | `v3` | `arrowlake` | **não** |
+| **baseline** | `x86-64-v3` | `v3` | `x86-64-v3` | no |
+| **Zen 5** | `znver5` | `v4` | `znver5` | **yes** |
+| **Arrow Lake** | `arrowlake` | `v3` | `arrowlake` | **no** |
 
-### 9.2 ⚠️ Armadilha do `x86-64-v4` para Intel
+### 9.2 ⚠️ The `x86-64-v4` trap for Intel
 
-`x86-64-v4` **exige** AVX-512, mas Intel **client** (Alder Lake em diante) **removeu** AVX-512. Uma ISO `-march=x86-64-v4` **não roda** em Arrow Lake. Para "Intel moderno", usar o `-march` específico (`arrowlake`), **nunca v4**. `v4` só serve para Intel **server** (Granite Rapids) ou Zen 4/5.
+`x86-64-v4` **requires** AVX-512, but Intel **client** (Alder Lake onward) **removed** AVX-512. A `-march=x86-64-v4` ISO **does not run** on Arrow Lake. For "modern Intel", use the specific `-march` (`arrowlake`), **never v4**. `v4` only serves Intel **server** (Granite Rapids) or Zen 4/5.
 
-### 9.3 Knobs que precisam andar JUNTOS
+### 9.3 Knobs that must move TOGETHER
 
-O fragmento de `arch` deve parametrizar **todos** os controles de CPU em conjunto, senão um Go/Rust v3 vaza num binpkg znver5:
+The `arch` fragment must parametrize **all** CPU controls together, otherwise a v3 Go/Rust leaks into a znver5 binpkg:
 - `COMMON_FLAGS` (CFLAGS/CXXFLAGS/…)
 - `GOAMD64`
 - `RUSTFLAGS -C target-cpu`
-- `CPU_FLAGS_X86` — **setado manualmente por alvo** (não usar `cpuid2cpuflags`, que detecta o host)
-- `CHOST` (quando aplicável)
+- `CPU_FLAGS_X86` — **set manually per target** (do not use `cpuid2cpuflags`, which detects the host)
+- `CHOST` (when applicable)
 
-### 9.4 Host de build atual e tiers de validação
+### 9.4 Current build host and validation tiers
 
-Host: **AMD Ryzen 9 9950X (Zen 5, classe v4, com AVX-512).** Consequências:
-- **Constrói** qualquer alvo (GCC 16 cross-compila znver5/arrowlake sem problema).
-- **Roda nativamente** binpkgs `v3` **e `znver5`** (o Zen 5 tem AVX-512) → ambos são boot-testáveis no host.
-- **Não roda** `arrowlake`: `-march=arrowlake` pode usar ISA Intel-específica ausente no AMD → SIGILL.
+Host: **AMD Ryzen 9 9950X (Zen 5, v4 class, with AVX-512).** Consequences:
+- **Builds** any target (GCC 16 cross-compiles znver5/arrowlake without trouble).
+- **Runs natively** `v3` **and `znver5`** binpkgs (Zen 5 has AVX-512) → both are boot-testable on the host.
+- **Does not run** `arrowlake`: `-march=arrowlake` may use Intel-specific ISA absent on AMD → SIGILL.
 
-**Estratégia de teste por tier:**
+**Test strategy per tier:**
 
-| Tier | Archs | Validação |
+| Tier | Archs | Validation |
 |---|---|---|
-| Tier 1 | `v3`, **`znver5`** | Smoke-test + boot nativo no host (9950X) |
-| Tier 2 | `arrowlake` | **Boot-test via QEMU (TCG)** — build-only no host AMD; sem hardware Intel real |
+| Tier 1 | `v3`, **`znver5`** | Smoke test + native boot on the host (9950X) |
+| Tier 2 | `arrowlake` | **Boot test via QEMU (TCG)** — build-only on the AMD host; no real Intel hardware |
 
-> Mudança vs. host anterior (Zen 3): **`znver5` subiu para Tier 1** — deixa de ser build-only e passa a
-> ser validável nativamente, porque o 9950X possui AVX-512.
+> Change vs. the previous host (Zen 3): **`znver5` moved up to Tier 1** — it is no longer build-only and becomes
+> natively verifiable, because the 9950X has AVX-512.
 >
-> **`arrowlake` valida só por QEMU (TCG):** como Arrow Lake **não tem AVX-512**, sua ISA cabe na emulação
-> TCG — boot-test fiel o bastante sem aquisição de hardware Intel.
+> **`arrowlake` validates only through QEMU (TCG):** since Arrow Lake **has no AVX-512**, its ISA fits within TCG
+> emulation — a faithful enough boot test without acquiring Intel hardware.
 
 ---
 
-## 10. Reprodutibilidade
+## 10. Reproducibility
 
-- **Nível perseguido: reprodutibilidade de *entrada*** (mesmo input → mesmo conjunto de pacotes/USE), **não** bit-a-bit. O objetivo é **replicar o processo sem erros que quebrem**, não gerar ISO byte-idêntica.
-- **Pin de snapshot do `::gentoo`** por release (squashfs datado) → input determinístico.
-- **`-march=native` é banido** (§9.3) — pré-requisito de qualquer determinismo; sempre `-march` explícito por arch.
-- Tensão conhecida: o sistema usa `ACCEPT_KEYWORDS="~amd64"` (testing, muda rápido). O pin do snapshot é **ainda mais crítico** nesse contexto — não é opcional.
-- Cada release registra: hash do stage3, hash do snapshot do repo, hash das receitas, versões do toolchain.
-- Saída versionada: `bentoo-<flavor>-<init>-<arch>-<data>.iso` + `.sha256` + `.asc`.
+- **Level pursued: *input* reproducibility** (same input → same set of packages/USE), **not** bit-for-bit. The goal is to **replicate the process without breaking errors**, not to produce a byte-identical ISO.
+- **`::gentoo` snapshot pin** per release (dated squashfs) → deterministic input.
+- **`-march=native` is banned** (§9.3) — a prerequisite for any determinism; always an explicit `-march` per arch.
+- Known tension: the system uses `ACCEPT_KEYWORDS="~amd64"` (testing, changes fast). The snapshot pin is **even more critical** in that context — it is not optional.
+- Each release records: stage3 hash, repo snapshot hash, recipe hash, toolchain versions.
+- Versioned output: `bentoo-<flavor>-<init>-<arch>-<date>.iso` + `.sha256` + `.asc`.
 
 ---
 
-## 11. Fluxo de Release Semanal
+## 11. Weekly Release Flow
 
-Cadência fixa: **todo domingo às 00:00.**
+Fixed cadence: **every Sunday at 00:00.**
 
-**Seed por init (no-multilib).** O Shidashi semeia cada variante a partir do stage3
-**no-multilib** do init correspondente — **não** do tarball `desktop` (que é multilib).
-Trocar de init não se faz por conversão de profile (operação "difícil" segundo o Handbook):
-cada init parte do seu próprio stage3.
+**Seed per init (no-multilib).** Shidashi seeds each variant from the corresponding init's
+**no-multilib** stage3 — **not** from the `desktop` tarball (which is multilib).
+Switching init is not done by profile conversion (a "difficult" operation according to the Handbook):
+each init starts from its own stage3.
 
-| init | stage3 seed (autobuild oficial) | profile-base âncora |
+| init | stage3 seed (official autobuild) | anchor base profile |
 |---|---|---|
 | systemd | `stage3-amd64-nomultilib-systemd-<snapshot>.tar.xz` | `default/linux/amd64/23.0/no-multilib/systemd` |
 | openrc  | `stage3-amd64-nomultilib-openrc-<snapshot>.tar.xz`  | `default/linux/amd64/23.0/no-multilib` |
 
-> Snapshot do piloto: **`20260517T170110Z`** (ambos os inits do mesmo snapshot, para reprodutibilidade).
+> Pilot snapshot: **`20260517T170110Z`** (both inits from the same snapshot, for reproducibility).
 
 ```
-┌─ trigger (cron: domingo 00:00) ───────────────────────┐
-│ CI lê os pointer files dos autobuilds (no-multilib):  │
+┌─ trigger (cron: Sunday 00:00) ────────────────────────┐
+│ CI reads the autobuild pointer files (no-multilib):   │
 │   .../latest-stage3-amd64-nomultilib-systemd.txt      │
 │   .../latest-stage3-amd64-nomultilib-openrc.txt       │
-│ Compara cada um com o último build registrado.        │
+│ Compares each one with the last recorded build.       │
 └──────────────────┬────────────────────────────────────┘
-                   │ mudou? (toolchain-bump? → wipe; senão → delta)
+                   │ changed? (toolchain-bump? → wipe; else → delta)
                    ▼
-        ┌─ Factory (matriz arch × flavor × init) ─┐
-        │ rebuild dos binpkgs alterados            │
+        ┌─ Factory (arch × flavor × init matrix) ──┐
+        │ rebuild of the changed binpkgs           │
         └──────────────────┬───────────────────────┘
                            ▼
-        ┌─ Assembler (matriz arch × init × desktop) ─┐
-        │ re-spin das ISOs a partir do binhost        │
+        ┌─ Assembler (arch × init × desktop matrix) ─┐
+        │ re-spin of the ISOs from the binhost        │
         └──────────────────┬──────────────────────────┘
                            ▼
         ┌─ Publish: checksum + GPG + upload ──────────┐
         └─────────────────────────────────────────────┘
 ```
 
-CI como matriz (exemplo conceitual):
+CI as a matrix (conceptual example):
 
 ```yaml
 on:
   schedule:
-    - cron: "0 0 * * 0"   # domingo 00:00 UTC
+    - cron: "0 0 * * 0"   # Sunday 00:00 UTC
 strategy:
   matrix:
     arch:    [v3, znver5, arrowlake]
@@ -409,144 +409,144 @@ strategy:
 
 ---
 
-## 12. Stack Tecnológica
+## 12. Technology Stack
 
-### Linguagem: **Python ≥ 3.14** (definitivo)
+### Language: **Python ≥ 3.14** (final)
 
-| Argumento | Detalhe |
+| Argument | Detail |
 |---|---|
-| **Portage é uma biblioteca Python** | `import portage`: consulta a árvore, resolve átomos, lê profiles, parseia o índice `Packages`, manipula metadados de binpkg multi-instance — **sem shell out + parse de texto** que Go/Rust exigiriam. Catalyst e Metro usam essa API. |
-| **O alvo SEMPRE tem Portage** | O Shidashi roda num host Gentoo. Não existe "Shidashi single-binary em host arbitrário" — Go não removeria a dependência do Portage. Distribuir = **ebuild `app-misc/shidashi`** ou `pip`. |
-| **Glue subprocess-bound** | O trabalho pesado é do `emerge`; performance da linguagem é irrelevante. Domina a **velocidade de iteração** (receitas mudam toda semana). |
-| **Rigor recuperável** | `pydantic` (schema das receitas) + `mypy --strict` + `ruff` cobrem a segurança de tipo onde o erro dói. |
-| **Cresce sem reescrever** | Dashboard/servidor de binhost cabem em FastAPI + asyncio; o núcleo permanece. |
+| **Portage is a Python library** | `import portage`: queries the tree, resolves atoms, reads profiles, parses the `Packages` index, handles multi-instance binpkg metadata — **without the shell-out + text parsing** that Go/Rust would require. Catalyst and Metro use this API. |
+| **The target ALWAYS has Portage** | Shidashi runs on a Gentoo host. There is no "single-binary Shidashi on an arbitrary host" — Go would not remove the Portage dependency. Distribute = **`app-misc/shidashi` ebuild** or `pip`. |
+| **Subprocess-bound glue** | The heavy work is `emerge`'s; language performance is irrelevant. **Iteration speed** dominates (recipes change every week). |
+| **Recoverable rigor** | `pydantic` (recipe schema) + `mypy --strict` + `ruff` cover type safety where errors hurt. |
+| **Grows without a rewrite** | A dashboard/binhost server fits in FastAPI + asyncio; the core stays. |
 
-> **Rust** foi descartado: otimiza a correção da camada onde os bugs *não* estão (USE flag/`emerge`/shell), ao maior custo de iteração. **Go** só venceria num orquestrador remoto que não tocasse Portage local — e isso é o *dashboard* (FastAPI já cobre).
+> **Rust** was ruled out: it optimizes the correctness of the layer where the bugs are *not* (USE flag/`emerge`/shell), at the highest iteration cost. **Go** would only win for a remote orchestrator that did not touch local Portage — and that is the *dashboard* (FastAPI already covers it).
 
-**Recursos modernos de Python 3.14 a explorar:**
-- **PEP 695** — sintaxe nova de genéricos e type alias (`type Recipe = ...`, `def merge[T](...)`) nos modelos de receita.
-- **PEP 749** — anotações *lazy* por padrão → menos custo de import, ótimo para pydantic.
-- **PEP 750 — t-strings** — montagem **segura contra injeção** de comandos `emerge`/shell no `container.py`.
-- **`match`** — despacho do deep-merge dos eixos e do parse dos resultados do `pretend-resolve`.
-- **`tomllib`** (stdlib) — leitura de TOML sem dependência extra.
+**Modern Python 3.14 features to exploit:**
+- **PEP 695** — new generics and type alias syntax (`type Recipe = ...`, `def merge[T](...)`) in the recipe models.
+- **PEP 749** — *lazy* annotations by default → lower import cost, great for pydantic.
+- **PEP 750 — t-strings** — **injection-safe** assembly of `emerge`/shell commands in `container.py`.
+- **`match`** — dispatch of the axis deep-merge and of parsing the `pretend-resolve` results.
+- **`tomllib`** (stdlib) — TOML reading without an extra dependency.
 
-### Componentes
+### Components
 
-| Função | Escolha |
+| Role | Choice |
 |---|---|
-| Orquestrador | Python 3.14 + pydantic + mypy + ruff |
-| Helpers no container | Bash (`emerge`, `eselect`) |
-| Isolamento | `systemd-nspawn` |
-| Cache de fase | btrfs subvol / tarball |
-| Cache de compilação | ccache (C/C++) + sccache (Rust) — **compartilhado** entre flavors |
-| Linker | mold (knob por arch) |
-| Compressão squashfs | zstd |
+| Orchestrator | Python 3.14 + pydantic + mypy + ruff |
+| Helpers in the container | Bash (`emerge`, `eselect`) |
+| Isolation | `systemd-nspawn` |
+| Phase cache | btrfs subvol / tarball |
+| Compilation cache | ccache (C/C++) + sccache (Rust) — **shared** across flavors |
+| Linker | mold (per-arch knob) |
+| squashfs compression | zstd |
 | Live boot | dracut `dmsquash-live` |
 | ISO | `grub-mkrescue` / `xorriso` |
-| Binpkg | gpkg + multi-instance + assinatura GPG |
-| Distribuição do Shidashi | ebuild `app-misc/shidashi` (overlay) |
-| CI | GitHub Actions (runner grande) ou self-hosted |
+| Binpkg | gpkg + multi-instance + GPG signature |
+| Shidashi distribution | `app-misc/shidashi` ebuild (overlay) |
+| CI | GitHub Actions (large runner) or self-hosted |
 
-### Ambiente verificado (host atual)
-`GCC 16.1.0` · `Clang 22.1.6` · `mold 2.41` · `Portage 3.0.79` · `Python 3.14.5` · `Go 1.26.3` · `Rust 1.95.0` · profile `no-multilib/systemd` · CPU **Ryzen 9 9950X (Zen 5)**. GCC suporta todos os `-march` alvo.
+### Verified environment (current host)
+`GCC 16.1.0` · `Clang 22.1.6` · `mold 2.41` · `Portage 3.0.79` · `Python 3.14.5` · `Go 1.26.3` · `Rust 1.95.0` · profile `no-multilib/systemd` · CPU **Ryzen 9 9950X (Zen 5)**. GCC supports every target `-march`.
 
 ---
 
-## 13. Layout do Repositório
+## 13. Repository Layout
 
-Co-localizado **por eixo** (`variants/<eixo>/<nome>/`): a configuração de uma variante numa pasta só — facilita adicionar/remover uma variante inteira (e contribuições de terceiros). O **conteúdo** (os sets) mora numa biblioteca única, `variants/kits/` (D25): as camadas só configuram e escolhem.
+Co-located **per axis** (`variants/<axis>/<name>/`): a variant's configuration in a single folder — makes it easy to add/remove a whole variant (and third-party contributions). The **content** (the sets) lives in a single library, `variants/kits/` (D25): the layers only configure and choose.
 
 ```
-stages/                          # raiz do projeto (este repo)
-├── OVERVIEW.md                  # este documento
+stages/                          # project root (this repo)
+├── OVERVIEW.md                  # this document
 ├── README.md · pyproject.toml · .gitignore
-├── shidashi/                        # pacote Python (orquestrador)
-│   ├── cli.py                   # CLI Typer (subcomandos)
-│   ├── config.py                # caminhos/paths
-│   ├── recipe.py                # modelos pydantic + merge dos eixos
-│   ├── container.py             # wrapper systemd-nspawn
-│   ├── factory.py               # subsistema Package Factory
-│   ├── assembler.py             # subsistema ISO Assembler
-│   ├── phases.py                # execução de fases + cache de camadas
-│   ├── binhost.py               # gestão multi-instance + índice + assinatura
+├── shidashi/                        # Python package (orchestrator)
+│   ├── cli.py                   # Typer CLI (subcommands)
+│   ├── config.py                # paths
+│   ├── recipe.py                # pydantic models + axis merge
+│   ├── container.py             # systemd-nspawn wrapper
+│   ├── factory.py               # Package Factory subsystem
+│   ├── assembler.py             # ISO Assembler subsystem
+│   ├── phases.py                # phase execution + layer cache
+│   ├── binhost.py               # multi-instance management + index + signing
 │   ├── image.py                 # squashfs + dracut + ISO
-│   └── portage_api.py           # integração com `import portage`
-├── variants/                    # eixos componíveis (recipe + portage) + a biblioteca de sets
-│   ├── kits/                    # TODOS os sets, por categoria (D25) — nomes únicos
-│   │   ├── core/                #   base (agregador) boot fs portage shell hardware admin archive network
-│   │   ├── system/              #   extra-system (agregador) net-tools monitoring laptop firmware misc …
+│   └── portage_api.py           # integration with `import portage`
+├── variants/                    # composable axes (recipe + portage) + the set library
+│   ├── kits/                    # ALL the sets, by category (D25) — unique names
+│   │   ├── core/                #   base (aggregator) boot fs portage shell hardware admin archive network
+│   │   ├── system/              #   extra-system (aggregator) net-tools monitoring laptop firmware misc …
 │   │   ├── graphics/ services/ internet/ media/ dev/ virt/
 │   │   ├── groups/              #   extra-desktop extra-dev extra-media extra-virt
 │   │   └── desktops/            #   kde gnome wm
-│   ├── base/                    # ESTÁGIO 1 — o núcleo; a única reconstrução completa (D24)
+│   ├── base/                    # STAGE 1 — the core; the only complete rebuild (D24)
 │   │   ├── recipe.yaml
-│   │   └── portage/             # /etc/portage base (CORE/FEATURES/DISTDIR/PKGDIR…)
-│   ├── minimal/recipe.yaml      # ESTÁGIO 2 — after: base; imagem entregue (console)
-│   ├── desktop/recipe.yaml      # ESTÁGIO 3 — after: minimal; infra gráfica, sem apps
+│   │   └── portage/             # base /etc/portage (CORE/FEATURES/DISTDIR/PKGDIR…)
+│   ├── minimal/recipe.yaml      # STAGE 2 — after: base; shipped image (console)
+│   ├── desktop/recipe.yaml      # STAGE 3 — after: minimal; graphical infra, no apps
 │   ├── arch/
 │   │   ├── v3/{recipe.yaml, portage/}
 │   │   ├── znver5/{recipe.yaml, portage/}
 │   │   └── arrowlake/{recipe.yaml, portage/}
 │   ├── flavor/
-│   │   ├── kde/{recipe.yaml, portage/}      # ESTÁGIO 4 — after: desktop; imagem entregue
+│   │   ├── kde/{recipe.yaml, portage/}      # STAGE 4 — after: desktop; shipped image
 │   │   ├── gnome/{recipe.yaml, portage/}
 │   │   └── wm/{recipe.yaml, portage/}     # Wayland-only: Hyprland, Sway, niri
 │   └── init/
 │       ├── systemd/{recipe.yaml, portage/}
 │       └── openrc/{recipe.yaml, portage/}
-├── seeds/stage3.toml            # pointer pinado do stage3 (§10/§11)
+├── seeds/stage3.toml            # pinned stage3 pointer (§10/§11)
 ├── scripts/
-│   └── postinstall.d/           # customizações idempotentes
+│   └── postinstall.d/           # idempotent customizations
 └── .github/workflows/release.yml
 
-# overlay bentoo: externo a este repo, em /var/db/repos/bentoo
+# bentoo overlay: external to this repo, at /var/db/repos/bentoo
 ```
 
-**Mapeamento de sets → eixo** (os sets que as fases do §6.4 consomem):
+**Set → axis mapping** (the sets that the §6.4 phases consume):
 
-Os sets são de **dois níveis**: folhas com átomos, e agregadores que referenciam
-outras folhas por `@nome` (o Portage expande recursivamente). Um flavor declara
-dois ou três agregadores em vez de vinte folhas.
+Sets come in **two levels**: leaves with atoms, and aggregators that reference
+other leaves by `@name` (Portage expands them recursively). A flavor declares
+two or three aggregators instead of twenty leaves.
 
-Todo set mora em `variants/kits/<categoria>/<nome>`. A categoria é só para
-pessoas: o Portage enxerga os sets num espaço de nomes plano
-(`/etc/portage/sets/<nome>`), então um nome é **único** na biblioteca inteira —
-um teste garante. **Onde o arquivo mora não decide quem o instala**: só é
-instalado o que uma receita declara (`sets:`), com as `@refs` seguidas até
-fechar. O ajuste por flavor é explícito: declarar um set, ou `exclude:` átomos
-dele. Não há sobrescrita por mesmo nome entre camadas. Um set que só vale sob
-um init vai em `init_sets: {<init>: [...]}` do estágio — o display manager do
-kde: `kde-dm-plasma` (plasma-login-manager, exige systemd) ou `kde-dm-sddm`.
+Every set lives in `variants/kits/<category>/<name>`. The category is only for
+people: Portage sees sets in a flat namespace
+(`/etc/portage/sets/<name>`), so a name is **unique** across the whole library —
+a test enforces it. **Where the file lives does not decide who installs it**: only
+what a recipe declares (`sets:`) is installed, with the `@refs` followed until
+closure. Per-flavor tuning is explicit: declare a set, or `exclude:` atoms
+from it. There is no same-name override between layers. A set that only applies under
+one init goes in the stage's `init_sets: {<init>: [...]}` — kde's display manager:
+`kde-dm-plasma` (plasma-login-manager, requires systemd) or `kde-dm-sddm`.
 
-| Set | Local | Escopo |
+| Set | Location | Scope |
 |---|---|---|
-| `base` (agregador) | `kits/core/` | **universal** — declarado pelo `base/recipe.yaml`, entra em toda imagem |
-| `extra-system` | `kits/system/` | os kits de console — declarado por todo flavor |
-| `extra-desktop`, `extra-media`, `extra-dev`, `extra-virt` | `kits/groups/` | **opcionais** — cada flavor declara os que quer |
-| folhas (`boot`, `fs`, `audio`, `web`, `devel` …) | `kits/<categoria>/` | referenciadas pelos agregadores; um flavor pode declarar uma direto (ex.: `gpu`) |
-| `kde`, `gnome`, `wm` | `kits/desktops/` | **específicos** do desktop — cada um declarado só pelo seu flavor |
+| `base` (aggregator) | `kits/core/` | **universal** — declared by `base/recipe.yaml`, goes into every image |
+| `extra-system` | `kits/system/` | the console kits — declared by every flavor |
+| `extra-desktop`, `extra-media`, `extra-dev`, `extra-virt` | `kits/groups/` | **optional** — each flavor declares the ones it wants |
+| leaves (`boot`, `fs`, `audio`, `web`, `devel` …) | `kits/<category>/` | referenced by the aggregators; a flavor may declare one directly (e.g. `gpu`) |
+| `kde`, `gnome`, `wm` | `kits/desktops/` | desktop-**specific** — each declared only by its own flavor |
 
-Qual fase instala quais sets é **declarado** em `base/recipe.yaml` (campo `sets` de cada
-fase), não deduzido do nome da fase. `phase_target` intersecta com os sets da
-receita, então listar ali um set que só alguns flavors declaram é seguro.
+Which phase installs which sets is **declared** in `base/recipe.yaml` (the `sets` field of each
+phase), not inferred from the phase name. `phase_target` intersects with the recipe's
+sets, so listing there a set that only some flavors declare is safe.
 
-O `minimal` não tem set de desktop — consome `@base` e `@extra-system`. Cada fragmento (`recipe.yaml`,
-`portage/`, `sets/`) é resolvido pelo `shidashi recipe` via deep-merge na ordem `base → arch → flavor → init`.
+`minimal` has no desktop set — it consumes `@base` and `@extra-system`. Each fragment (`recipe.yaml`,
+`portage/`, `sets/`) is resolved by `shidashi recipe` via deep-merge in the order `base → arch → flavor → init`.
 
 ---
 
-## 14. Schema de Receita (exemplo)
+## 14. Recipe Schema (example)
 
-Uma imagem é a cadeia de estágios até o alvo, mais os eixos `arch` e `init`
-(`config.load_recipe(arch, alvo, init)`). Cada estágio escolhe **sets** e
-**cortes**; o **USE** mora só no `portage/make.conf` de cada camada — é o
-arquivo que o build lê, e a única fonte:
+An image is the chain of stages up to the target, plus the `arch` and `init` axes
+(`config.load_recipe(arch, target, init)`). Each stage chooses **sets** and
+**cuts**; the **USE** lives only in each layer's `portage/make.conf` — it is the
+file the build reads, and the only source:
 
 ```yaml
 # variants/flavor/kde/recipe.yaml
 stage: kde
 after: desktop
-ships: true                     # imagem entregue: settle + fork-point assentado
+ships: true                     # shipped image: settle + settled fork-point
 sets: [kde, extra-desktop, extra-media, extra-dev, extra-virt]
 ```
 
@@ -561,245 +561,245 @@ sets: [extra-system]
 ```yaml
 # variants/init/openrc/recipe.yaml
 init: openrc
-profile_suffix: ""                    # profile sem /systemd
+profile_suffix: ""                    # profile without /systemd
 phases_prepend:
   - { name: seat, packages: [sys-auth/elogind, sys-auth/seatd] }
 ```
 
-> **Não há mais `use_prefer` nem `override_ok`** (F69). O `use_prefer` só era
-> exibido pelo `recipe show` e nunca chegou a um build; gnome, xfce, wm e openrc
-> dependiam dele e por isso nunca tiveram o USE característico aplicado — ele
-> passa ao `make.conf` deles no passo 3 do D24. Sem `use_prefer` não há conflito
-> de USE entre camadas para o `override_ok` arbitrar.
+> **There is no longer a `use_prefer` or an `override_ok`** (F69). `use_prefer` was only
+> displayed by `recipe show` and never reached a build; gnome, xfce, wm and openrc
+> depended on it and therefore never had their characteristic USE applied — it
+> moves to their `make.conf` in step 3 of D24. Without `use_prefer` there is no USE
+> conflict between layers for `override_ok` to arbitrate.
 
-**Resolução de profile (decisão: `no-multilib` apenas, tudo acima por USE).** O único eixo que toca o
-profile é o **init**. *Todos* os flavors herdam a mesma âncora; **não há profile de DE**:
+**Profile resolution (decision: `no-multilib` only, everything above via USE).** The only axis that touches the
+profile is **init**. *All* flavors inherit the same anchor; **there is no DE profile**:
 
     default/linux/amd64/23.0/no-multilib[/<init.profile_suffix>]
 
-- `base` fixa `default/linux/amd64/23.0/no-multilib` (no-multilib é padrão — §3).
-- `init.profile_suffix` acrescenta `/systemd` (systemd) ou nada (openrc).
-- **O flavor NÃO contribui com profile.** A "camada de desktop" (KDE/GNOME/WM) é construída
-  inteiramente **acima** do no-multilib via `portage/` (make.conf + package.use) + `sets` (§13).
+- `base` pins `default/linux/amd64/23.0/no-multilib` (no-multilib is the default — §3).
+- `init.profile_suffix` appends `/systemd` (systemd) or nothing (openrc).
+- **The flavor does NOT contribute a profile.** The "desktop layer" (KDE/GNOME/WM) is built
+  entirely **on top of** no-multilib via `portage/` (make.conf + package.use) + `sets` (§13).
 
-Profile resolvido (idêntico para minimal/kde/gnome/wm — só muda por init):
+Resolved profile (identical for minimal/kde/gnome/wm — it only changes per init):
 - `* + openrc`  → `default/linux/amd64/23.0/no-multilib`
 - `* + systemd` → `default/linux/amd64/23.0/no-multilib/systemd`
 
-> ⚠️ **Por que não há profile de desktop.** Na árvore oficial, `desktop/*` e `no-multilib` são **irmãos**
-> de `default/linux/amd64/23.0/` — não existe `no-multilib/desktop/plasma`, então não compõem. Em vez de
-> criar profiles próprios no overlay, o bentoo fica **só no profile `no-multilib[/systemd]`** e codifica
-> toda a diferenciação de DE via `portage/package.use` + sets (que já são load-bearing, §18.2). Vantagem:
-> nada de profiles custom para terceiros manterem; as camadas (`portage/` + sets) são a **única** fonte da
-> camada gráfica. (Decisão §19.1.)
+> ⚠️ **Why there is no desktop profile.** In the official tree, `desktop/*` and `no-multilib` are **siblings**
+> under `default/linux/amd64/23.0/` — there is no `no-multilib/desktop/plasma`, so they do not compose. Instead of
+> creating custom profiles in the overlay, bentoo stays **on the `no-multilib[/systemd]` profile only** and encodes
+> all DE differentiation via `portage/package.use` + sets (which are already load-bearing, §18.2). Advantage:
+> no custom profiles for third parties to maintain; the layers (`portage/` + sets) are the **only** source of the
+> graphical layer. (Decision §19.1.)
 
 ---
 
-## 15. Decomposição do make.conf
+## 15. make.conf Decomposition
 
-O `make.conf` de referência (já organizado em grupos nomeados) mapeia diretamente:
+The reference `make.conf` (already organized into named groups) maps directly:
 
-| Grupo no make.conf | Fragmento de destino |
+| Group in make.conf | Destination fragment |
 |---|---|
 | `CORE KERNEL COMPRESSOR GRAPHICS DEVELOPMENT PERFORMANCE FILESYSTEM IMAGE AUDIO VIDEO NETWORK DEVICES SECURITY VIRTUALIZATION` | `variants/base/portage/` |
 | `COMMON_FLAGS GOAMD64 RUSTFLAGS CPU_FLAGS_X86 CHOST` | `variants/arch/<x>/portage/` |
-| `DESKTOPS REMOVED` (parte gráfica) | `variants/flavor/<y>/portage/` |
+| `DESKTOPS REMOVED` (graphical part) | `variants/flavor/<y>/portage/` |
 | `SYSTEMD` / elogind | `variants/init/<z>/portage/` |
 | `FEATURES DISTDIR PKGDIR ccache/sccache` | `variants/base/portage/` |
 
-> A primeira release do bentoo é, essencialmente, o make.conf atual fatorado em
-> `base + arch/v3 + flavor/kde + init/systemd` (e `flavor/minimal`). **Não se cria do zero —
-> fatora-se o existente** (com menos USE que o exemplo).
+> The first bentoo release is, essentially, the current make.conf factored into
+> `base + arch/v3 + flavor/kde + init/systemd` (and `flavor/minimal`). **It is not created from scratch —
+> the existing one is factored** (with less USE than the example).
 
 ---
 
-## 16. Binhost: Segurança e Distribuição
+## 16. Binhost: Security and Distribution
 
-- **Assinatura obrigatória se público:** gpkg suporta assinatura GPG nativa. Ligar `binpkg-request-signature` nos clientes. Binhost público sem assinatura é vetor de supply-chain.
-- **Índice por arch:** cada `binhost/<arch>/Packages` é independente.
-- **Hospedagem evolutiva (local → online):** dev usa binhost **local/self-hosted** no próprio host (custo zero); a fase pública migra para **Cloudflare R2** (object storage S3-compatível, **sem taxa de egress**) para binhost e ISOs.
-- **Bônus:** o mesmo binhost que alimenta o Assembler pode servir os **usuários finais** do bentoo (modelo Redcore/Sisyphus), acelerando instalações.
-
----
-
-## 17. Roadmap de Desenvolvimento
-
-> Legenda: `[x]` implementado e validado pela suíte off-host · `[ ]` pendente.
-> *Pilots de build/boot em host Gentoo root são host-gated e seguem diferidos
-> mesmo onde o código está completo (stories 003/004); anotados inline.*
-
-### Fase 0 — Fundação (MVP)
-- [x] Esqueleto Python (≥3.14) + pydantic + estrutura de receitas por eixo.
-- [x] `recipe.py` + `cli.py`: `recipe show/validate` (deep-merge dos eixos) — primeiro entregável real.
-- [x] `shidashi pretend <arch> <flavor> <init>` (descoberta de ciclos, custo segundos).
-- [x] Wrapper `systemd-nspawn`.
-- [x] Detector de stage3 (pointer file).
-- [x] Pipeline mínimo: **`v3 × minimal × systemd`** → stage4 tarball, depois `v3 × kde × systemd`. *(`shidashi factory` completo + testado; pilot de build em host root diferido — stories 003/004.)*
-
-### Fase 1 — ISO
-- [x] Assembler: squashfs + dracut `dmsquash-live` + ISO híbrida. *(impl. + testes off-host; caminho de imagem validado por boot real — pilot de montagem via binhost da Fase 2 ainda diferido.)*
-- [x] Smoke-test de boot (QEMU + nativo no 9950X) automatizado. *(`scripts/smoke-iso.sh` + `tests/test_smoke_iso.py` host-gated; **boot validado em QEMU/KVM no 9950X** — grub → dmsquash-live monta o squashfs → systemd switch-root → userspace.)*
-
-### Fase 2 — Binhost & Factory
-- [x] Factory com fases + cache de fork-point. *(impl. + testes; pilot host root diferido.)*
-- [x] Estratégia tronco-persistente (fork-point reuse) — delta semanal sobre o binhost. *(impl. em `factory.py`; pilot host diferido.)*
-- [ ] Wipe-na-toolchain + fase toolchain-bump (§6.6): detecção de bump GCC/glibc/binutils → `--emptytree` + `@preserved-rebuild` + subslot-rebuilds. *(story 006; zero ocorrências no código hoje.)*
-- [ ] Binhost multi-instance + assinatura.
-- [ ] LibreOffice Qt vs GTK como prova de conceito. *(variante Qt presente em `flavor/kde`; contraparte GTK pendente.)*
-
-### Fase 3 — Matriz
-- [x] Eixo arch: `znver5` (tier 1), `arrowlake` (tier 2, build-only, boot-test QEMU/TCG). *(receitas v3/znver5/arrowlake completas; boot-test `arrowlake` QEMU/TCG diferido.)*
-- [ ] Eixo flavor: `gnome`, `wm` (Wayland-only: Hyprland, Sway, niri). *(só `kde` e `minimal` curados; `gnome`/`wm` ainda placeholder — sets vazios.)*
-- [x] Eixo init: `openrc`. *(systemd + openrc completos.)*
-
-### Fase 4 — Automação
-- [ ] CI matriz semanal (cron domingo 00:00) + publicação + checksums/GPG. *(scaffold gated com `if: false`; falta runner Gentoo + leitura de pointer file + comando `release`.)*
-- [x] Pin de snapshot reprodutível. *(stage3 em `seeds/stage3.toml`; `::gentoo` em `seeds/gentoo.toml` — snapshot diário assinado, com ≥ 7 dias (cooldown, D26), montado no lugar da árvore do host em factory/assemble/pretend. Overlay `::bentoo` ainda segue o host.)*
-
-### Fase 5 — Operação (opcional)
-- [ ] Dashboard de releases (FastAPI).
-- [ ] Binhost público para usuários finais (Cloudflare R2).
-- [ ] ebuild `app-misc/shidashi` no overlay.
+- **Signing mandatory if public:** gpkg supports native GPG signing. Enable `binpkg-request-signature` on the clients. A public binhost without signatures is a supply-chain vector.
+- **Per-arch index:** each `binhost/<arch>/Packages` is independent.
+- **Evolving hosting (local → online):** development uses a **local/self-hosted** binhost on the host itself (zero cost); the public phase moves to **Cloudflare R2** (S3-compatible object storage, **no egress fee**) for the binhost and ISOs.
+- **Bonus:** the same binhost that feeds the Assembler can serve bentoo's **end users** (Redcore/Sisyphus model), speeding up installations.
 
 ---
 
-## 18. Validação Empírica e Refinamentos (teste de resolução)
+## 17. Development Roadmap
 
-> Registra o que um **teste de resolução** (`emerge --pretend`, **sem compilar**) revelou
-> sobre o pipeline real, e os refinamentos de arquitetura que decorreram dele.
-> Ferramenta: `shidashi pretend <arch> <flavor> <init>` — pipeline `seed → apply_portage → run`.
+> Legend: `[x]` implemented and validated by the off-host suite · `[ ]` pending.
+> *Build/boot pilots on a root Gentoo host are host-gated and remain deferred
+> even where the code is complete (stories 003/004); noted inline.*
 
-### 18.1 Metodologia
+### Phase 0 — Foundation (MVP)
+- [x] Python skeleton (≥3.14) + pydantic + per-axis recipe structure.
+- [x] `recipe.py` + `cli.py`: `recipe show/validate` (axis deep-merge) — the first real deliverable.
+- [x] `shidashi pretend <arch> <flavor> <init>` (cycle discovery, costs seconds).
+- [x] `systemd-nspawn` wrapper.
+- [x] stage3 detector (pointer file).
+- [x] Minimal pipeline: **`v3 × minimal × systemd`** → stage4 tarball, then `v3 × kde × systemd`. *(`shidashi factory` complete + tested; root-host build pilot deferred — stories 003/004.)*
 
-Antes de gastar horas compilando, resolve-se a árvore com `emerge --pretend --emptytree`
-dentro de um stage3 semeado, medindo **a lista de pacotes** e detectando **dependências
-circulares** — sem build. Cenário **T0** = make.conf de referência com USE completa de uma
-vez ("tudo de uma vez", estilo naive). Custo ~segundos; risco zero. Alvo do piloto:
+### Phase 1 — ISO
+- [x] Assembler: squashfs + dracut `dmsquash-live` + hybrid ISO. *(impl. + off-host tests; image path validated by a real boot — assembly pilot via the Phase 2 binhost still deferred.)*
+- [x] Automated boot smoke test (QEMU + native on the 9950X). *(`scripts/smoke-iso.sh` + host-gated `tests/test_smoke_iso.py`; **boot validated on QEMU/KVM on the 9950X** — grub → dmsquash-live mounts the squashfs → systemd switch-root → userspace.)*
+
+### Phase 2 — Binhost & Factory
+- [x] Factory with phases + fork-point cache. *(impl. + tests; root-host pilot deferred.)*
+- [x] Persistent-trunk strategy (fork-point reuse) — weekly delta over the binhost. *(impl. in `factory.py`; host pilot deferred.)*
+- [ ] Wipe-on-toolchain + toolchain-bump phase (§6.6): GCC/glibc/binutils bump detection → `--emptytree` + `@preserved-rebuild` + subslot-rebuilds. *(story 006; zero occurrences in the code today.)*
+- [ ] Multi-instance binhost + signing.
+- [ ] LibreOffice Qt vs GTK as a proof of concept. *(Qt variant present in `flavor/kde`; GTK counterpart pending.)*
+
+### Phase 3 — Matrix
+- [x] arch axis: `znver5` (tier 1), `arrowlake` (tier 2, build-only, QEMU/TCG boot test). *(v3/znver5/arrowlake recipes complete; `arrowlake` QEMU/TCG boot test deferred.)*
+- [ ] flavor axis: `gnome`, `wm` (Wayland-only: Hyprland, Sway, niri). *(only `kde` and `minimal` curated; `gnome`/`wm` still placeholders — empty sets.)*
+- [x] init axis: `openrc`. *(systemd + openrc complete.)*
+
+### Phase 4 — Automation
+- [ ] Weekly CI matrix (cron Sunday 00:00) + publishing + checksums/GPG. *(scaffold gated with `if: false`; still missing a Gentoo runner + pointer file reading + a `release` command.)*
+- [x] Reproducible snapshot pin. *(stage3 in `seeds/stage3.toml`; `::gentoo` in `seeds/gentoo.toml` — signed daily snapshot, at least 7 days old (cooldown, D26), mounted in place of the host's tree in factory/assemble/pretend. The `::bentoo` overlay still follows the host.)*
+
+### Phase 5 — Operations (optional)
+- [ ] Release dashboard (FastAPI).
+- [ ] Public binhost for end users (Cloudflare R2).
+- [ ] `app-misc/shidashi` ebuild in the overlay.
+
+---
+
+## 18. Empirical Validation and Refinements (resolution test)
+
+> Records what a **resolution test** (`emerge --pretend`, **without compiling**) revealed
+> about the real pipeline, and the architecture refinements that followed from it.
+> Tool: `shidashi pretend <arch> <flavor> <init>` — pipeline `seed → apply_portage → run`.
+
+### 18.1 Methodology
+
+Before spending hours compiling, the tree is resolved with `emerge --pretend --emptytree`
+inside a seeded stage3, measuring **the package list** and detecting **circular
+dependencies** — without a build. Scenario **T0** = reference make.conf with the full USE at
+once ("all at once", naive style). Cost ~seconds; zero risk. Pilot target:
 `v3 × kde × systemd`, profile `no-multilib/systemd`, stage3 `nomultilib-systemd`.
 
-### 18.2 Achados do T0
+### 18.2 T0 findings
 
-1. **make.conf sozinho NÃO resolve.** Só o make.conf (sem `package.use`) num stage3 limpo
-   faz o resolvedor exigir uma batelada de mudanças de USE (`systemd policykit`,
-   `qt5compat qml`, `kconfig qml`, `qtbase libproxy`…). **O `package.use` curado é
-   load-bearing**, não cosmético — reforça §4.2 (fonte única de USE).
-2. **O overlay é parte da resolução.** Sem o overlay bentoo (`/var/db/repos/bentoo`),
-   pacotes-folha atrasados na migração do Python (ex.: `libffado` × `python3.14`) batem em
-   `REQUIRED_USE` que o overlay já corrige. → Factory **e** Assembler devem configurar
-   **todos** os repos do alvo (gentoo + bentoo + …), não só o `::gentoo`.
-3. **A dependência circular é real e concreta:**
+1. **make.conf alone does NOT resolve.** make.conf alone (without `package.use`) on a clean stage3
+   makes the resolver demand a batch of USE changes (`systemd policykit`,
+   `qt5compat qml`, `kconfig qml`, `qtbase libproxy`…). **The curated `package.use` is
+   load-bearing**, not cosmetic — reinforces §4.2 (single source of USE).
+2. **The overlay is part of the resolution.** Without the bentoo overlay (`/var/db/repos/bentoo`),
+   leaf packages lagging in the Python migration (e.g. `libffado` × `python3.14`) hit
+   `REQUIRED_USE` that the overlay already fixes. → Factory **and** Assembler must configure
+   **all** of the target's repos (gentoo + bentoo + …), not just `::gentoo`.
+3. **The circular dependency is real and concrete:**
    ```
    libsdl2 ─▶ pipewire ─▶ ffmpeg ─▶ libsdl2        (build-time)
-   quebra:  ffmpeg -sdl  |  libsdl2 -pipewire  |  pipewire -ffmpeg
+   break:   ffmpeg -sdl  |  libsdl2 -pipewire  |  pipewire -ffmpeg
    ```
-   Confirma: USE completa de uma vez **trava em ciclo**; o resolvedor **lista** as quebras
-   mas **não as aplica sozinho** — a Factory precisa codificá-las.
-4. **A primeira barreira não é o ciclo — é a curadoria de USE.** A resolução morreu na USE
-   antes de chegar ao ciclo; só com `package.use` + overlay o ciclo apareceu.
+   Confirms: the full USE at once **gets stuck in a cycle**; the resolver **lists** the breaks
+   but **does not apply them on its own** — the Factory must encode them.
+4. **The first barrier is not the cycle — it is USE curation.** Resolution died on USE
+   before reaching the cycle; only with `package.use` + overlay did the cycle show up.
 
-### 18.3 Disciplina de USE estagiada
+### 18.3 Staged USE discipline
 
-- **USE de *completude* (qt6/gtk/kde/gnome/VIDEO_CARDS/L10N): final e global desde o step 1.**
-  Não causam ciclo e não incham `@system` (que não as referencia). Estagiá-las é o que cria
-  **duplicação espúria** de deps — evitar.
-- **USE de *quebra-de-ciclo* (`use_break`, ex.: `ffmpeg -sdl`): transiente, por step,
-  escopada via `package.use`.** É a única que se estagia: *break-pass* (USE off) →
-  *settle-pass* (USE on, com o parceiro do ciclo já presente). O mesmo pacote compila duas
-  vezes **no primeiro build** — custo pago uma vez, amortizado no binhost. **Curada manualmente.**
-- `--newuse` **não** recompila por mudança de `-march`/CFLAGS → o primeiro build do tronco
-  usa `--emptytree`; semanas seguintes são o **delta** sobre o binhost persistente. Um
-  **toolchain-bump** força novo `--emptytree` (§6.6).
+- ***Completeness* USE (qt6/gtk/kde/gnome/VIDEO_CARDS/L10N): final and global from step 1.**
+  They cause no cycle and do not bloat `@system` (which does not reference them). Staging them is what creates
+  **spurious duplication** of deps — avoid it.
+- ***Cycle-breaking* USE (`use_break`, e.g. `ffmpeg -sdl`): transient, per step,
+  scoped via `package.use`.** It is the only one that is staged: *break-pass* (USE off) →
+  *settle-pass* (USE on, with the cycle partner already present). The same package compiles twice
+  **on the first build** — a cost paid once, amortized in the binhost. **Curated manually.**
+- `--newuse` does **not** recompile on a `-march`/CFLAGS change → the trunk's first build
+  uses `--emptytree`; following weeks are the **delta** over the persistent binhost. A
+  **toolchain-bump** forces a new `--emptytree` (§6.6).
 
-### 18.4 Binpkg transiente — categoria nova
+### 18.4 Transient binpkg — a new category
 
-O `ffmpeg[-sdl]` do break-pass é um **binpkg transiente**: existe só para quebrar o ciclo,
-é substituído pelo `ffmpeg[sdl]` final, e **nunca deve chegar à ISO/usuário**. Três
-multiplicidades convivem no pool multi-instance — e o GC precisa distingui-las:
+The break-pass `ffmpeg[-sdl]` is a **transient binpkg**: it exists only to break the cycle,
+is replaced by the final `ffmpeg[sdl]`, and **must never reach the ISO/user**. Three
+multiplicities coexist in the multi-instance pool — and the GC must tell them apart:
 
-| Tipo | Exemplo | Política de GC |
+| Type | Example | GC policy |
 |---|---|---|
-| Variante de flavor (legítima) | `poppler[qt6]` vs `poppler[gtk]` | manter **todas** (cada uma vai pra sua ISO) |
-| Versão antiga | `poppler-24` vs `poppler-25` | keep-N mais recentes |
-| Transiente de bootstrap | `ffmpeg[-sdl]` | **podar** após settle / só no build-pool |
+| Flavor variant (legitimate) | `poppler[qt6]` vs `poppler[gtk]` | keep **all** (each goes to its own ISO) |
+| Old version | `poppler-24` vs `poppler-25` | keep the N most recent |
+| Bootstrap transient | `ffmpeg[-sdl]` | **prune** after settle / build-pool only |
 
-→ `binhost.gc()` é **ciente da USE** (qual instância é a final de cada flavor), **não**
-"keep-N global" (senão poda uma variante de flavor achando que é duplicata).
+→ `binhost.gc()` is **USE-aware** (which instance is the final one for each flavor), **not**
+"global keep-N" (otherwise it prunes a flavor variant thinking it is a duplicate).
 
-### 18.5 Binhost é um grafo, não um array
+### 18.5 The binhost is a graph, not an array
 
-O binhost por arch é um conjunto de nós `(CPV, USE)` — não "o último compilado". Cada
-flavor é uma **fatia consistente** desse grafo. A divergência entre flavors vem de (a) a
-USE global do flavor tocar dezenas de pacotes **diretamente** e (b) **propagação por
-USE-dep** (`kio[qt6]` força `qtbase[qml]`…). Pacotes sem USE de DE (toolchain, libs base)
-são **idênticos** entre flavors → uma instância compartilhada (o tronco do fork-point).
+The per-arch binhost is a set of `(CPV, USE)` nodes — not "the last one compiled". Each
+flavor is a **consistent slice** of that graph. Divergence between flavors comes from (a) the
+flavor's global USE touching dozens of packages **directly** and (b) **USE-dep
+propagation** (`kio[qt6]` forces `qtbase[qml]`…). Packages without DE USE (toolchain, base libs)
+are **identical** across flavors → one shared instance (the fork-point trunk).
 
-**Dois níveis de pool:**
-- **build-pool** — inclui transientes; reusado entre semanas para não re-quebrar ciclos.
-- **publish-pool** — só finais; consumido por Assembler e usuários (índice `Packages`
-  filtrado). É o que reencontra a ideia de "binhost em camadas" (tronco vs flavor).
+**Two pool levels:**
+- **build-pool** — includes transients; reused across weeks so cycles are not re-broken.
+- **publish-pool** — finals only; consumed by the Assembler and users (filtered `Packages`
+  index). This is what recovers the idea of a "layered binhost" (trunk vs flavor).
 
-### 18.6 O Assembler é imune a ciclo
+### 18.6 The Assembler is immune to cycles
 
-Ciclo é fenômeno de *build-time*. `emerge --usepkgonly` **instala binário pronto**, sem
-ordem de compilação → o ciclo não existe no assemble. O Assembler resolve a **USE final** e
-o match multi-instance pega a instância certa por flavor (`poppler[qt6]` p/ KDE, `[gtk]` p/
-GNOME). **Toda a complexidade de ciclo fica na Factory; o Assembler permanece trivial.**
-Requisito: a USE final do *settle-pass* da Factory **==** a USE que o Assembler resolve
-(senão `--usepkgonly` falha sem match). Vale um teste automatizado que compare a USE
-prometida pelo fragmento com a gravada no `BUILD_ID`.
+A cycle is a *build-time* phenomenon. `emerge --usepkgonly` **installs ready-made binaries**, with no
+compilation order → the cycle does not exist at assemble time. The Assembler resolves the **final USE** and
+the multi-instance match picks the right instance per flavor (`poppler[qt6]` for KDE, `[gtk]` for
+GNOME). **All the cycle complexity stays in the Factory; the Assembler stays trivial.**
+Requirement: the final USE of the Factory's *settle-pass* **==** the USE the Assembler resolves
+(otherwise `--usepkgonly` fails with no match). An automated test comparing the USE
+promised by the fragment with the one recorded in the `BUILD_ID` is worthwhile.
 
-### 18.7 `shidashi pretend` como descobridor de ciclos
+### 18.7 `shidashi pretend` as a cycle discoverer
 
-O comando `shidashi pretend <arch> <flavor> <init>` é promovido a **instrumento de curadoria**:
-roda o `emerge --pretend` dentro do container, colhe as quebras sugeridas ("break this cycle
-by changing USE X") e **alimenta manualmente** o `use_break` dos steps da recipe. Deixa de ser
-só teste e vira parte do pipeline de curadoria.
+The `shidashi pretend <arch> <flavor> <init>` command is promoted to a **curation instrument**:
+it runs `emerge --pretend` inside the container, collects the suggested breaks ("break this cycle
+by changing USE X") and **manually feeds** the `use_break` of the recipe steps. It stops being
+just a test and becomes part of the curation pipeline.
 
 ---
 
-## 19. Decisões
+## 19. Decisions
 
-### 19.1 Tomadas (registradas)
+### 19.1 Taken (recorded)
 
-| Tema | Decisão |
+| Topic | Decision |
 |---|---|
-| **Estrutura do pipeline** | Fases-de-emerge (Factory) + Assembler. Handbook = checklist, não estrutura (§5.3). |
-| **Re-seed vs. tronco** | **Híbrido:** tronco persistente para delta semanal; **wipe total `--emptytree`** em toolchain-bump (§6.6). |
-| **`use_break`** | Curadoria **manual** por flavor, alimentada pelo `pretend-resolve` (§18.7). |
-| **Determinismo** | De **entrada/configuração** (replicar sem erro), **não** bit-a-bit (§10). |
-| **Distribuição do Shidashi** | **ebuild** `app-misc/shidashi` em host Gentoo; nunca single-binary (§3, §12). |
-| **`minimal`** | Flavor **console-only, apenas TTY** — sem compositor, nem para smoke-test (§8). |
-| **`wm`** | **Wayland-only:** Hyprland (default) + Sway + niri — sem dependências X11 (§8). |
-| **Layout** | Co-localizado **por eixo** (`variants/<eixo>/<nome>/`); overlay externo (§13). |
-| **Host de build** | **Ryzen 9 9950X (Zen 5)** → `v3` e `znver5` em Tier 1; `arrowlake` Tier 2 (§9.4). |
-| **Validação `arrowlake`** | **QEMU (TCG)** — sem AVX-512, a ISA cabe na emulação; sem hardware Intel real (§9.4). |
-| **Cadência** | Release fixo **todo domingo 00:00** (§11). |
-| **multilib** | **no-multilib** por padrão; 32-bit só na futura fase de jogos, **por-pacote via `ABI_X86="32 64"`** (§3). |
-| **Seed** | stage3 **no-multilib** por init (systemd/openrc), do mesmo snapshot pinado (§11). |
-| **`ships`** | O estágio é uma imagem entregue (`minimal` e cada flavor): recebe settle e um fork-point assentado (§6.4). |
-| **Camada de desktop** | **Profile `no-multilib[/systemd]` apenas** — sem profiles de DE no overlay; KDE/GNOME/WM construídos **acima** via `package.use` + sets (§14). |
-| **Linguagem** | **Python ≥ 3.14** (em vias de virar o padrão do Gentoo), recursos modernos (PEP 695/749/750, `match`) (§12). |
-| **Hospedagem** | **Local agora → Cloudflare R2 depois** (sem egress) para binhost e ISOs (§16). |
-| **Toolchain-bump** | Fase explícita que dispara `@preserved-rebuild` + subslot-rebuilds (§6.6). |
+| **Pipeline structure** | Emerge phases (Factory) + Assembler. Handbook = checklist, not structure (§5.3). |
+| **Re-seed vs. trunk** | **Hybrid:** persistent trunk for the weekly delta; **full `--emptytree` wipe** on toolchain-bump (§6.6). |
+| **`use_break`** | **Manual** curation per flavor, fed by `pretend-resolve` (§18.7). |
+| **Determinism** | Of **input/configuration** (replicate without errors), **not** bit-for-bit (§10). |
+| **Shidashi distribution** | **ebuild** `app-misc/shidashi` on a Gentoo host; never a single binary (§3, §12). |
+| **`minimal`** | **Console-only, TTY-only** flavor — no compositor, not even for a smoke test (§8). |
+| **`wm`** | **Wayland-only:** Hyprland (default) + Sway + niri — no X11 dependencies (§8). |
+| **Layout** | Co-located **per axis** (`variants/<axis>/<name>/`); external overlay (§13). |
+| **Build host** | **Ryzen 9 9950X (Zen 5)** → `v3` and `znver5` in Tier 1; `arrowlake` Tier 2 (§9.4). |
+| **`arrowlake` validation** | **QEMU (TCG)** — no AVX-512, the ISA fits within emulation; no real Intel hardware (§9.4). |
+| **Cadence** | Fixed release **every Sunday 00:00** (§11). |
+| **multilib** | **no-multilib** by default; 32-bit only in the future gaming phase, **per package via `ABI_X86="32 64"`** (§3). |
+| **Seed** | **no-multilib** stage3 per init (systemd/openrc), from the same pinned snapshot (§11). |
+| **`ships`** | The stage is a shipped image (`minimal` and each flavor): it gets a settle and a settled fork-point (§6.4). |
+| **Desktop layer** | **`no-multilib[/systemd]` profile only** — no DE profiles in the overlay; KDE/GNOME/WM built **on top** via `package.use` + sets (§14). |
+| **Language** | **Python ≥ 3.14** (on its way to becoming Gentoo's default), modern features (PEP 695/749/750, `match`) (§12). |
+| **Hosting** | **Local now → Cloudflare R2 later** (no egress) for the binhost and ISOs (§16). |
+| **Toolchain-bump** | Explicit phase that triggers `@preserved-rebuild` + subslot-rebuilds (§6.6). |
 
-### 19.2 Ainda em aberto
+### 19.2 Still open
 
-**Nenhum item de arquitetura em aberto.** Todas as decisões anteriores foram fechadas e migradas
-para §19.1: WMs do `wm` (Wayland-only: Hyprland/Sway/niri), validação `arrowlake` (QEMU/TCG),
-`minimal` (apenas TTY), hospedagem (Cloudflare R2), multilib da fase de jogos (por-pacote via
-`ABI_X86="32 64"`) e a camada de desktop (**profile `no-multilib[/systemd]` apenas**, DE por
+**No open architecture items.** All earlier decisions were closed and moved
+to §19.1: the `wm` WMs (Wayland-only: Hyprland/Sway/niri), `arrowlake` validation (QEMU/TCG),
+`minimal` (TTY only), hosting (Cloudflare R2), multilib for the gaming phase (per package via
+`ABI_X86="32 64"`) and the desktop layer (**`no-multilib[/systemd]` profile only**, DE via
 `package.use` + sets).
 
-Próximas decisões surgem na implementação (Fase 0): nomes/versões exatos dos pacotes por set,
-política de GC do binhost e formato do pin de snapshot.
+Next decisions arise during implementation (Phase 0): exact package names/versions per set,
+binhost GC policy and the snapshot pin format.
 
 ---
 
-## 20. Referências
+## 20. References
 
 - [Catalyst — Gentoo Wiki](https://wiki.gentoo.org/wiki/Catalyst)
 - [Funtoo Metro](https://github.com/funtoo/metro) · [stage4.spec](https://github.com/funtoo/metro/blob/master/targets/gentoo/stage4.spec)
 - [Calculate Linux — Interactive system build](https://old.calculate-linux.org/main/en/interactive_system_build)
 - [Distributions based on Gentoo — Gentoo Wiki](https://wiki.gentoo.org/wiki/Distributions_based_on_Gentoo)
-- [Handbook:AMD64 — Gentoo Wiki](https://wiki.gentoo.org/wiki/Handbook:AMD64) (usado como checklist de cobertura)
+- [Handbook:AMD64 — Gentoo Wiki](https://wiki.gentoo.org/wiki/Handbook:AMD64) (used as a coverage checklist)
 - dracut `dmsquash-live`, `app-cdr/livecd-tools`, `binpkg-multi-instance` (Portage docs)

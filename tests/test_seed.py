@@ -1,18 +1,18 @@
-"""UNIT (R2.1-R2.6) — lógica pura de seed: pointer, URL, digest, fetch (cache).
+"""UNIT (R2.1-R2.6) — pure seed logic: pointer, URL, digest, fetch (cache).
 
-Tudo aqui é determinista no host CI não-Gentoo. O download e a extração
-privilegiada NÃO são exercitados aqui (extract_stage3 é integração, tarefa 2.3);
-``fetch_stage3`` é testado pelos caminhos cache-hit e ``download=False`` sem
-tocar a rede (monkeypatch). ``verify_signature`` (gpg shell-out) tem seu caminho
-de host coberto pela integração; aqui exercitamos apenas o contrato puro
-verificável: ``load_pointer``, ``stage3_url``, ``verify_digest``.
+Everything here is deterministic on the non-Gentoo CI host. The download and the
+privileged extraction are NOT exercised here (extract_stage3 is integration, task 2.3);
+``fetch_stage3`` is tested through the cache-hit and ``download=False`` paths without
+touching the network (monkeypatch). ``verify_signature`` (gpg shell-out) has its host
+path covered by the integration tests; here we exercise only the pure,
+verifiable contract: ``load_pointer``, ``stage3_url``, ``verify_digest``.
 
-Contrato (design.md §seed): ``Stage3Pointer(init, base_url, snapshot, filename,
+Contract (design.md §seed): ``Stage3Pointer(init, base_url, snapshot, filename,
 sha512)`` frozen pydantic; ``SeedError(Exception)``; ``load_pointer(init, *,
-seeds_dir)`` (SeedError listando entradas se init ausente); ``stage3_url`` puro;
-``verify_digest(tarball, sha512)`` levanta SeedError em divergência;
-``fetch_stage3(pointer, *, cache_dir, download=True)`` reusa cache, e
-``download=False`` sem cache levanta SeedError.
+seeds_dir)`` (SeedError listing the entries if the init is missing); ``stage3_url`` pure;
+``verify_digest(tarball, sha512)`` raises SeedError on mismatch;
+``fetch_stage3(pointer, *, cache_dir, download=True)`` reuses the cache, and
+``download=False`` without a cache raises SeedError.
 """
 
 import hashlib
@@ -56,7 +56,7 @@ def seeds_dir(tmp_path: Path) -> Path:
     return d
 
 
-# --- SeedError é uma exceção -------------------------------------------------
+# --- SeedError is an exception -------------------------------------------------
 
 
 def test_seed_error_is_exception_subclass() -> None:
@@ -80,7 +80,7 @@ def test_load_pointer_unknown_init_lists_available(seeds_dir: Path) -> None:
         load_pointer("upstart", seeds_dir=seeds_dir)
     msg = str(excinfo.value)
     assert "upstart" in msg
-    # nomeia as entradas disponíveis
+    # names the available entries
     assert "systemd" in msg
     assert "openrc" in msg
 
@@ -112,7 +112,7 @@ def test_stage3_url_builds_mirror_path() -> None:
     assert url.startswith(_BASE_URL)
     assert _SNAPSHOT in url
     assert url.endswith(p.filename)
-    # sem barras duplicadas no meio (junção limpa)
+    # no doubled slashes in the middle (clean join)
     assert "//releases" not in url.replace("https://", "")
 
 
@@ -124,7 +124,7 @@ def test_verify_digest_passes_on_match(tmp_path: Path) -> None:
     tarball = tmp_path / "s.tar.xz"
     tarball.write_bytes(blob)
     good = hashlib.sha512(blob).hexdigest()
-    # match → não levanta, retorna None
+    # match → does not raise, returns None
     assert verify_digest(tarball, good) is None  # type: ignore[func-returns-value]
 
 
@@ -148,7 +148,7 @@ def test_fetch_stage3_no_download_no_cache_raises(tmp_path: Path) -> None:
         filename="absent.tar.xz",
         sha512="0" * 128,
     )
-    # --no-download + sem cache → SeedError acionável, sem tocar a rede
+    # --no-download + no cache → actionable SeedError, without touching the network
     with pytest.raises(SeedError):
         fetch_stage3(p, cache_dir=cache, download=False)
 
@@ -156,11 +156,11 @@ def test_fetch_stage3_no_download_no_cache_raises(tmp_path: Path) -> None:
 def test_fetch_stage3_reuses_verified_cache(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # blinda contra rede: qualquer download deve falhar o teste
+    # guard against the network: any download must fail the test
     def _boom(*_a: object, **_k: object) -> None:
-        raise AssertionError("não deve baixar quando o cache é válido")
+        raise AssertionError("must not download when the cache is valid")
 
-    # cobre tanto urllib quanto um possível helper interno de download
+    # covers both urllib and a possible internal download helper
     monkeypatch.setattr(seed, "_download", _boom, raising=False)
 
     cache = tmp_path / "cache"

@@ -1,19 +1,19 @@
-"""UNIT + INTEGRAÇÃO de shidashi.factory stepwise (story 004 grupo 6).
+"""UNIT + INTEGRATION tests of the stepwise shidashi.factory (story 004 group 6).
 
-UNIT (determinista, CI não-Gentoo):
-* 6.1 ``FactoryResult`` ganha campos defaultados ``stopped_at``/``phase_diffs``/
-  ``completed_phases`` — a construção da story 003 (sem eles) PERMANECE válida
-  (back-compat) e os enums ``CheckpointDecision``/``FailureDecision`` são puros
+UNIT (deterministic, non-Gentoo CI):
+* 6.1 ``FactoryResult`` gains the defaulted fields ``stopped_at``/``phase_diffs``/
+  ``completed_phases`` — story 003's construction (without them) REMAINS valid
+  (back-compat) and the ``CheckpointDecision``/``FailureDecision`` enums are pure
   (R8.2);
-* 6.2 (unit) ``Factory.build_stepwise`` levanta a guarda de root ANTES de
-  qualquer trabalho (``os.geteuid`` monkeypatched) — R8.1; e um stepwise NUNCA
-  auto-deleta o rootfs (a teardown rule é "keep" — R1.6).
+* 6.2 (unit) ``Factory.build_stepwise`` raises the root guard BEFORE
+  any work (``os.geteuid`` monkeypatched) — R8.1; and a stepwise run NEVER
+  auto-deletes the rootfs (the teardown rule is "keep" — R1.6).
 
-INTEGRAÇÃO (host-gated, Red DIFERIDO): seed-or-restore real, snapshot por fase,
-``--reset`` que limpa state+rootfs, Container persistente real — PULA em CI.
+INTEGRATION (host-gated, DEFERRED Red): real seed-or-restore, per-phase snapshot,
+``--reset`` that clears state+rootfs, real persistent Container — SKIPPED in CI.
 
-Símbolos novos importados de forma tolerante; cada teste unit fica Red no uso
-(Red esperado 004). ``FactoryError``/``FactoryResult`` já existem da story 003.
+New symbols imported tolerantly; each unit test goes Red on use
+(expected Red 004). ``FactoryError``/``FactoryResult`` already exist from story 003.
 """
 
 import os
@@ -36,7 +36,7 @@ PhaseDiff: Any = try_import("shidashi.state", "PhaseDiff")
 
 _NEEDS_HOST = os.geteuid() != 0 or shutil.which("systemd-nspawn") is None
 _skip_privileged = pytest.mark.skipif(
-    _NEEDS_HOST, reason="exige root + systemd-nspawn + stage3 seedado (host Gentoo)"
+    _NEEDS_HOST, reason="requires root + systemd-nspawn + a seeded stage3 (Gentoo host)"
 )
 
 
@@ -62,8 +62,8 @@ def _recipe(*, flavor: str = "minimal") -> ResolvedRecipe:
 
 
 def test_factory_result_story003_construction_still_valid() -> None:
-    # back-compat: sem os campos novos a construção da story 003 funciona e os
-    # novos campos assumem defaults (R8.2).
+    # back-compat: without the new fields story 003's construction works and the
+    # new fields take their defaults (R8.2).
     result = FactoryResult(
         pkgdir=Path("/var/cache/shidashi/binpkgs/v3"),
         built_atoms=("media-libs/libsdl2-2.30.5",),
@@ -95,7 +95,7 @@ def test_factory_result_extended_fields_carry_values() -> None:
     assert result.completed_phases == ("rebuild",)
 
 
-# --- 6.1 enums puros ---------------------------------------------------------
+# --- 6.1 pure enums ----------------------------------------------------------
 
 
 def test_checkpoint_and_failure_decisions_are_str_enums() -> None:
@@ -106,7 +106,7 @@ def test_checkpoint_and_failure_decisions_are_str_enums() -> None:
     assert FailureDecision.ABORT == "ABORT"
 
 
-# --- 6.2 (unit) guarda de root antes de qualquer trabalho (R8.1) -------------
+# --- 6.2 (unit) root guard before any work (R8.1) ----------------------------
 
 
 def test_build_stepwise_non_root_raises_factory_error_before_work(
@@ -115,31 +115,31 @@ def test_build_stepwise_non_root_raises_factory_error_before_work(
     monkeypatch.setattr(os, "geteuid", lambda: 1000)
 
     def _boom(*_a: object, **_k: object) -> object:
-        raise AssertionError("trabalho executado antes da guarda de root")
+        raise AssertionError("work done before the root guard")
 
     monkeypatch.setattr(factory, "fetch_stage3", _boom, raising=False)
     monkeypatch.setattr(factory, "extract_stage3", _boom, raising=False)
 
     f = Factory(_recipe(), Path("/var/cache/shidashi/binpkgs/v3"))
-    # a guarda DEVE levantar FactoryError mencionando root — NÃO um AttributeError
-    # de método ausente (que passaria por engano antes da impl existir).
+    # the guard MUST raise a FactoryError mentioning root — NOT an AttributeError
+    # for a missing method (which would pass by mistake before the impl existed).
     with pytest.raises(FactoryError) as exc:
         f.build_stepwise(until="rebuild")
     assert "root" in str(exc.value).lower()
 
 
-# --- INTEGRAÇÃO host-gated (Red DIFERIDO ao host privilegiado real) ----------
+# --- host-gated INTEGRATION (Red DEFERRED to the real privileged host) -------
 
 
 @_skip_privileged
 def test_build_stepwise_until_rebuild_keeps_rootfs_and_state() -> None:
-    # R1.1/R1.6/R5.1/R6.1 (int): --until rebuild seeda+roda rebuild, persiste
-    # state com completed=("rebuild",), escreve snapshot por fase, NÃO roda settle
-    # e NUNCA deleta o rootfs (teardown rule = keep). Diferido ao host.
-    pytest.skip("integração privilegiada: requer host Gentoo seedado (Red diferido)")
+    # R1.1/R1.6/R5.1/R6.1 (int): --until rebuild seeds+runs rebuild, persists
+    # state with completed=("rebuild",), writes a per-phase snapshot, does NOT run settle
+    # and NEVER deletes the rootfs (teardown rule = keep). Deferred to the host.
+    pytest.skip("privileged integration: requires a seeded Gentoo host (deferred Red)")
 
 
 @_skip_privileged
 def test_build_stepwise_reset_clears_state_and_rootfs() -> None:
-    # R6.4 (int): --reset descarta o state persistido e o rootfs, recomeça do zero.
-    pytest.skip("integração privilegiada: requer host Gentoo seedado (Red diferido)")
+    # R6.4 (int): --reset discards the persisted state and the rootfs, starts over from scratch.
+    pytest.skip("privileged integration: requires a seeded Gentoo host (deferred Red)")

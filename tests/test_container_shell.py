@@ -1,18 +1,18 @@
-"""UNIT + INTEGRAÇÃO do shell interativo de shidashi.container (story 004 grupo 4).
+"""UNIT + INTEGRATION of the interactive shell of shidashi.container (story 004 group 4).
 
-UNIT (R7.2/R8.4): ``_nspawn_shell_argv(rootfs, *, binds, binds_rw)`` é puro e
-inspecionável — ``systemd-nspawn --directory <rootfs>`` + o MESMO bloco de
-``--bind-ro=``/``--bind=`` de ``_nspawn_argv``, porém SEM comando final (sem o
-separador ``--`` nem argv). A paridade do bloco de binds com o run argv é o
-contrato chave (R7.2); a ausência de comando final faz o nspawn cair no shell de
-login do container.
+UNIT (R7.2/R8.4): ``_nspawn_shell_argv(rootfs, *, binds, binds_rw)`` is pure and
+inspectable — ``systemd-nspawn --directory <rootfs>`` + the SAME block of
+``--bind-ro=``/``--bind=`` as ``_nspawn_argv``, but WITHOUT a trailing command (no
+``--`` separator and no argv). Parity of the bind block with the run argv is the
+key contract (R7.2); the absence of a trailing command makes nspawn drop into the
+container's login shell.
 
-INTEGRAÇÃO (R7.1/R7.3): ``Container.shell()`` ABRE um shell real no rootfs vivo
-(stdio herdado) — exige root + systemd-nspawn + um rootfs seedado e um pty;
-host-gated, Red DIFERIDO ao host privilegiado real (PULA em CI/sandbox).
+INTEGRATION (R7.1/R7.3): ``Container.shell()`` OPENS a real shell in the live rootfs
+(inherited stdio) — requires root + systemd-nspawn + a seeded rootfs and a pty;
+host-gated, Red DEFERRED to the real privileged host (SKIPS on CI/sandbox).
 
-``_nspawn_shell_argv``/``Container.shell`` importados de forma tolerante; até a
-impl existir os testes unit ficam Red por símbolo pendente (Red esperado 004).
+``_nspawn_shell_argv``/``Container.shell`` imported tolerantly; until the
+impl exists the unit tests stay Red on a pending symbol (expected Red 004).
 """
 
 import os
@@ -29,11 +29,11 @@ _nspawn_shell_argv: Any = try_import("shidashi.container", "_nspawn_shell_argv")
 
 _NEEDS_ROOT = os.geteuid() != 0 or shutil.which("systemd-nspawn") is None
 _skip_privileged = pytest.mark.skipif(
-    _NEEDS_ROOT, reason="exige root + systemd-nspawn + pty (host Gentoo privilegiado)"
+    _NEEDS_ROOT, reason="requires root + systemd-nspawn + pty (privileged Gentoo host)"
 )
 
 
-# --- 4.1 _nspawn_shell_argv puro (R7.2/R8.4) ---------------------------------
+# --- 4.1 pure _nspawn_shell_argv (R7.2/R8.4) ---------------------------------
 
 
 def test_shell_argv_basic_shape_no_trailing_command() -> None:
@@ -41,7 +41,7 @@ def test_shell_argv_basic_shape_no_trailing_command() -> None:
     assert argv[0] == "systemd-nspawn"
     assert "--directory" in argv
     assert argv[argv.index("--directory") + 1] == "/scratch/rootfs"
-    # SEM comando final: nenhum separador "--" (cai no shell de login do container)
+    # NO trailing command: no "--" separator (drops into the container's login shell)
     assert "--" not in argv
 
 
@@ -57,7 +57,7 @@ def test_shell_argv_emits_ro_then_rw_binds() -> None:
 
 
 def test_shell_argv_bind_block_parity_with_run_argv() -> None:
-    # R7.2: o bloco de binds do shell argv == o bloco de binds do run argv.
+    # R7.2: the bind block of the shell argv == the bind block of the run argv.
     ro = [(Path("/var/db/repos/gentoo"), Path("/var/db/repos/gentoo"))]
     rw = [
         (Path("/h/pkgdir"), Path("/var/cache/binpkgs")),
@@ -77,15 +77,15 @@ def test_shell_argv_no_rw_binds_default_empty() -> None:
     assert not any(a.startswith("--bind=") for a in argv)
 
 
-# --- INTEGRAÇÃO host-gated (R7.1/R7.3 — Red DIFERIDO ao host real) -----------
+# --- host-gated INTEGRATION (R7.1/R7.3 — Red DEFERRED to the real host) ------
 
 
 @_skip_privileged
 def test_container_shell_opens_in_live_rootfs(tmp_path: Path) -> None:
-    # R7.1/R7.3: shell() ABRE um nspawn no rootfs vivo (stdio herdado) e RETORNA
-    # quando o shell sai, SEM teardown do rootfs. Exige root+nspawn+pty: diferido.
+    # R7.1/R7.3: shell() OPENS an nspawn in the live rootfs (inherited stdio) and RETURNS
+    # when the shell exits, WITHOUT tearing down the rootfs. Requires root+nspawn+pty: deferred.
     rootfs = tmp_path / "rootfs"
     rootfs.mkdir()
     container = Container(rootfs, ephemeral=False)
     assert hasattr(container, "shell")
-    pytest.skip("integração privilegiada: requer rootfs seedado + pty (Red diferido)")
+    pytest.skip("privileged integration: requires a seeded rootfs + pty (deferred Red)")

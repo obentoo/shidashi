@@ -1,22 +1,22 @@
-"""Testes de INTEGRAÇÃO da árvore ``variants/`` realmente entregue (R8.1–R8.4).
+"""INTEGRATION tests of the ``variants/`` tree actually shipped (R8.1–R8.4).
 
-Diferente de ``test_config.py``/``test_merge.py`` (que montam fixtures), aqui
-NÃO se constrói árvore alguma: aponta-se ``SHIDASHI_VARIANTS_DIR`` para o
-``variants/`` real do repositório (resolvido a partir da localização deste
-arquivo de teste) e prova-se que os fragmentos shipados parseiam nos modelos
-frozen (``extra="forbid"``) e fundem-se coerentemente.
+Unlike ``test_config.py``/``test_merge.py`` (which build fixtures), here NO tree
+is built at all: ``SHIDASHI_VARIANTS_DIR`` is pointed at the repository's real
+``variants/`` (resolved from this test file's location) and we prove that the
+shipped fragments parse into the frozen models (``extra="forbid"``) and merge
+coherently.
 
-Cobertura:
-* ``base`` parseia; o make.conf de base teve fatorados os flags de compilador
-  (sem ``COMMON_FLAGS``), o grupo ``SYSTEMD=`` (movido para init) e ``DESKTOPS``
-  fica vazio; a base carrega os três cortes do tronco.
-* os três ``arch`` parseiam com flags coerentes (arrowlake sem avx512, znver5
-  com avx512, v3 sem avx512).
-* os estágios formam a cadeia ``base → minimal → desktop → <flavor>`` (D24);
-  o USE do kde está no make.conf montado, não num campo decorativo.
-* ``minimal`` é ``base → minimal``, sem desktop; cada flavor passa pelo desktop.
-* ``systemd``/``openrc`` parseiam; o profile de systemd termina em ``/systemd`` e
-  o de openrc não; o merge openrc prepende a phase ``seat``.
+Coverage:
+* ``base`` parses; the base make.conf had the compiler flags factored out
+  (no ``COMMON_FLAGS``), the ``SYSTEMD=`` group (moved to init) and ``DESKTOPS``
+  is empty; the base carries the three trunk cuts.
+* the three ``arch`` values parse with coherent flags (arrowlake without avx512,
+  znver5 with avx512, v3 without avx512).
+* the stages form the ``base → minimal → desktop → <flavor>`` chain (D24);
+  kde's USE is in the assembled make.conf, not in a decorative field.
+* ``minimal`` is ``base → minimal``, without desktop; every flavor goes through desktop.
+* ``systemd``/``openrc`` parse; the systemd profile ends in ``/systemd`` and
+  the openrc one does not; the openrc merge prepends the ``seat`` phase.
 """
 
 import itertools
@@ -43,17 +43,17 @@ from shidashi.resolve import apply_portage, catalog_entry, kit_index
 # the binpkg check of a shipped stage extracts the stage3's vdb: stubbed here
 pytestmark = pytest.mark.usefixtures("no_stage3_vdb")
 
-# Raiz do repo = pai de tests/; o variants/ real vive em <raiz>/variants.
+# Repo root = parent of tests/; the real variants/ lives at <root>/variants.
 _VARIANTS_DIR = Path(__file__).resolve().parent.parent / "variants"
 
 
 @pytest.fixture(autouse=True)
 def _point_at_real_variants(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Aponta o resolvedor de caminhos para o variants/ shipado (não fixture)."""
+    """Point the path resolver at the shipped variants/ (not a fixture)."""
     monkeypatch.setenv("SHIDASHI_VARIANTS_DIR", str(_VARIANTS_DIR))
 
 
-# --- loaders por eixo (consomem o caminho resolvido por shidashi.config) ---------
+# --- per-axis loaders (consume the path resolved by shidashi.config) ------------
 
 
 def _load_base() -> BaseFragment:
@@ -84,11 +84,11 @@ def _base_make_conf_text() -> str:
 
 
 def _live_text(text: str) -> str:
-    """Texto sem linhas de comentário (ignora a documentação 'FACTORED OUT')."""
+    """Text without comment lines (ignores the 'FACTORED OUT' documentation)."""
     return "\n".join(ln for ln in text.splitlines() if not ln.lstrip().startswith("#"))
 
 
-# --- a árvore existe nos lugares esperados -----------------------------------
+# --- the tree exists in the expected places ----------------------------------
 
 
 def test_variants_dir_resolves_to_shipped_tree() -> None:
@@ -98,10 +98,10 @@ def test_variants_dir_resolves_to_shipped_tree() -> None:
 
 @pytest.mark.parametrize("axis", ["arch", "flavor", "init"])
 def test_axes_are_non_empty(axis: str) -> None:
-    assert config.available_names(axis), f"eixo {axis!r} não tem valores"
+    assert config.available_names(axis), f"axis {axis!r} has no values"
 
 
-# --- base: parseia, phases canônicas, make.conf fatorado ---------------------
+# --- base: parses, canonical phases, factored make.conf ----------------------
 
 
 def test_base_parses_with_canonical_profile_and_sets() -> None:
@@ -111,11 +111,11 @@ def test_base_parses_with_canonical_profile_and_sets() -> None:
 
 
 def test_base_declares_only_trunk_cycle_breaks() -> None:
-    """A base cura os ciclos do TRONCO; o resto é por flavor.
+    """The base curates the TRUNK's cycles; the rest is per flavor.
 
-    Antes este teste exigia use_break vazio em toda phase da base, o que
-    obrigava as quebras do tronco a viverem fora do repositório -- num ficheiro
-    escrito à mão no laboratório.
+    This test used to require an empty use_break in every base phase, which
+    forced the trunk's breaks to live outside the repository -- in a file
+    written by hand in the lab.
     """
     base = _load_base()
     atoms = {b.atom for b in base.use_break}
@@ -171,32 +171,34 @@ def test_minimal_is_the_base_plus_the_console_kits() -> None:
 def test_base_make_conf_has_no_compiler_flags() -> None:
     text = _live_text(_base_make_conf_text())
     for token in ("COMMON_FLAGS=", "CFLAGS=", "CXXFLAGS=", "CHOST=", "ABI_X86="):
-        assert token not in text, f"{token} deveria ter sido fatorado p/ arch"
-    # CPU_FLAGS_X86 também é de arch (não pode reaparecer como atribuição)
+        assert token not in text, f"{token} should have been factored out to arch"
+    # CPU_FLAGS_X86 also belongs to arch (it must not reappear as an assignment)
     assert "CPU_FLAGS_X86=" not in text
 
 
 def test_base_make_conf_has_no_systemd_group_or_use_reference() -> None:
     text = _live_text(_base_make_conf_text())
-    assert "SYSTEMD=" not in text, "grupo SYSTEMD= deveria ter ido p/ init/systemd"
-    # a referência ${SYSTEMD} no bloco USE também não pode sobrar
+    assert "SYSTEMD=" not in text, "the SYSTEMD= group should have gone to init/systemd"
+    # the ${SYSTEMD} reference in the USE block must not be left over either
     assert "${SYSTEMD}" not in text
 
 
 def test_base_make_conf_has_no_desktops_slot() -> None:
-    # A base NÃO reserva um slot ${DESKTOPS} no bloco USE, e isso não é
-    # esquecimento: apply_portage CONCATENA os make.conf dos layers, então o bloco
-    # USE da base já foi expandido pelo shell quando o fragmento do flavor é lido.
-    # Um slot aqui seria expandido vazio e o flavor não teria como preenchê-lo — o
-    # flavor SOMA (USE="${USE} ${DESKTOPS}") no seu próprio fragmento (F28).
+    # The base does NOT reserve a ${DESKTOPS} slot in the USE block, and that is
+    # not an oversight: apply_portage CONCATENATES the layers' make.conf, so the
+    # base's USE block has already been expanded by the shell when the flavor's
+    # fragment is read. A slot here would expand empty and the flavor would have
+    # no way to fill it — the flavor ADDS (USE="${USE} ${DESKTOPS}") in its own
+    # fragment (F28).
     text = _live_text(_base_make_conf_text())
     assert "${DESKTOPS}" not in text
     assert "DESKTOPS=" not in text
 
 
 def test_kde_flavor_appends_desktops_to_use() -> None:
-    # O contrapeso do teste acima: o flavor define o grupo E o soma ao USE. Sem a
-    # segunda linha o grupo seria decorativo e a camada gráfica sumiria da imagem.
+    # The counterweight of the test above: the flavor defines the group AND adds it
+    # to USE. Without the second line the group would be decorative and the
+    # graphical layer would vanish from the image.
     text = _live_text(
         (_VARIANTS_DIR / "flavor" / "kde" / "portage" / "make.conf").read_text(encoding="utf-8")
     )
@@ -205,8 +207,8 @@ def test_kde_flavor_appends_desktops_to_use() -> None:
 
 
 def test_systemd_init_appends_to_use_instead_of_replacing_it() -> None:
-    # Mesma regra no eixo init. `USE="${SYSTEMD}"` (sem ${USE}) trocaria a
-    # curadoria inteira da base por três flags — foi o que F28 mediu.
+    # Same rule on the init axis. `USE="${SYSTEMD}"` (without ${USE}) would replace
+    # the base's whole curation with three flags — which is what F28 measured.
     text = _live_text(
         (_VARIANTS_DIR / "init" / "systemd" / "portage" / "make.conf").read_text(encoding="utf-8")
     )
@@ -215,7 +217,7 @@ def test_systemd_init_appends_to_use_instead_of_replacing_it() -> None:
 
 def test_base_make_conf_keeps_unrelated_groups_verbatim() -> None:
     text = _base_make_conf_text()
-    # amostras de grupos que NÃO migraram (R8.2: manter verbatim)
+    # samples of groups that did NOT move (R8.2: keep verbatim)
     for token in ('FEATURES="', 'DISTDIR="', 'CORE="', 'L10N="'):
         assert token in text
 
@@ -233,10 +235,10 @@ def test_graphical_use_lives_in_the_desktop_stage_not_the_base() -> None:
 
 
 def test_video_cards_live_in_the_desktop_stage_with_wildcard_reset() -> None:
-    # VIDEO_CARDS saiu do make.conf: uma atribuição lá NÃO consegue limpar os
-    # defaults do profile (nouveau, vesa, dummy, radeon), só somar a eles. Em
-    # package.use o prefixo "-*" zera antes de listar — sem isso esses drivers
-    # seriam compilados em toda imagem, e o Portage não reporta nada.
+    # VIDEO_CARDS left make.conf: an assignment there CANNOT clear the profile's
+    # defaults (nouveau, vesa, dummy, radeon), only add to them. In package.use
+    # the "-*" prefix resets before listing — without it those drivers would be
+    # built into every image, and Portage reports nothing.
     assert 'VIDEO_CARDS="' not in _base_make_conf_text()
     assert not (_VARIANTS_DIR / "base" / "portage" / "package.use" / "00video_cards").exists()
     entry = (_VARIANTS_DIR / "desktop" / "portage" / "package.use" / "00video_cards").read_text(
@@ -251,13 +253,13 @@ def test_base_package_use_system_drops_init_specific_systemd_line() -> None:
     system = (_VARIANTS_DIR / "base" / "portage" / "package.use" / "22-system").read_text(
         encoding="utf-8"
     )
-    # a linha sys-apps/systemd boot ukify migrou p/ init/systemd
+    # the sys-apps/systemd boot ukify line moved to init/systemd
     assert "sys-apps/systemd boot ukify" not in _live_text(system)
-    # mas linhas vizinhas não-init continuam (ex.: grub mount)
+    # but neighboring non-init lines remain (e.g. grub mount)
     assert "sys-boot/grub mount" in system
 
 
-# --- arch: três alvos, flags coerentes ---------------------------------------
+# --- arch: three targets, coherent flags ------------------------------------
 
 
 def test_all_three_arches_are_present() -> None:
@@ -268,8 +270,8 @@ def test_all_three_arches_are_present() -> None:
 def test_each_arch_recipe_parses(name: str) -> None:
     arch = _load_arch(name)
     assert arch.arch == name
-    assert arch.common_flags  # não-vazio
-    assert arch.cpu_flags_x86  # não-vazio
+    assert arch.common_flags  # non-empty
+    assert arch.cpu_flags_x86  # non-empty
 
 
 def _has_avx512(arch: ArchFragment) -> bool:
@@ -278,7 +280,7 @@ def _has_avx512(arch: ArchFragment) -> bool:
 
 def test_arrowlake_has_no_avx512_and_is_tier2_buildonly() -> None:
     arch = _load_arch("arrowlake")
-    assert not _has_avx512(arch), "Arrow Lake não tem AVX-512 (§9.2)"
+    assert not _has_avx512(arch), "Arrow Lake has no AVX-512 (§9.2)"
     assert arch.goamd64 == "v3"
     assert arch.tier == 2
     assert arch.runnable_on_build_host is False
@@ -287,7 +289,7 @@ def test_arrowlake_has_no_avx512_and_is_tier2_buildonly() -> None:
 
 def test_znver5_has_avx512_and_is_tier1_runnable() -> None:
     arch = _load_arch("znver5")
-    assert _has_avx512(arch), "Zen 5 tem AVX-512 (§9.1)"
+    assert _has_avx512(arch), "Zen 5 has AVX-512 (§9.1)"
     assert arch.goamd64 == "v4"
     assert arch.tier == 1
     assert arch.runnable_on_build_host is True
@@ -296,7 +298,7 @@ def test_znver5_has_avx512_and_is_tier1_runnable() -> None:
 
 def test_v3_baseline_has_no_avx512_and_is_tier1_runnable() -> None:
     arch = _load_arch("v3")
-    assert not _has_avx512(arch), "baseline x86-64-v3 não tem AVX-512 (§9.1)"
+    assert not _has_avx512(arch), "baseline x86-64-v3 has no AVX-512 (§9.1)"
     assert arch.goamd64 == "v3"
     assert arch.tier == 1
     assert arch.runnable_on_build_host is True
@@ -304,17 +306,17 @@ def test_v3_baseline_has_no_avx512_and_is_tier1_runnable() -> None:
 
 
 def test_arch_make_conf_mirrors_recipe_flags() -> None:
-    # os knobs de CPU andam juntos (§9.3): make.conf espelha o recipe.yaml
+    # the CPU knobs go together (§9.3): make.conf mirrors recipe.yaml
     for name in ("v3", "znver5", "arrowlake"):
         arch = _load_arch(name)
         mk = (_VARIANTS_DIR / "arch" / name / "portage" / "make.conf").read_text(encoding="utf-8")
         assert f'COMMON_FLAGS="{arch.common_flags}"' in mk
         assert 'CHOST="x86_64-pc-linux-gnu"' in mk
         for flag in arch.cpu_flags_x86:
-            assert flag in mk, f"{flag!r} ausente no make.conf de {name}"
+            assert flag in mk, f"{flag!r} missing from the make.conf of {name}"
 
 
-# --- flavor kde: factored, merge habilita a camada KDE -----------------------
+# --- flavor kde: factored, merge enables the KDE layer -----------------------
 
 
 def test_kde_flavor_parses_as_a_shipped_stage() -> None:
@@ -336,7 +338,7 @@ def test_kde_use_lives_in_the_assembled_make_conf(tmp_path: Path) -> None:
     assert 'USE="${USE} ${DESKTOPS}"' in text
 
 
-# --- flavors minimal/gnome/wm: parseiam; minimal omite desktop ----------
+# --- flavors minimal/gnome/wm: parse; minimal omits desktop -------------
 
 
 @pytest.mark.parametrize("name", ["minimal", "desktop", "gnome", "wm"])
@@ -358,7 +360,7 @@ def test_no_variant_yaml_still_carries_use_prefer() -> None:
     assert live == []
 
 
-# --- init systemd/openrc: profile e phase de seat ----------------------------
+# --- init systemd/openrc: profile and seat phase ----------------------------
 
 
 def test_both_inits_parse() -> None:
@@ -383,7 +385,7 @@ def test_openrc_merge_prepends_seat_phase() -> None:
     assert resolved.phases[0].name == "seat"
 
 
-# --- apply_portage sobre o variants/ REAL (regressão F28) ---------------------
+# --- apply_portage over the REAL variants/ (F28 regression) ------------------
 
 
 def _assemble(tmp_path: Path, arch: str, flavor: str, init: str) -> Path:
@@ -396,10 +398,10 @@ def _assemble(tmp_path: Path, arch: str, flavor: str, init: str) -> Path:
 
 @pytest.mark.parametrize("flavor", ["minimal", "kde"])
 def test_apply_portage_preserves_the_whole_base_make_conf(tmp_path: Path, flavor: str) -> None:
-    # REGRESSÃO F28. apply_portage sobrescrevia arquivos de mesmo caminho, e o
-    # make.conf de 133 linhas da base virava o fragmento de 6 linhas do
-    # init/systemd — levando junto tudo o que se afere abaixo. O sintoma
-    # observável era um make.conf com 6 linhas.
+    # F28 REGRESSION. apply_portage overwrote files with the same path, and the
+    # base's 133-line make.conf became the 6-line fragment of init/systemd —
+    # taking along everything checked below. The observable symptom was a
+    # 6-line make.conf.
     portage = _assemble(tmp_path, "v3", flavor, "systemd")
     text = (portage / "make.conf").read_text(encoding="utf-8")
     assert len(text.splitlines()) > 100
@@ -413,18 +415,18 @@ def test_apply_portage_preserves_the_whole_base_make_conf(tmp_path: Path, flavor
         "L10N=",
         "ACCEPT_KEYWORDS=",
     ):
-        assert var in text, f"{var} perdida na composição"
-    # e os fragmentos posteriores continuam presentes
+        assert var in text, f"{var} lost in the composition"
+    # and the later fragments are still present
     assert "CPU_FLAGS_X86=" in text  # arch/v3
     assert 'SYSTEMD="boot uki ukify"' in text  # init/systemd
 
 
 def test_apply_portage_keeps_both_package_use_system_files(tmp_path: Path) -> None:
-    # REGRESSÃO F28. base e init/systemd traziam ambos `package.use/system`; o
-    # segundo apagava o primeiro, de 69 linhas para 4. O init entrega `50-systemd`
-    # e a base `22-system`, e o Portage lê o diretório como união. Desde a
-    # numeração (2026-09-13) a colisão nem é mais possível: nenhum layer usa o
-    # nome `system` cru.
+    # F28 REGRESSION. base and init/systemd both carried `package.use/system`; the
+    # second erased the first, from 69 lines to 4. The init delivers `50-systemd`
+    # and the base `22-system`, and Portage reads the directory as a union. Since
+    # the numbering (2026-09-13) the collision is not even possible anymore: no
+    # layer uses the bare `system` name.
     portage = _assemble(tmp_path, "v3", "minimal", "systemd")
     base_lines = (
         (_VARIANTS_DIR / "base/portage/package.use/22-system")
@@ -463,8 +465,8 @@ def test_apply_portage_keeps_both_package_use_system_files(tmp_path: Path) -> No
 def test_assembled_make_conf_composes_use_across_axes(
     tmp_path: Path, arch: str, flavor: str, init: str, expect: set[str], reject: set[str]
 ) -> None:
-    # Contar linhas não prova semântica: o make.conf montado é SOURCEADO e o USE
-    # resultante conferido. Cada eixo tem de somar o seu, e só o seu.
+    # Counting lines does not prove semantics: the assembled make.conf is SOURCED
+    # and the resulting USE checked. Each axis must add its own, and only its own.
     portage = _assemble(tmp_path, arch, flavor, init)
     out = subprocess.run(
         ["bash", "-c", f'. "{portage / "make.conf"}"; printf "%s" "$USE"'],
@@ -473,27 +475,28 @@ def test_assembled_make_conf_composes_use_across_axes(
         check=True,
     )
     flags = set(out.stdout.split())
-    # As sentinelas TÊM de ser flags que a RECEITA declara, não que o perfil
-    # fornece: aqui o make.conf é sourceado isolado, sem perfil algum. `acl` era a
-    # sentinela original e passou a falhar no dia em que foi removida da receita
-    # por já vir do perfil — o teste acusou "a curadoria sumiu" quando nada tinha
-    # sumido. Estas vivem nos grupos de base/portage/make.conf (wayland e vulkan
-    # passaram ao estágio desktop em 2026-09-26, D24).
-    assert {"btrfs", "cryptsetup"} <= flags, "a curadoria da base sumiu"
+    # The sentinels MUST be flags that the RECIPE declares, not that the profile
+    # provides: here make.conf is sourced in isolation, with no profile at all.
+    # `acl` was the original sentinel and started failing the day it was removed
+    # from the recipe because it already came from the profile — the test claimed
+    # "the curation vanished" when nothing had vanished. These live in the groups
+    # of base/portage/make.conf (wayland and vulkan moved to the desktop stage on
+    # 2026-09-26, D24).
+    assert {"btrfs", "cryptsetup"} <= flags, "the base's curation vanished"
     assert expect <= flags
     assert not (reject & flags)
 
 
-# --- integridade dos sets EMBARCADOS (variants/), não de dados sintéticos -----
+# --- integrity of the SHIPPED sets (variants/), not of synthetic data --------
 #
-# Estes testes existem porque a suíte inteira passou verde enquanto
-# `bentoo-apps` (então em variants/base/sets/) já tinha sido apagado e a fase `apps` ainda
-# apontava para `@bentoo-apps`: todo teste de fase montava uma receita sintética
-# e nenhum olhava para o que o repositório realmente embarca.
+# These tests exist because the whole suite passed green while
+# `bentoo-apps` (then in variants/base/sets/) had already been deleted and the `apps`
+# phase still pointed at `@bentoo-apps`: every phase test built a synthetic recipe
+# and none looked at what the repository actually ships.
 
 
 def _shipped_sets() -> dict[str, Path]:
-    """Todo set embarcado, por nome: a biblioteca ``kits/`` (D25)."""
+    """Every shipped set, by name: the ``kits/`` library (D25)."""
     return kit_index(config.kits_dir())
 
 
@@ -525,7 +528,7 @@ def test_set_names_are_unique_across_the_library() -> None:
 
 
 def _set_refs(path: Path) -> list[str]:
-    """Nomes referenciados por ``@nome`` dentro de um arquivo de set."""
+    """Names referenced by ``@name`` inside a set file."""
     refs = []
     for line in path.read_text(encoding="utf-8").splitlines():
         token = line.split("#", 1)[0].split()
@@ -538,7 +541,7 @@ def test_every_set_reference_resolves_to_a_shipped_file() -> None:
     shipped = _shipped_sets()
     for name, path in shipped.items():
         for ref in _set_refs(path):
-            assert ref in shipped, f"set {name!r} referencia @{ref}, que não existe"
+            assert ref in shipped, f"set {name!r} references @{ref}, which does not exist"
 
 
 @pytest.mark.parametrize("flavor", ["minimal", "kde", "gnome", "wm"])
@@ -546,12 +549,12 @@ def test_every_declared_set_is_shipped(flavor: str) -> None:
     recipe = _recipe(flavor)
     shipped = set(_shipped_sets()) | set(recipe.includes)  # a stage's include: is its own set
     for name in recipe.sets:
-        assert name in shipped, f"{flavor}: set {name!r} declarado mas não embarcado"
+        assert name in shipped, f"{flavor}: set {name!r} declared but not shipped"
 
 
 @pytest.mark.parametrize("flavor", ["minimal", "kde", "gnome", "wm"])
 def test_every_phase_target_is_reachable(flavor: str) -> None:
-    """Nenhuma fase pode apontar para um ``@set`` que não será instalado."""
+    """No phase may point at an ``@set`` that will not be installed."""
     recipe = _recipe(flavor)
     shipped = set(_shipped_sets()) | set(recipe.includes)
     for phase in recipe.phases:
@@ -559,10 +562,10 @@ def test_every_phase_target_is_reachable(flavor: str) -> None:
             if not target.startswith("@") or target == "@world":
                 continue
             name = target[1:]
-            assert name in shipped, f"{flavor}/{phase.name}: alvo {target} não existe"
+            assert name in shipped, f"{flavor}/{phase.name}: target {target} does not exist"
             assert name in recipe.sets, (
-                f"{flavor}/{phase.name}: alvo {target} não está em recipe.sets, "
-                "logo não seria instalado no rootfs"
+                f"{flavor}/{phase.name}: target {target} is not in recipe.sets, "
+                "so it would not be installed in the rootfs"
             )
 
 
@@ -617,7 +620,7 @@ def test_no_orphan_sets() -> None:
         for name in set(files) - reachable - _INTENTIONALLY_UNREACHABLE
         if not binhost_only(name)
     }
-    assert not orphans, f"sets curados que ninguém instala: {sorted(orphans)}"
+    assert not orphans, f"curated sets that nobody installs: {sorted(orphans)}"
 
 
 # --- D24: the configuration grows stage by stage (the shipped tree, for real) ---

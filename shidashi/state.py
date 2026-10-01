@@ -1,16 +1,16 @@
-"""Estado de build do Shidashi: modelos de progresso/diff + persistência (story 004).
+"""Shidashi build state: progress/diff models + persistence (story 004).
 
-Define os modelos *frozen* pydantic v2 (``extra="forbid"``, coleções ``tuple``,
-idioma ``_STRICT`` de :mod:`shidashi.recipe`) que registram o progresso de um build
-em fases — entradas do plano de emerge, o diff por fase (atoms construídos, USE
-changes, rebuilds inesperados, blockers) e o ``BuildState`` agregado (R4.1/R4.4).
+Defines the *frozen* pydantic v2 models (``extra="forbid"``, ``tuple`` collections,
+the ``_STRICT`` idiom from :mod:`shidashi.recipe`) that record the progress of a
+phased build — emerge plan entries, the per-phase diff (atoms built, USE changes,
+unexpected rebuilds, blockers) and the aggregate ``BuildState`` (R4.1/R4.4).
 
-A persistência (R6.1/R6.2/R6.4) é pura I/O contra um ``Path`` explícito: o estado
-é serializado como JSON sob o cache (sobrevive ao teardown do rootfs), gravado de
-forma atômica (temp irmão + ``os.replace``), relido com erro claro quando
-corrompido, limpo de forma idempotente e comparado contra ``snapshot``/``hash``
-da receita para detectar staleness. Usa apenas stdlib (``hashlib``/``os``/
-``tempfile``) mais pydantic.
+Persistence (R6.1/R6.2/R6.4) is pure I/O against an explicit ``Path``: the state
+is serialized as JSON under the cache (it survives the rootfs teardown), written
+atomically (sibling temp + ``os.replace``), read back with a clear error when
+corrupted, cleared idempotently and compared against the recipe's
+``snapshot``/``hash`` to detect staleness. Uses only the stdlib (``hashlib``/``os``/
+``tempfile``) plus pydantic.
 """
 
 import hashlib
@@ -27,20 +27,20 @@ _STRICT = ConfigDict(frozen=True, extra="forbid")
 
 
 class StateError(Exception):
-    """Falha ao carregar um estado de build persistido (R6.1).
+    """Failure to load a persisted build state (R6.1).
 
-    Levantada por :func:`load_state` quando o arquivo existe mas está corrompido
-    (JSON inválido ou não conforme ao schema de :class:`BuildState`). Nunca é
-    levantada por ausência do arquivo — esse caso devolve ``None``.
+    Raised by :func:`load_state` when the file exists but is corrupted
+    (invalid JSON or not conforming to the :class:`BuildState` schema). Never
+    raised for a missing file — that case returns ``None``.
     """
 
 
 class EmergePlanEntry(BaseModel):
-    """Uma entrada do plano de emerge (saída de ``--pretend``) (R4.4).
+    """One entry of the emerge plan (``--pretend`` output) (R4.4).
 
-    Frozen pydantic com ``extra="forbid"``. ``atom`` é o pacote/versão, ``op`` o
-    código de operação do Portage (``N`` novo, ``R`` rebuild, ``U`` upgrade, …) e
-    ``use_changes`` as USE flags alteradas para esse atom (vazio por padrão).
+    Frozen pydantic with ``extra="forbid"``. ``atom`` is the package/version, ``op``
+    the Portage operation code (``N`` new, ``R`` rebuild, ``U`` upgrade, …) and
+    ``use_changes`` the USE flags changed for that atom (empty by default).
     """
 
     model_config = _STRICT
@@ -50,12 +50,12 @@ class EmergePlanEntry(BaseModel):
 
 
 class PhaseDiff(BaseModel):
-    """Diff observado de uma fase de build (R4.1/R4.4).
+    """Observed diff of a build phase (R4.1/R4.4).
 
-    Frozen pydantic com ``extra="forbid"``. Registra, para a fase ``phase``: os
-    atoms efetivamente ``built``, os ``unexpected_rebuilds`` (rebuilds fora do
-    plano), as ``use_changes`` aplicadas e os ``blockers`` encontrados. Todas as
-    coleções são ``tuple`` e vazias por padrão (exceto ``built``).
+    Frozen pydantic with ``extra="forbid"``. Records, for the phase ``phase``: the
+    atoms actually ``built``, the ``unexpected_rebuilds`` (rebuilds outside the
+    plan), the applied ``use_changes`` and the ``blockers`` found. All
+    collections are ``tuple`` and empty by default (except ``built``).
     """
 
     model_config = _STRICT
@@ -67,14 +67,15 @@ class PhaseDiff(BaseModel):
 
 
 class BuildState(BaseModel):
-    """Estado agregado e persistido de um build em fases (R4.1/R4.4/R6.1).
+    """Aggregate, persisted state of a phased build (R4.1/R4.4/R6.1).
 
-    Frozen pydantic com ``extra="forbid"``. Identifica o build pela chave
-    ``arch``/``flavor``/``init`` mais o ``snapshot`` do stage3 e o ``recipe_hash``
-    da receita resolvida (ambos comparados em :func:`is_stale`). ``seed_done``
-    marca a extração concluída; ``completed_phases`` as fases já encerradas;
-    ``accumulated_breaks`` os :class:`~shidashi.recipe.UseBreak` acumulados; e
-    ``phase_diffs`` o histórico de :class:`PhaseDiff` por fase.
+    Frozen pydantic with ``extra="forbid"``. Identifies the build by the
+    ``arch``/``flavor``/``init`` key plus the stage3 ``snapshot`` and the
+    ``recipe_hash`` of the resolved recipe (both compared in :func:`is_stale`).
+    ``seed_done`` marks the extraction as finished; ``completed_phases`` the phases
+    already closed; ``accumulated_breaks`` the accumulated
+    :class:`~shidashi.recipe.UseBreak`; and ``phase_diffs`` the per-phase history of
+    :class:`PhaseDiff`.
     """
 
     model_config = _STRICT
@@ -84,9 +85,9 @@ class BuildState(BaseModel):
     snapshot: str
     recipe_hash: str
     seed_done: bool = False
-    # SHA-512 do stage3 buildado localmente pelo Catalyst (story 005); vazio
-    # quando a seed veio por download. Aditivo/defaultado: JSON antigo (sem o
-    # campo) ainda carrega sob extra="forbid".
+    # SHA-512 of the stage3 built locally by Catalyst (story 005); empty
+    # when the seed came from a download. Additive/defaulted: old JSON (without the
+    # field) still loads under extra="forbid".
     seed_sha512: str = ""
     #: The toolchain bootstrap ran over the seed (BOOTSTRAP-PROCESS §5). Additive
     #: and defaulted, like seed_sha512: older state files still load.
@@ -97,25 +98,25 @@ class BuildState(BaseModel):
 
 
 def recipe_hash(recipe: ResolvedRecipe) -> str:
-    """Devolve o SHA-256 hex do JSON canônico da receita resolvida (R6.2).
+    """Return the hex SHA-256 of the resolved recipe's canonical JSON (R6.2).
 
-    Estável (mesma receita → mesmo hash) e sensível a qualquer mudança de campo
-    da receita, pois deriva de ``recipe.model_dump_json()`` (serialização
-    determinística do pydantic v2). Usado por :func:`is_stale` para detectar uma
-    receita divergente da persistida.
+    Stable (same recipe → same hash) and sensitive to any change of a recipe
+    field, since it derives from ``recipe.model_dump_json()`` (pydantic v2's
+    deterministic serialization). Used by :func:`is_stale` to detect a recipe
+    that diverges from the persisted one.
     """
     payload = recipe.model_dump_json().encode("utf-8")
     return hashlib.sha256(payload).hexdigest()
 
 
 def save_state(path: Path, state: BuildState) -> None:
-    """Grava ``state`` em ``path`` como JSON, de forma atômica (R6.1).
+    """Write ``state`` to ``path`` as JSON, atomically (R6.1).
 
-    Escreve primeiro num arquivo temporário *irmão* (mesmo diretório, para que o
-    ``os.replace`` seja atômico no mesmo filesystem) e só então o renomeia sobre
-    ``path``. Em sucesso não deixa **nenhum** parcial: o temp ou virou o arquivo
-    final (``replace``) ou foi removido. Erros de I/O (:class:`OSError`) propagam
-    para o chamador surfacá-los.
+    First writes to a *sibling* temporary file (same directory, so that
+    ``os.replace`` is atomic on the same filesystem) and only then renames it over
+    ``path``. On success it leaves **no** partial file: the temp either became the
+    final file (``replace``) or was removed. I/O errors (:class:`OSError`) propagate
+    for the caller to surface them.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = state.model_dump_json()
@@ -131,12 +132,12 @@ def save_state(path: Path, state: BuildState) -> None:
 
 
 def load_state(path: Path) -> BuildState | None:
-    """Lê e devolve o :class:`BuildState` persistido em ``path`` (R6.1).
+    """Read and return the :class:`BuildState` persisted at ``path`` (R6.1).
 
-    Devolve ``None`` quando o arquivo está ausente (caso esperado: build novo).
-    Se o arquivo existe mas está corrompido — JSON inválido ou não conforme ao
-    schema — levanta :class:`StateError` com mensagem clara (nunca devolve
-    ``None`` silenciosamente para um arquivo malformado).
+    Returns ``None`` when the file is missing (expected case: a new build).
+    If the file exists but is corrupted — invalid JSON or not conforming to the
+    schema — raises :class:`StateError` with a clear message (never silently
+    returns ``None`` for a malformed file).
     """
     try:
         raw = path.read_text(encoding="utf-8")
@@ -145,25 +146,25 @@ def load_state(path: Path) -> BuildState | None:
     try:
         return BuildState.model_validate_json(raw)
     except (ValidationError, json.JSONDecodeError) as err:
-        raise StateError(f"estado de build corrompido em {path}: {err}") from err
+        raise StateError(f"corrupted build state at {path}: {err}") from err
 
 
 def clear_state(path: Path) -> None:
-    """Remove o estado persistido em ``path``, idempotente (R6.4).
+    """Remove the state persisted at ``path``, idempotently (R6.4).
 
-    Ignora a ausência do arquivo (``missing_ok=True``): chamar repetidamente — ou
-    sobre um build sem estado — nunca levanta. Suporta o reset/clear do fluxo
-    interativo.
+    Ignores a missing file (``missing_ok=True``): calling it repeatedly — or
+    on a build without state — never raises. Supports the reset/clear of the
+    interactive flow.
     """
     path.unlink(missing_ok=True)
 
 
 def is_stale(state: BuildState, *, snapshot: str, recipe_hash: str) -> bool:
-    """Diz se ``state`` está obsoleto frente ao ``snapshot``/``recipe_hash`` atuais (R6.2).
+    """Tell whether ``state`` is stale against the current ``snapshot``/``recipe_hash`` (R6.2).
 
-    Obsoleto (``True``) quando o ``snapshot`` do stage3 mudou **ou** o
-    ``recipe_hash`` da receita mudou frente ao persistido — em ambos os casos o
-    progresso salvo não é mais reaproveitável. O parâmetro ``recipe_hash`` é
-    keyword-only e sombreia deliberadamente o nome da função :func:`recipe_hash`.
+    Stale (``True``) when the stage3 ``snapshot`` changed **or** the recipe's
+    ``recipe_hash`` changed relative to the persisted one — in both cases the
+    saved progress can no longer be reused. The ``recipe_hash`` parameter is
+    keyword-only and deliberately shadows the name of the :func:`recipe_hash` function.
     """
     return state.snapshot != snapshot or state.recipe_hash != recipe_hash
