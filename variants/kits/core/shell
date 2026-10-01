@@ -4,6 +4,6 @@
 
 app-editors/nano
 app-editors/vim
-app-shells/starship
-app-shells/zsh
-app-shells/zsh-completions
+#app-shells/starship
+#app-shells/zsh
+#app-shells/zsh-completions

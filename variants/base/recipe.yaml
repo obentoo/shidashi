@@ -32,9 +32,5 @@ sets:
 # A later stage declares its own cuts where its cycles form.
 use_break: []
 exclude:
-  - sys-kernel/gentoo-kernel
-  - app-shells/starship
-  - app-shells/zsh
-  - app-shells/zsh-completions
   - sys-fs/fuse
   - sys-fs/fuse:0

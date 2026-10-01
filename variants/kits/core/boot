@@ -3,7 +3,7 @@
 # LEAF set: a flat list of atoms (2026-09-09). See kits/core/base for the layering contract.
 
 sys-kernel/dracut
-sys-kernel/gentoo-kernel
+#sys-kernel/gentoo-kernel
 sys-kernel/gentoo-kernel-bin
 sys-kernel/linux-firmware
 sys-firmware/intel-microcode
