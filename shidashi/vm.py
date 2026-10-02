@@ -59,6 +59,25 @@ class VmError(Exception):
     """The VM could not be started, reached or stopped."""
 
 
+#: The host's virtiofs daemon (sys-fs/virtiofsd, or a distribution's path).
+_VIRTIOFSD = ("/usr/libexec/virtiofsd", "/usr/lib/virtiofsd", "/usr/lib/qemu/virtiofsd")
+
+
+@dataclass(frozen=True)
+class Share:
+    """A host directory the guest mounts with ``mount -t virtiofs <tag> <dir>``.
+
+    Read-only shares run their daemon without a sandbox, so the guest sees the
+    host's real owners (root, portage) and can only read. A writable share runs
+    in virtiofsd's user namespace: what the guest's root writes belongs to the
+    invoking user on the host, never to the host's root.
+    """
+
+    tag: str
+    path: Path
+    readonly: bool = True
+
+
 @dataclass(frozen=True)
 class VmSpec:
     """What to boot and how."""
@@ -69,11 +88,67 @@ class VmSpec:
     memory: str = "8G"
     cpus: int = 8
     display: str = "none"
+    #: qcow2 disks attached as virtio (/dev/vda, /dev/vdb... in the guest).
+    disks: tuple[Path, ...] = ()
+    shares: tuple[Share, ...] = ()
 
 
 def _credential(name: str, value: str) -> list[str]:
     encoded = base64.b64encode(value.encode()).decode()
     return ["-smbios", f"type=11,value=io.systemd.credential.binary:{name}={encoded}"]
+
+
+def parse_share(text: str) -> Share:
+    """``TAG=DIR`` (read-only) or ``TAG=DIR:rw``. Pure, but checks the directory."""
+    tag, sep, rest = text.partition("=")
+    if not sep or not tag or not rest:
+        raise VmError(f"--share {text!r}: expected TAG=DIR or TAG=DIR:rw")
+    if not tag.replace("-", "").replace("_", "").isalnum():
+        raise VmError(f"--share {text!r}: the tag is letters, digits, - and _")
+    readonly = True
+    if rest.endswith(":rw"):
+        rest, readonly = rest[: -len(":rw")], False
+    path = Path(rest).resolve()
+    if not path.is_dir():
+        raise VmError(f"--share {text!r}: {path} is not a directory")
+    return Share(tag, path, readonly)
+
+
+def ensure_disk(path: Path, size: str | None) -> Path:
+    """``path`` as a qcow2 disk, created sparse with ``size`` when missing. I/O."""
+    if path.is_file():
+        return path
+    if size is None:
+        raise VmError(f"--disk {path} does not exist: give --disk-size to create it")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    done = subprocess.run(
+        ["qemu-img", "create", "-q", "-f", "qcow2", str(path), size],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if done.returncode != 0:
+        raise VmError(f"qemu-img could not create {path}: {done.stderr.strip()}")
+    return path
+
+
+def virtiofsd() -> str:
+    """The host's virtiofsd. I/O."""
+    for path in _VIRTIOFSD:
+        if Path(path).is_file():
+            return path
+    found = shutil.which("virtiofsd")
+    if found is None:
+        raise VmError("virtiofsd is missing on the host (sys-fs/virtiofsd): needed by --share")
+    return found
+
+
+def virtiofsd_argv(daemon: str, share: Share, socket_path: Path) -> list[str]:
+    """One share's virtiofsd command line. Pure."""
+    argv = [daemon, f"--socket-path={socket_path}", f"--shared-dir={share.path}"]
+    if share.readonly:
+        argv += ["--readonly", "--sandbox=none"]
+    return [*argv, "--cache=auto", "--log-level=error"]
 
 
 def ovmf() -> tuple[str, str, str]:
@@ -93,12 +168,17 @@ def qemu_argv(
     pidfile: Path,
     uefi_vars: Path | None = None,
     uefi_code: tuple[str, str] | None = None,
+    share_sockets: Sequence[Path] = (),
 ) -> list[str]:
     """The QEMU command line. Pure.
 
     ``-cpu host``: the image is built for x86-64-v3 and would not run on QEMU's
     generic CPU. The ISO is attached read-only; the live root is an overlay in RAM.
+    ``share_sockets`` (one per ``spec.shares``) are the virtiofsd sockets; a
+    vhost-user device needs the guest's RAM shared, hence the memfd backend.
     """
+    if len(share_sockets) != len(spec.shares):
+        raise VmError("one virtiofsd socket per share")
     argv = [
         "qemu-system-x86_64",
         "-name",
@@ -113,6 +193,13 @@ def qemu_argv(
         "-m",
         spec.memory,
     ]
+    if spec.shares:
+        argv += [
+            "-object",
+            f"memory-backend-memfd,id=mem,size={spec.memory},share=on",
+            "-numa",
+            "node,memdev=mem",
+        ]
     if spec.uefi:
         if uefi_code is None or uefi_vars is None:
             raise VmError("UEFI needs the OVMF code and a copy of its variables")
@@ -142,6 +229,21 @@ def qemu_argv(
         f"file:{serial}",
         "-nic",
         "user,model=virtio-net-pci",
+        *(
+            arg
+            for disk in spec.disks
+            for arg in ("-drive", f"file={disk},if=virtio,format=qcow2,discard=unmap")
+        ),
+        *(
+            arg
+            for i, (share, sock) in enumerate(zip(spec.shares, share_sockets, strict=True))
+            for arg in (
+                "-chardev",
+                f"socket,id=fs{i},path={sock}",
+                "-device",
+                f"vhost-user-fs-pci,queue-size=1024,chardev=fs{i},tag={share.tag}",
+            )
+        ),
         "-daemonize",
         "-pidfile",
         str(pidfile),
@@ -239,6 +341,7 @@ class Session:
             capture_output=True,
             text=True,
         )
+        sockets = self._start_shares()
         uefi_vars = uefi_code = None
         if self.spec.uefi:
             code, template, fmt = ovmf()
@@ -253,9 +356,11 @@ class Session:
             pidfile=self.pidfile,
             uefi_vars=uefi_vars,
             uefi_code=uefi_code,
+            share_sockets=sockets,
         )
         done = self.runner(argv, capture_output=True, text=True)
         if done.returncode != 0:
+            self._stop_shares()
             raise VmError(f"qemu failed to start: {done.stderr.strip()}")
         self.started = time.monotonic()
         (self.directory / "session.json").write_text(
@@ -266,12 +371,63 @@ class Session:
                     "cid": self.spec.cid,
                     "memory": self.spec.memory,
                     "cpus": self.spec.cpus,
+                    "disks": [str(d) for d in self.spec.disks],
+                    "shares": [
+                        {"tag": s.tag, "path": str(s.path), "readonly": s.readonly}
+                        for s in self.spec.shares
+                    ],
                 }
             )
         )
         audit.current().event(
             "vm.start", iso=str(self.spec.iso), uefi=self.spec.uefi, cid=self.spec.cid
         )
+
+    def _start_shares(self) -> list[Path]:
+        """One virtiofsd per share, each on its socket; their pids go to the session."""
+        if not self.spec.shares:
+            return []
+        daemon = virtiofsd()
+        sockets: list[Path] = []
+        pids: list[int] = []
+        for share in self.spec.shares:
+            if not share.path.is_dir():
+                raise VmError(f"share {share.tag!r}: {share.path} is not a directory")
+            sock = self.directory / f"virtiofs-{share.tag}.sock"
+            sock.unlink(missing_ok=True)
+            log = (self.directory / f"virtiofs-{share.tag}.log").open("w")
+            proc = subprocess.Popen(
+                virtiofsd_argv(daemon, share, sock),
+                stdin=subprocess.DEVNULL,
+                stdout=log,
+                stderr=log,
+                start_new_session=True,
+            )
+            pids.append(proc.pid)
+            deadline = time.monotonic() + 10
+            while not sock.exists():
+                if proc.poll() is not None or time.monotonic() > deadline:
+                    self._kill(pids)
+                    raise VmError(
+                        f"virtiofsd for {share.tag!r} did not start; "
+                        f"see {self.directory / f'virtiofs-{share.tag}.log'}"
+                    )
+                time.sleep(0.1)
+            sockets.append(sock)
+        (self.directory / "virtiofsd.pids").write_text(" ".join(map(str, pids)))
+        return sockets
+
+    @staticmethod
+    def _kill(pids: Sequence[int]) -> None:
+        for pid in pids:
+            with contextlib.suppress(ProcessLookupError):
+                os.kill(pid, signal.SIGTERM)
+
+    def _stop_shares(self) -> None:
+        pids_file = self.directory / "virtiofsd.pids"
+        if pids_file.is_file():
+            self._kill([int(p) for p in pids_file.read_text().split()])
+            pids_file.unlink()
 
     def run_command(self, command: str, *, timeout: int = 600) -> GuestResult:
         """Run ``command`` as root in the guest's shell; recorded in the audit trail."""
@@ -353,6 +509,7 @@ class Session:
             if self.pidfile.is_file():
                 with contextlib.suppress(ProcessLookupError, ValueError):
                     os.kill(int(self.pidfile.read_text().strip()), signal.SIGTERM)
+        self._stop_shares()
         audit.current().event("vm.stop", uptime_s=round(time.monotonic() - self.started, 1))
 
 
@@ -373,6 +530,10 @@ def load_session(name: str) -> Session:
         cid=data["cid"],
         memory=data["memory"],
         cpus=data["cpus"],
+        disks=tuple(Path(d) for d in data.get("disks", ())),
+        shares=tuple(
+            Share(s["tag"], Path(s["path"]), s["readonly"]) for s in data.get("shares", ())
+        ),
     )
     return Session(spec, directory)
 

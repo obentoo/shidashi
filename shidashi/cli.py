@@ -1456,14 +1456,42 @@ def vm_start(
         str, typer.Option("--display", help="none (headless) or sdl to watch it.")
     ] = "none",
     wait: Annotated[bool, typer.Option("--wait/--no-wait", help="Wait for SSH.")] = True,
+    disk: Annotated[
+        list[Path] | None,
+        typer.Option("--disk", help="A qcow2 disk for the guest (/dev/vda, vdb...); repeatable."),
+    ] = None,
+    disk_size: Annotated[
+        str | None,
+        typer.Option("--disk-size", help="Create a missing --disk with this size (e.g. 200G)."),
+    ] = None,
+    share: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--share",
+            help="TAG=DIR[:rw]: a host directory the guest mounts with "
+            "`mount -t virtiofs TAG <dir>`; read-only unless :rw. Repeatable.",
+        ),
+    ] = None,
     work_dir: Annotated[Path | None, typer.Option("--work-dir")] = None,
 ) -> None:
     """Start ``iso`` in a VM reachable with `shidashi vm run`."""
     from shidashi import vm
 
     _apply_work_dir(work_dir)
+    try:
+        shares = tuple(vm.parse_share(s) for s in share or ())
+        disks = tuple(vm.ensure_disk(d.resolve(), disk_size) for d in disk or ())
+    except vm.VmError as err:
+        raise _vm_error(err) from err
     spec = vm.VmSpec(
-        iso=iso.resolve(), uefi=uefi, cid=cid, memory=memory, cpus=cpus, display=display
+        iso=iso.resolve(),
+        uefi=uefi,
+        cid=cid,
+        memory=memory,
+        cpus=cpus,
+        display=display,
+        disks=disks,
+        shares=shares,
     )
     session = vm.Session(spec, vm.session_dir(name))
     try:
@@ -1478,6 +1506,9 @@ def vm_start(
 def vm_run(
     command: Annotated[list[str], typer.Argument(help="The command, run by the guest's shell.")],
     name: Annotated[str, typer.Option("--name")] = "bentoo",
+    timeout: Annotated[
+        int, typer.Option("--timeout", min=1, help="Seconds before giving up on the command.")
+    ] = 600,
     work_dir: Annotated[Path | None, typer.Option("--work-dir")] = None,
 ) -> None:
     """Run a command as root in the VM; its exit code becomes ours."""
@@ -1485,7 +1516,7 @@ def vm_run(
 
     _apply_work_dir(work_dir)
     try:
-        result = vm.load_session(name).run_command(" ".join(command))
+        result = vm.load_session(name).run_command(" ".join(command), timeout=timeout)
     except vm.VmError as err:
         raise _vm_error(err) from err
     sys.stdout.write(result.stdout)

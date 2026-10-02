@@ -230,3 +230,121 @@ def test_run_command_records_the_guest_command_in_the_trail(
         e for e in audit.read_events(trail.path / "events.jsonl") if e["kind"] == "vm.command"
     ]
     assert events[0]["command"] == "uname -r" and events[0]["exit_code"] == 0
+
+
+# --- disks and virtiofs shares (the builder guest) --------------------------------------
+
+
+def _argv(tmp_path: Path, spec: vm.VmSpec, sockets: tuple[Path, ...] = ()) -> list[str]:
+    return vm.qemu_argv(
+        spec,
+        pubkey="ssh-ed25519 AAAA test",
+        qmp=tmp_path / "qmp.sock",
+        serial=tmp_path / "serial.log",
+        pidfile=tmp_path / "qemu.pid",
+        share_sockets=sockets,
+    )
+
+
+def test_a_disk_is_a_virtio_qcow2_drive(tmp_path: Path) -> None:
+    spec = vm.VmSpec(iso=tmp_path / "x.iso", disks=(tmp_path / "work.qcow2",))
+    argv = _argv(tmp_path, spec)
+    at = argv.index(f"file={tmp_path / 'work.qcow2'},if=virtio,format=qcow2,discard=unmap")
+    assert argv[at - 1] == "-drive"
+
+
+def test_shares_need_shared_memory_and_one_vhost_user_fs_each(tmp_path: Path) -> None:
+    shares = (vm.Share("lab", tmp_path), vm.Share("out", tmp_path, readonly=False))
+    spec = vm.VmSpec(iso=tmp_path / "x.iso", memory="32G", shares=shares)
+    sockets = (tmp_path / "a.sock", tmp_path / "b.sock")
+    argv = _argv(tmp_path, spec, sockets)
+    # vhost-user devices read the guest's RAM: it must be a shared memfd of -m's size
+    assert "memory-backend-memfd,id=mem,size=32G,share=on" in argv
+    assert "node,memdev=mem" in argv
+    assert f"socket,id=fs0,path={sockets[0]}" in argv
+    assert "vhost-user-fs-pci,queue-size=1024,chardev=fs1,tag=out" in argv
+
+
+def test_without_shares_memory_stays_private(tmp_path: Path) -> None:
+    argv = _argv(tmp_path, vm.VmSpec(iso=tmp_path / "x.iso"))
+    assert not any("memory-backend" in a for a in argv)
+
+
+def test_one_socket_per_share(tmp_path: Path) -> None:
+    spec = vm.VmSpec(iso=tmp_path / "x.iso", shares=(vm.Share("lab", tmp_path),))
+    with pytest.raises(vm.VmError, match="one virtiofsd socket per share"):
+        _argv(tmp_path, spec)
+
+
+def test_a_read_only_share_shows_real_owners_and_refuses_writes(tmp_path: Path) -> None:
+    argv = vm.virtiofsd_argv("/usr/libexec/virtiofsd", vm.Share("lab", tmp_path), tmp_path / "s")
+    assert "--readonly" in argv and "--sandbox=none" in argv
+    assert f"--shared-dir={tmp_path}" in argv and f"--socket-path={tmp_path / 's'}" in argv
+
+
+def test_a_writable_share_keeps_the_user_namespace(tmp_path: Path) -> None:
+    """What the guest's root writes must belong to the invoking user, not root."""
+    share = vm.Share("out", tmp_path, readonly=False)
+    argv = vm.virtiofsd_argv("/usr/libexec/virtiofsd", share, tmp_path / "s")
+    assert "--readonly" not in argv
+    assert not any(a.startswith("--sandbox") for a in argv)  # the default: namespace
+
+
+def test_parse_share(tmp_path: Path) -> None:
+    assert vm.parse_share(f"lab={tmp_path}") == vm.Share("lab", tmp_path.resolve())
+    assert vm.parse_share(f"out={tmp_path}:rw") == vm.Share("out", tmp_path.resolve(), False)
+    for bad in ("lab", f"={tmp_path}", f"l a b={tmp_path}", f"lab={tmp_path / 'nope'}"):
+        with pytest.raises(vm.VmError):
+            vm.parse_share(bad)
+
+
+def test_ensure_disk_needs_a_size_to_create(tmp_path: Path) -> None:
+    with pytest.raises(vm.VmError, match="--disk-size"):
+        vm.ensure_disk(tmp_path / "work.qcow2", None)
+    existing = tmp_path / "old.qcow2"
+    existing.write_bytes(b"QFI")
+    assert vm.ensure_disk(existing, None) == existing
+
+
+@pytest.mark.skipif(shutil.which("qemu-img") is None, reason="needs qemu-img")
+def test_ensure_disk_creates_a_sparse_qcow2(tmp_path: Path) -> None:
+    disk = vm.ensure_disk(tmp_path / "sub" / "work.qcow2", "1G")
+    assert disk.read_bytes()[:4] == b"QFI\xfb"
+    assert disk.stat().st_size < 1024 * 1024  # sparse: metadata only
+
+
+def test_a_session_remembers_its_disks_and_shares(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("SHIDASHI_SCRATCH", str(tmp_path))
+    directory = vm.session_dir("builder")
+    directory.mkdir(parents=True)
+    (directory / "session.json").write_text(
+        json.dumps(
+            {
+                "iso": "/x.iso",
+                "uefi": False,
+                "cid": 62,
+                "memory": "32G",
+                "cpus": 24,
+                "disks": ["/w.qcow2"],
+                "shares": [{"tag": "out", "path": "/o", "readonly": False}],
+            }
+        )
+    )
+    spec = vm.load_session("builder").spec
+    assert spec.disks == (Path("/w.qcow2"),)
+    assert spec.shares == (vm.Share("out", Path("/o"), readonly=False),)
+
+
+def test_an_old_session_file_has_no_disks_or_shares(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("SHIDASHI_SCRATCH", str(tmp_path))
+    directory = vm.session_dir("old")
+    directory.mkdir(parents=True)
+    (directory / "session.json").write_text(
+        json.dumps({"iso": "/x.iso", "uefi": True, "cid": 42, "memory": "8G", "cpus": 8})
+    )
+    spec = vm.load_session("old").spec
+    assert spec.disks == () and spec.shares == ()
