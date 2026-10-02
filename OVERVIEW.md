@@ -59,9 +59,11 @@
 - It is **not** a graphical installer (Calamares/etc. is a component *of the live medium*, not of the builder).
 - It does **not** pursue **bit-for-bit reproducibility** (byte-identical ISO) — only *input* reproducibility.
   Bit-for-bit on Gentoo (timestamps, build paths) would cost disproportionately; out of scope for now.
-- It is **not** a standalone binary for an arbitrary host. Shidashi **requires a Gentoo host with Portage**
-  (`import portage`) and is **distributed as an ebuild** (`app-misc/shidashi` in the overlay) or via `pip install` — never
-  as a single binary. *(It is this, and not "a product for third parties", that pins the language to Python — see §12.)*
+- It is **not** a standalone binary. Shidashi is a Python package for a **Linux host with systemd**
+  (`systemd-nspawn`) and root: every Gentoo-specific step runs in a container — `emerge` in the image's
+  stage3, the ISO tools in the toolbox (§7), the repositories from pins — so the host needs no Portage.
+  `shidashi doctor` lists what the host must provide. Distributed via `pip`/`uv`, or as the
+  `app-misc/shidashi` ebuild on Gentoo — never as a single binary. *(Builds have so far run on Gentoo only.)*
 - It is **not** multilib by default. bentoo is **no-multilib** (pure 64-bit); 32-bit (Steam, wine, some
   drivers) is left to a future **advanced gaming support** phase, enabled **per package via
   `ABI_X86="32 64"`** in `package.use` — never through the global multilib profile. Migrating `no-multilib →
@@ -421,8 +423,8 @@ strategy:
 
 | Argument | Detail |
 |---|---|
-| **Portage is a Python library** | `import portage`: queries the tree, resolves atoms, reads profiles, parses the `Packages` index, handles multi-instance binpkg metadata — **without the shell-out + text parsing** that Go/Rust would require. Catalyst and Metro use this API. |
-| **The target ALWAYS has Portage** | Shidashi runs on a Gentoo host. There is no "single-binary Shidashi on an arbitrary host" — Go would not remove the Portage dependency. Distribute = **`app-misc/shidashi` ebuild** or `pip`. |
+| **Gentoo's tooling is Python** | Portage, its `Packages` index and its build logs are Python-shaped; Shidashi drives `emerge` **inside the containers** and parses its output, sharing the language of the tools it orchestrates. It never imports Portage on the host. |
+| **The host needs no Portage** | Portage lives in the containers (the image's stage3, the toolbox). The host is any Linux with systemd that passes `shidashi doctor`. Distribute = **`pip`/`uv`**, or the **`app-misc/shidashi` ebuild** on Gentoo. |
 | **Subprocess-bound glue** | The heavy work is `emerge`'s; language performance is irrelevant. **Iteration speed** dominates (recipes change every week). |
 | **Recoverable rigor** | `pydantic` (recipe schema) + `mypy --strict` + `ruff` cover type safety where errors hurt. |
 | **Grows without a rewrite** | A dashboard/binhost server fits in FastAPI + asyncio; the core stays. |
@@ -450,7 +452,7 @@ strategy:
 | Live boot | dracut `dmsquash-live` |
 | ISO | `grub-mkrescue` / `xorriso` |
 | Binpkg | gpkg + multi-instance + GPG signature |
-| Shidashi distribution | `app-misc/shidashi` ebuild (overlay) |
+| Shidashi distribution | Python package (`pip`/`uv`); `app-misc/shidashi` ebuild (overlay) on Gentoo |
 | CI | GitHub Actions (large runner) or self-hosted |
 
 ### Verified environment (current host)
@@ -773,7 +775,7 @@ just a test and becomes part of the curation pipeline.
 | **Re-seed vs. trunk** | **Hybrid:** persistent trunk for the weekly delta; **full `--emptytree` wipe** on toolchain-bump (§6.6). |
 | **`use_break`** | **Manual** curation per flavor, fed by `pretend-resolve` (§18.7). |
 | **Determinism** | Of **input/configuration** (replicate without errors), **not** bit-for-bit (§10). |
-| **Shidashi distribution** | **ebuild** `app-misc/shidashi` on a Gentoo host; never a single binary (§3, §12). |
+| **Shidashi distribution** | Python package on a Linux host with systemd (`shidashi doctor`); `app-misc/shidashi` ebuild on Gentoo; never a single binary (§3, §12). |
 | **`minimal`** | **Console-only, TTY-only** flavor — no compositor, not even for a smoke test (§8). |
 | **`wm`** | **Wayland-only:** Hyprland (default) + Sway + niri — no X11 dependencies (§8). |
 | **Layout** | Co-located **per axis** (`variants/<axis>/<name>/`); external overlay (§13). |

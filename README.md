@@ -38,9 +38,9 @@ The full architecture is in **[OVERVIEW.md](OVERVIEW.md)**.
 | Package Factory (stage3 → binpkgs) | ✅ implemented and tested |
 | ISO Assembler (binpkgs → live ISO) | ✅ implemented and tested |
 | Boot test (`shidashi vm test`, BIOS + UEFI) | ✅ the `kde` and `minimal` ISOs pass |
-| Weekly releases (every Sunday, 00:00 UTC) | 🚧 planned: needs a self-hosted Gentoo runner |
+| Weekly releases (every Sunday, 00:00 UTC) | 🚧 planned: needs a self-hosted runner (Linux with systemd, root) |
 
-661 tests; lint, types and tests run on every push. The roadmap is in
+678 tests; lint, types and tests run on every push. The roadmap is in
 [OVERVIEW.md §17](OVERVIEW.md#17-development-roadmap).
 
 ## Model
@@ -97,19 +97,30 @@ image, so the binhost can offer more than the ISOs ship.
 
 ### Why Python
 
-Portage *is* a Python library, so Shidashi speaks its language: recipes are validated with
-pydantic, and the build steps run `emerge` inside the containers.
+Portage and Gentoo's own tooling are Python, so Shidashi speaks their language: recipes are
+validated with pydantic, and the build steps run `emerge` inside the containers and read its
+output. Shidashi never imports Portage on the host.
 
 ## Requirements
 
 - **To develop and run the tests:** Python ≥ 3.14 and [uv](https://docs.astral.sh/uv/). Any
   Linux works.
-- **To build images:** a **Gentoo host**, with root, plus `systemd-nspawn`. The ISO tools
-  (`mksquashfs`, `grub-mkrescue`, `xorriso`) are not the host's: they run in the
-  **toolbox**, a Bentoo stage built by the factory (see below). `shidashi vm` needs QEMU/KVM
-  and `xorriso`.
+- **To build images:** a Linux host with **systemd** and **root**. Everything Gentoo-specific
+  runs in a container: `emerge` in the image's stage3, the ISO tools in the **toolbox** (see
+  below), the repositories from pins. The host needs no Portage. What it does need:
 
-Portage itself runs inside the build containers; the host's Python does not need it.
+  | For | Requirement |
+  |---|---|
+  | building | Python ≥ 3.14, `systemd-nspawn` ≥ 242, GNU `tar` with `--xattrs`/`--acls`, `gpg`, `git`, `openssl`, `objdump` |
+  | `shidashi vm` | `qemu-system-x86_64`, `xorriso`, read/write access to `/dev/kvm` and `/dev/vhost-vsock` |
+  | optional | `gcc` (names the CPU for the ISA check), `syft` (the SBOM); btrfs under the work directory makes copies instant |
+
+  `shidashi doctor` checks all of it without root, and `pretend`, `factory`, `assemble` and
+  `build` refuse to start when a build requirement is missing. A distribution without
+  Python 3.14 gets it from `uv python install 3.14`.
+
+So far builds have only run on a Gentoo host: the requirements above come from the code, not
+yet from a build on another distribution.
 
 ## Getting started
 
@@ -129,6 +140,7 @@ uv run ruff check . && uv run ruff format --check . && uv run mypy . && uv run p
 ## Usage
 
 ```sh
+shidashi doctor                            # can this host build? (no root needed)
 shidashi recipe list                       # the arches, images and inits available
 shidashi recipe show v3 kde systemd        # the resolved recipe of one image
 shidashi world kde systemd                 # its packages, kit by kit (nothing is written)
@@ -141,6 +153,7 @@ shidashi vm test bentoo-…-kde-systemd-v3.iso   # boot it and check what it dec
 
 | Command | What it does | Root |
 |---|---|:---:|
+| `doctor` | check what this host provides for builds and `vm` | |
 | `recipe list` / `show` / `validate` | inspect and validate the resolved recipes | |
 | `world` | write, check or print each image's package list | |
 | `kits check` | check every kit atom against the pinned trees | |
