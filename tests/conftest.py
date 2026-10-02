@@ -34,3 +34,13 @@ def no_stage3_vdb(monkeypatch: pytest.MonkeyPatch) -> list[Path]:
     monkeypatch.setattr(phases, "_seed_tarball", lambda _recipe: Path("/stage3.tar.xz"))
     monkeypatch.setattr(phases, "_extract_vdb", _extract)
     return extracted
+
+
+@pytest.fixture(autouse=True)
+def _build_host_ok(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The CLI's host check passes: tests describe hosts through doctor.checks'
+    probes (tests/test_doctor.py), never through the machine they run on --
+    a CI runner has no systemd-nspawn."""
+    from shidashi import doctor
+
+    monkeypatch.setattr(doctor, "require_build_host", lambda _work_dir: None)

@@ -29,7 +29,7 @@ from rich.markup import escape
 from rich.prompt import Prompt
 from rich.table import Table
 
-from shidashi import audit, config, publish
+from shidashi import audit, config, doctor, publish
 from shidashi.assembler import Assembler, AssemblerError, AssembleResult
 from shidashi.factory import (
     CheckpointDecision,
@@ -96,6 +96,15 @@ class OutputFormat(StrEnum):
     yaml = "yaml"
     json = "json"
     pretty = "pretty"
+
+
+def _require_build_host() -> None:
+    """Refuse to start a build on a host that lacks what it needs (:mod:`shidashi.doctor`)."""
+    try:
+        doctor.require_build_host(config.scratch_dir())
+    except doctor.DoctorError as err:
+        _err_console.print(f"[bold red]error:[/bold red] {escape(str(err))}")
+        raise typer.Exit(1) from err
 
 
 def _apply_work_dir(work_dir: Path | None) -> None:
@@ -266,6 +275,7 @@ def pretend(
     (``ResolveError`` with ``raw_output``) the raw emerge output goes to stderr.
     """
     _apply_work_dir(work_dir)
+    _require_build_host()
     try:
         report = pretend_resolve(arch, flavor, init, download=not no_download, keep=keep)
     except (SeedError, ResolveError, config.UnknownAxisError, RecipeChainError) as err:
@@ -562,6 +572,7 @@ def factory(
     the phase that failed and the emerge ``output``.
     """
     _apply_work_dir(work_dir)
+    _require_build_host()
     if jobs is not None:
         os.environ["SHIDASHI_JOBS"] = str(jobs)  # read by resolve.apply_portage
     try:
@@ -919,6 +930,7 @@ def assemble(
     failure) become a friendly message + exit 1, no traceback.
     """
     _apply_work_dir(work_dir)
+    _require_build_host()
     try:
         resolved = _resolve(arch, flavor, init)
     except (config.UnknownAxisError, RecipeChainError) as err:
@@ -1077,6 +1089,7 @@ def build(
     with one audit trail covering all of it (steps factory:<image>, assemble:<image>).
     """
     _apply_work_dir(work_dir)
+    _require_build_host()
     if jobs is not None:
         os.environ["SHIDASHI_JOBS"] = str(jobs)
     if compression not in ("zstd", "xz", "both"):
@@ -1337,6 +1350,47 @@ def world(
             "run `shidashi world` and commit the result"
         )
         raise typer.Exit(1)
+
+
+@app.command("doctor")
+def doctor_cmd(
+    work_dir: Annotated[
+        Path | None,
+        typer.Option("--work-dir", help="Work root to check (its filesystem)."),
+    ] = None,
+) -> None:
+    """Check what this host must provide to build images and boot them.
+
+    Needs no root and changes nothing. Exits 1 when something a build needs is
+    missing (``build``); what only ``shidashi vm`` needs (``vm``) and the
+    ``optional`` tools are reported without failing.
+    """
+    _apply_work_dir(work_dir)
+    found = doctor.checks(config.scratch_dir())
+    table = Table(title="shidashi doctor")
+    table.add_column("check", style="bold")
+    table.add_column("for")
+    table.add_column("", justify="center")
+    table.add_column("detail")
+    for c in found:
+        mark = (
+            "[green]ok[/green]"
+            if c.ok
+            else ("[yellow]—[/yellow]" if c.scope in ("optional", "info") else "[red]missing[/red]")
+        )
+        table.add_row(c.name, c.scope, mark, escape(c.detail))
+    Console().print(table)
+    lacking = doctor.missing(found, "build")
+    if lacking:
+        _err_console.print(
+            f"[bold red]this host cannot build:[/bold red] {', '.join(c.name for c in lacking)}"
+        )
+        raise typer.Exit(1)
+    vm = doctor.missing(found, "vm")
+    if vm:
+        typer.echo(f"builds: ok; `shidashi vm` also needs: {', '.join(c.name for c in vm)}")
+    else:
+        typer.echo("builds and `shidashi vm`: ok")
 
 
 @app.command("release")
