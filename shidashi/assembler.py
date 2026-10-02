@@ -329,8 +329,8 @@ class Assembler:
     ) -> None:
         self.recipe = recipe
         self.binhost_dir = binhost_dir
-        #: emerge --jobs and mksquashfs -processors; None = emerge serial,
-        #: mksquashfs on every CPU.
+        #: emerge --jobs, mksquashfs/unsquashfs -processors and the stage4's
+        #: xz -T; None = emerge serial, the others on every CPU.
         self.jobs = jobs
 
     def assemble(
@@ -477,7 +477,7 @@ class Assembler:
                     # the configured system, BEFORE the live user and autologin
                     with run.step("stage4") as step:
                         tarball4 = output_dir / f"{name}.stage4.tar.xz"
-                        publish.make_stage4(rootfs, tarball4, exclude_file)
+                        publish.make_stage4(rootfs, tarball4, exclude_file, threads=self.jobs)
                         artifacts.append(tarball4)
                         run.artifact(tarball4, role="stage4")
                 with run.step("live") as step:
@@ -596,7 +596,10 @@ class Assembler:
                 with run.step(f"publish:{profile}"):
                     digests, sha256 = publish.write_digests(iso)
                     contents = publish.write_contents(
-                        squashfs, output_dir / f"{name}{suffix}.iso.contents.gz", tools=tools
+                        squashfs,
+                        output_dir / f"{name}{suffix}.iso.contents.gz",
+                        tools=tools,
+                        processors=self.jobs,
                     )
                     sums[iso.name] = sha256
                     artifacts += [digests, contents]

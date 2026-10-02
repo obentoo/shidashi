@@ -902,8 +902,9 @@ def assemble(
         typer.Option(
             "--jobs",
             min=1,
-            help="emerge --jobs N (binpkgs merged in parallel) and mksquashfs -processors N. "
-            "Default: emerge one package at a time, mksquashfs on every CPU.",
+            help="emerge --jobs N (binpkgs merged in parallel), mksquashfs/unsquashfs "
+            "-processors N and the stage4's xz -TN. Default: emerge one package at a "
+            "time, the others on every CPU.",
         ),
     ] = None,
 ) -> None:
@@ -1046,8 +1047,8 @@ def build(
         typer.Option(
             "--jobs",
             min=1,
-            help="MAKEOPTS -jN in the factory; emerge --jobs N and "
-            "mksquashfs -processors N in the assemble.",
+            help="MAKEOPTS -jN in the factory; emerge --jobs N, mksquashfs/unsquashfs "
+            "-processors N and the stage4's xz -TN in the assemble.",
         ),
     ] = None,
     keep: Annotated[bool, typer.Option("--keep", help="Keep the build rootfs.")] = False,

@@ -94,11 +94,15 @@ def write_packages(dest: Path, packages: Iterable[Mapping[str, Any]]) -> Path:
     return dest
 
 
-def write_contents(squashfs: Path, dest: Path, *, tools: Tools) -> Path:
+def write_contents(
+    squashfs: Path, dest: Path, *, tools: Tools, processors: int | None = None
+) -> Path:
     """Every path of the live root, directories included (``unsquashfs -l``;
-    ``-lc`` would list files only), gzipped. ``unsquashfs`` is ``tools``'. I/O."""
+    ``-lc`` would list files only), gzipped. ``unsquashfs`` is ``tools``';
+    ``processors`` caps its threads (``None``: every CPU). I/O."""
+    cap = ["-processors", str(processors)] if processors is not None else []
     try:
-        listing = tools.run(["unsquashfs", "-l", str(tools.path(squashfs))])
+        listing = tools.run(["unsquashfs", *cap, "-l", str(tools.path(squashfs))])
     except (OSError, subprocess.CalledProcessError) as err:
         raise PublishError(f"unsquashfs -l {squashfs}: {err}") from err
     paths = [
@@ -162,9 +166,11 @@ def read_patterns(exclude_file: Path) -> list[str]:
     return [ln.strip() for ln in lines if ln.strip() and not ln.lstrip().startswith("#")]
 
 
-def stage4_argv(rootfs: Path, dest: Path, patterns: Sequence[str]) -> list[str]:
-    """``tar`` of the configured root, xattrs and ACLs kept, ``xz -9e`` on every
-    CPU (the author's own stage4 recipe). Pure."""
+def stage4_argv(
+    rootfs: Path, dest: Path, patterns: Sequence[str], *, threads: int | None = None
+) -> list[str]:
+    """``tar`` of the configured root, xattrs and ACLs kept, ``xz -9e`` (the
+    author's own stage4 recipe) on ``threads`` CPUs -- every CPU when ``None``. Pure."""
     return [
         "tar",
         "--create",
@@ -176,17 +182,19 @@ def stage4_argv(rootfs: Path, dest: Path, patterns: Sequence[str]) -> list[str]:
         "--xattrs-include=*",
         "--acls",
         "--numeric-owner",
-        "--use-compress-program=xz -9e -T0",
+        f"--use-compress-program=xz -9e -T{threads if threads is not None else 0}",
         *tar_excludes(patterns),
         ".",
     ]
 
 
-def make_stage4(rootfs: Path, dest: Path, exclude_file: Path) -> Path:
+def make_stage4(
+    rootfs: Path, dest: Path, exclude_file: Path, *, threads: int | None = None
+) -> Path:
     """The stage4 tarball of ``rootfs``. I/O (long: xz -9e)."""
     try:
         subprocess.run(
-            stage4_argv(rootfs, dest, read_patterns(exclude_file)),
+            stage4_argv(rootfs, dest, read_patterns(exclude_file), threads=threads),
             capture_output=True,
             text=True,
             check=True,

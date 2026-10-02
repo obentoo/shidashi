@@ -51,7 +51,8 @@ def test_packages_list_is_sorted_atoms(tmp_path: Path) -> None:
 
 
 @pytest.mark.skipif(shutil.which("mksquashfs") is None, reason="needs squashfs-tools")
-def test_contents_lists_every_path_of_the_live_root(tmp_path: Path) -> None:
+@pytest.mark.parametrize("processors", [None, 2])
+def test_contents_lists_every_path_of_the_live_root(tmp_path: Path, processors: int | None) -> None:
     root = tmp_path / "root"
     (root / "usr/bin").mkdir(parents=True)
     (root / "usr/bin/sh").write_text("x")
@@ -61,7 +62,7 @@ def test_contents_lists_every_path_of_the_live_root(tmp_path: Path) -> None:
         check=True,
         capture_output=True,
     )
-    dest = publish.write_contents(sq, tmp_path / "c.gz", tools=HostTools())
+    dest = publish.write_contents(sq, tmp_path / "c.gz", tools=HostTools(), processors=processors)
     with gzip.open(dest, "rt") as f:
         assert f.read().splitlines() == ["/", "/usr", "/usr/bin", "/usr/bin/sh"]
 
@@ -70,7 +71,9 @@ def test_stage4_keeps_xattrs_and_leaves_out_what_the_iso_does() -> None:
     argv = publish.stage4_argv(Path("/r"), Path("/o.tar.xz"), ["dev/*", "var/log/*.log"])
     assert argv[:6] == ["tar", "--create", "--file", "/o.tar.xz", "--directory", "/r"]
     assert {"--xattrs", "--xattrs-include=*", "--acls", "--numeric-owner"} <= set(argv)
-    assert "--use-compress-program=xz -9e -T0" in argv
+    assert "--use-compress-program=xz -9e -T0" in argv  # every CPU by default
+    capped = publish.stage4_argv(Path("/r"), Path("/o.tar.xz"), [], threads=6)
+    assert "--use-compress-program=xz -9e -T6" in capped
     # one path component per *, as in mksquashfs
     assert "--no-wildcards-match-slash" in argv
     assert "--exclude=./dev/*" in argv and "--exclude=./var/log/*.log" in argv

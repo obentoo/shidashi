@@ -423,7 +423,10 @@ def test_assemble_orchestrates_seed_emerge_dracut_squashfs_iso(
     # the host tools of the artifacts (unsquashfs, syft) are publish.py's tests' concern
     from shidashi import publish
 
-    def fake_contents(squashfs: Path, dest: Path, **_k: object) -> Path:
+    contents_kwargs: list[dict[str, object]] = []
+
+    def fake_contents(squashfs: Path, dest: Path, **kw: object) -> Path:
+        contents_kwargs.append(kw)
         dest.write_bytes(b"C")
         return dest
 
@@ -531,6 +534,7 @@ def test_assemble_orchestrates_seed_emerge_dracut_squashfs_iso(
     assert inst.runs[3] == [*final, "@preserved-rebuild"]
     # --jobs also caps mksquashfs; without it mksquashfs keeps every CPU
     assert processors_seen == [jobs]
+    assert [kw["processors"] for kw in contents_kwargs] == [jobs]  # unsquashfs -l too
     assert inst.runs[4][0] == "dracut" and "dmsquash-live" in inst.runs[4]
     # binhost mounted RO in the container (and nothing RW) — the binhost_dir→Container thread.
     assert (tmp_path / "binhost" / "znver5", asm._BINHOST_DST) in inst.binds
