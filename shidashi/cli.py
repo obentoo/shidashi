@@ -1233,20 +1233,14 @@ def _world_notes(recipe: ResolvedRecipe, kits: list[KitView]) -> dict[str, str]:
 
 def _show_world(target: str, inits: list[str]) -> None:
     """Print each image's packages kit by kit, excluded atoms marked. Writes nothing."""
-    from shidashi.recipe import BASE_STAGE, RecipeFileError, load_init
+    from shidashi.recipe import BASE_STAGE, RecipeFileError
     from shidashi.resolve import ResolveError, kit_view
 
     arch = config.available_names("arch")[0]
     for i, init in enumerate(inits):
         try:
             recipe = config.load_recipe(arch, target, init, any_stage=True)
-            # the init's excludes cover whole images; a stage viewed alone may lack them
-            optional = (
-                frozenset(load_init(config.recipe_path("init", init)).exclude)
-                if target not in config.target_names()
-                else frozenset()
-            )
-            kits = kit_view(recipe, optional=optional)
+            kits = kit_view(recipe)
         except (ResolveError, RecipeFileError) as err:
             _err_console.print(f"[bold red]error:[/bold red] {err}")
             raise typer.Exit(1) from err

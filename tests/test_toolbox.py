@@ -12,6 +12,7 @@ import pytest
 from shidashi import config, toolbox
 from shidashi.container import CommandResult
 from shidashi.recipe import TOOLBOX_STAGE
+from shidashi.resolve import ResolveError, set_closure
 from shidashi.toolbox import WORK, HostTools, Toolbox, ToolboxError
 
 # --- the stage -------------------------------------------------------------------
@@ -24,6 +25,28 @@ def test_the_toolbox_branches_off_the_base_and_is_no_image() -> None:
     assert not any(p.ships for p in recipe.phases)
     assert TOOLBOX_STAGE not in config.target_names()
     assert TOOLBOX_STAGE in config.factory_names()
+
+
+@pytest.mark.parametrize("init", ["systemd", "openrc"])
+def test_the_toolbox_sets_resolve_under_every_init(init: str) -> None:
+    """The init's excludes (systemd's ntp) target image kits the toolbox never
+    has; the factory writes its sets all the same (the first lab run, 2026-10-01)."""
+    recipe = config.load_recipe("v3", TOOLBOX_STAGE, init)
+    closure = set_closure(recipe)
+    assert {"base", "toolbox"} <= closure.keys()
+    assert "sys-boot/grub" in closure["toolbox"]
+
+
+def test_an_image_still_refuses_an_exclude_that_matches_nothing() -> None:
+    recipe = config.load_recipe("v3", "minimal", "systemd")
+    bogus = recipe.model_copy(
+        update={
+            "exclude": (*recipe.exclude, "app-misc/no-such-thing"),
+            "exclude_origin": {**recipe.exclude_origin, "app-misc/no-such-thing": "init/systemd"},
+        }
+    )
+    with pytest.raises(ResolveError, match="no-such-thing"):
+        set_closure(bogus)
 
 
 def test_the_toolbox_builds_grub_for_bios_and_uefi() -> None:

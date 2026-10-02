@@ -209,14 +209,27 @@ class KitView:
         return tuple(t[0] for t in tokens if t and not t[0].startswith("@"))
 
 
-def kit_view(recipe: ResolvedRecipe, *, optional: frozenset[str] = frozenset()) -> list[KitView]:
+def _optional_excludes(recipe: ResolvedRecipe) -> frozenset[str]:
+    """The excludes that may match nothing in ``recipe``'s chain. Pure.
+
+    The init's excludes cover whole images. A chain that does not end in one
+    -- the base or the desktop viewed alone, the toolbox -- may lack what they
+    take out: ntp, say, comes in a minimal kit, and the toolbox is base →
+    toolbox. Every other exclude must match, image or not.
+    """
+    if recipe.phases and recipe.phases[-1].ships:
+        return frozenset()
+    return frozenset(a for a, layer in recipe.exclude_origin.items() if layer.startswith("init/"))
+
+
+def kit_view(recipe: ResolvedRecipe) -> list[KitView]:
     """Every set ``recipe`` installs, depth first: each set is followed by the
     ``@refs`` it reaches, so ``@base`` reads with its kits under it. I/O (reads
     the kits).
 
     The one walk of the kits: :func:`set_closure` writes it, ``shidashi world
-    <image>`` prints it. ``optional`` excludes may match nothing: the init's,
-    when the base is viewed alone (ntp, say, comes in a minimal kit).
+    <image>`` prints it. An exclude that matches nothing is an error, except
+    :func:`_optional_excludes`.
     """
     kits = config.kits_dir()
     index = kit_index(kits)
@@ -268,7 +281,7 @@ def kit_view(recipe: ResolvedRecipe, *, optional: frozenset[str] = frozenset()) 
         seen[name] = KitView(name, tuple(kept), tuple(dropped), tuple(refs), tuple(catalog))
     # an exclude that matches nothing is a typo, or a package the chain never
     # had: silently ignored, it would leave in the image what it meant to take out
-    unmatched = sorted(excluded - matched - optional)
+    unmatched = sorted(excluded - matched - _optional_excludes(recipe))
     if unmatched:
         raise ResolveError(
             f"exclude: {', '.join(unmatched)} is in no set of the {recipe.flavor} chain "
