@@ -10,13 +10,5 @@ sys-kernel/gentoo-kernel savedconfig
 # exists in ::gentoo or ::bentoo, and neither is named in any doc, recipe or set,
 # so there was no recorded intent to keep. Re-add WITH the ebuild (2026-09-08).
 
-# Out-of-tree modules (linux-mod-r1) are NOT signed: the image runs
-# gentoo-kernel-bin, whose .config names Gentoo's build-host key
-# (CONFIG_MODULE_SIG_KEY=/var/tmp/portage/sys-kernel/gentoo-kernel-*/temp/kernel_key.pem),
-# which is never shipped -- with USE=modules-sign these die in pkg_setup
-# (2026-10-01). The kernel has MODULE_SIG but not MODULE_SIG_FORCE, so it loads
-# them unsigned. A user who wants them signed needs their own MOK key, enrolled
-# on their machine, and a local rebuild; a binpkg cannot carry that. The global
-# SECURITY="modules-sign" (make.conf) stays for whatever can still use it.
-net-misc/r8168 -modules-sign
-x11-drivers/nvidia-drivers -modules-sign
+# Out-of-tree modules are built unsigned: modules-sign is off for the whole image,
+# see SECURITY in make.conf.
