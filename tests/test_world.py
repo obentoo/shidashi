@@ -409,3 +409,62 @@ def test_kits_check_names_a_glued_comment_that_is_no_atom(tmp_path: Path) -> Non
         "web:4: #www-client-firefox is neither #category/package nor #@kit "
         "(prose needs a space after #)"
     ]
+
+
+# --- an exclude cannot reach back into an earlier stage's kits ----------------------
+
+
+def _add_exclude(tree: Path, stage_dir: str, atom: str) -> None:
+    """Add ``atom`` to a stage's exclude: (creating the key when it has none)."""
+    recipe = tree / stage_dir / "recipe.yaml"
+    text = recipe.read_text()
+    if "\nexclude:\n" in text:
+        text = text.replace("\nexclude:\n", f"\nexclude:\n  - {atom}\n", 1)
+    else:
+        text += f"exclude:\n  - {atom}\n"
+    recipe.write_text(text)
+
+
+def test_a_flavor_cannot_exclude_what_minimal_installs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """r8168 enters at minimal (@extra-system → net-tools): minimal's fork point,
+    shared by every flavor, already holds it. kde excluding it would change that
+    shared fork point only when kde happened to build it."""
+    from shidashi.resolve import ResolveError, world_atoms
+
+    tree = _variants_copy(tmp_path, monkeypatch)
+    _add_exclude(tree, "flavor/kde", "net-misc/r8168")
+    with pytest.raises(ResolveError, match=r"net-misc/r8168 \(stage 'kde'\).*'minimal' installs"):
+        world_atoms(config.load_recipe("v3", "kde", "systemd"))
+
+
+def test_minimal_cannot_exclude_what_the_base_installs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from shidashi.resolve import ResolveError, world_atoms
+
+    tree = _variants_copy(tmp_path, monkeypatch)
+    _add_exclude(tree, "minimal", "app-editors/vim")
+    with pytest.raises(ResolveError, match=r"kit 'shell'.*stage 'base' installs"):
+        world_atoms(config.load_recipe("v3", "minimal", "systemd"))
+
+
+def test_a_flavor_may_exclude_from_its_own_kits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from shidashi.resolve import world_atoms
+
+    tree = _variants_copy(tmp_path, monkeypatch)
+    _add_exclude(tree, "flavor/kde", "kde-apps/konsole")
+    kde = config.load_recipe("v3", "kde", "systemd")
+    assert "kde-apps/konsole" not in world_atoms(kde)
+
+
+def test_the_committed_excludes_respect_the_fork_points() -> None:
+    """Every image and init of the repository: no exclude reaches back."""
+    from shidashi.resolve import set_closure
+
+    for target in config.target_names():
+        for init in config.available_names("init"):
+            set_closure(config.load_recipe("v3", target, init))

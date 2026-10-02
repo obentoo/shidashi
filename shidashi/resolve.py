@@ -222,6 +222,64 @@ def _optional_excludes(recipe: ResolvedRecipe) -> frozenset[str]:
     return frozenset(a for a, layer in recipe.exclude_origin.items() if layer.startswith("init/"))
 
 
+def _first_stage_of(recipe: ResolvedRecipe, index: dict[str, Path]) -> dict[str, tuple[str, str]]:
+    """Each kit atom of ``recipe``'s chain -> (the first stage that installs it, its kit).
+
+    A stage installs the closure of its own sets (each ``@ref`` followed); the
+    stages are walked base first, so the first one met is where the atom enters
+    the build -- and the fork point of that stage already holds it. I/O.
+    """
+    first: dict[str, tuple[str, str]] = {}
+    for phase in recipe.phases:
+        if not phase.stage:
+            continue
+        pending = [s for s in phase.sets if s in index]
+        seen: set[str] = set()
+        while pending:
+            name = pending.pop()
+            if name in seen:
+                continue
+            seen.add(name)
+            for line in index[name].read_text(encoding="utf-8").splitlines():
+                token = line.split("#", 1)[0].split()
+                if not token:
+                    continue
+                if token[0].startswith("@"):
+                    if token[0][1:] in index:
+                        pending.append(token[0][1:])
+                    continue
+                first.setdefault(token[0], (phase.stage, name))
+    return first
+
+
+def _check_exclude_scope(recipe: ResolvedRecipe, index: dict[str, Path]) -> None:
+    """Refuse a stage's exclude that reaches back into an earlier stage's kits.
+
+    An exclude applies to its stage and every later one, but a fork point is
+    shared: minimal's is the same for the minimal image and every flavor. A
+    flavor excluding an atom minimal installs would build minimal without it in
+    that flavor's chain only, so the shared fork point would depend on which
+    image built it first -- and the flavor's own image still gets the atom from
+    a fork point built by another. The init's excludes apply from the base on,
+    so they cannot reach back.
+    """
+    stages = list(recipe.stages)
+    first = _first_stage_of(recipe, index)
+    for atom in recipe.exclude:
+        layer = recipe.exclude_origin.get(atom, "")
+        if layer not in stages or atom not in first:
+            continue
+        installed_by, kit = first[atom]
+        if stages.index(installed_by) < stages.index(layer):
+            raise ResolveError(
+                f"exclude: {atom} (stage {layer!r}) is in kit {kit!r}, which the earlier "
+                f"stage {installed_by!r} installs: {installed_by}'s fork point is shared by "
+                f"every image built on it, so the exclude cannot take it out of {layer} "
+                f"alone. Exclude it in {installed_by} (or in the init), or use an include "
+                "the other way round"
+            )
+
+
 def kit_view(recipe: ResolvedRecipe) -> list[KitView]:
     """Every set ``recipe`` installs, depth first: each set is followed by the
     ``@refs`` it reaches, so ``@base`` reads with its kits under it. I/O (reads
@@ -238,6 +296,7 @@ def kit_view(recipe: ResolvedRecipe) -> list[KitView]:
         raise ResolveError(
             f"kit {clashing[0]!r}: the {INCLUDE_SET_PREFIX}* names belong to stages' include:"
         )
+    _check_exclude_scope(recipe, index)
     excluded = frozenset(recipe.exclude)
     seen: dict[str, KitView] = {}
     matched: set[str] = set()
