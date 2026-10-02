@@ -832,6 +832,88 @@ def module_rebuild(container: Container, *, phase: str) -> dict[str, object]:
     return {"stale": list(stale), "rebuilt": list(owners)}
 
 
+# --- perl-rebuild -----------------------------------------------------------------
+
+_PERL5 = Path("usr") / "lib64" / "perl5"
+_PERL_VERSION = re.compile(r"5\.\d+")
+
+
+def installed_perl(rootfs: Path) -> str | None:
+    """The installed perl's ``major.minor`` (``5.44``), from the vdb; ``None`` without one. I/O."""
+    for entry in sorted((rootfs / _VDB / "dev-lang").glob("perl-[0-9]*")):
+        match = re.fullmatch(r"perl-(5\.\d+)\..*", entry.name)
+        if match:
+            return match.group(1)
+    return None
+
+
+def stale_perl_dirs(rootfs: Path) -> tuple[str, ...]:
+    """The ``/usr/lib64/perl5`` version directories of a perl that is not installed. I/O.
+
+    Perl keeps modules per ``major.minor`` (``vendor_perl/5.42``): after an
+    upgrade, a module nothing rebuilt sits where the new perl never looks. The
+    base's ``--emptytree @world`` rebuilds the world; the stage3's build-only
+    leftovers stay -- Locale-gettext, which help2man loads, broke the toolbox's
+    grub that way (2026-10-01). ``()`` without a perl: nothing to compare against.
+    """
+    current = installed_perl(rootfs)
+    if current is None:
+        return ()
+    stale: list[str] = []
+    for base in (_PERL5, _PERL5 / "vendor_perl"):
+        root = rootfs / base
+        if root.is_dir():
+            stale.extend(
+                f"/{base / d.name}"
+                for d in sorted(root.iterdir())
+                if d.is_dir() and _PERL_VERSION.fullmatch(d.name) and d.name != current
+            )
+    return tuple(stale)
+
+
+def perl_owners(rootfs: Path, dirs: Sequence[str]) -> tuple[str, ...]:
+    """The packages that installed files under those perl directories (vdb CONTENTS). I/O."""
+    if not dirs:
+        return ()
+    prefixes = tuple(f"{d}/" for d in dirs)
+    owners: set[str] = set()
+    for contents in sorted((rootfs / _VDB).glob("*/*/CONTENTS")):
+        for line in contents.read_text(encoding="utf-8", errors="replace").splitlines():
+            parts = line.split(" ", 1)
+            if len(parts) == 2 and parts[0] in ("obj", "sym") and parts[1].startswith(prefixes):
+                owners.add(f"{contents.parent.parent.name}/{contents.parent.name}")
+                break
+    return tuple(sorted(owners))
+
+
+def perl_rebuild(container: Container, *, phase: str) -> dict[str, object]:
+    """Rebuild, from source, every package with modules for a perl that is not
+    installed; drop the directories they leave. PRIVILEGED.
+
+    Runs BEFORE the stage's emerge: a stage that builds something whose build
+    loads such a module (grub → help2man → Locale::gettext) would fail before
+    any later step could repair it. Built WITH buildpkg, like module-rebuild.
+    """
+    rootfs = container.rootfs
+    stale = stale_perl_dirs(rootfs)
+    if not stale:
+        return {"stale": []}
+    owners = perl_owners(rootfs, stale)
+    if owners:
+        argv = ["emerge", "--oneshot", "--verbose", "--usepkg=n", *(f"={o}" for o in owners)]
+        _run_emerge(container, argv, phase=phase)
+    left = perl_owners(rootfs, stale)
+    if left:
+        raise FactoryError(
+            f"modules for a perl that is not installed ({', '.join(stale)}) are still "
+            f"owned by {', '.join(left)} after the rebuild",
+            phase=phase,
+        )
+    # what remains (packlists, empty directories) belongs to no package
+    container.run(["rm", "-rf", *stale], check=True)
+    return {"stale": list(stale), "rebuilt": list(owners)}
+
+
 def run_phase(
     container: Container, recipe: ResolvedRecipe, phase: Phase, *, emptytree: bool
 ) -> PhaseResult:
@@ -872,6 +954,8 @@ def run_phase(
             elif kind == "write-cuts":
                 write_use_break(container.rootfs, phase)
                 step.add(cuts=list(use_break_lines(phase)))
+            elif kind == "perl-rebuild":
+                step.add(**perl_rebuild(container, phase=phase.name))
             elif kind == "emerge-stage":
                 argv = phase_emerge_argv(phase, recipe, emptytree=emptytree, flow=flow)
                 since = int(time.time())

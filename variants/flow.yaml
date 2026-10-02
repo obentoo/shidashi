@@ -79,6 +79,9 @@ stages:
     # before the emerge
     - {name: config, do: apply-config}     # layers up to this stage + quirks.yaml
     - {name: cuts, do: write-cuts}         # this stage's use_break → package.use
+    - {name: perl, do: perl-rebuild}       # modules left for a perl that is gone: the
+                                           # base upgrades perl, the stage3's build-only
+                                           # modules stay behind (grub's help2man)
     - {name: emerge, do: emerge-stage}
     # after the emerge
     - {name: modules, do: module-rebuild}  # out-of-tree modules built for a kernel

@@ -783,9 +783,10 @@ def test_every_stage_and_step_is_in_the_audit_trail(
         _run_chain(tmp_path, monkeypatch)
     manifest = audit.build_manifest(audit.read_events(trail.path / "events.jsonl"))
     steps = [s["step"] for s in manifest["steps"]]
-    assert steps[:5] == [
+    assert steps[:6] == [
         "stage:base/apply-config",
         "stage:base/write-cuts",
+        "stage:base/perl-rebuild",
         "stage:base/emerge-stage",
         "stage:base/module-rebuild",
         "stage:base/fork-point",
@@ -908,4 +909,108 @@ def test_the_flow_runs_module_rebuild_before_the_fork_point() -> None:
     steps.append({"name": "modules", "do": "module-rebuild"})  # after snapshot
     bad["steps"] = steps
     with pytest.raises(ValueError, match="module-rebuild must come after emerge-stage"):
+        StagesFlow.model_validate(bad)
+
+
+# --- perl-rebuild: modules for a perl that is not installed ------------------------
+
+
+def _perl_rootfs(root: Path) -> Path:
+    """perl 5.44 installed; Locale-gettext still in vendor_perl/5.42 (the base fork
+    point of 2026-10-01, where it broke grub's help2man)."""
+    vdb = root / "var/db/pkg"
+    (vdb / "dev-lang/perl-5.44.0").mkdir(parents=True)
+    (root / "usr/lib64/perl5/5.44").mkdir(parents=True)
+    (root / "usr/lib64/perl5/vendor_perl/5.44").mkdir(parents=True)
+    old = root / "usr/lib64/perl5/vendor_perl/5.42/x86_64-linux/Locale"
+    old.mkdir(parents=True)
+    (old / "gettext.pm").write_text("1;")
+    (vdb / "dev-perl/Locale-gettext-1.70.0_p20181130").mkdir(parents=True)
+    (vdb / "dev-perl/Locale-gettext-1.70.0_p20181130/CONTENTS").write_text(
+        "obj /usr/lib64/perl5/vendor_perl/5.42/x86_64-linux/Locale/gettext.pm abc 1\n"
+    )
+    (vdb / "sys-apps/help2man-1.49.3").mkdir(parents=True)
+    (vdb / "sys-apps/help2man-1.49.3/CONTENTS").write_text("obj /usr/bin/help2man abc 1\n")
+    return root
+
+
+class _PerlRebuildContainer:
+    """An emerge "rebuilds" Locale-gettext for 5.44 (its CONTENTS moves); rm removes."""
+
+    def __init__(self, rootfs: Path, *, rebuild_moves: bool = True) -> None:
+        self.rootfs = rootfs
+        self.calls: list[list[str]] = []
+        self.rebuild_moves = rebuild_moves
+
+    def run(self, argv: Any, *, env: Any = None, check: bool = True) -> Any:
+        import shutil
+
+        from shidashi.container import CommandResult
+
+        self.calls.append(list(argv))
+        if argv[0] == "emerge" and self.rebuild_moves:
+            contents = self.rootfs / "var/db/pkg/dev-perl/Locale-gettext-1.70.0_p20181130/CONTENTS"
+            contents.write_text(
+                "obj /usr/lib64/perl5/vendor_perl/5.44/x86_64-linux/Locale/gettext.pm d 2\n"
+            )
+        if argv[0] == "rm":
+            for path in argv[2:]:
+                shutil.rmtree(self.rootfs / path.lstrip("/"))
+        return CommandResult(0, "", "")
+
+
+def test_stale_perl_dirs_are_the_versions_not_installed(tmp_path: Path) -> None:
+    root = _perl_rootfs(tmp_path)
+    assert phases.installed_perl(root) == "5.44"
+    stale = phases.stale_perl_dirs(root)
+    assert stale == ("/usr/lib64/perl5/vendor_perl/5.42",)
+    assert phases.perl_owners(root, stale) == ("dev-perl/Locale-gettext-1.70.0_p20181130",)
+
+
+def test_no_perl_installed_means_nothing_to_compare(tmp_path: Path) -> None:
+    (tmp_path / "usr/lib64/perl5/vendor_perl/5.42").mkdir(parents=True)
+    assert phases.stale_perl_dirs(tmp_path) == ()
+
+
+def test_perl_rebuild_rebuilds_the_owners_from_source_and_drops_the_dir(tmp_path: Path) -> None:
+    root = _perl_rootfs(tmp_path)
+    container = _PerlRebuildContainer(root)
+    done = phases.perl_rebuild(container, phase="toolbox")  # type: ignore[arg-type]
+    assert done == {
+        "stale": ["/usr/lib64/perl5/vendor_perl/5.42"],
+        "rebuilt": ["dev-perl/Locale-gettext-1.70.0_p20181130"],
+    }
+    assert container.calls[0] == [
+        "emerge",
+        "--oneshot",
+        "--verbose",
+        "--usepkg=n",
+        "=dev-perl/Locale-gettext-1.70.0_p20181130",
+    ]
+    assert not (root / "usr/lib64/perl5/vendor_perl/5.42").exists()
+    assert (root / "usr/lib64/perl5/vendor_perl/5.44").is_dir()
+    # idempotent: the next stage finds nothing
+    container.calls.clear()
+    assert phases.perl_rebuild(container, phase="kde") == {"stale": []}  # type: ignore[arg-type]
+    assert container.calls == []
+
+
+def test_perl_rebuild_fails_when_the_rebuild_did_not_move_the_modules(tmp_path: Path) -> None:
+    root = _perl_rootfs(tmp_path)
+    container = _PerlRebuildContainer(root, rebuild_moves=False)
+    with pytest.raises(phases.FactoryError, match="still owned by dev-perl/Locale-gettext"):
+        phases.perl_rebuild(container, phase="toolbox")  # type: ignore[arg-type]
+    assert (root / "usr/lib64/perl5/vendor_perl/5.42").exists()  # kept for diagnosis
+
+
+def test_the_flow_repairs_perl_before_the_stage_emerge() -> None:
+    from shidashi.flow import StagesFlow
+
+    kinds = [s.do for s in phases.stages_flow().steps]
+    assert kinds.index("apply-config") < kinds.index("perl-rebuild") < kinds.index("emerge-stage")
+    bad = phases.stages_flow().model_dump()
+    steps = [s for s in bad["steps"] if s["do"] != "perl-rebuild"]
+    steps.append({"name": "perl", "do": "perl-rebuild"})  # after the emerge
+    bad["steps"] = steps
+    with pytest.raises(ValueError, match="perl-rebuild must come after apply-config"):
         StagesFlow.model_validate(bad)

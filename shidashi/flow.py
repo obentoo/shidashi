@@ -24,6 +24,9 @@ by :mod:`shidashi.phases` in the declared order:
 
 - ``apply-config``: the layers in force up to this stage (portage/ + quirks);
 - ``write-cuts``: the cycle cuts pending at this stage (``use_break``);
+- ``perl-rebuild`` (optional): before the emerge, rebuild what still has
+  modules for a perl that is not installed (the base's perl upgrade leaves the
+  stage3's build-only modules behind);
 - ``emerge-stage``: the stage's emerge -- ``--emptytree`` for the stage whose
   ``update`` is ``emptytree`` (the base), the ``update`` options otherwise, with
   ``@world`` and the stage's sets; its options are in ``stages.emerge``;
@@ -133,6 +136,7 @@ class _StageStep(BaseModel):
     do: Literal[
         "apply-config",
         "write-cuts",
+        "perl-rebuild",
         "emerge-stage",
         "module-rebuild",
         "settle",
@@ -179,6 +183,15 @@ class StagesFlow(BaseModel):
         at = kinds.index("emerge-stage")
         if kinds.index("apply-config") > at or kinds.index("write-cuts") > at:
             raise ValueError("apply-config and write-cuts must come before emerge-stage")
+        if kinds.count("perl-rebuild") > 1:
+            raise ValueError("stages.steps needs `perl-rebuild` at most once")
+        if "perl-rebuild" in kinds and not (
+            kinds.index("apply-config") < kinds.index("perl-rebuild") < at
+        ):
+            raise ValueError(
+                "perl-rebuild must come after apply-config and before emerge-stage: "
+                "the stage's emerge may load the modules it repairs"
+            )
         if kinds.count("module-rebuild") > 1:
             raise ValueError("stages.steps needs `module-rebuild` at most once")
         if "module-rebuild" in kinds and not (
