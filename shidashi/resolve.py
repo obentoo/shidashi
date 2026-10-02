@@ -310,8 +310,13 @@ def apply_portage(
     *,
     variants_dir: Path,
     layers: tuple[str, ...] | None = None,
+    host_jobs: bool = True,
 ) -> None:
     """Compose the layers' ``portage/`` trees into ``${rootfs}/etc/portage`` (R3.1).
+
+    ``host_jobs`` appends this host's ``--jobs`` (:func:`_jobs_override`). The
+    assembler turns it off: its rootfs IS the image, and the build host's job
+    counts have no place in the ``make.conf`` a user installs.
 
     The layers are walked in base→arch→flavor→init order, and there are exactly
     **two** regimes, because Portage reads the two kinds of file differently:
@@ -381,9 +386,9 @@ def apply_portage(
 
     _write_quirks(dest, variants_dir, chosen, provider)
 
-    jobs = _jobs_override()
+    jobs = _jobs_override() if host_jobs else None
     if jobs is not None:
-        make_conf_parts.append((f"runtime ({_JOBS_ENV})", f'MAKEOPTS="-j{jobs} -l{jobs}"\n'))
+        make_conf_parts.append((f"runtime ({_JOBS_ENV})", _jobs_make_conf(jobs)))
     if make_conf_parts:
         (dest / _MAKE_CONF).write_text(_assemble_make_conf(make_conf_parts), encoding="utf-8")
 
@@ -469,11 +474,12 @@ _JOBS_ENV = "SHIDASHI_JOBS"
 
 
 def _jobs_override() -> int | None:
-    """``SHIDASHI_JOBS`` (``factory --jobs``) as a positive int; ``None`` when unset.
+    """``SHIDASHI_JOBS`` (``--jobs``) as a positive int; ``None`` when unset.
 
     How many jobs THIS build host runs is not part of the recipe, so it is not a
     layer: it is appended after every layer, where the shell's last-assignment
-    rule makes it win over the base's MAKEOPTS in every phase. Validated because
+    rule makes it win over the base's MAKEOPTS in every phase, and it extends
+    EMERGE_DEFAULT_OPTS (:func:`_jobs_make_conf`). Validated because
     the value is written into a shell-sourced file.
     """
     raw = os.environ.get(_JOBS_ENV)
@@ -482,6 +488,20 @@ def _jobs_override() -> int | None:
     if not raw.isdigit() or int(raw) < 1:
         raise ResolveError(f"{_JOBS_ENV} must be a positive integer, got {raw!r}")
     return int(raw)
+
+
+def _jobs_make_conf(jobs: int) -> str:
+    """The ``make.conf`` lines of ``--jobs N``. Pure.
+
+    ``MAKEOPTS`` is the jobs inside one package's build; ``EMERGE_DEFAULT_OPTS``
+    the packages built at once. Both carry ``--load-average N``: emerge starts
+    another package, and make another job, only while the load is under N, so
+    N packages of N make jobs each do not run N² compilers.
+    """
+    return (
+        f'MAKEOPTS="-j{jobs} -l{jobs}"\n'
+        f'EMERGE_DEFAULT_OPTS="${{EMERGE_DEFAULT_OPTS}} --jobs={jobs} --load-average={jobs}"\n'
+    )
 
 
 def _assemble_make_conf(parts: list[tuple[str, str]]) -> str:

@@ -377,9 +377,13 @@ def test_assemble_orchestrates_seed_emerge_dracut_squashfs_iso(
     # A single event list to pin the ORDER (not only the occurrence): apply_portage
     # MUST precede the emerge, otherwise the resolved USE ≠ the binpkgs' (§18.6).
     events: list[str] = []
-    monkeypatch.setattr(
-        asm, "apply_portage", lambda rootfs, recipe, *, variants_dir: events.append("apply_portage")
-    )
+    portage_kwargs: list[dict[str, object]] = []
+
+    def fake_apply_portage(rootfs: Path, recipe: ResolvedRecipe, **kw: object) -> None:
+        events.append("apply_portage")
+        portage_kwargs.append(kw)
+
+    monkeypatch.setattr(asm, "apply_portage", fake_apply_portage)
     monkeypatch.setattr(asm, "apply_rootfs", lambda *_a, **_k: ())
     monkeypatch.setattr(asm, "bind_repos", lambda d, **_k: [])
 
@@ -516,6 +520,8 @@ def test_assemble_orchestrates_seed_emerge_dracut_squashfs_iso(
     assert exclude_file.name == "znver5-kde-systemd.squashfs-exclude"
     assert "dev/*" in exclude_file.read_text().splitlines()  # livecd.yaml's squashfs_exclude
     assert out.read_bytes() == b"ISO"
+    # the image's make.conf never gets the build host's --jobs
+    assert [kw["host_jobs"] for kw in portage_kwargs] == [False]
     # §18.6 — apply_portage strictly BEFORE the emerge (not only "was called").
     assert events.index("apply_portage") < events.index("emerge")
     # order inside the container: emerge --usepkgonly, then the stage3's leftovers
@@ -566,7 +572,7 @@ def test_assemble_keeps_rootfs_on_emerge_failure(
         (rootfs / "boot").mkdir(parents=True)
 
     monkeypatch.setattr(asm, "extract_stage3", fake_extract)
-    monkeypatch.setattr(asm, "apply_portage", lambda rootfs, recipe, *, variants_dir: None)
+    monkeypatch.setattr(asm, "apply_portage", lambda rootfs, recipe, **_k: None)
     monkeypatch.setattr(asm, "bind_repos", lambda d, **_k: [])
 
     class _BoomContainer(_FakeContainer):
@@ -601,7 +607,7 @@ def test_assemble_keeps_rootfs_on_squashfs_failure(
         (boot / "vmlinuz-6.12.0").write_bytes(b"K")
 
     monkeypatch.setattr(asm, "extract_stage3", fake_extract)
-    monkeypatch.setattr(asm, "apply_portage", lambda rootfs, recipe, *, variants_dir: None)
+    monkeypatch.setattr(asm, "apply_portage", lambda rootfs, recipe, **_k: None)
     monkeypatch.setattr(asm, "bind_repos", lambda d, **_k: [])
     monkeypatch.setattr(asm, "Container", _FakeContainer)  # run() is a no-op (success)
 
@@ -734,7 +740,7 @@ def test_a_configuration_that_did_not_apply_fails_the_assemble_before_the_squash
         (rootfs / "lib" / "modules" / "6.12.0").mkdir(parents=True)
 
     monkeypatch.setattr(asm, "extract_stage3", fake_extract)
-    monkeypatch.setattr(asm, "apply_portage", lambda rootfs, recipe, *, variants_dir: None)
+    monkeypatch.setattr(asm, "apply_portage", lambda rootfs, recipe, **_k: None)
     monkeypatch.setattr(asm, "bind_repos", lambda d, **_k: [])
     monkeypatch.setattr(asm, "Container", _FakeContainer)
     monkeypatch.setattr(

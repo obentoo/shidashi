@@ -530,7 +530,8 @@ def factory(
         typer.Option(
             "--jobs",
             min=1,
-            help="MAKEOPTS=-jN -lN for this host, over the recipe's (every phase).",
+            help="This host's jobs, over the recipe's, in every phase: MAKEOPTS=-jN -lN "
+            "and emerge --jobs=N --load-average=N.",
         ),
     ] = None,
     stop_after: Annotated[
@@ -1047,8 +1048,9 @@ def build(
         typer.Option(
             "--jobs",
             min=1,
-            help="MAKEOPTS -jN in the factory; emerge --jobs N, mksquashfs/unsquashfs "
-            "-processors N and the stage4's xz -TN in the assemble.",
+            help="In the factory MAKEOPTS -jN -lN and emerge --jobs=N --load-average=N; "
+            "in the assemble emerge --jobs N, mksquashfs/unsquashfs -processors N and "
+            "the stage4's xz -TN.",
         ),
     ] = None,
     keep: Annotated[bool, typer.Option("--keep", help="Keep the build rootfs.")] = False,

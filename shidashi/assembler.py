@@ -396,7 +396,9 @@ class Assembler:
 
         with run.step("configure") as step:
             apply_rootfs(rootfs, recipe, variants_dir=config.variants_dir())
-            apply_portage(rootfs, recipe, variants_dir=config.variants_dir())
+            # no host_jobs: this rootfs is the image, its make.conf the user's;
+            # the assemble's own --jobs goes on the emerge command lines
+            apply_portage(rootfs, recipe, variants_dir=config.variants_dir(), host_jobs=False)
             _install_sets(rootfs, recipe)
             # the chain's cycle cuts, as the factory built under them: a fresh stage3
             # meets every cycle again, and the cut binpkgs are in the PKGDIR

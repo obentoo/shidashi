@@ -170,10 +170,16 @@ def test_apply_portage_assembled_make_conf_gives_the_last_assignment(tmp_path: P
 def test_apply_portage_jobs_override_is_the_last_makeopts(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """SHIDASHI_JOBS (factory --jobs) sets MAKEOPTS for THIS host, after every
-    layer, so it wins over the base's -j32 in every phase that re-applies it."""
+    """SHIDASHI_JOBS (factory --jobs) sets MAKEOPTS and emerge's jobs for THIS
+    host, after every layer, so it wins over the base's -j32 in every phase that
+    re-applies it -- and keeps whatever EMERGE_DEFAULT_OPTS a layer set."""
     variants = tmp_path / "variants"
-    _seed_layer(variants, "base", "make.conf", 'MAKEOPTS="-j32 -l32"\n')
+    _seed_layer(
+        variants,
+        "base",
+        "make.conf",
+        'MAKEOPTS="-j32 -l32"\nEMERGE_DEFAULT_OPTS="--with-bdeps=y"\n',
+    )
     rootfs = tmp_path / "rootfs"
     (rootfs / "etc").mkdir(parents=True)
     monkeypatch.setenv("SHIDASHI_JOBS", "16")
@@ -182,13 +188,30 @@ def test_apply_portage_jobs_override_is_the_last_makeopts(
 
     make_conf = rootfs / "etc" / "portage" / "make.conf"
     out = subprocess.run(
-        ["bash", "-c", f'. "{make_conf}"; printf "%s" "$MAKEOPTS"'],
+        ["bash", "-c", f'. "{make_conf}"; printf "%s|%s" "$MAKEOPTS" "$EMERGE_DEFAULT_OPTS"'],
         capture_output=True,
         text=True,
         check=True,
     )
-    assert out.stdout == "-j16 -l16"
+    assert out.stdout == "-j16 -l16|--with-bdeps=y --jobs=16 --load-average=16"
     assert "layer: runtime (SHIDASHI_JOBS)" in make_conf.read_text(encoding="utf-8")
+
+
+def test_apply_portage_leaves_the_host_jobs_out_when_asked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The assembler's rootfs is the image: the build host's jobs stay out of it."""
+    variants = tmp_path / "variants"
+    _seed_layer(variants, "base", "make.conf", 'MAKEOPTS="-j32 -l32"\n')
+    rootfs = tmp_path / "rootfs"
+    (rootfs / "etc").mkdir(parents=True)
+    monkeypatch.setenv("SHIDASHI_JOBS", "16")
+
+    apply_portage(rootfs, _recipe(), variants_dir=variants, layers=("base",), host_jobs=False)
+
+    text = (rootfs / "etc" / "portage" / "make.conf").read_text(encoding="utf-8")
+    assert "SHIDASHI_JOBS" not in text and "EMERGE_DEFAULT_OPTS" not in text
+    assert 'MAKEOPTS="-j32 -l32"' in text
 
 
 @pytest.mark.parametrize("bad", ["0", "-3", "sixteen", "16; rm -rf /"])
