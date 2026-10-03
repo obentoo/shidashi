@@ -657,17 +657,20 @@ The reference `make.conf` (already organized into named groups) maps directly:
 
 ### Phase 3 — Matrix
 - [x] arch axis: `znver5` (tier 1), `arrowlake` (tier 2, build-only, QEMU/TCG boot test). *(v3/znver5/arrowlake recipes complete; `arrowlake` QEMU/TCG boot test deferred.)*
-- [ ] flavor axis: `gnome`, `wm` (Wayland-only: Hyprland, Sway, niri). *(only `kde` and `minimal` curated; `gnome`/`wm` still placeholders — empty sets.)*
+- [ ] flavor axis: `gnome`, `wm` (Wayland-only: Hyprland, Sway, niri). *(`kde` and `minimal` curated; `gnome` ships `gnome-light` + GDM (unreleased); `wm` is still a placeholder — an empty set, its ISO boots to a tty.)*
 - [x] init axis: `openrc`. *(systemd + openrc complete.)*
 
 ### Phase 4 — Automation
-- [ ] Weekly CI matrix (cron Sunday 00:00) + publishing + checksums/GPG. *(scaffold gated with `if: false`; still missing a Gentoo runner + pointer file reading + a `release` command.)*
+- [ ] Weekly CI matrix (cron Sunday 00:00) + publishing + checksums/GPG. *(scaffold gated with `if: false`; still missing a self-hosted runner (Linux with systemd, root — or the builder VM below) + pointer file reading + a `release` command.)*
 - [x] Reproducible snapshot pin. *(stage3 in `seeds/stage3.toml`; `::gentoo` in `seeds/gentoo.toml` — signed daily snapshot, at least 7 days old (cooldown, D26), the overlays by commit in `seeds/overlays.toml`; factory/assemble/pretend bind only these pins, never the host's `/var/db/repos`.)*
+
+- [x] Builder VM: builds as the guest's root, no sudo on the host. *(`lab/vm/builder.sh`: a Bentoo `minimal` ISO under `shidashi vm`, the host's cache read-only under an overlay on the VM's disk; built the minimal, gnome and wm ISOs on 2026-10-02.)*
+- [ ] Builder image (OCI) under Kata Containers. Shidashi and its dependencies in a Bentoo image, run per job with `podman run --runtime kata`: each build in a disposable micro-VM with its own kernel, no sudo on the host, on any distribution with Podman and Kata — the packaged form of the builder VM, and an isolated self-hosted CI runner (each job in its own micro-VM). First experiment: the `minimal` rootfs as an OCI image under the kata runtime, checking that `systemd-nspawn` runs inside. Open points: the Kata guest kernel needs overlayfs, namespaces and device support (`sys-kernel/kata-guest-kernel` is in the overlay); Kata shares the rootfs over virtiofs, measured ~25% slower for binpkg installs in the builder VM — a block volume for the build tree; the micro-VM's memory is fixed (2 GB by default) and must be sized for builds.
 
 ### Phase 5 — Operations (optional)
 - [ ] Release dashboard (FastAPI).
 - [ ] Public binhost for end users (Cloudflare R2).
-- [ ] `app-misc/shidashi` ebuild in the overlay.
+- [x] `app-misc/shidashi` ebuild in the overlay. *(0.1.1, 2026-10-03: no `env.d`, the recipes in `/usr/share/shidashi`.)*
 
 ---
 
