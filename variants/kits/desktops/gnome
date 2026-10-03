@@ -1,9 +1,20 @@
-# CURATION: fed by pretend-resolve (§18.7) — GNOME desktop atoms.
-# No real source edition exists for GNOME yet (only editions/plasma is shipped),
-# so NO package atoms are fabricated here. Populate by curating a GNOME world set
-# and validating with `shidashi pretend-resolve` before trusting.
+# variants/kits/desktops/gnome — the GNOME desktop (2026-10-03).
+#
+# gnome-light, not gnome: the shell, the session, Settings, Files (nautilus) and a
+# terminal, without the full application set (gnome-core-apps and gnome-extra-apps:
+# epiphany, evolution, two editors, two image viewers, 17 games, tracker...). The
+# ISO already ships its own browser, mail client and media players; applications
+# are chosen here, as kits/desktops/kde does on top of Plasma.
+#
+# gdm is the display manager under both inits: gdm.service under systemd, the
+# display-manager service with DISPLAYMANAGER="gdm" under OpenRC (system.yaml).
 #
 # NOTE when curating: `graphics` gives every graphical flavor media-video/mpv but
 # NOT media-video/vlc -- vlc-4 is a Qt6/KDE-Frameworks application now, so it sits
 # in flavor/kde/sets/kde. If this flavor wants a full-featured player, pick the
 # native one (media-video/totem) rather than pulling Qt6+KF6 in for vlc alone.
+#
+# LEAF set: a flat list of atoms (2026-09-09). See kits/core/base for the layering contract.
+
+gnome-base/gdm
+gnome-base/gnome-light

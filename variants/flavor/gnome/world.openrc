@@ -21,6 +21,8 @@ app-portage/pycargoebuild
 dev-lang/rust-bin
 dev-libs/libayatana-appindicator-glib
 dev-util/vulkan-tools
+gnome-base/gdm
+gnome-base/gnome-light
 mail-client/thunderbird-bin
 mail-mta/proton-mail-bridge
 media-fonts/arphicfonts

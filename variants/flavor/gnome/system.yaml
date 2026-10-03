@@ -1,0 +1,20 @@
+# variants/flavor/gnome/system.yaml — GNOME's additions to base/system.yaml.
+#
+# GDM under both inits (kits/desktops/gnome): gdm.service provides the
+# display-manager.service alias under systemd; OpenRC's display-manager service
+# starts the one named in display_manager below.
+services:
+  systemd:
+    enable:
+      - gdm.service
+  openrc:
+    default:
+      - display-manager       # /etc/conf.d/display-manager: DISPLAYMANAGER below
+
+# The variant's name in /etc/os-release (VARIANT_ID is the flavor).
+os_release:
+  VARIANT: GNOME
+
+# OpenRC's display-manager service starts the one named here.
+display_manager:
+  openrc: gdm

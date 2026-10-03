@@ -266,9 +266,11 @@ def test_excluding_a_catalog_atom_is_an_error(
 
     tree = _variants_copy(tmp_path, monkeypatch)
     kit = tree / "kits/core/shell"
-    kit.write_text(kit.read_text().replace("app-editors/vim\n", "#app-editors/vim\n"))
+    # nano: an atom the base's shell kit installs (the curation may move others)
+    lines = kit.read_text().splitlines()
+    kit.write_text("".join(f"#{ln}\n" if ln == "app-editors/nano" else f"{ln}\n" for ln in lines))
     recipe = config.load_recipe("v3", "minimal", "systemd")
-    redundant = recipe.model_copy(update={"exclude": ("app-editors/vim",)})
+    redundant = recipe.model_copy(update={"exclude": ("app-editors/nano",)})
     with pytest.raises(ResolveError, match="already catalog-only in kit 'shell'"):
         world_atoms(redundant)
 
@@ -346,8 +348,8 @@ def test_an_include_of_something_never_taken_out_is_an_error(
 ) -> None:
     from shidashi.resolve import ResolveError, world_atoms
 
-    _with_include(tmp_path, monkeypatch, "kde", "include:\n  - app-editors/vim\n")
-    with pytest.raises(ResolveError, match="app-editors/vim .* is neither excluded"):
+    _with_include(tmp_path, monkeypatch, "kde", "include:\n  - app-editors/nano\n")
+    with pytest.raises(ResolveError, match="app-editors/nano .* is neither excluded"):
         world_atoms(config.load_recipe("v3", "kde", "systemd"))
 
 
@@ -445,7 +447,7 @@ def test_minimal_cannot_exclude_what_the_base_installs(
     from shidashi.resolve import ResolveError, world_atoms
 
     tree = _variants_copy(tmp_path, monkeypatch)
-    _add_exclude(tree, "minimal", "app-editors/vim")
+    _add_exclude(tree, "minimal", "app-editors/nano")
     with pytest.raises(ResolveError, match=r"kit 'shell'.*stage 'base' installs"):
         world_atoms(config.load_recipe("v3", "minimal", "systemd"))
 
