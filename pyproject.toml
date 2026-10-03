@@ -1,6 +1,6 @@
 [project]
 name = "shidashi"
-version = "0.1.0"
+version = "0.1.1"
 description = "Shidashi: builds Bentoo (Gentoo stage5) images and live ISOs from a stage3, phase by phase."
 readme = "README.md"
 requires-python = ">=3.14"
