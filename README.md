@@ -40,7 +40,7 @@ The full architecture is in **[OVERVIEW.md](OVERVIEW.md)**.
 | Boot test (`shidashi vm test`, BIOS + UEFI) | ✅ the `kde` and `minimal` ISOs pass |
 | Weekly releases (every Sunday, 00:00 UTC) | 🚧 planned: needs a self-hosted runner (Linux with systemd, root) |
 
-693 tests; lint, types and tests run on every push. The roadmap is in
+699 tests; lint, types and tests run on every push. The roadmap is in
 [OVERVIEW.md §17](OVERVIEW.md#17-development-roadmap).
 
 ## Model
@@ -135,6 +135,38 @@ Run the same checks as CI:
 
 ```sh
 uv run ruff check . && uv run ruff format --check . && uv run mypy . && uv run pytest
+```
+
+On Gentoo, `app-misc/shidashi` from the [Bentoo overlay](https://github.com/obentoo/bentoo)
+installs it system-wide, with the recipes and pins under `/usr/share/shidashi`. A checkout
+always uses its own `variants/` and `seeds/`, even with the package installed;
+`SHIDASHI_VARIANTS_DIR` and `SHIDASHI_SEEDS_DIR` point at any other tree.
+
+### Where the data lives
+
+| Path | What | Override |
+|---|---|---|
+| `/var/cache/shidashi` | binhost, fork points, pinned trees, distfiles, ccache | `SHIDASHI_CACHE` |
+| `/var/log/shidashi/runs` | one audit trail per run | `SHIDASHI_RUNS` |
+| `/var/tmp/shidashi` | scratch: build rootfs, logs, VM sessions | `SHIDASHI_SCRATCH` |
+
+`--work-dir DIR` puts all three under one directory instead.
+
+### The builder VM
+
+[`lab/vm/builder.sh`](lab/vm/builder.sh) builds inside a VM booted from a Bentoo `minimal`
+ISO, as the guest's root, so the host needs no sudo for `factory` or `assemble`. The host's
+cache is shared read-only and an overlay on the VM's own disk takes the writes; logs, audit
+trails and ISOs land in `/var/lib/shidashi/vm/builder/out`. It runs from a checkout (the
+guest uses the checkout's `.venv`), as a user in the `kvm` group.
+
+```sh
+sudo install -d -o "$USER" /var/lib/shidashi/vm   # once: the VM's directory is yours
+lab/vm/builder.sh start                     # the newest minimal ISO, 24 vCPUs, 32G, 200G disk
+lab/vm/builder.sh setup                     # shares, work disk, overlay
+lab/vm/builder.sh job iso-kde build v3 systemd --images kde --output-dir /mnt/out/iso
+lab/vm/builder.sh status
+shidashi vm test /var/lib/shidashi/vm/builder/out/iso/bentoo-…-kde-systemd-v3.iso   # on the host
 ```
 
 ## Usage

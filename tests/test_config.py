@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from shidashi import config
 from shidashi.config import (
     UnknownAxisError,
     available_names,
@@ -126,3 +127,50 @@ def test_recipe_path_unknown_name_raises_with_available(variants_tree: Path) -> 
     msg = str(excinfo.value)
     for name in _FIXTURE["flavor"]:
         assert name in msg
+
+
+# --- variants/ and seeds/: environment, checkout, then the system install ---------------
+
+
+@pytest.mark.parametrize("name", ["variants", "seeds"])
+def test_a_checkout_uses_its_own_tree(name: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Running from the repository: its recipes, even with a system install present."""
+    monkeypatch.delenv("SHIDASHI_VARIANTS_DIR", raising=False)
+    monkeypatch.delenv("SHIDASHI_SEEDS_DIR", raising=False)
+    checkout = Path(config.__file__).resolve().parent.parent / name
+    found = config.variants_dir() if name == "variants" else config.seeds_dir()
+    assert found == checkout
+
+
+@pytest.mark.parametrize("name", ["variants", "seeds"])
+def test_an_installed_package_finds_the_system_tree(
+    name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The wheel carries no recipes: an installed package falls back to
+    /usr/share/shidashi, so the ebuild needs no env.d to point at it."""
+    monkeypatch.delenv("SHIDASHI_VARIANTS_DIR", raising=False)
+    monkeypatch.delenv("SHIDASHI_SEEDS_DIR", raising=False)
+    package = tmp_path / "site-packages" / "shidashi"
+    package.mkdir(parents=True)
+    share = tmp_path / "usr-share-shidashi"
+    (share / name).mkdir(parents=True)
+    monkeypatch.setattr(config, "__file__", str(package / "config.py"))
+    monkeypatch.setattr(config, "_SYSTEM_SHARE", share)
+    found = config.variants_dir() if name == "variants" else config.seeds_dir()
+    assert found == share / name
+
+
+def test_the_environment_beats_both(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SHIDASHI_VARIANTS_DIR", str(tmp_path / "mine"))
+    assert config.variants_dir() == tmp_path / "mine"
+
+
+def test_without_any_tree_the_checkout_path_is_named(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("SHIDASHI_VARIANTS_DIR", raising=False)
+    package = tmp_path / "site-packages" / "shidashi"
+    package.mkdir(parents=True)
+    monkeypatch.setattr(config, "__file__", str(package / "config.py"))
+    monkeypatch.setattr(config, "_SYSTEM_SHARE", tmp_path / "nowhere")
+    assert config.variants_dir() == tmp_path / "site-packages" / "variants"

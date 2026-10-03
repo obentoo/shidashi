@@ -23,6 +23,35 @@ _CACHE_ENV = "SHIDASHI_CACHE"
 _SEEDS_ENV = "SHIDASHI_SEEDS_DIR"
 _RUNS_ENV = "SHIDASHI_RUNS"
 
+#: Where a system install (the app-misc/shidashi ebuild) puts the recipes and the
+#: pins: ``<share>/variants`` and ``<share>/seeds``. A module attribute so tests can
+#: point it elsewhere.
+_SYSTEM_SHARE = Path("/usr/share/shidashi")
+
+
+def _data_dir(name: str, env: str) -> Path:
+    """``variants/`` or ``seeds/``: the environment, the checkout, then the system.
+
+    1. ``env`` when set -- a curator's own tree;
+    2. ``<project root>/<name>`` when it exists: running from a checkout, whose
+       recipes are the ones being edited, even with a system install present;
+    3. ``/usr/share/shidashi/<name>`` when it exists: an installed Shidashi, whose
+       package sits in site-packages with no recipes beside it.
+
+    Neither existing, the checkout path is returned, so the error that follows
+    names where the tree was expected.
+    """
+    override = os.environ.get(env)
+    if override:
+        return Path(override)
+    checkout = Path(__file__).resolve().parent.parent / name
+    if checkout.is_dir():
+        return checkout
+    system = _SYSTEM_SHARE / name
+    if system.is_dir():
+        return system
+    return checkout
+
 
 class UnknownAxisError(Exception):
     """Unknown axis/value while resolving a ``variants/`` directory (R1.4).
@@ -43,15 +72,10 @@ class UnknownAxisError(Exception):
 def variants_dir() -> Path:
     """Return the ``variants/`` directory (R6.1).
 
-    If ``SHIDASHI_VARIANTS_DIR`` is set, use it; otherwise locate ``variants/``
-    relative to the package: the project root is the parent directory of the
-    ``shidashi`` package and ``variants/`` lives at ``<root>/variants``.
+    ``SHIDASHI_VARIANTS_DIR``, else the checkout's ``variants/``, else the system
+    install's (:func:`_data_dir`).
     """
-    override = os.environ.get(_ENV_VAR)
-    if override:
-        return Path(override)
-    project_root = Path(__file__).resolve().parent.parent
-    return project_root / "variants"
+    return _data_dir("variants", _ENV_VAR)
 
 
 def available_names(axis: str) -> list[str]:
@@ -167,16 +191,16 @@ def kits_dir() -> Path:
 
 
 def scratch_dir() -> Path:
-    """Return the scratch directory of the *pretend* flow (R6.2).
+    """Return the scratch directory: build rootfs, logs, VM sessions (R6.2).
 
     Honors ``SHIDASHI_SCRATCH`` (read on every call, like :func:`variants_dir`);
-    when unset, uses the default ``/var/tmp/shidashi-pretend``. All ephemeral
-    resolution state (the seeded rootfs) is confined here.
+    when unset, uses ``/var/tmp/shidashi``. Everything here is ephemeral and
+    can be wiped between builds.
     """
     override = os.environ.get(_SCRATCH_ENV)
     if override:
         return Path(override)
-    return Path("/var/tmp/shidashi-pretend")
+    return Path("/var/tmp/shidashi")
 
 
 def cache_dir() -> Path:
@@ -205,17 +229,12 @@ def runs_dir() -> Path:
 
 
 def seeds_dir() -> Path:
-    """Return the repo's ``seeds/`` directory (the pinned pointer) (R2.1).
+    """Return the ``seeds/`` directory (the pinned pointers) (R2.1).
 
-    Honors ``SHIDASHI_SEEDS_DIR`` (read on every call); when unset, resolves
-    ``seeds/`` relative to the project root (same resolution as
-    :func:`variants_dir`: the parent directory of the ``shidashi`` package).
+    ``SHIDASHI_SEEDS_DIR``, else the checkout's ``seeds/``, else the system
+    install's -- the same resolution as :func:`variants_dir` (:func:`_data_dir`).
     """
-    override = os.environ.get(_SEEDS_ENV)
-    if override:
-        return Path(override)
-    project_root = Path(__file__).resolve().parent.parent
-    return project_root / "seeds"
+    return _data_dir("seeds", _SEEDS_ENV)
 
 
 def build_root() -> Path:

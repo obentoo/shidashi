@@ -1,7 +1,7 @@
 """UNIT (R6.2) — new shidashi.config path helpers for the pretend flow.
 
 Contract (design.md §config): ``scratch_dir()`` (env ``SHIDASHI_SCRATCH``, default
-``/var/tmp/shidashi-pretend``), ``cache_dir()`` (env ``SHIDASHI_CACHE``) and
+``/var/tmp/shidashi``), ``cache_dir()`` (env ``SHIDASHI_CACHE``) and
 ``seeds_dir()`` (env ``SHIDASHI_SEEDS_DIR``). Each helper reads the environment
 variable *per call* (same pattern as ``variants_dir``), so we force the state via
 ``monkeypatch`` — we never depend on the host. Observable behavior only:
@@ -25,7 +25,7 @@ from shidashi import config
 
 def test_scratch_dir_default_when_unset(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("SHIDASHI_SCRATCH", raising=False)
-    assert config.scratch_dir() == Path("/var/tmp/shidashi-pretend")
+    assert config.scratch_dir() == Path("/var/tmp/shidashi")
 
 
 def test_scratch_dir_honors_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
