@@ -16,7 +16,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and `gnome-base/gdm`, without `gnome`'s full application set; the image picks its
   own applications. `flavor/gnome/system.yaml` enables `gdm.service` under systemd
   and the `display-manager` service under OpenRC, so the boot test also checks the
-  display manager and the graphical autologin.
+  display manager and the graphical autologin. On the Wayland-only base, the
+  gnome flavor turns X on for GTK 4, vulkan-loader and mesa (IBus's input methods
+  need `gtk:4[X]`; still no X session), builds SpiderMonkey with GCC instead of a
+  second LLVM, and leaves the Wacom panel out of Settings, which would have pulled
+  an X server into the image.
+
+### Changed
+
+- **Package selection.** vim, bash and their completions leave the `shell` kit for
+  the binhost catalog (bash stays in every image through `@system`; nano is the
+  installed editor); GNOME's USE gains `gtk4`; KDE's drops `qt5`.
 
 ## [0.1.1] - 2026-10-03
 
