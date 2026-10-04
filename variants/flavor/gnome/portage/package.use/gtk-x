@@ -1,0 +1,12 @@
+# GTK 4 with X (2026-10-03): the base forces USE="-X", but gnome-shell[ibus] needs
+# app-i18n/ibus[gtk3,gtk4,introspection], and ibus[gtk4] needs gui-libs/gtk:4[X] --
+# the input methods (IBus: CJK, emoji) have no Wayland-only build. Still no X
+# session: mutter runs Wayland and the X side serves XWayland clients, as in
+# flavor/kde/portage/package.use/plasma-x. Kept in the gnome flavor so the cascade
+# does not reach the other desktops.
+gui-libs/gtk X
+
+# The cascade of gtk[X], each asked by its [X?] dependency:
+# gtk -> vulkan-loader[X] (gtk[vulkan]) and mesa[X].
+media-libs/vulkan-loader X
+media-libs/mesa X

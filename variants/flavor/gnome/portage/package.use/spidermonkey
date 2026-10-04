@@ -1,0 +1,10 @@
+# SpiderMonkey for GNOME's JavaScript (2026-10-04): gnome-shell -> dev-libs/gjs ->
+# dev-lang/spidermonkey:140 (gjs asks mozjs-140 upstream). Its ebuild requires
+# exactly one of LLVM_SLOT 20 or 21, and the images set LLVM_SLOT="22".
+#
+# The flag only satisfies that REQUIRED_USE. -clang is what keeps LLVM 21 out:
+# the base's global USE has clang (DEVELOPMENT="clang git"), and spidermonkey[clang]
+# builds with clang/lld of that slot -- a second LLVM, clang and lld, compiled
+# for one library (seen on 2026-10-04). With -clang it builds with GCC and pulls
+# no LLVM at all. Drop both when a spidermonkey:140 with LLVM 22 reaches ::gentoo.
+dev-lang/spidermonkey:140 llvm_slot_21 -clang

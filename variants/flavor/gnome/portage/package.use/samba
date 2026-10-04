@@ -1,0 +1,6 @@
+# Samba's client for GNOME's printer settings (2026-10-04):
+# gnome-control-center[cups] -> net-fs/samba[client] (SMB printers), and
+# samba -> net-libs/ngtcp2[gnutls]. Kept in the gnome flavor: no other image
+# pulls samba.
+net-fs/samba client
+net-libs/ngtcp2 gnutls

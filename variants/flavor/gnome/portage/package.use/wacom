@@ -1,0 +1,6 @@
+# No Wacom panel in GNOME Settings (author's decision, 2026-10-04): with
+# input_devices_wacom (from the desktop's INPUT_DEVICES), gnome-control-center
+# needs x11-drivers/xf86-input-wacom -- an X driver, which pulls x11-base/xorg-server
+# and xorg-drivers with ~10 xf86-* drivers into a Wayland-only image. Tablets still
+# work through libinput; only their settings panel goes.
+gnome-base/gnome-control-center -input_devices_wacom
