@@ -196,6 +196,19 @@ shidashi vm test bentoo-…-kde-systemd-v3.iso   # boot it and check what it dec
 | `vm start` / `run` / `test` / `stop` | boot an ISO in a VM and drive it over SSH on vsock | |
 | `release` | publish a release (not implemented yet) | |
 
+### Following a build
+
+`pretend`, `factory`, `assemble` and `build` show their progress on stderr as they run: one
+`✓` line per finished step with its time, a line per download and per merged package
+(`(47/312) dev-lang/rust-1.91.0  done  41m03s`), and on a terminal a footer with the
+running step, a bar over the emerge's packages, the packages in flight and a bar per download.
+Piped or redirected, the same lines come out without the footer.
+
+The raw output of every command goes to the run's log, under `/var/tmp/shidashi/logs`
+(named when the first command starts). `-v`/`--verbose` prints it on the terminal too. When a
+build fails, the terminal shows the last 50 lines of the failing command's output; the log has
+all of it.
+
 ## Contributing
 
 Issues and pull requests are welcome. Before pushing, run the checks above; the CI job can be

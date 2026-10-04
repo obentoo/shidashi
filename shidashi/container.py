@@ -15,7 +15,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from types import TracebackType
 
-from shidashi import audit
+from shidashi import audit, progress
 
 
 class CommandResult:
@@ -174,14 +174,19 @@ class Container:
         if self.log is not None:
             return self._run_logged(cmd, argv, env=env, check=check)
         start = time.monotonic()
-        proc = subprocess.run(
-            cmd,
-            stdin=subprocess.DEVNULL,
-            capture_output=True,
-            text=True,
-            env=dict(env) if env is not None else None,
-            check=False,
-        )
+        reporter = progress.current()
+        reporter.command_started(argv)
+        try:
+            proc = subprocess.run(
+                cmd,
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                text=True,
+                env=dict(env) if env is not None else None,
+                check=False,
+            )
+        finally:
+            reporter.command_ended()
         self._audit(argv, proc.returncode, start, (proc.stdout + proc.stderr).count("\n"))
         result = CommandResult(proc.returncode, proc.stdout, proc.stderr)
         if check and proc.returncode != 0:
@@ -202,32 +207,40 @@ class Container:
 
         Returns the same :class:`CommandResult` as the captured path, with the
         merged stream as ``stdout`` (every caller reads ``stdout + stderr``).
+        Each line also reaches the progress reporter (:mod:`shidashi.progress`),
+        which turns emerge's status lines into the packages on the terminal.
         """
         assert self.log is not None
         self.log.parent.mkdir(parents=True, exist_ok=True)
         lines: list[str] = []
         start = time.monotonic()
-        with self.log.open("a", encoding="utf-8") as out:
-            stamp = datetime.datetime.now().isoformat(timespec="seconds")
-            out.write(f"### {stamp} $ {' '.join(argv)}\n")
-            out.flush()
-            with subprocess.Popen(
-                cmd,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                errors="replace",
-                env=dict(env) if env is not None else None,
-            ) as proc:
-                assert proc.stdout is not None
-                for line in proc.stdout:
-                    lines.append(line)
-                    out.write(line)
-                    out.flush()
-                returncode = proc.wait()
-            stamp = datetime.datetime.now().isoformat(timespec="seconds")
-            out.write(f"### {stamp} exit {returncode}\n")
+        reporter = progress.current()
+        reporter.command_started(argv, log=self.log)
+        try:
+            with self.log.open("a", encoding="utf-8") as out:
+                stamp = datetime.datetime.now().isoformat(timespec="seconds")
+                out.write(f"### {stamp} $ {' '.join(argv)}\n")
+                out.flush()
+                with subprocess.Popen(
+                    cmd,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    errors="replace",
+                    env=dict(env) if env is not None else None,
+                ) as proc:
+                    assert proc.stdout is not None
+                    for line in proc.stdout:
+                        lines.append(line)
+                        out.write(line)
+                        out.flush()
+                        reporter.output(line)
+                    returncode = proc.wait()
+                stamp = datetime.datetime.now().isoformat(timespec="seconds")
+                out.write(f"### {stamp} exit {returncode}\n")
+        finally:
+            reporter.command_ended()
         self._audit(argv, returncode, start, len(lines))
         output = "".join(lines)
         if check and returncode != 0:
@@ -253,9 +266,13 @@ class Container:
         ``capture_output``/``text``/``check`` — so that the user's terminal
         attaches to the container. Reuses the persistent rootfs
         (``ephemeral=False``), so changes made in the shell persist into the
-        next phase; returns on exit **without** tearing down the rootfs.
+        next phase; returns on exit **without** tearing down the rootfs. The
+        progress footer is paused meanwhile: the shell owns the terminal.
         """
-        subprocess.run(_nspawn_shell_argv(self.rootfs, binds=self.binds, binds_rw=self.binds_rw))
+        with progress.current().paused():
+            subprocess.run(
+                _nspawn_shell_argv(self.rootfs, binds=self.binds, binds_rw=self.binds_rw)
+            )
 
     def __enter__(self) -> Container:
         if shutil.which("systemd-nspawn") is None:

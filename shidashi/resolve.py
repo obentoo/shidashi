@@ -21,7 +21,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
 
-from shidashi import config, seed
+from shidashi import audit, config, seed
 from shidashi.container import CommandResult, Container
 from shidashi.recipe import INCLUDE_SET_PREFIX, ResolvedRecipe
 
@@ -754,20 +754,28 @@ def pretend_resolve(
     scratch = config.scratch_dir()
     rootfs = scratch / f"{arch}-{flavor}-{init}" / "rootfs"
 
-    pointer = seed.load_pointer(init, seeds_dir=config.seeds_dir())
-    tarball = seed.fetch_stage3(pointer, cache_dir=config.cache_dir(), download=download)
-    seed.extract_stage3(tarball, rootfs)
+    # steps of the audit vocabulary: outside an audited run they record nothing,
+    # but the progress reporter shows them (shidashi.progress)
+    run = audit.current()
+    with run.step("seed"):
+        pointer = seed.load_pointer(init, seeds_dir=config.seeds_dir())
+        tarball = seed.fetch_stage3(pointer, cache_dir=config.cache_dir(), download=download)
+        seed.extract_stage3(tarball, rootfs)
 
-    from shidashi.tree import pinned_repos  # local: tree imports seed, like this module
+        from shidashi.tree import pinned_repos  # local: tree imports seed, like this module
 
-    repos = pinned_repos(
-        seeds_dir=config.seeds_dir(), cache_dir=config.cache_dir(), download=download
-    )
-    apply_rootfs(rootfs, recipe, variants_dir=variants_dir)
-    apply_portage(rootfs, recipe, variants_dir=variants_dir)
-    binds = bind_repos(rootfs / "etc" / "portage" / "repos.conf", pinned=repos)
+        repos = pinned_repos(
+            seeds_dir=config.seeds_dir(), cache_dir=config.cache_dir(), download=download
+        )
+        apply_rootfs(rootfs, recipe, variants_dir=variants_dir)
+        apply_portage(rootfs, recipe, variants_dir=variants_dir)
+        binds = bind_repos(rootfs / "etc" / "portage" / "repos.conf", pinned=repos)
 
-    with Container(rootfs, ephemeral=not keep, binds=binds) as container:
+    log = scratch / "logs" / f"pretend-{arch}-{flavor}-{init}.log"
+    with (
+        run.step("resolve"),
+        Container(rootfs, ephemeral=not keep, binds=binds, log=log) as container,
+    ):
         result = run_pretend(container)
 
     combined = result.stdout + result.stderr

@@ -29,7 +29,7 @@ from rich.markup import escape
 from rich.prompt import Prompt
 from rich.table import Table
 
-from shidashi import audit, config, doctor, publish
+from shidashi import audit, config, doctor, progress, publish
 from shidashi.assembler import Assembler, AssemblerError, AssembleResult
 from shidashi.factory import (
     CheckpointDecision,
@@ -96,6 +96,15 @@ class OutputFormat(StrEnum):
     yaml = "yaml"
     json = "json"
     pretty = "pretty"
+
+
+#: ``-v``: the raw output of every command on the terminal too. The progress
+#: (:mod:`shidashi.progress`) shows steps, downloads and packages either way, and
+#: the raw output always goes to the run's log file.
+Verbose = Annotated[
+    bool,
+    typer.Option("--verbose", "-v", help="Also print every line the build prints, as it runs."),
+]
 
 
 def _require_build_host() -> None:
@@ -267,6 +276,7 @@ def pretend(
         Path | None,
         typer.Option("--work-dir", help="Work root (cache+scratch under <DIR>)."),
     ] = None,
+    verbose: Verbose = False,
 ) -> None:
     """Resolve the recipe against the real tree via ``emerge --pretend`` (R1.1–R1.4).
 
@@ -277,7 +287,8 @@ def pretend(
     _apply_work_dir(work_dir)
     _require_build_host()
     try:
-        report = pretend_resolve(arch, flavor, init, download=not no_download, keep=keep)
+        with progress.reporting(_err_console, verbose=verbose):
+            report = pretend_resolve(arch, flavor, init, download=not no_download, keep=keep)
     except (SeedError, ResolveError, config.UnknownAxisError, RecipeChainError) as err:
         if isinstance(err, ResolveError) and err.raw_output:
             _err_console.print(err.raw_output, markup=False, highlight=False)
@@ -309,13 +320,17 @@ def _pin_inputs(init: str) -> dict[str, object]:
 
 
 @contextlib.contextmanager
-def _audited(command: str, resolved: ResolvedRecipe, **inputs: object) -> Generator[audit.Recorder]:
+def _audited(
+    command: str, resolved: ResolvedRecipe, *, verbose: bool = False, **inputs: object
+) -> Generator[audit.Recorder]:
     """Run the block as an audited run (:mod:`shidashi.audit`) and say where it went.
 
     The trail records the whole recipe, the pins and ``inputs``, then every step
     and command. If the runs directory cannot be written (not root, read-only),
     the run goes on unaudited with a visible warning instead of failing before
-    the real checks (such as the root guard) could explain why.
+    the real checks (such as the root guard) could explain why. Either way the
+    block's progress is shown on stderr (:mod:`shidashi.progress`; ``verbose``
+    adds the raw output).
     """
     all_inputs = {"recipe": resolved.model_dump(mode="json"), **_pin_inputs(resolved.init)}
     all_inputs.update(inputs)
@@ -330,10 +345,12 @@ def _audited(command: str, resolved: ResolvedRecipe, **inputs: object) -> Genera
         recorder = cm.__enter__()
     except OSError as err:
         _err_console.print(f"[yellow]warning:[/yellow] audit trail disabled: {escape(str(err))}")
-        yield audit.current()
+        with progress.reporting(_err_console, verbose=verbose):
+            yield audit.current()
         return
     try:
-        yield recorder
+        with progress.reporting(_err_console, verbose=verbose):
+            yield recorder
     except BaseException:
         if not cm.__exit__(*sys.exc_info()):
             raise
@@ -435,14 +452,42 @@ def _render_factory_stepwise_pretty(
         _render_phase_diff(diff, console)
 
 
+#: Lines of a failed command's output shown on the terminal; the rest is in its log.
+_OUTPUT_TAIL = 50
+
+
+def _print_output(output: object, log: Path | None = None) -> None:
+    """The end of a failed command's output, where emerge says what broke and where.
+
+    A multi-hour emerge prints far more than a terminal keeps, and the error is
+    at the end. The whole output is in the run's log: ``log``, or the one the
+    progress named when the first command started.
+    """
+    text = output.decode(errors="replace") if isinstance(output, bytes) else str(output or "")
+    lines = text.rstrip("\n").splitlines()
+    if not lines:
+        return
+    if len(lines) > _OUTPUT_TAIL:
+        where = str(log) if log is not None else "the log named above"
+        _err_console.print(
+            f"[dim]… {len(lines) - _OUTPUT_TAIL} earlier lines; the whole output is in "
+            f"{escape(where)}[/dim]",
+            soft_wrap=True,
+        )
+        lines = lines[-_OUTPUT_TAIL:]
+    _err_console.print("\n".join(lines), markup=False, highlight=False)
+
+
 def _prompt_choice(prompt: str, choices: list[str], default: str) -> str:
     """Ask for a choice among ``choices`` via ``rich`` (the default on no answer).
 
     Thin wrapper over :meth:`rich.prompt.Prompt.ask` -- restricts the input to
     ``choices`` and returns the default when the user just presses Enter. Kept apart
     so that the interactive callbacks (checkpoint/failure) stay short and testable.
+    The progress footer is paused while it asks.
     """
-    return Prompt.ask(prompt, choices=choices, default=default)
+    with progress.current().paused():
+        return Prompt.ask(prompt, choices=choices, default=default)
 
 
 def _on_checkpoint(phase: str, diff: PhaseDiff) -> CheckpointDecision:
@@ -468,7 +513,7 @@ def _on_failure(phase: str, err: Exception) -> FailureDecision:
     """Phase failure callback: print the emerge output and ask retry/abort (R3.1–R3.3).
 
     ``err`` is the phase's :class:`~shidashi.factory.FactoryError`; prints ``err.phase`` and
-    ``err.output`` (the raw ``emerge`` output) to stderr and maps the choice to
+    the end of ``err.output`` (the raw ``emerge`` output) to stderr and maps the choice to
     :class:`~shidashi.factory.FailureDecision`: ``r`` → ``RETRY`` (re-runs the same phase),
     anything else → ``ABORT``. Opening the failure shell belongs to the build/driver
     layer -- the callback only prints and asks (R3.4: it never skips the phase).
@@ -476,8 +521,7 @@ def _on_failure(phase: str, err: Exception) -> FailureDecision:
     failing = getattr(err, "phase", None) or phase
     output = getattr(err, "output", "")
     _err_console.print(f"[bold red]phase failed[/bold red] {failing}: {escape(str(err))}")
-    if output:
-        _err_console.print(output, markup=False, highlight=False)
+    _print_output(output)
     choice = _prompt_choice("retry/abort", ["r", "a"], "a")
     if choice == "r":
         return FailureDecision.RETRY
@@ -559,6 +603,7 @@ def factory(
             "-uDN --changed-deps over the pinned tree; refuses a toolchain change.",
         ),
     ] = False,
+    verbose: Verbose = False,
 ) -> None:
     """Build the recipe's binpkgs (stage4) in an nspawn container (R1.1–R1.5/R8.x).
 
@@ -619,6 +664,7 @@ def factory(
             keep=keep,
             update=update,
             stop_after=stop_after,
+            verbose=verbose,
         )
         return
 
@@ -648,6 +694,7 @@ def factory(
         step=step,
         reset=reset,
         force_resume=force_resume,
+        verbose=verbose,
     )
 
 
@@ -664,6 +711,7 @@ def _run_factory_oneshot(
     keep: bool,
     update: bool = False,
     stop_after: str | None = None,
+    verbose: bool = False,
 ) -> None:
     """Story 003's one-shot path -- behavior unchanged byte for byte (R8.2).
 
@@ -673,6 +721,7 @@ def _run_factory_oneshot(
         with _audited(
             "factory",
             resolved,
+            verbose=verbose,
             pkgdir=str(pkgdir),
             update=update,
             emptytree=emptytree,
@@ -692,8 +741,7 @@ def _run_factory_oneshot(
             )
         else:
             _err_console.print(f"[bold red]error:[/bold red] {escape(str(err))}")
-        if err.output:
-            _err_console.print(err.output, markup=False, highlight=False)
+        _print_output(err.output, config.build_log_path(resolved))
         raise typer.Exit(1) from err
     except (SeedError, ResolveError, config.UnknownAxisError, RecipeChainError) as err:
         if isinstance(err, ResolveError) and err.raw_output:
@@ -721,6 +769,7 @@ def _run_factory_stepwise(
     step: bool,
     reset: bool,
     force_resume: bool,
+    verbose: bool = False,
 ) -> None:
     """Stepwise/resumable path (R1.x/R2.x/R3.x/R6.3).
 
@@ -743,6 +792,7 @@ def _run_factory_stepwise(
             with _audited(
                 "factory-stepwise",
                 resolved,
+                verbose=verbose,
                 pkgdir=str(pkgdir),
                 until=until,
                 reset=reset,
@@ -774,8 +824,7 @@ def _run_factory_stepwise(
                 )
             else:
                 _err_console.print(f"[bold red]error:[/bold red] {escape(str(err))}")
-            if err.output:
-                _err_console.print(err.output, markup=False, highlight=False)
+            _print_output(err.output, config.build_log_path(resolved))
             raise typer.Exit(1) from err
         except (SeedError, ResolveError, config.UnknownAxisError, RecipeChainError) as err:
             if isinstance(err, ResolveError) and err.raw_output:
@@ -919,6 +968,7 @@ def assemble(
             "time, the others on every CPU.",
         ),
     ] = None,
+    verbose: Verbose = False,
 ) -> None:
     """Assemble the recipe's live ISO from the binhost (OVERVIEW §7).
 
@@ -951,6 +1001,7 @@ def assemble(
         with _audited(
             "assemble",
             resolved,
+            verbose=verbose,
             binhost=str(binhost),
             output_dir=str(output_dir),
             jobs=jobs,
@@ -988,8 +1039,8 @@ def assemble(
         _err_console.print(
             f"[bold red]emerge/dracut failure in the ISO[/bold red] (exit {err.returncode})"
         )
-        if err.stderr:
-            _err_console.print(err.stderr, markup=False, highlight=False)
+        # a logged container merges stderr into the output
+        _print_output(err.output or err.stderr)
         raise typer.Exit(1) from err
 
     if output_format is OutputFormat.json:
@@ -1081,6 +1132,7 @@ def build(
         Path | None,
         typer.Option("--work-dir", help="Root of cache, scratch and runs."),
     ] = None,
+    verbose: Verbose = False,
 ) -> None:
     """Build a tree of images in one audited run: the factory, then every ISO.
 
@@ -1114,6 +1166,7 @@ def build(
         with _audited(
             "build",
             recipes[iso_targets[-1]],
+            verbose=verbose,
             images=iso_targets,
             factory=[] if skip_factory else factory_targets,
             pkgdir=str(pkgdir),
@@ -1161,8 +1214,7 @@ def build(
     except FactoryError as err:
         where = f" {escape(str(err.phase))}" if err.phase else ""
         _err_console.print(f"[bold red]phase failed[/bold red]{where}: {escape(str(err))}")
-        if err.output:
-            _err_console.print(err.output, markup=False, highlight=False)
+        _print_output(err.output)
         raise typer.Exit(1) from err
     except (
         AssemblerError,
@@ -1176,6 +1228,7 @@ def build(
         raise typer.Exit(1) from err
     except subprocess.CalledProcessError as err:
         _err_console.print(f"[bold red]emerge/dracut failure[/bold red] (exit {err.returncode})")
+        _print_output(err.output or err.stderr)
         raise typer.Exit(1) from err
 
     if trail.root is not None:

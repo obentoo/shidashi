@@ -280,6 +280,20 @@ def current() -> Recorder:
     return _CURRENT.get() or _NULL
 
 
+@contextlib.contextmanager
+def recording(recorder: Recorder) -> Generator[Recorder]:
+    """Make ``recorder`` :func:`current` for the block.
+
+    For a recorder that wraps the run in force -- :class:`shidashi.progress.Observed`
+    shows the steps on the terminal and forwards everything to the run.
+    """
+    token = _CURRENT.set(recorder)
+    try:
+        yield recorder
+    finally:
+        _CURRENT.reset(token)
+
+
 def new_run_id(now: datetime.datetime | None = None) -> str:
     """``20260930T014500Z-<6 hex>``: sortable, and unique within a second."""
     stamp = (now or _utc_now()).strftime("%Y%m%dT%H%M%SZ")

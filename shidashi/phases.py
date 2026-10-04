@@ -33,7 +33,7 @@ from pathlib import Path
 
 import pydantic
 
-from shidashi import audit, config, state
+from shidashi import audit, config, progress, state
 from shidashi.container import Container
 from shidashi.flow import StagesFlow, active_flow
 from shidashi.recipe import Phase, ResolvedRecipe, UseBreak
@@ -709,6 +709,7 @@ def snapshot_fork_point(rootfs: Path, dest: Path) -> Path:
     xattrs (file capabilities) survive, which Python's ``tarfile`` did not.
     """
     tmp = dest.with_name(f".{dest.name}.tmp")
+    progress.current().note(f"writing {dest.name}")
     try:
         _tar(["--create", "--file", str(tmp), "--directory", str(rootfs), *ROOTFS_TAR_FLAGS, "."])
         os.replace(tmp, dest)
@@ -720,6 +721,7 @@ def snapshot_fork_point(rootfs: Path, dest: Path) -> Path:
 
 def restore_fork_point(tarball: Path, rootfs: Path) -> None:
     """Extract ``tarball`` into ``rootfs`` (R5.1/R5.2), modes and xattrs intact."""
+    progress.current().note(f"restoring {tarball.name}")
     _tar(["--extract", "--file", str(tarball), "--directory", str(rootfs), *ROOTFS_TAR_FLAGS])
 
 

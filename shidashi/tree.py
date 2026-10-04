@@ -32,6 +32,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
+from shidashi import progress
 from shidashi.seed import GENTOO_KEYRING, SeedError, gpg_verify
 
 #: A snapshot younger than this is refused (D26).
@@ -103,7 +104,7 @@ def verify_detached(data: Path, signature: Path, *, keyring: Path = GENTOO_KEYRI
 def _download(url: str, dest: Path) -> None:
     try:
         with urllib.request.urlopen(url) as resp, dest.open("wb") as out:  # noqa: S310
-            shutil.copyfileobj(resp, out)
+            progress.copy(resp, out, label=dest.name, total=getattr(resp, "length", None))
     except (urllib.error.URLError, OSError) as err:
         raise TreeError(f"failed to download {url}: {err}") from err
 
@@ -165,6 +166,7 @@ def ensure_tree(
     tarball = fetch_snapshot(pin, cache_dir=cache_dir, download=download, verify=verify)
     dest.parent.mkdir(parents=True, exist_ok=True)
     tmp = Path(tempfile.mkdtemp(prefix=".extract-", dir=dest.parent))
+    progress.current().note(f"extracting {pin.filename}")
     try:
         with tarfile.open(tarball, "r:*") as tar:
             tar.extractall(tmp, filter="data")
@@ -248,6 +250,7 @@ def ensure_overlay(pin: OverlayPin, *, cache_dir: Path, download: bool = True) -
     if have.returncode != 0:
         if not download:
             raise TreeError(f"--no-download: {pin.name} commit {pin.commit} is not in {gitdir}")
+        progress.current().note(f"fetching {pin.name} {pin.commit[:12]}")
         fetched = _git(
             ["--git-dir", str(gitdir), "fetch", "--quiet", "--depth", "1", pin.url, pin.commit]
         )

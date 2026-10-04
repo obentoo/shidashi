@@ -143,6 +143,51 @@ def test_factory_error_exit1_prints_phase_and_output(
     assert "ffmpeg build error" in combined
 
 
+def test_factory_error_shows_the_end_of_a_long_output_and_names_the_log(
+    monkeypatch: pytest.MonkeyPatch, variants_tree: Path
+) -> None:
+    output = "".join(f"emerge line {i:03d}\n" for i in range(200))
+
+    def _raise(**_k: object) -> Any:
+        raise FactoryError("emerge failed", phase="graphics", output=output)
+
+    monkeypatch.setattr(cli, "Factory", _fake_factory(_raise), raising=False)
+    result = runner.invoke(app, ["factory", "v3", "minimal", "systemd"])
+    assert result.exit_code == 1
+    combined = result.stdout + (result.stderr or "")
+    assert "emerge line 199" in combined and "emerge line 150" in combined
+    assert "emerge line 149" not in combined
+    assert "150 earlier lines" in combined
+    assert "v3-minimal-systemd.log" in combined
+
+
+@pytest.mark.parametrize("command", ["pretend", "factory", "assemble", "build"])
+def test_the_build_commands_take_verbose(command: str) -> None:
+    result = runner.invoke(app, [command, "--help"])
+    assert result.exit_code == 0
+    assert "--verbose" in result.stdout
+
+
+@pytest.mark.parametrize(("flags", "verbose"), [([], False), (["-v"], True)])
+def test_factory_shows_its_progress_and_verbose_reaches_it(
+    monkeypatch: pytest.MonkeyPatch, variants_tree: Path, flags: list[str], verbose: bool
+) -> None:
+    from shidashi import progress
+
+    seen: list[bool] = []
+
+    def _build(**_k: object) -> Any:
+        reporter = progress.current()
+        assert isinstance(reporter, progress.View)
+        seen.append(reporter.verbose)
+        return _fake_result()
+
+    monkeypatch.setattr(cli, "Factory", _fake_factory(_build), raising=False)
+    result = runner.invoke(app, ["factory", "v3", "minimal", "systemd", *flags])
+    assert result.exit_code == 0, result.output
+    assert seen == [verbose]
+
+
 # --- SeedError / ResolveError → friendly exit 1 ------------------------------
 
 

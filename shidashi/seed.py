@@ -25,6 +25,8 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
 
+from shidashi import progress
+
 _STRICT = ConfigDict(frozen=True, extra="forbid")
 
 # Defensive limit when reading the TOML pointer (small, checked-in file).
@@ -200,10 +202,11 @@ def _download(url: str, dest: Path) -> None:
 
     Isolated in a named helper so tests can monkeypatch
     ``seed._download`` and ensure the cache-hit path does not touch the network.
+    The transfer shows on the terminal (:func:`shidashi.progress.copy`).
     """
     try:
         with urllib.request.urlopen(url) as resp, dest.open("wb") as out:  # noqa: S310
-            shutil.copyfileobj(resp, out)
+            progress.copy(resp, out, label=dest.name, total=getattr(resp, "length", None))
     except (urllib.error.URLError, OSError) as err:
         raise SeedError(f"failed to download {url}: {err}") from err
 
@@ -274,6 +277,7 @@ def extract_stage3(tarball: Path, rootfs: Path) -> None:
     aborted -- and ``tarfile`` does not restore xattrs (file capabilities).
     """
     rootfs.mkdir(parents=True, exist_ok=True)
+    progress.current().note(f"extracting {tarball.name}")
     result = subprocess.run(
         ["tar", "--extract", "--file", str(tarball), "--directory", str(rootfs), *ROOTFS_TAR_FLAGS],
         capture_output=True,
