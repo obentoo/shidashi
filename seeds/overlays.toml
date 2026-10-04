@@ -14,7 +14,7 @@
 # Pin the overlay to the SAME DAY as the ::gentoo snapshot and bump both
 # together: an overlay newer than the tree asks for versions the tree lacks.
 
-# 2026-09-27: the last commit of 2026-09-19 (UTC), the day of gentoo-20260919.
+# 2026-10-04: the last commit of 2026-09-26 (UTC), the day of gentoo-20260926.
 [bentoo]
 url = "https://github.com/obentoo/bentoo.git"
-commit = "199e434501209293c85d3e67260fafffd5d38033"
+commit = "8f3c6db4961b7d6eddd67c29e524abe4796657ee"

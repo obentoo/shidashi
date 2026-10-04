@@ -20,7 +20,7 @@ from shidashi.tree import (
     verify_detached,
 )
 
-_LAB_SNAPSHOT = Path("/var/tmp/bentoo-lab/dl/gentoo-20260919.tar.xz")
+_LAB_SNAPSHOT = Path("/var/tmp/bentoo-lab/dl/gentoo-20260926.tar.xz")
 
 
 def _snapshot_bytes(date: str) -> bytes:

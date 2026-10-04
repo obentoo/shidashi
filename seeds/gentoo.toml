@@ -15,9 +15,10 @@
 #   sha512sum $F                # -> sha512 below
 # and update date + sha512 together.
 
-# 2026-09-26: the newest snapshot the cooldown allows. GOODSIG + VALIDSIG by
-# E1D6ABB63BFCFB4BA02FDF1CEC590EEAC9189250 (Gentoo ebuild repository signing key)
-# against /usr/share/openpgp-keys/gentoo-release.asc before the hash was copied.
-date = "20260919"
+# 2026-10-04: gentoo-20260919 rotated off the mirror (404); re-pinned to 20260926.
+# GOODSIG + VALIDSIG by E1D6ABB63BFCFB4BA02FDF1CEC590EEAC9189250 (Gentoo ebuild
+# repository signing key) against /usr/share/openpgp-keys/gentoo-release.asc
+# before the hash was copied.
+date = "20260926"
 base_url = "https://distfiles.gentoo.org/snapshots"
-sha512 = "dbaaa31d00beb9e4ffbe15825333e76943434d3ec8d89aacdd4070e11277723a621a0032c30f5ae5dcff0aa1eb73a17851385eebc789ade16d83fa6153c6b601"
+sha512 = "8a052b91f0f72470442683a5fb9ff052d810d0128db9d682bb88af1c6583b48213b69e57ffdaf2a2ec835eacf7d1f2aee19047ed5fea5e5f9350d40af1561926"
