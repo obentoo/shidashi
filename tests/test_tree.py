@@ -16,7 +16,6 @@ from shidashi.tree import (
     ensure_tree,
     fetch_snapshot,
     load_tree_pin,
-    signature_ok,
     verify_detached,
 )
 
@@ -57,14 +56,6 @@ def test_cooldown_accepts_a_week_old_snapshot_and_refuses_a_younger_one() -> Non
     check_cooldown(pin, today=datetime.date(2026, 9, 26))  # exactly 7 days
     with pytest.raises(TreeError, match="6 day\\(s\\) old.*gentoo-20260918"):
         check_cooldown(pin, today=datetime.date(2026, 9, 25))
-
-
-def test_signature_ok_needs_goodsig_validsig_and_exit_zero() -> None:
-    good = "[GNUPG:] GOODSIG EC59 Gentoo\n[GNUPG:] VALIDSIG E1D6 2026-09-20\n"
-    assert signature_ok(good, 0)
-    assert not signature_ok(good, 1)
-    assert not signature_ok("[GNUPG:] GOODSIG EC59 Gentoo\n", 0)  # e.g. an expired key
-    assert not signature_ok("[GNUPG:] BADSIG EC59 Gentoo\n", 1)
 
 
 def _mirror(monkeypatch: pytest.MonkeyPatch, files: dict[str, bytes]) -> list[str]:

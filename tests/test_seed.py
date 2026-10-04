@@ -3,8 +3,8 @@
 Everything here is deterministic on the non-Gentoo CI host. The download and the
 privileged extraction are NOT exercised here (extract_stage3 is integration, task 2.3);
 ``fetch_stage3`` is tested through the cache-hit and ``download=False`` paths without
-touching the network (monkeypatch). ``verify_signature`` (gpg shell-out) has its host
-path covered by the integration tests; here we exercise only the pure,
+touching the network (monkeypatch). ``verify_signature`` runs the real ``gpg``
+against a key generated for the test (skipped without gpg); the rest is the pure,
 verifiable contract: ``load_pointer``, ``stage3_url``, ``verify_digest``.
 
 Contract (design.md §seed): ``Stage3Pointer(init, base_url, snapshot, filename,
@@ -16,6 +16,10 @@ seeds_dir)`` (SeedError listing the entries if the init is missing); ``stage3_ur
 """
 
 import hashlib
+import shutil
+import subprocess
+import tempfile
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -26,8 +30,10 @@ from shidashi.seed import (
     Stage3Pointer,
     fetch_stage3,
     load_pointer,
+    signature_ok,
     stage3_url,
     verify_digest,
+    verify_signature,
 )
 
 _SNAPSHOT = "20260518T170330Z"
@@ -133,6 +139,91 @@ def test_verify_digest_raises_on_mismatch(tmp_path: Path) -> None:
     tarball.write_bytes(b"stage3 contents")
     with pytest.raises(SeedError):
         verify_digest(tarball, "deadbeef" * 8)
+
+
+# --- verify_signature (R2.3, R2.4) -------------------------------------------
+
+
+def test_signature_ok_needs_goodsig_validsig_and_exit_zero() -> None:
+    good = "[GNUPG:] GOODSIG EC59 Gentoo\n[GNUPG:] VALIDSIG E1D6 2026-09-20\n"
+    assert signature_ok(good, 0)
+    assert not signature_ok(good, 1)
+    assert not signature_ok("[GNUPG:] GOODSIG EC59 Gentoo\n", 0)  # e.g. an expired key
+    assert not signature_ok("[GNUPG:] BADSIG EC59 Gentoo\n", 1)
+
+
+_NO_GPG = pytest.mark.skipif(shutil.which("gpg") is None, reason="gpg is not installed")
+
+
+def _gpg(home: str, *args: str) -> str:
+    return subprocess.run(
+        ["gpg", "--homedir", home, "--batch", "--pinentry-mode", "loopback", "--passphrase", ""]
+        + list(args),
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+
+
+@pytest.fixture
+def signed_digests(tmp_path: Path) -> Iterator[tuple[Path, Path]]:
+    """A cleartext-signed ``.DIGESTS`` (the autobuilds' layout) and a keyring
+    holding only its signer's public key, standing in for gentoo-release.asc."""
+    # a short home: gpg-agent's socket path must fit in sun_path
+    home = tempfile.mkdtemp(prefix="shidashi-t-")
+    try:
+        _gpg(home, "--quick-gen-key", "Release <releng@test.invalid>", "ed25519", "sign", "never")
+        keyring = tmp_path / "release.asc"
+        keyring.write_text(_gpg(home, "--armor", "--export"))
+        plain = tmp_path / "DIGESTS"
+        plain.write_text(f"# SHA512 HASH\n{'0' * 128}  stage3.tar.xz\n")
+        signed = tmp_path / "stage3.tar.xz.DIGESTS"
+        _gpg(home, "--clearsign", "--output", str(signed), str(plain))
+        yield signed, keyring
+    finally:
+        subprocess.run(["gpgconf", "--homedir", home, "--kill", "all"], check=False)
+        shutil.rmtree(home, ignore_errors=True)
+
+
+@_NO_GPG
+def test_verify_signature_trusts_the_keyring_not_the_callers_home(
+    signed_digests: tuple[Path, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression (2026-10-04): under sudo, ``gpg --verify`` used root's empty
+    ~/.gnupg and refused the stage3 with "No public key"."""
+    signed, keyring = signed_digests
+    empty = tmp_path / "root-gnupg"
+    empty.mkdir(mode=0o700)
+    monkeypatch.setenv("GNUPGHOME", str(empty))
+    verify_signature(signed, keyring=keyring)
+
+
+@_NO_GPG
+def test_verify_signature_refuses_a_signer_outside_the_keyring(
+    signed_digests: tuple[Path, Path], tmp_path: Path
+) -> None:
+    signed, _ = signed_digests
+    other = tmp_path / "other.asc"
+    other.write_text("")
+    with pytest.raises(SeedError, match="GPG verification failed"):
+        verify_signature(signed, keyring=other)
+
+
+@_NO_GPG
+def test_verify_signature_refuses_a_tampered_digests(signed_digests: tuple[Path, Path]) -> None:
+    signed, keyring = signed_digests
+    signed.write_text(signed.read_text().replace("0" * 128, "1" * 128))
+    with pytest.raises(SeedError, match="GPG verification failed"):
+        verify_signature(signed, keyring=keyring)
+
+
+@_NO_GPG
+def test_verify_signature_names_a_missing_keyring(
+    signed_digests: tuple[Path, Path], tmp_path: Path
+) -> None:
+    signed, _ = signed_digests
+    with pytest.raises(SeedError, match="openpgp-keys-gentoo-release"):
+        verify_signature(signed, keyring=tmp_path / "absent.asc")
 
 
 # --- fetch_stage3 cache/no-download (R2.5, R2.6) -----------------------------

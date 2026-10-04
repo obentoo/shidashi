@@ -32,15 +32,10 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
-from shidashi.seed import SeedError
+from shidashi.seed import GENTOO_KEYRING, SeedError, gpg_verify
 
 #: A snapshot younger than this is refused (D26).
 COOLDOWN_DAYS = 7
-
-#: The Gentoo release keys, as installed by sec-keys/openpgp-keys-gentoo-release
-#: -- the same file emerge-webrsync verifies snapshots with. Imported into a
-#: throwaway keyring, so nothing depends on the caller's own gpg setup.
-GENTOO_KEYRING = Path("/usr/share/openpgp-keys/gentoo-release.asc")
 
 _STRICT = ConfigDict(frozen=True, extra="forbid")
 
@@ -97,54 +92,12 @@ def _sha512(path: Path) -> str:
     return h.hexdigest()
 
 
-def signature_ok(status: str, returncode: int) -> bool:
-    """Whether ``gpg --status-fd`` output proves a good, valid signature. Pure.
-
-    Both lines are required: GOODSIG alone is emitted for a key that is expired
-    or revoked too, and only VALIDSIG says the signature checks out.
-    """
-    lines = status.splitlines()
-    return (
-        returncode == 0
-        and any(line.startswith("[GNUPG:] GOODSIG ") for line in lines)
-        and any(line.startswith("[GNUPG:] VALIDSIG ") for line in lines)
-    )
-
-
 def verify_detached(data: Path, signature: Path, *, keyring: Path = GENTOO_KEYRING) -> None:
     """Verify ``signature`` over ``data`` against ``keyring`` in a throwaway home."""
-    if shutil.which("gpg") is None:
-        raise TreeError("gpg is not available on the host; cannot verify the ::gentoo snapshot")
-    if not keyring.is_file():
-        raise TreeError(f"{keyring} is missing (sec-keys/openpgp-keys-gentoo-release)")
-    home = tempfile.mkdtemp(prefix="shidashi-gpg-")
     try:
-        subprocess.run(
-            ["gpg", "--homedir", home, "--batch", "--quiet", "--import", str(keyring)],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        result = subprocess.run(
-            [
-                "gpg",
-                "--homedir",
-                home,
-                "--batch",
-                "--status-fd",
-                "1",
-                "--verify",
-                str(signature),
-                str(data),
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-    finally:
-        shutil.rmtree(home, ignore_errors=True)
-    if not signature_ok(result.stdout, result.returncode):
-        raise TreeError(f"GPG verification failed for {data.name}:\n{result.stderr.strip()}")
+        gpg_verify(signature, data, keyring=keyring)
+    except SeedError as err:
+        raise TreeError(str(err)) from err
 
 
 def _download(url: str, dest: Path) -> None:

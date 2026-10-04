@@ -30,6 +30,13 @@ _STRICT = ConfigDict(frozen=True, extra="forbid")
 # Defensive limit when reading the TOML pointer (small, checked-in file).
 _MAX_POINTER_BYTES = 64 * 1024
 
+#: The Gentoo release keys, as installed by sec-keys/openpgp-keys-gentoo-release
+#: -- the same file emerge-webrsync verifies snapshots with. Imported into a
+#: throwaway keyring, so nothing depends on the caller's own gpg setup (root's
+#: ~/.gnupg is usually empty: the first real ``sudo shidashi pretend`` failed
+#: with "No public key" on 2026-10-04).
+GENTOO_KEYRING = Path("/usr/share/openpgp-keys/gentoo-release.asc")
+
 
 class SeedError(Exception):
     """Failure to acquire/verify a stage3 (R2.2/R2.4/R2.6).
@@ -122,33 +129,70 @@ def verify_digest(tarball: Path, sha512: str) -> None:
         raise SeedError(f"sha512 mismatch for {tarball.name}: expected {sha512}, got {actual}")
 
 
-def verify_signature(digests: Path) -> None:
-    """Verify the inline GPG signature of the stage3 ``.DIGESTS`` (R2.3/R2.4).
+def signature_ok(status: str, returncode: int) -> bool:
+    """Whether ``gpg --status-fd`` output proves a good, valid signature. Pure.
 
-    Gentoo's current autobuilds sign the ``.DIGESTS`` in *cleartext* (inline PGP
-    SIGNED MESSAGE) — there is no separate ``.DIGESTS.asc`` anymore. So the
-    verification is ``gpg --verify <.DIGESTS>`` with **a single** argument (the
-    cleartext-signed file validates itself; passing a second data
-    file would be wrong for this format). Trust comes from Gentoo's release key
-    in the host keyring. Raises :class:`SeedError` if the file is
-    missing, if ``gpg`` is not available, or if the verification returns
-    non-zero. Never ignores the return code.
+    Both lines are required: GOODSIG alone is emitted for a key that is expired
+    or revoked too, and only VALIDSIG says the signature checks out.
     """
-    if not digests.is_file():
-        raise SeedError(f".DIGESTS missing: {digests}")
+    lines = status.splitlines()
+    return (
+        returncode == 0
+        and any(line.startswith("[GNUPG:] GOODSIG ") for line in lines)
+        and any(line.startswith("[GNUPG:] VALIDSIG ") for line in lines)
+    )
+
+
+def gpg_verify(*files: Path, keyring: Path = GENTOO_KEYRING) -> None:
+    """``gpg --verify *files`` against ``keyring`` alone, in a throwaway home.
+
+    ``files`` is ``signature data`` for a detached signature, or the one file of
+    a cleartext-signed message. Raises :class:`SeedError` when ``gpg`` or the
+    keyring is missing, or unless :func:`signature_ok`.
+    """
+    name = files[-1].name
     if shutil.which("gpg") is None:
-        raise SeedError("gpg unavailable on the host; cannot verify the signature")
+        raise SeedError(f"gpg is not available on the host; cannot verify {name}")
+    if not keyring.is_file():
+        raise SeedError(f"{keyring} is missing (sec-keys/openpgp-keys-gentoo-release)")
+    home = tempfile.mkdtemp(prefix="shidashi-gpg-")
     try:
+        subprocess.run(
+            ["gpg", "--homedir", home, "--batch", "--quiet", "--import", str(keyring)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
         result = subprocess.run(
-            ["gpg", "--verify", str(digests)],
+            ["gpg", "--homedir", home, "--batch", "--status-fd", "1", "--verify"]
+            + [str(f) for f in files],
             capture_output=True,
             text=True,
             check=False,
         )
     except OSError as err:
         raise SeedError(f"failed to run gpg --verify: {err}") from err
-    if result.returncode != 0:
-        raise SeedError(f"GPG verification failed for {digests.name}:\n{result.stderr.strip()}")
+    finally:
+        shutil.rmtree(home, ignore_errors=True)
+    if not signature_ok(result.stdout, result.returncode):
+        raise SeedError(f"GPG verification failed for {name}:\n{result.stderr.strip()}")
+
+
+def verify_signature(digests: Path, *, keyring: Path = GENTOO_KEYRING) -> None:
+    """Verify the inline GPG signature of the stage3 ``.DIGESTS`` (R2.3/R2.4).
+
+    Gentoo's current autobuilds sign the ``.DIGESTS`` in *cleartext* (inline PGP
+    SIGNED MESSAGE) — there is no separate ``.DIGESTS.asc`` anymore. So the
+    verification is ``gpg --verify <.DIGESTS>`` with **a single** argument (the
+    cleartext-signed file validates itself; passing a second data
+    file would be wrong for this format). Trust comes from Gentoo's release keys
+    in ``keyring`` (:func:`gpg_verify`), never the caller's own keyring. Raises
+    :class:`SeedError` if the file is missing, if ``gpg`` is not available, or
+    unless the signature is good and valid.
+    """
+    if not digests.is_file():
+        raise SeedError(f".DIGESTS missing: {digests}")
+    gpg_verify(digests, keyring=keyring)
 
 
 def _download(url: str, dest: Path) -> None:
