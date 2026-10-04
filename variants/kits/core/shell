@@ -3,7 +3,10 @@
 # LEAF set: a flat list of atoms (2026-09-09). See kits/core/base for the layering contract.
 
 app-editors/nano
-app-editors/vim
+#app-editors/vim
+#app-vim/gentoo-syntax
 #app-shells/starship
+#app-shells/bash
+#app-shells/gentoo-bashcomp
 #app-shells/zsh
 #app-shells/zsh-completions

@@ -9,7 +9,6 @@ app-admin/sysstat
 app-arch/7zip
 app-cdr/dolphin-plugins-mountiso
 app-editors/nano
-app-editors/vim
 app-eselect/eselect-repository
 app-laptop/laptop-mode-tools
 app-misc/fastfetch

@@ -16,7 +16,6 @@ app-containers/kompose
 app-containers/podman
 app-containers/podman-compose
 app-editors/nano
-app-editors/vim
 app-emulation/dxvk
 app-emulation/libvirt
 app-emulation/qemu
