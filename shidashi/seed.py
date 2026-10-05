@@ -150,7 +150,8 @@ def gpg_verify(*files: Path, keyring: Path = GENTOO_KEYRING) -> None:
 
     ``files`` is ``signature data`` for a detached signature, or the one file of
     a cleartext-signed message. Raises :class:`SeedError` when ``gpg`` or the
-    keyring is missing, or unless :func:`signature_ok`.
+    keyring is missing, when the keyring imports nothing, or unless
+    :func:`signature_ok`.
     """
     name = files[-1].name
     if shutil.which("gpg") is None:
