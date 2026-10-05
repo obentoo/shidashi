@@ -23,7 +23,7 @@ from pydantic import BaseModel, ConfigDict
 
 from shidashi import audit, config, seed
 from shidashi.container import CommandResult, Container
-from shidashi.recipe import INCLUDE_SET_PREFIX, ResolvedRecipe
+from shidashi.recipe import INCLUDE_SET_PREFIX, ResolvedRecipe, stage_layer
 
 _STRICT = ConfigDict(frozen=True, extra="forbid")
 
@@ -148,6 +148,13 @@ def install_sets(rootfs: Path, recipe: ResolvedRecipe) -> None:
         (dest_dir / name).write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def _exclude_layer(recipe: ResolvedRecipe, atom: str) -> str:
+    """The layer whose ``exclude:`` took ``atom`` out: ``minimal``, ``flavor/kde``,
+    ``init/systemd`` (the final image when the recipe does not say). Pure."""
+    origin = recipe.exclude_origin.get(atom, recipe.flavor)
+    return origin if origin.startswith("init/") else stage_layer(origin)
+
+
 def set_closure(recipe: ResolvedRecipe) -> dict[str, list[str]]:
     """Every set ``recipe`` installs -- its own and each ``@ref`` they reach -- with
     the lines it is written with (``exclude:`` applied). I/O (reads the kits).
@@ -164,10 +171,14 @@ def set_closure(recipe: ResolvedRecipe) -> dict[str, list[str]]:
                 0, "# shidashi: catalog only (binhost, not this image): " + " ".join(kit.catalog)
             )
         if kit.dropped:
-            kept.insert(
-                0,
-                f"# shidashi: excluded by flavor/{recipe.flavor}: " + " ".join(sorted(kit.dropped)),
-            )
+            # named after the layer that excluded each atom, not the final image:
+            # the same configuration then reads the same in every image built on
+            # it (minimal and worker share their checkpoints, shidashi.checkpoint)
+            by_layer: dict[str, list[str]] = {}
+            for atom in sorted(kit.dropped):
+                by_layer.setdefault(_exclude_layer(recipe, atom), []).append(atom)
+            for layer, atoms in sorted(by_layer.items(), reverse=True):
+                kept.insert(0, f"# shidashi: excluded by {layer}: " + " ".join(atoms))
         closure[kit.name] = kept
     return closure
 

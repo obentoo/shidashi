@@ -139,7 +139,7 @@ def test_root_and_the_filesystem_are_information_only() -> None:
     found = _checks(_Host(fstype="ext4"))
     by = _by_name(found)
     assert by["root"].scope == "info" and not by["root"].ok
-    assert "btrfs makes" in by["work filesystem"].detail
+    assert "resumes from checkpoints" in by["work filesystem"].detail
     assert missing(found, "build") == []
 
 

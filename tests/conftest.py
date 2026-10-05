@@ -19,6 +19,15 @@ def _runs_in_tmp(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.M
     monkeypatch.setenv("SHIDASHI_RUNS", str(tmp_path_factory.mktemp("runs")))
 
 
+@pytest.fixture(autouse=True)
+def _checkpoints_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The assemble's checkpoints stay off unless a test hands in a backend: on a
+    btrfs /tmp the real ``btrfs`` command would otherwise run, without root."""
+    from shidashi import checkpoint
+
+    monkeypatch.setattr(checkpoint, "filesystem_type", lambda _path: "tmpfs")
+
+
 @pytest.fixture
 def no_stage3_vdb(monkeypatch: pytest.MonkeyPatch) -> list[Path]:
     """The binpkg check without a cached stage3: its vdb extraction is recorded,

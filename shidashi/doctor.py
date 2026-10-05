@@ -115,9 +115,12 @@ def _filesystem(work_dir: Path, run: Run) -> Check:
     fstype = out.strip() if out else "unknown"
     detail = f"{fstype} at {work_dir}"
     if fstype == "btrfs":
-        detail += " (copies are reflinks)"
+        detail += " (copies are reflinks; the assemble keeps checkpoints)"
     else:
-        detail += " (btrfs makes the 8 GB squashfs copy instant)"
+        detail += (
+            " (on btrfs the 8 GB squashfs copy is instant and the assemble"
+            " resumes from checkpoints after a failure)"
+        )
     return Check("work filesystem", "info", True, detail)
 
 

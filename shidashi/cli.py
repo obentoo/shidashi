@@ -951,6 +951,20 @@ def assemble(
     keep: Annotated[
         bool, typer.Option("--keep", help="Keep the scratch rootfs after the assembly.")
     ] = False,
+    fresh: Annotated[
+        bool,
+        typer.Option(
+            "--fresh",
+            help="Ignore and drop the image's checkpoints: install from the stage3 again.",
+        ),
+    ] = False,
+    no_trunk: Annotated[
+        bool,
+        typer.Option(
+            "--no-trunk",
+            help="Install a flavor whole from the stage3, not on top of its trunk (desktop).",
+        ),
+    ] = False,
     work_dir: Annotated[
         Path | None,
         typer.Option(
@@ -1009,6 +1023,8 @@ def assemble(
             compressions=list(compressions),
             stage4=stage4,
             sbom=not no_sbom,
+            fresh=fresh,
+            trunk=not no_trunk,
         ) as trail:
             produced = Assembler(resolved, binhost, jobs=jobs).assemble(
                 output_dir,
@@ -1017,6 +1033,8 @@ def assemble(
                 compressions=compressions,
                 stage4=stage4,
                 sbom=not no_sbom,
+                fresh=fresh,
+                trunk=not no_trunk,
             )
         # the trail is complete only once the run closed: publish it beside the ISO
         if trail.root is not None:
@@ -1103,6 +1121,20 @@ def build(
     ] = "zstd",
     stage4: Annotated[bool, typer.Option("--stage4", help="Also a stage4 per image.")] = False,
     no_sbom: Annotated[bool, typer.Option("--no-sbom", help="No SBOM (syft).")] = False,
+    fresh: Annotated[
+        bool,
+        typer.Option(
+            "--fresh",
+            help="Ignore and drop the image's checkpoints: install from the stage3 again.",
+        ),
+    ] = False,
+    no_trunk: Annotated[
+        bool,
+        typer.Option(
+            "--no-trunk",
+            help="Install a flavor whole from the stage3, not on top of its trunk (desktop).",
+        ),
+    ] = False,
     skip_factory: Annotated[
         bool,
         typer.Option("--skip-factory", help="Assemble from the binpkgs already built."),
@@ -1193,6 +1225,8 @@ def build(
                             compressions=compressions,
                             stage4=stage4,
                             sbom=not no_sbom,
+                            fresh=fresh,
+                            trunk=not no_trunk,
                         )
                     )
             if boot_test:

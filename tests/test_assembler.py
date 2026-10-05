@@ -10,6 +10,7 @@ monkeypatched — no real nspawn/emerge/dracut/mksquashfs (host-gated).
 import json
 import os
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
@@ -469,6 +470,7 @@ def test_assemble_orchestrates_seed_emerge_dracut_squashfs_iso(
         "settle",
         "depclean",
         "preserved-rebuild",
+        "rootfs",
         "system",
         "live",
         "initramfs",
@@ -769,3 +771,442 @@ def test_ships_nvidia_driver_reads_the_vdb(tmp_path: Path) -> None:
     assert not ships_nvidia_driver(tmp_path)
     (vdb / "nvidia-drivers-615.71.09").mkdir()
     assert ships_nvidia_driver(tmp_path)
+
+
+# --- checkpoints: resume after a failure (fake btrfs backend) -----------------
+
+
+class _Wired:
+    """An assemble wired for the checkpoint tests: every command recorded, the
+    install and the squashfs able to fail on demand, a fake btrfs store."""
+
+    def __init__(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        import subprocess
+
+        from shidashi import checkpoint, publish
+        from tests._fake_btrfs import FakeBackend
+
+        self.tmp_path = tmp_path
+        self.runs: list[list[str]] = []
+        self.fail_install = False
+        self.fail_squashfs = False
+        self.binhost = tmp_path / "binhost"
+        self.binhost.mkdir()
+        self.write_index()
+        #: what the install merges, and what a later --pretend would choose
+        self.install_output = (
+            "[binary   N    ] x/a-1-1::gentoo  0 KiB\n"
+            '[binary   R    ] x/b-2:0::gentoo  USE="-c*" 0 KiB\n'
+        )
+        self.pretend_output: str | None = None
+        self.store = checkpoint.Store(tmp_path / "ckpt", FakeBackend())
+        self.extracted = 0
+        wired = self
+
+        monkeypatch.setattr(os, "geteuid", lambda: 0)
+        monkeypatch.setenv("SHIDASHI_SCRATCH", str(tmp_path / "scratch"))
+        monkeypatch.setenv("SHIDASHI_CACHE", str(tmp_path / "cache"))
+        monkeypatch.setattr(asm, "load_pointer", lambda init, *, seeds_dir: _pointer())
+        monkeypatch.setattr(
+            asm, "fetch_stage3", lambda pointer, *, cache_dir, download: tmp_path / "s.tar"
+        )
+
+        def fake_extract(tarball: Path, rootfs: Path) -> None:
+            wired.extracted += 1
+            (rootfs / "lib" / "modules" / "6.12.0").mkdir(parents=True)
+            (rootfs / "boot").mkdir(parents=True)
+            (rootfs / "boot" / "vmlinuz-6.12.0").write_bytes(b"K")
+
+        monkeypatch.setattr(asm, "extract_stage3", fake_extract)
+        monkeypatch.setattr(asm, "apply_portage", lambda rootfs, recipe, **_k: None)
+        self.rootfs_layers: list[tuple[str, ...] | None] = []
+
+        def fake_apply_rootfs(
+            rootfs: Path, recipe: object, *, variants_dir: Path, layers: object = None
+        ) -> tuple[str, ...]:
+            wired.rootfs_layers.append(layers)  # type: ignore[arg-type]
+            return ()
+
+        monkeypatch.setattr(asm, "apply_rootfs", fake_apply_rootfs)
+        monkeypatch.setattr(asm, "bind_repos", lambda d, **_k: [])
+        monkeypatch.setattr(checkpoint, "open_store", lambda root, **_k: wired.store)
+
+        install_argv = iso_emerge_argv(_recipe())
+
+        class _Container(_FakeContainer):
+            def run(self, argv: list[str], **kw: object) -> object:
+                from shidashi.container import CommandResult
+
+                wired.runs.append(argv)
+                if argv == [*install_argv, "--pretend"]:
+                    out = wired.pretend_output
+                    # a fresh rootfs marks merges N, the restored one R: same choice
+                    return CommandResult(0, out if out is not None else wired.install_output, "")
+                if (
+                    argv in (install_argv, asm.ISO_RESUME_ARGV)
+                    or argv[:2]
+                    == [
+                        "emerge",
+                        asm.ISO_BRANCH_OPTIONS[0],
+                    ]
+                    and "--update" in argv
+                ):
+                    if wired.fail_install:
+                        # Portage leaves its resume list when a merge stops midway
+                        edb = self.rootfs / "var" / "cache" / "edb"
+                        edb.mkdir(parents=True, exist_ok=True)
+                        (edb / "mtimedb").write_text(
+                            json.dumps({"resume": {"mergelist": [["binary", "/", "x/b-1"]]}})
+                        )
+                        raise subprocess.CalledProcessError(1, argv, output="[binary R] x/a-1\n")
+                    (self.rootfs / "installed").write_text("yes")
+                    return CommandResult(0, wired.install_output, "")
+                return CommandResult(0, "", "")
+
+        monkeypatch.setattr(asm, "Container", _Container)
+
+        def fake_squashfs(rootfs: Path, output: Path, **_k: object) -> Path:
+            if wired.fail_squashfs:
+                raise ImageError("mksquashfs: disk full")
+            assert (rootfs / "installed").read_text() == "yes"  # the installed state
+            output.write_bytes(b"SQ")
+            return output
+
+        def fake_iso(squashfs: Path, output: Path, **_k: object) -> Path:
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_bytes(b"ISO")
+            return output
+
+        def fake_contents(squashfs: Path, dest: Path, **_k: object) -> Path:
+            dest.write_bytes(b"C")
+            return dest
+
+        monkeypatch.setattr(image, "make_squashfs", fake_squashfs)
+        monkeypatch.setattr(image, "build_iso", fake_iso)
+        monkeypatch.setattr(publish, "write_contents", fake_contents)
+        monkeypatch.setattr(publish, "write_sbom", lambda rootfs, dest: None)
+
+    def assemble(
+        self, flavor: str = "kde", recipe: ResolvedRecipe | None = None, **kw: Any
+    ) -> list[dict[str, object]]:
+        """One run; returns its audit steps. Commands of this run only in ``runs``."""
+        from shidashi import audit
+
+        self.runs = []
+        self.rootfs_layers = []
+        runs_dir = self.tmp_path / "runs"
+        with audit.run(runs_dir, command="assemble", argv=[]) as trail:
+            try:
+                Assembler(recipe or _recipe(flavor=flavor), self.binhost).assemble(
+                    self.tmp_path / "dist", **kw
+                )
+            finally:
+                manifest = audit.build_manifest(audit.read_events(trail.path / "events.jsonl"))
+                self.steps = cast(list[dict[str, object]], manifest["steps"])
+        return self.steps
+
+    def write_index(self, *, a_build: str = "1", other: str = "1") -> None:
+        """A binhost index: the two packages this image installs and an unrelated one."""
+        (self.binhost / "Packages").write_text(
+            "PACKAGES: 3\n\n"
+            f"BUILD_ID: {a_build}\nCPV: x/a-1\nSHA1: a{a_build}\n\n"
+            "CPV: x/b-2\nSHA1: b\nUSE: c\n\n"
+            f"BUILD_ID: {other}\nCPV: kde/plasma-6\nSHA1: p{other}\n"
+        )
+
+    def ran(self, argv: list[str]) -> bool:
+        return argv in self.runs
+
+    def has(self, step: str) -> bool:
+        return bool(self.store.marks(step))
+
+    def step(self, name: str) -> dict[str, object]:
+        return next(s for s in self.steps if s["step"] == name)
+
+
+def test_a_failure_after_the_install_resumes_without_installing_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from shidashi import checkpoint
+
+    wired = _Wired(tmp_path, monkeypatch)
+    wired.fail_squashfs = True
+    with pytest.raises(ImageError, match="disk full"):
+        wired.assemble()
+    assert wired.ran(iso_emerge_argv(_recipe()))
+    assert wired.has(checkpoint.INSTALL)
+    assert wired.has(checkpoint.PACKAGES)
+
+    wired.fail_squashfs = False
+    wired.assemble()
+    assert wired.extracted == 1  # the stage3 was not extracted again
+    assert not wired.ran(iso_emerge_argv(_recipe()))  # nor the install
+    assert not wired.ran(asm.ISO_DEPCLEAN_ARGV)  # nor depclean
+    assert wired.step("seed")["restored"] == checkpoint.PACKAGES
+    assert wired.step("install")["restored"] == checkpoint.PACKAGES
+    assert wired.step("configure")["applied"] is False
+
+
+def test_a_failed_install_resumes_portages_merge_list(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import subprocess
+
+    from shidashi import checkpoint
+
+    wired = _Wired(tmp_path, monkeypatch)
+    wired.fail_install = True
+    with pytest.raises(subprocess.CalledProcessError):
+        wired.assemble()
+    assert wired.has(checkpoint.PARTIAL)
+    assert wired.step("install")["checkpoint"] == checkpoint.PARTIAL
+
+    # the broken binpkg fixed: the binhost index changes, the partial still applies
+    (wired.binhost / "Packages").write_text("PACKAGES: 2\n")
+    wired.fail_install = False
+    wired.assemble()
+    assert wired.runs[0] == asm.ISO_RESUME_ARGV  # only what was left
+    assert not wired.ran(iso_emerge_argv(_recipe()))
+    assert wired.ran(asm.ISO_DEPCLEAN_ARGV)
+    assert wired.extracted == 1
+    assert not wired.has(checkpoint.PARTIAL)
+    assert wired.has(checkpoint.PACKAGES)
+
+
+def test_a_binpkg_rebuilt_for_another_image_keeps_the_checkpoint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """kde's binpkg is rebuilt: the index changes, this image's packages do not."""
+    wired = _Wired(tmp_path, monkeypatch)
+    wired.assemble()
+    wired.write_index(other="2")
+    wired.assemble()
+    assert not wired.ran(iso_emerge_argv(_recipe()))
+    assert wired.ran([*iso_emerge_argv(_recipe()), "--pretend"])  # validated, not assumed
+    assert wired.extracted == 1
+
+
+def test_a_rebuilt_binpkg_of_this_image_installs_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from shidashi import checkpoint
+
+    wired = _Wired(tmp_path, monkeypatch)
+    wired.assemble()
+    wired.write_index(a_build="2")  # x/a-1 rebuilt: same version, new instance
+    wired.assemble()
+    assert wired.ran(iso_emerge_argv(_recipe()))
+    assert wired.extracted == 2
+    stale = wired.step("seed")["stale"]
+    assert isinstance(stale, list)
+    # packages, then install: the same plan, both stale, both gone
+    assert [r.split(":")[0] for r in stale] == ["packages", "install"]
+    assert "binhost entries" in str(stale)
+    assert len(wired.store.marks(checkpoint.PACKAGES)) == 1
+    (install,) = wired.store.marks(checkpoint.INSTALL)
+    assert install.data["binhost"] == wired.store.marks(checkpoint.PACKAGES)[0].data["binhost"]
+
+
+def test_a_different_resolution_installs_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The resolver now picks another binpkg (a new version, a changed dependency)."""
+    wired = _Wired(tmp_path, monkeypatch)
+    wired.assemble()
+    wired.pretend_output = "[binary   R    ] x/a-1-1::gentoo\n[binary   N    ] x/c-3::gentoo\n"
+    wired.assemble()
+    assert wired.ran(iso_emerge_argv(_recipe()))
+    assert "x/c-3::gentoo" in str(wired.step("seed")["stale"])
+
+
+def test_fresh_drops_the_checkpoints(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    wired = _Wired(tmp_path, monkeypatch)
+    wired.assemble()
+    wired.assemble(fresh=True)
+    assert wired.ran(iso_emerge_argv(_recipe()))
+    assert wired.extracted == 2
+
+
+def test_without_btrfs_the_assemble_runs_as_before(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from shidashi import checkpoint
+
+    wired = _Wired(tmp_path, monkeypatch)
+    monkeypatch.setattr(checkpoint, "open_store", lambda root, **_k: None)
+    wired.assemble()
+    wired.assemble()
+    assert wired.extracted == 2
+    assert str(wired.step("seed")["checkpoints"]).startswith("off")
+
+
+def test_an_image_with_the_same_configuration_shares_the_checkpoints(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """worker installs exactly what minimal does: it resumes from minimal's checkpoint."""
+    from shidashi import checkpoint
+
+    wired = _Wired(tmp_path, monkeypatch)
+    wired.assemble(flavor="kde")
+    wired.assemble(flavor="worker")
+    assert wired.extracted == 1  # one stage3 for both images
+    assert not wired.ran(iso_emerge_argv(_recipe()))
+    assert wired.step("seed")["restored"] == checkpoint.PACKAGES
+    assert wired.step("seed")["shared_with"] == ["znver5-kde-systemd"]
+    (shared,) = wired.store.marks(checkpoint.PACKAGES)
+    assert shared.images == ("znver5-kde-systemd", "znver5-worker-systemd")
+
+
+def test_only_the_base_rootfs_lands_before_the_install(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The other layers' files come after the checkpoints, so a checkpoint carries none."""
+    wired = _Wired(tmp_path, monkeypatch)
+    wired.assemble()
+    # the fingerprint's rendering, the configure, then the late rootfs step
+    assert wired.rootfs_layers[0] == asm.INSTALL_ROOTFS_LAYERS
+    assert wired.rootfs_layers[-1] == ("arch/znver5", "flavor/kde", "init/systemd")
+    assert wired.step("rootfs")["layers"] == ["arch/znver5", "flavor/kde", "init/systemd"]
+    # resumed: the late files are applied again on top of the restored state
+    wired.assemble()
+    assert wired.rootfs_layers == [asm.INSTALL_ROOTFS_LAYERS, wired.rootfs_layers[-1]]
+
+
+def test_the_exclusion_comment_names_the_layer_that_excluded() -> None:
+    """minimal excludes bleachbit: every image built on it says so, worker included."""
+    from shidashi import config
+    from shidashi.resolve import set_closure
+
+    for target in ("minimal", "worker"):
+        misc = set_closure(config.load_recipe("v3", target, "systemd"))["misc"]
+        assert "# shidashi: excluded by minimal: sys-apps/bleachbit" in misc
+
+
+def test_the_same_binpkgs_in_another_order_still_resume(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The pretend lists the merges in its own order: only the choice matters."""
+    wired = _Wired(tmp_path, monkeypatch)
+    wired.assemble()
+    wired.pretend_output = "".join(reversed(wired.install_output.splitlines(keepends=True)))
+    wired.assemble()
+    assert not wired.ran(iso_emerge_argv(_recipe()))
+    assert wired.extracted == 1
+
+
+# --- the trunk: flavors grow from one desktop install ---------------------------
+
+
+def _chain(flavor: str) -> ResolvedRecipe:
+    """A flavor on the real chain's shape: base -> minimal -> desktop -> flavor."""
+    return _recipe(flavor=flavor).model_copy(
+        update={
+            "stages": ("base", "minimal", "desktop", flavor),
+            "phases": (
+                Phase(name="base", stage="base", emptytree=True),
+                Phase(name="minimal", stage="minimal", ships=True),
+                Phase(name="desktop", stage="desktop"),
+                Phase(name="flavor", stage=flavor, ships=True),
+            ),
+            "portage_layers": ("base", "arch/znver5", f"flavor/{flavor}", "init/systemd"),
+        }
+    )
+
+
+def _trunked(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> _Wired:
+    from shidashi import config
+
+    wired = _Wired(tmp_path, monkeypatch)
+    trunk = _chain("kde").model_copy(
+        update={
+            "flavor": "desktop",
+            "stages": ("base", "minimal", "desktop"),
+            "phases": _chain("kde").phases[:3],
+            "portage_layers": ("base", "arch/znver5", "init/systemd"),
+        }
+    )
+    real = config.load_recipe
+
+    def load_recipe(arch: str, target: str, init: str, **kw: object) -> ResolvedRecipe:
+        return trunk if target == "desktop" else real(arch, target, init, **kw)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(config, "load_recipe", load_recipe)
+    # a stage's world comes from the kits; the image's from its committed file --
+    # one per flavor, so that two flavors differ like real ones
+    monkeypatch.setattr(asm, "world_atoms", lambda recipe: ("app-misc/trunk",))
+    from shidashi import world
+
+    monkeypatch.setattr(
+        world, "current_atoms", lambda recipe, variants_dir: (f"app-misc/{recipe.flavor}",)
+    )
+    return wired
+
+
+def _branch_ran(wired: _Wired) -> bool:
+    return any("--update" in argv for argv in wired.runs)
+
+
+def test_trunk_stage_is_the_deepest_intermediate_stage_that_ships_nothing() -> None:
+    assert asm.trunk_stage(_chain("kde")) == "desktop"
+    worker = _recipe(flavor="worker").model_copy(
+        update={
+            "stages": ("base", "minimal", "worker"),
+            "phases": (
+                Phase(name="base", stage="base", emptytree=True),
+                Phase(name="minimal", stage="minimal", ships=True),
+                Phase(name="worker", stage="worker", ships=True),
+            ),
+        }
+    )
+    assert asm.trunk_stage(worker) is None  # minimal ships: worker installs it whole
+    assert asm.trunk_stage(_recipe()) is None
+
+
+def test_the_first_flavor_installs_the_trunk_then_branches(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from shidashi import checkpoint
+
+    wired = _trunked(tmp_path, monkeypatch)
+    wired.assemble(recipe=_chain("kde"))
+    assert wired.ran(iso_emerge_argv(_chain("kde")))  # the trunk, from the stage3
+    assert _branch_ran(wired)  # then the flavor on top of it
+    assert wired.step("trunk")["built"] == "znver5-desktop-systemd"
+    owners = {m.images for m in wired.store.marks(checkpoint.INSTALL)}
+    assert ("znver5-desktop-systemd",) in owners and ("znver5-kde-systemd",) in owners
+
+
+def test_the_next_flavor_starts_from_the_same_trunk(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    wired = _trunked(tmp_path, monkeypatch)
+    wired.assemble(recipe=_chain("kde"))
+    wired.assemble(recipe=_chain("gnome"))
+    assert wired.extracted == 1  # one stage3 for the trunk, none for gnome
+    assert not wired.ran(iso_emerge_argv(_chain("gnome")))  # no whole install
+    assert _branch_ran(wired)
+    assert wired.step("trunk")["restored"] == "znver5-desktop-systemd"
+    assert wired.step("seed")["trunk"] == "znver5-desktop-systemd"
+
+
+def test_a_flavor_resumes_from_its_own_checkpoint_before_its_trunk(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from shidashi import checkpoint
+
+    wired = _trunked(tmp_path, monkeypatch)
+    wired.assemble(recipe=_chain("kde"))
+    wired.assemble(recipe=_chain("kde"))
+    assert wired.step("seed")["restored"] == checkpoint.PACKAGES
+    assert not _branch_ran(wired)
+    assert all(s["step"] != "trunk" for s in wired.steps)
+
+
+def test_no_trunk_installs_the_flavor_whole(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    wired = _trunked(tmp_path, monkeypatch)
+    wired.assemble(recipe=_chain("kde"), trunk=False)
+    assert wired.ran(iso_emerge_argv(_chain("kde")))
+    assert not _branch_ran(wired)
+    assert all(s["step"] != "trunk" for s in wired.steps)

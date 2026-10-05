@@ -150,6 +150,8 @@ def test_assemble_passes_output_and_flags(
             "both",
             "--stage4",
             "--no-sbom",
+            "--fresh",
+            "--no-trunk",
         ],
     )
     assert result.exit_code == 0, result.stdout
@@ -160,6 +162,8 @@ def test_assemble_passes_output_and_flags(
         "compressions": ("zstd", "xz"),
         "stage4": True,
         "sbom": False,
+        "fresh": True,
+        "trunk": False,
     }
 
 

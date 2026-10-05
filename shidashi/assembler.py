@@ -24,13 +24,15 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 import time
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
 
-from shidashi import audit, config, image, publish, toolbox, world
+from shidashi import audit, checkpoint, config, image, publish, toolbox, world
 from shidashi.container import Container
 from shidashi.phases import (
     ISO_EMERGE_OPTIONS,
@@ -42,9 +44,9 @@ from shidashi.phases import (
     parse_reused_atoms,
     write_cuts,
 )
-from shidashi.recipe import TOOLBOX_STAGE, ResolvedRecipe
-from shidashi.resolve import apply_portage, apply_rootfs, bind_repos, install_sets
-from shidashi.seed import extract_stage3, fetch_stage3, load_pointer
+from shidashi.recipe import TOOLBOX_STAGE, ResolvedRecipe, UseBreak
+from shidashi.resolve import apply_portage, apply_rootfs, bind_repos, install_sets, world_atoms
+from shidashi.seed import Stage3Pointer, extract_stage3, fetch_stage3, load_pointer
 from shidashi.system import (
     apply_live,
     apply_system,
@@ -61,6 +63,23 @@ __all__ = ["Assembler", "AssemblerError"]
 # here, so the host-side binhost is bind-mounted over this path (same as the
 # Factory, which mounts the output PKGDIR at the same destination — OVERVIEW §6.3).
 _BINHOST_DST = Path("/var/cache/binpkgs")
+
+
+@dataclass
+class _Trunk:
+    """The trunk an image branches from (:func:`trunk_stage`), as this assemble found it.
+
+    ``mark`` is its checkpoint once restored or built; None while it still has
+    to be installed, in this run, before the image's own packages.
+    """
+
+    assembler: Assembler
+    key: str
+    store: checkpoint.Store
+    fps: checkpoint.Fingerprints
+    cuts: tuple[UseBreak, ...]
+    atoms: tuple[str, ...]
+    mark: checkpoint.Mark | None
 
 
 class AssemblerError(Exception):
@@ -133,9 +152,59 @@ def _jobs_args(jobs: int | None) -> list[str]:
     return ["--jobs", str(jobs)] if jobs is not None else []
 
 
+#: The layers whose ``rootfs/`` the install needs: the base's ``locale.gen``,
+#: which ``locale-gen`` reads while glibc merges. Every other layer's ``rootfs/``
+#: lands after preserved-rebuild, so the checkpoints carry none of it and are
+#: shared between images (``worker`` resumes from ``minimal``'s); it also wins
+#: over a package's own file, with no ``._cfg`` left behind.
+INSTALL_ROOTFS_LAYERS = ("base",)
+
+#: The resume of an interrupted install: Portage replays its own saved command.
+ISO_RESUME_ARGV = ["emerge", "--resume"]
+
+
 def iso_settle_argv(atoms: tuple[str, ...], *, jobs: int | None = None) -> list[str]:
     """The settle of the cut packages: their final binpkgs. Pure."""
     return ["emerge", *ISO_SETTLE_OPTIONS, *_jobs_args(jobs), *atoms]
+
+
+#: The branch of an image off its trunk: the image's sets on top of the trunk's
+#: installed state. ``--newuse`` swaps the trunk's packages whose USE the flavor
+#: changes (``kde qt6``, ``gtk gnome``) for their binpkgs of that flavor.
+ISO_BRANCH_OPTIONS = (
+    "--usepkgonly",
+    "--binpkg-respect-use=y",
+    "--update",
+    "--deep",
+    "--newuse",
+)
+
+
+def trunk_stage(recipe: ResolvedRecipe) -> str | None:
+    """The stage ``recipe``'s image branches from, or None. Pure.
+
+    The deepest intermediate stage that ships no image of its own: ``desktop``
+    for kde, gnome and wm -- identical for the three, so it is installed once
+    and each flavor grows from it. The base never is one (nothing ships
+    without minimal), and neither is a shipping stage: minimal and worker
+    install their whole configuration from the stage3 (and share it already).
+    """
+    shipping = {phase.stage for phase in recipe.phases if phase.ships}
+    for stage in reversed(recipe.stages[1:-1]):
+        if stage not in shipping:
+            return stage
+    return None
+
+
+def iso_branch_argv(recipe: ResolvedRecipe, *, jobs: int | None = None) -> list[str]:
+    """The image's install on top of its trunk (:data:`ISO_BRANCH_OPTIONS`). Pure."""
+    return [
+        "emerge",
+        *ISO_BRANCH_OPTIONS,
+        "--verbose",
+        *_jobs_args(jobs),
+        *image_targets(recipe.sets),
+    ]
 
 
 def iso_emerge_argv(recipe: ResolvedRecipe, *, jobs: int | None = None) -> list[str]:
@@ -333,6 +402,146 @@ class Assembler:
         #: xz -T; None = emerge serial, the others on every CPU.
         self.jobs = jobs
 
+    def _fingerprints(
+        self,
+        *,
+        pointer: Stage3Pointer,
+        repos: Mapping[str, Path],
+        cuts: Sequence[UseBreak],
+        atoms: Sequence[str],
+    ) -> checkpoint.Fingerprints:
+        """The checkpoints' fingerprints: everything the installed state depends on. I/O.
+
+        The configuration is RENDERED -- the same ``configure`` the image gets,
+        into a temporary directory -- and its result hashed: a layer that
+        configures nothing (``worker``) leaves it unchanged, whatever its name.
+        Then the stage3, the profile and the pins (seeds/, the pinned
+        repositories' paths, which carry their snapshot or commit) and the
+        install's command line without ``--jobs`` (it changes the speed, not the
+        result). The binhost is left out: :meth:`_still_valid` checks a checkpoint
+        against it by what the resolver would choose today.
+        """
+        recipe = self.recipe
+        with tempfile.TemporaryDirectory(prefix="shidashi-config-") as tmp:
+            rendered = Path(tmp)
+            self._configure(rendered, cuts=cuts, atoms=atoms)
+            config_digest = checkpoint.tree_digest([rendered])
+        inputs = (
+            checkpoint.FORMAT,
+            pointer.model_dump(mode="json"),
+            recipe.profile,
+            {name: str(path) for name, path in sorted(repos.items())},
+            checkpoint.tree_digest([config.seeds_dir()]),
+            config_digest,
+            iso_emerge_argv(recipe),
+        )
+        # the binhost is not here: a checkpoint is validated against it by what the
+        # resolver chooses (:meth:`_still_valid`), not by the whole index
+        install = checkpoint.fingerprint(checkpoint.INSTALL, *inputs)
+        return checkpoint.Fingerprints(
+            install=install,
+            packages=checkpoint.fingerprint(
+                checkpoint.PACKAGES, install, ISO_DEPCLEAN_ARGV, list(ISO_SETTLE_OPTIONS)
+            ),
+            partial=checkpoint.fingerprint(checkpoint.PARTIAL, *inputs),
+        )
+
+    def _plan_data(self, plan: Sequence[str]) -> dict[str, object]:
+        """What a checkpoint records of the binhost: the plan and its index slice. I/O."""
+        cpvs = {checkpoint.token_cpv(t) for t in plan}
+        return {
+            "plan": list(plan),
+            "binhost": checkpoint.binhost_slice(self.binhost_dir / "Packages", cpvs),
+        }
+
+    def _still_valid(
+        self, mark: checkpoint.Mark, rootfs: Path, *, repos: Mapping[str, Path]
+    ) -> str | None:
+        """Why the restored checkpoint ``mark`` no longer matches the binhost, or None. I/O.
+
+        Valid while the resolver would choose today exactly the binpkgs it
+        installed: first the index entries of those packages (a rebuilt or new
+        instance changes them), then ``emerge --pretend`` with the install's own
+        command line, run in the restored rootfs (``--emptytree`` resolves as if
+        nothing were installed). Every other entry of the index is ignored, so a
+        binpkg rebuilt for kde leaves minimal's checkpoint alone.
+        """
+        plan = tuple(mark.data.get("plan") or ())
+        if not plan:
+            return "no plan recorded"
+        slice_now = checkpoint.binhost_slice(
+            self.binhost_dir / "Packages", {checkpoint.token_cpv(t) for t in plan}
+        )
+        if slice_now != mark.data.get("binhost"):
+            return "the binhost entries of its packages changed"
+        binds_ro, binds_rw = _build_binds(
+            self.binhost_dir, rootfs / "etc" / "portage" / "repos.conf", repos=repos
+        )
+        with Container(rootfs, ephemeral=False, binds=binds_ro, binds_rw=binds_rw) as container:
+            pretended = container.run([*iso_emerge_argv(self.recipe), "--pretend"])
+        chosen = checkpoint.plan_tokens(pretended.stdout + pretended.stderr)
+        # the same binpkgs, counted; the order is the display's, not the result's
+        # (the install ran with --jobs, the pretend without: measured 2026-10-05)
+        if sorted(chosen) != sorted(plan):
+            changed = sorted(set(chosen) ^ set(plan)) or ["(the same binpkgs, other counts)"]
+            return f"the resolver chooses other binpkgs: {', '.join(changed[:5])}"
+        return None
+
+    def _find_trunk(
+        self,
+        *,
+        pointer: Stage3Pointer,
+        repos: Mapping[str, Path],
+        store: checkpoint.Store,
+        rootfs: Path,
+        stale: list[str],
+    ) -> _Trunk | None:
+        """The image's trunk, restored into ``rootfs`` when its checkpoint holds. I/O.
+
+        None when the image has no trunk. A trunk checkpoint is validated like
+        any other, against the trunk's own command line; a stale one is dropped
+        and the trunk is installed again by this run.
+        """
+        name = trunk_stage(self.recipe)
+        if name is None:
+            return None
+        recipe = self.recipe
+        trunk_recipe = config.load_recipe(recipe.arch, name, recipe.init, any_stage=True)
+        assembler = Assembler(trunk_recipe, self.binhost_dir, jobs=self.jobs)
+        # a stage, not an image: its world comes from the kits, no committed file
+        cuts = image_cuts(trunk_recipe)
+        atoms = world_atoms(trunk_recipe)
+        fps = assembler._fingerprints(pointer=pointer, repos=repos, cuts=cuts, atoms=atoms)
+        key = f"{recipe.arch}-{name}-{recipe.init}"
+        mark = store.find(checkpoint.INSTALL, fps.install)
+        if mark is not None:
+            store.restore(mark, rootfs)
+            reason = assembler._still_valid(mark, rootfs, repos=repos)
+            if reason is None:
+                mark = store.claim(mark, key)
+            else:
+                stale.append(f"trunk {name}: {reason}")
+                store.drop(mark)
+                mark = None
+        return _Trunk(assembler, key, store, fps, cuts, atoms, mark)
+
+    def _configure(self, rootfs: Path, *, cuts: Sequence[UseBreak], atoms: Sequence[str]) -> None:
+        """Write the image's install-time configuration into ``rootfs``. I/O.
+
+        The base's ``rootfs/`` (:data:`INSTALL_ROOTFS_LAYERS`), the composed
+        ``/etc/portage``, the sets, the cuts and the world: what the install reads.
+        """
+        recipe = self.recipe
+        apply_rootfs(
+            rootfs, recipe, variants_dir=config.variants_dir(), layers=INSTALL_ROOTFS_LAYERS
+        )
+        # no host_jobs: this rootfs is the image, its make.conf the user's;
+        # the assemble's own --jobs goes on the emerge command lines
+        apply_portage(rootfs, recipe, variants_dir=config.variants_dir(), host_jobs=False)
+        _install_sets(rootfs, recipe)
+        write_cuts(rootfs, tuple(cuts))
+        world.write_to_image(rootfs, tuple(atoms))
+
     def assemble(
         self,
         output_dir: Path,
@@ -342,6 +551,8 @@ class Assembler:
         compressions: Sequence[str] = ("zstd",),
         stage4: bool = False,
         sbom: bool = True,
+        fresh: bool = False,
+        trunk: bool = True,
         now: datetime.datetime | None = None,
     ) -> AssembleResult:
         """Build the live ISO(s) of the recipe into ``output_dir``. PRIVILEGED.
@@ -354,6 +565,18 @@ class Assembler:
         squashfs, the ISO and its published artifacts (DIGESTS, SHA256SUMS,
         package list, contents). On success without ``keep`` the scratch rootfs
         and squashfs go; on failure or ``keep`` they stay for debugging.
+
+        On a btrfs scratch the rootfs is a subvolume, frozen after the install
+        and after preserved-rebuild (:mod:`shidashi.checkpoint`); a failed install
+        is frozen too, with Portage's resume list. The next run of the same image
+        resumes from the deepest checkpoint whose inputs are unchanged, so a
+        failure after the install never pays it again. ``fresh`` drops them and
+        starts from the stage3.
+
+        With ``trunk`` (the default) a flavor without a checkpoint of its own
+        grows from its trunk's (:func:`trunk_stage`, ``desktop``): the trunk is
+        installed from the stage3 once, frozen, and every flavor adds its packages
+        on top of it (``trunk`` step, :data:`ISO_BRANCH_OPTIONS`).
         """
         _require_root()
         run = audit.current()
@@ -387,29 +610,84 @@ class Assembler:
                     f"no toolbox for {recipe.arch}/{recipe.init} at {toolbox_tar}; build it "
                     f"first: shidashi factory {recipe.arch} {TOOLBOX_STAGE} {recipe.init}"
                 )
-            tarball = fetch_stage3(pointer, cache_dir=config.cache_dir(), download=download)
-            # a fresh stage3 into a fresh directory: a failed --keep run leaves its
-            # rootfs, and extracting over it would inherit what that run left
-            shutil.rmtree(rootfs, ignore_errors=True)
-            extract_stage3(tarball, rootfs)
-            step.add(stage3=tarball.name, stage3_sha512=pointer.sha512, rootfs=str(rootfs))
-
-        with run.step("configure") as step:
-            apply_rootfs(rootfs, recipe, variants_dir=config.variants_dir())
-            # no host_jobs: this rootfs is the image, its make.conf the user's;
-            # the assemble's own --jobs goes on the emerge command lines
-            apply_portage(rootfs, recipe, variants_dir=config.variants_dir(), host_jobs=False)
-            _install_sets(rootfs, recipe)
             # the chain's cycle cuts, as the factory built under them: a fresh stage3
             # meets every cycle again, and the cut binpkgs are in the PKGDIR
             cuts = image_cuts(recipe)
-            write_cuts(rootfs, cuts)
+            # the flat package list, as committed in variants/<stage>/world.<init>
+            atoms = world.current_atoms(recipe, config.variants_dir())
+            # one store per arch and init: every image of it shares the checkpoints
+            store = checkpoint.open_store(
+                config.scratch_dir() / "assemble" / "checkpoints" / f"{recipe.arch}-{recipe.init}"
+            )
+            backend = store.backend if store is not None else None
+            # computed only with a store: rendering the configuration has a cost
+            fps = (
+                self._fingerprints(pointer=pointer, repos=repos, cuts=cuts, atoms=atoms)
+                if store is not None
+                else None
+            )
+            if store is not None and fps is not None:
+                if fresh:
+                    store.release(key)
+                else:
+                    store.retain(key, (fps.install, fps.packages, fps.partial))
+            resumed: checkpoint.Mark | None = None
+            stale: list[str] = []
+            if store is not None and fps is not None:
+                step.add(pruned=store.prune())
+                # deepest first; a stale one goes (it is stale for every image
+                # sharing it: the same inputs, the same binhost) and the next is tried
+                while (resumed := checkpoint.resume_point(store, fps)) is not None:
+                    store.restore(resumed, rootfs)
+                    reason = (
+                        None
+                        if resumed.step == checkpoint.PARTIAL
+                        else self._still_valid(resumed, rootfs, repos=repos)
+                    )
+                    if reason is None:
+                        break
+                    stale.append(f"{resumed.step}: {reason}")
+                    store.drop(resumed)
+            branch: _Trunk | None = None
+            if resumed is None and trunk and store is not None:
+                branch = self._find_trunk(
+                    pointer=pointer, repos=repos, store=store, rootfs=rootfs, stale=stale
+                )
+            if stale:
+                step.add(stale=stale)
+            if store is not None and resumed is not None:
+                resumed = store.claim(resumed, key)
+                step.add(
+                    restored=resumed.step,
+                    restored_from=resumed.run_id,
+                    shared_with=[i for i in resumed.images if i != key],
+                )
+            elif branch is not None and branch.mark is not None:
+                step.add(trunk=branch.key, trunk_restored_from=branch.mark.run_id)
+            else:
+                tarball = fetch_stage3(pointer, cache_dir=config.cache_dir(), download=download)
+                # a fresh stage3 into a fresh directory: a failed --keep run leaves its
+                # rootfs, and extracting over it would inherit what that run left
+                checkpoint.remove_tree(rootfs, backend)
+                if backend is not None:
+                    backend.create(rootfs)
+                extract_stage3(tarball, rootfs)
+            step.add(
+                stage3=pointer.filename,
+                stage3_sha512=pointer.sha512,
+                rootfs=str(rootfs),
+                checkpoints="on" if store is not None else "off (scratch is not btrfs)",
+            )
+
+        with run.step("configure") as step:
+            if resumed is None and branch is None:
+                self._configure(rootfs, cuts=cuts, atoms=atoms)
+            elif resumed is None and branch is not None and branch.mark is None:
+                # the trunk's own configuration first: the image's comes after it
+                branch.assembler._configure(rootfs, cuts=branch.cuts, atoms=branch.atoms)
             # loaded (and validated) now: a broken system.yaml fails before the
             # half-hour install, not after it
             system_cfg = load_system_config(recipe, variants_dir=config.variants_dir())
-            # the flat package list, as committed in variants/<stage>/world.<init>
-            atoms = world.current_atoms(recipe, config.variants_dir())
-            world.write_to_image(rootfs, atoms)
             run.attach("world", list(atoms))
             step.add(
                 world=len(atoms),
@@ -417,6 +695,8 @@ class Assembler:
                 layers=list(recipe.portage_layers),
                 sets=list(recipe.sets),
                 cuts=[f"{c.atom} {'' if c.enable else '-'}{c.flag}" for c in cuts],
+                # a restored checkpoint already holds this configuration
+                applied=resumed is None,
             )
 
         binds_ro, binds_rw = _build_binds(
@@ -437,32 +717,189 @@ class Assembler:
                 # installing ~1800 binpkgs takes a while: stream it, like the factory
                 log=config.scratch_dir() / "logs" / f"assemble-{key}.log",
             ) as container:
+                # what a restored checkpoint spares: the install (and its settle),
+                # or everything up to preserved-rebuild
+                installed_state = resumed is not None and resumed.step in (
+                    checkpoint.INSTALL,
+                    checkpoint.PACKAGES,
+                )
+                final_packages = resumed is not None and resumed.step == checkpoint.PACKAGES
+                # the cuts the image's own install and settle use: off a trunk,
+                # only those the trunk did not already install and settle
+                branch_cuts = cuts
+                trunk_since, trunk_reused = 0, ()
+                if branch is not None:
+                    with run.step("trunk") as step:
+                        if branch.mark is None:
+                            trunk_since = int(time.time())
+                            built = container.run(
+                                iso_emerge_argv(branch.assembler.recipe, jobs=self.jobs)
+                            )
+                            text = built.stdout + built.stderr
+                            clear_use_break(rootfs)
+                            trunk_settle = tuple(
+                                sorted(
+                                    {c.atom for c in branch.cuts if is_installed(rootfs, c.atom)}
+                                )
+                            )
+                            if trunk_settle:
+                                container.run(iso_settle_argv(trunk_settle, jobs=self.jobs))
+                            branch.mark = branch.store.save(
+                                rootfs,
+                                checkpoint.INSTALL,
+                                branch.fps.install,
+                                image=branch.key,
+                                run_id=run.run_id,
+                                data={
+                                    "since": trunk_since,
+                                    "reused": list(parse_reused_atoms(text)),
+                                    **branch.assembler._plan_data(checkpoint.plan_tokens(text)),
+                                },
+                            )
+                            step.add(built=branch.key, checkpoint=checkpoint.INSTALL)
+                        else:
+                            step.add(restored=branch.key)
+                        trunk_since = int(branch.mark.data["since"])
+                        trunk_reused = tuple(branch.mark.data["reused"])
+                        branch_cuts = tuple(c for c in cuts if c not in branch.cuts)
+                        # the image's configuration over the trunk's
+                        self._configure(rootfs, cuts=branch_cuts, atoms=atoms)
+                        step.add(packages=len(trunk_reused))
                 with run.step("install") as step:
-                    since = int(time.time())
-                    installed = container.run(iso_emerge_argv(recipe, jobs=self.jobs))
-                    reused = parse_reused_atoms(installed.stdout + installed.stderr)
-                    step.add(packages=len(reused))
+                    if resumed is not None and installed_state:
+                        since = int(resumed.data["since"])
+                        reused = tuple(resumed.data["reused"])
+                        plan = tuple(resumed.data["plan"])
+                        step.add(restored=resumed.step, packages=len(reused))
+                    else:
+                        # an install-partial resumes Portage's own merge list
+                        partial = resumed is not None
+                        if resumed is not None:
+                            since = int(resumed.data["since"])
+                            earlier = tuple(resumed.data["reused"])
+                            # it keeps the plan of the install it continues
+                            earlier_plan = tuple(resumed.data.get("plan") or ())
+                            argv = ISO_RESUME_ARGV
+                        elif branch is not None:
+                            since, earlier, earlier_plan = trunk_since, trunk_reused, ()
+                            argv = iso_branch_argv(recipe, jobs=self.jobs)
+                        else:
+                            since, earlier, earlier_plan = int(time.time()), (), ()
+                            argv = iso_emerge_argv(recipe, jobs=self.jobs)
+                        # off a trunk the install's own list is only the branch: the
+                        # image's plan is asked of the resolver, as a fresh one would see it
+                        branched = branch is not None or bool(
+                            resumed is not None and resumed.data.get("branch")
+                        )
+                        try:
+                            installed = container.run(argv)
+                        except subprocess.CalledProcessError as err:
+                            if (
+                                store is not None
+                                and fps is not None
+                                and checkpoint.has_resume_list(rootfs)
+                            ):
+                                merged = earlier + parse_reused_atoms(
+                                    (err.output or "") + (err.stderr or "")
+                                )
+                                output = (err.output or "") + (err.stderr or "")
+                                store.save(
+                                    rootfs,
+                                    checkpoint.PARTIAL,
+                                    fps.partial,
+                                    image=key,
+                                    run_id=run.run_id,
+                                    data={
+                                        "since": since,
+                                        "branch": branched,
+                                        "reused": list(merged),
+                                        # the whole list: emerge prints it before merging
+                                        "plan": list(
+                                            earlier_plan or checkpoint.plan_tokens(output)
+                                        ),
+                                    },
+                                )
+                                step.add(checkpoint=checkpoint.PARTIAL)
+                            raise
+                        reused = earlier + parse_reused_atoms(installed.stdout + installed.stderr)
+                        if branched:
+                            pretended = container.run([*iso_emerge_argv(recipe), "--pretend"])
+                            plan = checkpoint.plan_tokens(pretended.stdout + pretended.stderr)
+                        else:
+                            plan = earlier_plan or checkpoint.plan_tokens(
+                                installed.stdout + installed.stderr
+                            )
+                        step.add(packages=len(reused), resumed=partial, plan=len(plan))
                 with run.step("settle") as step:
-                    # the cut packages again, from their final binpkgs
-                    clear_use_break(rootfs)
-                    settle = tuple(sorted({c.atom for c in cuts if is_installed(rootfs, c.atom)}))
-                    if settle:
-                        container.run(iso_settle_argv(settle, jobs=self.jobs))
-                    step.add(atoms=list(settle))
+                    if resumed is not None and installed_state:
+                        step.add(restored=resumed.step)
+                    else:
+                        # the cut packages again, from their final binpkgs
+                        clear_use_break(rootfs)
+                        settle = tuple(
+                            sorted({c.atom for c in branch_cuts if is_installed(rootfs, c.atom)})
+                        )
+                        if settle:
+                            container.run(iso_settle_argv(settle, jobs=self.jobs))
+                        step.add(atoms=list(settle))
+                        if store is not None and fps is not None:
+                            # a newer install makes this image's later checkpoints stale
+                            store.release_step(checkpoint.PACKAGES, key)
+                            store.release_step(checkpoint.PARTIAL, key)
+                            store.save(
+                                rootfs,
+                                checkpoint.INSTALL,
+                                fps.install,
+                                image=key,
+                                run_id=run.run_id,
+                                data={
+                                    "since": since,
+                                    "reused": list(reused),
+                                    **self._plan_data(plan),
+                                },
+                            )
+                            step.add(checkpoint=checkpoint.INSTALL)
                 with run.step("depclean") as step:
-                    # The stage3 under the ISO keeps what the closure does not reach:
-                    # its own gcc and binutils slots, bootstrap leftovers (F77).
-                    cleaned = container.run(ISO_DEPCLEAN_ARGV)
-                    step.add(removed=_depclean_count(cleaned.stdout + cleaned.stderr))
-                with run.step("preserved-rebuild"):
-                    container.run(
-                        [
-                            "emerge",
-                            *ISO_SETTLE_OPTIONS,
-                            *_jobs_args(self.jobs),
-                            "@preserved-rebuild",
-                        ]
+                    if resumed is not None and final_packages:
+                        step.add(restored=resumed.step)
+                    else:
+                        # The stage3 under the ISO keeps what the closure does not reach:
+                        # its own gcc and binutils slots, bootstrap leftovers (F77).
+                        cleaned = container.run(ISO_DEPCLEAN_ARGV)
+                        step.add(removed=_depclean_count(cleaned.stdout + cleaned.stderr))
+                with run.step("preserved-rebuild") as step:
+                    if resumed is not None and final_packages:
+                        step.add(restored=resumed.step)
+                    else:
+                        container.run(
+                            [
+                                "emerge",
+                                *ISO_SETTLE_OPTIONS,
+                                *_jobs_args(self.jobs),
+                                "@preserved-rebuild",
+                            ]
+                        )
+                        if store is not None and fps is not None:
+                            store.save(
+                                rootfs,
+                                checkpoint.PACKAGES,
+                                fps.packages,
+                                image=key,
+                                run_id=run.run_id,
+                                data={
+                                    "since": since,
+                                    "reused": list(reused),
+                                    **self._plan_data(plan),
+                                },
+                            )
+                            step.add(checkpoint=checkpoint.PACKAGES)
+                with run.step("rootfs") as step:
+                    # the other layers' files, after the checkpoints (INSTALL_ROOTFS_LAYERS)
+                    late = tuple(x for x in recipe.portage_layers if x not in INSTALL_ROOTFS_LAYERS)
+                    written = apply_rootfs(
+                        rootfs, recipe, variants_dir=config.variants_dir(), layers=late
                     )
+                    step.add(layers=list(late), files=list(written))
                 with run.step("system") as step:
                     version = f"{when:%Y.%m.%d}"
                     build = {
@@ -618,7 +1055,12 @@ class Assembler:
 
         if not keep_rootfs:
             with run.step("cleanup"):
-                shutil.rmtree(rootfs, ignore_errors=True)
+                # the checkpoints stay: the next run of this image (a configuration
+                # change, a new day's version) resumes from them
+                try:
+                    checkpoint.remove_tree(rootfs, backend)
+                except OSError, checkpoint.CheckpointError:
+                    shutil.rmtree(rootfs, ignore_errors=True)
                 for squashfs in squashfs_files:
                     squashfs.unlink(missing_ok=True)  # already copied into the ISO
         return AssembleResult(name=name, isos=tuple(isos), artifacts=tuple(artifacts))
