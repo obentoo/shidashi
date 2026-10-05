@@ -21,12 +21,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   need `gtk:4[X]`; still no X session), builds SpiderMonkey with GCC instead of a
   second LLVM, and leaves the Wacom panel out of Settings, which would have pulled
   an X server into the image.
+- **A build shows its progress, pacman-style.** `pretend`, `factory`, `assemble`
+  and `build` were silent for hours. They now print on stderr a `✓` line per
+  finished step with its time, a line per download and per merged package and, on
+  a terminal, a footer with the running step, a bar over the emerge's packages,
+  the packages in flight and a bar per download. `-v`/`--verbose` echoes the raw
+  output too; it always goes to the run's log, whose path is printed. A failure
+  shows the last 50 lines of the failing command instead of all of it. `pretend`
+  gains a log of its own.
 
 ### Changed
 
 - **Package selection.** vim, bash and their completions leave the `shell` kit for
   the binhost catalog (bash stays in every image through `@system`; nano is the
   installed editor); GNOME's USE gains `gtk4`; KDE's drops `qt5`.
+- **`::gentoo` re-pinned to 20260926, `::bentoo` to the same day.** The 20260919
+  snapshot rotated off the mirror.
+
+### Fixed
+
+- **`sudo shidashi pretend` refused the stage3 with "No public key".** The
+  `.DIGESTS` signature was checked against the caller's own keyring (root's, empty).
+  It is now checked like the `::gentoo` snapshot: against Gentoo's release keys in
+  a throwaway keyring, accepted only on GOODSIG and VALIDSIG. A keyring that imports
+  nothing is named instead of surfacing as a missing key.
 
 ## [0.1.1] - 2026-10-03
 
