@@ -40,7 +40,7 @@ The full architecture is in **[OVERVIEW.md](OVERVIEW.md)**.
 | Boot test (`shidashi vm test`, BIOS + UEFI) | ✅ the `kde` and `minimal` ISOs pass |
 | Weekly releases (every Sunday, 00:00 UTC) | 🚧 planned: needs a self-hosted runner (Linux with systemd, root) |
 
-699 tests; lint, types and tests run on every push. The roadmap is in
+699 tests; lint, types and tests run on every pull request. The roadmap is in
 [OVERVIEW.md §17](OVERVIEW.md#17-development-roadmap).
 
 ## Model
@@ -212,7 +212,7 @@ all of it.
 ## Contributing
 
 Issues and pull requests are welcome. Before pushing, run the checks above; the CI job can be
-reproduced locally with [`act`](https://github.com/nektos/act) (`act -j quality`).
+reproduced locally with [`act`](https://github.com/nektos/act) (`act pull_request -j quality`).
 
 To report a vulnerability, see [SECURITY.md](SECURITY.md).
 

@@ -1,19 +1,22 @@
 # Shidashi CI -- quality (real) + weekly release (scaffold, gated).
 #
-# Two triggers:
-#   * push / pull_request -> job `quality` (real): runs on a standard runner,
+# Remote runs only what local cannot:
+#   * pull_request / manual -> job `quality` (real): runs on a standard runner,
 #     without Gentoo. Installs from uv.lock (--frozen); lint (ruff check) +
-#     format (ruff format --check) + types (mypy) + tests (pytest). Run it
-#     before pushing with `act -j quality`.
-#   * schedule (weekly)   -> job `weekly-release` (scaffold): the
+#     format (ruff format --check) + types (mypy) + tests (pytest). It checks
+#     a contributor's code on a neutral machine. NOT on push: a push to main
+#     shares work already verified locally -- run `act pull_request -j quality`
+#     before pushing.
+#   * schedule (weekly)     -> job `weekly-release` (scaffold): the
 #     arch x init x desktop matrix. Gated with `if: false` because it needs a
 #     self-hosted Gentoo runner (OVERVIEW phase 4) -- it documents the intent
 #     without breaking CI.
+# CodeQL is not here: it runs from the repository's code-scanning default setup.
 name: release
 
 on:
-  push:
   pull_request:
+  workflow_dispatch:
   schedule:
     # every Sunday, 00:00 UTC -- only for the gated scaffold below.
     - cron: "0 0 * * 0"
@@ -24,6 +27,8 @@ jobs:
     # Pinned image, like the actions below: ubuntu-latest moves to Ubuntu 26 on
     # 2026-10-19, and the runner should change only by a commit.
     runs-on: ubuntu-24.04
+    # the weekly schedule is the release scaffold's, not a reason to re-run the gates
+    if: github.event_name != 'schedule'
     # read-only token: this job only checks out and runs the local gates
     permissions:
       contents: read
