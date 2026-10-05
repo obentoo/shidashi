@@ -37,6 +37,7 @@ from shidashi.phases import (
     attach_packages,
     fork_point,
     latest_resumable,
+    plan_phase_run,
     restore_fork_point,
     run_phases,
     run_phases_stepwise,
@@ -633,7 +634,8 @@ class Factory:
         Interactive/resumable variant of :meth:`build`. Order:
 
         1. **Root guard** (R8.1, :func:`_require_root`) — the FIRST thing, before
-           any fetch/extraction/state I/O.
+           any fetch/extraction/state I/O; then an invalid ``until`` is refused
+           (:func:`shidashi.phases.plan_phase_run`), still before any work.
         2. Resolves ``snapshot`` (stage3 pointer) and ``recipe_hash``; the path of the
            persisted state is :func:`shidashi.config.build_state_path`.
         3. ``reset`` (R6.4): clears the persisted state and removes the rootfs, starting
@@ -661,6 +663,8 @@ class Factory:
         _require_root()
 
         recipe = self.recipe
+        # an invalid --until is refused before any fetch, seed or state write
+        plan_phase_run(recipe, completed=(), until=until)
         rootfs = config.build_root() / f"{recipe.arch}-{recipe.flavor}-{recipe.init}"
         pointer = load_pointer(recipe.init, seeds_dir=config.seeds_dir())
         snapshot = pointer.snapshot

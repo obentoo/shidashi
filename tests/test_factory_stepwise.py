@@ -128,6 +128,24 @@ def test_build_stepwise_non_root_raises_factory_error_before_work(
     assert "root" in str(exc.value).lower()
 
 
+def test_build_stepwise_refuses_an_invalid_until_before_work(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression (2026-10-05): ``--until bootstrap`` was refused only after the
+    seed, the generation check and the state file were already done."""
+    monkeypatch.setattr(os, "geteuid", lambda: 0)
+
+    def _boom(*_a: object, **_k: object) -> object:
+        raise AssertionError("work done before --until was checked")
+
+    monkeypatch.setattr(factory, "load_pointer", _boom)
+    monkeypatch.setattr(factory, "pinned_repos", _boom)
+
+    f = Factory(_recipe(), Path("/var/cache/shidashi/binpkgs/v3"))
+    with pytest.raises(ValueError, match="valid values: seed, rebuild, graphics"):
+        f.build_stepwise(until="bootstrap")
+
+
 # --- host-gated INTEGRATION (Red DEFERRED to the real privileged host) -------
 
 
