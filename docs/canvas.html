@@ -163,7 +163,7 @@ const BOARDS = [
     num: "4", title: "Breaking a circular dependency (use_break)",
     desc: "Real cycle: libsdl2 → pipewire → ffmpeg → libsdl2. Curated manually per flavor: compile with the USE turned off, then turn it back on.",
     code: `flowchart LR
-    PR["pretend-resolve.sh<br/>(emerge --pretend)"]:::tool --> CUR["manual curation<br/>of use_break in the recipe"]:::dec
+    PR["shidashi pretend<br/>(emerge --pretend)"]:::tool --> CUR["manual curation<br/>of use_break in the recipe"]:::dec
     CUR --> BP["BREAK-PASS<br/>ffmpeg#91;-sdl#93;<br/>(transient binpkg)"]:::trans
     BP --> SP["SETTLE-PASS<br/>ffmpeg#91;sdl#93; final<br/>(cycle partner already present)"]:::art
     SP --> GC{"USE-aware GC"}:::dec

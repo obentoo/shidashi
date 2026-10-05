@@ -310,3 +310,129 @@ def test_extract_stage3_keeps_sticky_setuid_and_group_write(tmp_path: Path) -> N
 
     assert oct((rootfs / "tmp").stat().st_mode & 0o7777) == "0o1777"
     assert oct((rootfs / "usr/bin/su").stat().st_mode & 0o7777) == "0o4755"
+
+
+# --- fetch_stage3 download → verify → store (R2.3, R2.4) — task 8.1 ----------
+#
+# The network is replaced by a fake ``seed._download`` that writes canned bytes
+# to whatever destination fetch_stage3 hands it, and the GPG check by a fake
+# ``seed.verify_signature``. What is asserted is the contract, not the steps:
+# a verified tarball ends up in the cache under its pinned name and nothing
+# else does; a failed check raises before anything lands in the cache.
+
+_FILENAME = f"stage3-amd64-nomultilib-systemd-{_SNAPSHOT}.tar.xz"
+_BLOB = b"downloaded stage3"
+
+
+def _pointer(sha512: str) -> Stage3Pointer:
+    return Stage3Pointer(
+        init="systemd",
+        base_url=_BASE_URL,
+        snapshot=_SNAPSHOT,
+        filename=_FILENAME,
+        sha512=sha512,
+    )
+
+
+class _FakeMirror:
+    """Serves the tarball (and anything else asked for, e.g. its signed
+    ``.DIGESTS``) and remembers every destination it wrote."""
+
+    def __init__(self, blob: bytes) -> None:
+        self.blob = blob
+        self.urls: list[str] = []
+        self.dests: list[Path] = []
+
+    def __call__(self, url: str, dest: Path) -> None:
+        self.urls.append(url)
+        self.dests.append(dest)
+        dest.write_bytes(self.blob if url == stage3_url(_pointer("0" * 128)) else b"signed")
+
+
+def _entries(cache: Path) -> list[str]:
+    # every entry, hidden ones too: a leftover ".tmp"/"shidashi-seed-*" counts
+    return sorted(p.name for p in cache.iterdir()) if cache.exists() else []
+
+
+def test_fetch_stage3_download_verified_is_stored_under_pinned_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cache = tmp_path / "cache"
+    mirror = _FakeMirror(_BLOB)
+    signature_checked: list[Path] = []
+
+    def _signature(digests: Path, **_k: object) -> None:
+        # the signature is checked BEFORE the tarball is stored: a cache hit
+        # only re-checks the digest, so a stored-then-refused tarball would be
+        # reused next time without its signature ever having held
+        assert not (cache / _FILENAME).exists(), "tarball stored before its signature was checked"
+        assert digests.is_file()
+        signature_checked.append(digests)
+
+    monkeypatch.setattr(seed, "_download", mirror)
+    monkeypatch.setattr(seed, "verify_signature", _signature)
+
+    got = fetch_stage3(_pointer(hashlib.sha512(_BLOB).hexdigest()), cache_dir=cache)
+
+    assert got == cache / _FILENAME
+    assert got.read_bytes() == _BLOB
+    assert stage3_url(_pointer("0" * 128)) in mirror.urls
+    assert len(signature_checked) == 1
+    # stored atomically: the cache holds the tarball and nothing else, and no
+    # destination the downloads went to survives outside the cache either
+    assert _entries(cache) == [_FILENAME]
+    assert [d for d in mirror.dests if d.exists() and d != got] == []
+
+
+def test_fetch_stage3_download_failed_digest_leaves_nothing_in_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cache = tmp_path / "cache"
+    mirror = _FakeMirror(b"tampered stage3")
+    monkeypatch.setattr(seed, "_download", mirror)
+    monkeypatch.setattr(seed, "verify_signature", lambda *_a, **_k: None)
+
+    with pytest.raises(SeedError, match="sha512"):
+        fetch_stage3(_pointer(hashlib.sha512(_BLOB).hexdigest()), cache_dir=cache)
+
+    assert _entries(cache) == []
+    assert [d for d in mirror.dests if d.exists()] == []
+
+
+def test_fetch_stage3_download_failed_signature_leaves_nothing_in_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cache = tmp_path / "cache"
+    mirror = _FakeMirror(_BLOB)
+
+    def _refuse(*_a: object, **_k: object) -> None:
+        raise SeedError("GPG verification failed for the .DIGESTS")
+
+    monkeypatch.setattr(seed, "_download", mirror)
+    monkeypatch.setattr(seed, "verify_signature", _refuse)
+
+    # the digest matches: only the signature fails, and that alone must refuse
+    with pytest.raises(SeedError, match="GPG"):
+        fetch_stage3(_pointer(hashlib.sha512(_BLOB).hexdigest()), cache_dir=cache)
+
+    assert _entries(cache) == []
+    assert [d for d in mirror.dests if d.exists()] == []
+
+
+def test_fetch_stage3_download_replaces_a_corrupt_file_under_the_pinned_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Hostile half of R2.5: a file carrying the pinned NAME is not the pinned
+    tarball until its digest says so — it is re-downloaded, never reused."""
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    (cache / _FILENAME).write_bytes(b"truncated by a killed run")
+    mirror = _FakeMirror(_BLOB)
+    monkeypatch.setattr(seed, "_download", mirror)
+    monkeypatch.setattr(seed, "verify_signature", lambda *_a, **_k: None)
+
+    got = fetch_stage3(_pointer(hashlib.sha512(_BLOB).hexdigest()), cache_dir=cache)
+
+    assert stage3_url(_pointer("0" * 128)) in mirror.urls
+    assert got.read_bytes() == _BLOB
+    assert _entries(cache) == [_FILENAME]

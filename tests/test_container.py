@@ -11,9 +11,13 @@ Story 003 (2.2): ``_nspawn_argv`` gains ``binds_rw`` (emitting ``--bind=`` after
 ``--bind-ro=``); ``Container`` accepts and propagates ``binds_rw``. Back-compat
 (R7.3): without ``binds_rw`` the argv is identical to story 002's.
 
-INTEGRATION (R4.1-R4.3): requires root + systemd-nspawn + a seeded rootfs — gated
-with ``@pytest.mark.skipif``. On non-Gentoo CI / a non-root sandbox these tests
-SKIP (Red deferred to the real privileged host).
+INTEGRATION (R4.1-R4.3): requires root + systemd-nspawn — gated with
+``@pytest.mark.skipif``; on non-Gentoo CI / a non-root sandbox these tests SKIP.
+They run on the ``seeded_rootfs`` fixture: a directory under the test's own
+``tmp_path`` that ``systemd-nspawn`` accepts as an OS tree (it refuses an empty
+one, "doesn't look like it has an OS tree", and exits 1 — the very code
+``false`` exits with) and in which ``true`` and ``false`` are runnable. It is
+built from what the host already has: no network, no package install.
 """
 
 import os
@@ -174,24 +178,93 @@ def test_container_threads_binds_rw_into_command() -> None:
     assert "--bind=/h/pkgdir:/var/cache/binpkgs" in cmd
 
 
-# --- host-gated INTEGRATION (R4.1-R4.3) ---------------------------------------
+# --- host-gated INTEGRATION (R4.1-R4.3) on a seeded OS tree -----------------
+
+
+def _shared_libs(binary: Path) -> set[Path]:
+    """The absolute paths ``ldd`` resolves for ``binary`` (loader included)."""
+    out = subprocess.run(["ldd", str(binary)], capture_output=True, text=True, check=False).stdout
+    libs: set[Path] = set()
+    for line in out.splitlines():
+        for word in line.split():
+            if word.startswith("/"):
+                libs.add(Path(word))
+    return libs
+
+
+@pytest.fixture
+def seeded_rootfs(tmp_path: Path) -> Path:
+    """The smallest tree ``systemd-nspawn`` accepts as an OS: merged ``/usr``,
+    an ``os-release``, and ``true``/``false`` with the libraries they load, all
+    copied from the host running the test."""
+    root = tmp_path / "machines" / "rootfs"
+    for d in ("usr/bin", "usr/lib", "usr/lib64", "etc", "proc", "sys", "dev", "run", "tmp", "var"):
+        (root / d).mkdir(parents=True)
+    for link in ("bin", "sbin", "lib", "lib64"):
+        target = "usr/bin" if link.endswith("bin") else f"usr/{link}"
+        (root / link).symlink_to(target)
+    (root / "usr/lib/os-release").write_text('ID=shidashi-test\nNAME="Shidashi test tree"\n')
+    (root / "etc/os-release").symlink_to("../usr/lib/os-release")
+    for name in ("true", "false"):
+        found = shutil.which(name)
+        assert found is not None, f"{name} not found on the host"
+        binary = Path(found).resolve()
+        shutil.copy2(binary, root / "usr/bin" / name)
+        for lib in _shared_libs(binary):
+            dest = root / lib.relative_to("/")
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            if not dest.exists():
+                shutil.copy2(lib.resolve(), dest)
+    return root
+
+
+def _tree(root: Path) -> list[tuple[str, int, int, int]]:
+    """Every path in ``root`` (itself included) with mode, size and mtime: what a
+    run on a disposable copy must leave exactly as it was."""
+    paths = [root, *sorted(root.rglob("*"))]
+    return [
+        (str(p.relative_to(root)), st.st_mode, st.st_size, st.st_mtime_ns)
+        for p in paths
+        for st in (p.lstat(),)
+    ]
 
 
 @_skip_privileged
-def test_container_runs_command_and_tears_down(tmp_path: Path) -> None:
-    rootfs = tmp_path / "rootfs"
-    rootfs.mkdir()
-    with Container(rootfs, ephemeral=True) as c:
+def test_container_runs_command_and_tears_down(seeded_rootfs: Path, tmp_path: Path) -> None:
+    # the tree is built for this test, never borrowed from the host
+    assert seeded_rootfs.is_relative_to(tmp_path)
+    before = _tree(seeded_rootfs)
+    neighbours = set(seeded_rootfs.parent.iterdir())
+
+    with Container(seeded_rootfs, ephemeral=True) as c:
+        # check=True: an nspawn refusal (exit 1) would raise here
         result = c.run(["true"], check=True)
         assert result.exit_code == 0
+        # R4.2: the run went to a disposable copy — nspawn's mount points,
+        # resolv.conf and machine-id never reached the seeded tree
+        assert _tree(seeded_rootfs) == before
+
+    # the ephemeral copy nspawn made beside the tree is gone with the container
+    leftovers = set(seeded_rootfs.parent.iterdir()) - neighbours
+    assert leftovers == set()
 
 
 @_skip_privileged
-def test_container_check_true_raises_on_nonzero(tmp_path: Path) -> None:
-    rootfs = tmp_path / "rootfs"
-    rootfs.mkdir()
-    with Container(rootfs, ephemeral=True) as c, pytest.raises(Exception):  # noqa: B017
-        c.run(["false"], check=True)
+def test_container_check_true_raises_on_nonzero(seeded_rootfs: Path, tmp_path: Path) -> None:
+    assert seeded_rootfs.is_relative_to(tmp_path)
+    with Container(seeded_rootfs, ephemeral=True) as c:
+        # hostile half: nspawn's own refusal also exits 1, so a raise alone
+        # proves nothing — the same container must first run a command cleanly
+        assert c.run(["true"], check=True).exit_code == 0
+        # converse: check=False hands back the command's own exit, no raise
+        assert c.run(["false"], check=False).exit_code == 1
+        with pytest.raises(subprocess.CalledProcessError) as err:
+            c.run(["false"], check=True)
+
+    assert err.value.returncode == 1
+    assert err.value.cmd[-1] == "false"
+    streams = f"{err.value.stdout or ''}{err.value.stderr or ''}"
+    assert "OS tree" not in streams
 
 
 # --- streaming log: a 3-hour emerge must be visible while it runs ---------------

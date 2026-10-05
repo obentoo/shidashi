@@ -216,7 +216,7 @@ flowchart TD
     <div class="diagram">
       <pre class="mermaid">
 flowchart LR
-    PR["pretend-resolve.sh<br/>(emerge --pretend)"]:::tool --> CUR["manual curation<br/>of use_break in the recipe"]:::dec
+    PR["shidashi pretend<br/>(emerge --pretend)"]:::tool --> CUR["manual curation<br/>of use_break in the recipe"]:::dec
     CUR --> BP["BREAK-PASS<br/>ffmpeg#91;-sdl#93;<br/>(transient binpkg)"]:::trans
     BP --> SP["SETTLE-PASS<br/>ffmpeg#91;sdl#93; final<br/>(cycle partner already present)"]:::art
     SP --> GC{"USE-aware GC"}:::dec
