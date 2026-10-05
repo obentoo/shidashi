@@ -19,7 +19,8 @@ from shidashi.tree import (
     verify_detached,
 )
 
-_LAB_SNAPSHOT = Path("/var/tmp/bentoo-lab/dl/gentoo-20260926.tar.xz")
+#: the lab's copy of the snapshot the pin names, with its .gpgsig
+_LAB_SNAPSHOT = Path("/var/tmp/bentoo-lab/dl") / load_tree_pin(config.seeds_dir()).filename
 
 
 def _snapshot_bytes(date: str) -> bytes:
@@ -115,7 +116,6 @@ def test_no_download_without_a_cached_snapshot_is_a_tree_error(tmp_path: Path) -
 def test_the_pinned_snapshot_verifies_against_the_gentoo_key() -> None:
     """The real thing: the tarball the pin names, its signature, the system key."""
     pin = load_tree_pin(config.seeds_dir())
-    assert _LAB_SNAPSHOT.name == pin.filename
     verify_detached(_LAB_SNAPSHOT, Path(f"{_LAB_SNAPSHOT}.gpgsig"))
     assert hashlib.sha512(_LAB_SNAPSHOT.read_bytes()).hexdigest() == pin.sha512
 

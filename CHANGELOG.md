@@ -35,8 +35,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Package selection.** vim, bash and their completions leave the `shell` kit for
   the binhost catalog (bash stays in every image through `@system`; nano is the
   installed editor); GNOME's USE gains `gtk4`; KDE's drops `qt5`.
-- **`::gentoo` re-pinned to 20260926, `::bentoo` to the same day.** The 20260919
-  snapshot rotated off the mirror.
+- **`::gentoo` re-pinned to 20260928, `::bentoo` to the same day.** The 20260919
+  snapshot rotated off the mirror, and 20260926 a day after it was pinned.
 
 ### Fixed
 
