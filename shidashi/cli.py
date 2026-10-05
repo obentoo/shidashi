@@ -1069,8 +1069,9 @@ def plan_tree(images: list[str]) -> tuple[list[str], list[str]]:
     minimal, and minimal → desktop → each flavor. A flavor's chain builds and
     settles minimal on its way (minimal ships), so minimal needs a factory run of
     its own only when no flavor is asked for; the second flavor starts from the
-    first one's desktop fork point. The toolbox (base → toolbox) comes first:
-    every ISO is made in it.
+    first one's desktop fork point. ``worker`` (minimal → worker) is planned like
+    a flavor: its chain settles minimal too. The toolbox (base → toolbox) comes
+    first: every ISO is made in it.
     """
     order = config.target_names()
     unknown = [i for i in images if i not in order]

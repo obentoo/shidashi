@@ -1,0 +1,8 @@
+# variants/worker/system.yaml — how the worker image differs from minimal.
+#
+# sshd stays disabled at boot, as on every live medium (init/systemd/system.yaml):
+# `shidashi kyomei` starts it once the host's key is in place, so nothing listens
+# before the machine is paired.
+
+# The name the host and the console show (and mDNS answers, once enabled).
+hostname: shidashi-worker

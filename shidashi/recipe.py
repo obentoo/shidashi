@@ -34,7 +34,11 @@ BASE_STAGE = "base"
 #: name. Every other stage is a flavor, at ``variants/flavor/<name>/``, and its
 #: phase is called ``flavor`` -- one phase name however many flavors exist.
 #: ``toolbox`` branches off the base and is no image: the ISO tools run in it.
-CORE_STAGES = ("base", "minimal", "desktop", "toolbox")
+#: ``worker`` branches off minimal: a console image, not a desktop flavor.
+CORE_STAGES = ("base", "minimal", "worker", "desktop", "toolbox")
+
+#: The images that are core stages, in chain order; every flavor comes after them.
+CORE_IMAGES = ("minimal", "worker")
 
 #: The stage the assembler runs mksquashfs and grub-mkrescue in (shidashi.toolbox).
 TOOLBOX_STAGE = "toolbox"

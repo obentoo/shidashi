@@ -1,0 +1,87 @@
+#!/bin/bash
+# shidashi — the worker image's console tool (variants/worker).
+#
+#   shidashi kyomei [HOST[:PORT]]   pair this machine with a Shidashi host
+#
+# kyomei (共鳴, "resonance") asks for the host's address -- digits and dots, the same
+# keys on any keyboard layout -- and fetches the host's worker key from the host's
+# temporary server (lab/worker/kyomei.sh, port 8765). It allows that key for root,
+# appended so that a VM's session key survives, takes the name the host offers (if
+# any) as its hostname, and starts sshd. Logins are key-only
+# (/etc/ssh/sshd_config.d/10-shidashi-worker.conf): the live medium's public password
+# never works over the network. Plain HTTP authenticates neither side, so kyomei
+# prints both fingerprints for a person to compare with the host's.
+#
+# Everything lands in the live root, in RAM: a reboot undoes it.
+set -euo pipefail
+
+readonly DEFAULT_PORT=8765
+readonly KEYS=/root/.ssh/authorized_keys
+
+usage() {
+  sed -n '4s/^# \{0,1\}//p' "$0"
+}
+
+die() {
+  echo "shidashi: $*" >&2
+  exit 1
+}
+
+kyomei() {
+  local target=${1:-} key
+  if [[ -z $target ]]; then
+    read -rp "Host IP: " target
+  fi
+  [[ $target == *:* ]] || target="$target:$DEFAULT_PORT"
+  [[ $target =~ ^[A-Za-z0-9.-]+:[0-9]+$ ]] || die "not an address: $target"
+
+  echo "kyomei: fetching the host key from $target"
+  key=$(curl -fsS --max-time 10 "http://$target/id_ed25519.pub") ||
+    die "no answer from http://$target -- is lab/worker/kyomei.sh running on the host?"
+  [[ $key == ssh-ed25519\ * ]] || die "not an ed25519 public key"
+
+  install -d -m 700 /root/.ssh
+  touch "$KEYS"
+  # A credential-provided file may lack its final newline: appending would glue
+  # two keys onto one line and break both (seen in the KVM test, 2026-10-04).
+  if [[ -s $KEYS && -n $(tail -c1 "$KEYS") ]]; then
+    echo >> "$KEYS"
+  fi
+  grep -qxF "$key" "$KEYS" || printf '%s\n' "$key" >> "$KEYS"
+  chmod 600 "$KEYS"
+
+  # the name is optional: a host without -n serves none (curl -f fails on the 404)
+  local name
+  if name=$(curl -fsS --max-time 10 "http://$target/hostname" 2>/dev/null); then
+    [[ $name =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$ ]] || die "not a hostname: $name"
+    hostnamectl hostname "$name"
+  fi
+
+  ssh-keygen -A >/dev/null
+  sshd -t
+  systemctl restart sshd.service
+
+  echo
+  echo "== host key allowed (compare with the host's):"
+  ssh-keygen -lf - <<<"$key"
+  echo "== this worker's key (the host checks it on first contact):"
+  ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub
+  echo "== name: $(hostname)"
+  echo "== addresses:"
+  ip -4 -br addr | grep -v '^lo'
+}
+
+case ${1:-} in
+  kyomei)
+    if [[ $EUID -ne 0 ]]; then
+      exec sudo "$0" "$@"
+    fi
+    shift
+    kyomei "$@"
+    ;;
+  "" | -h | --help) usage ;;
+  *)
+    usage >&2
+    exit 2
+    ;;
+esac

@@ -118,7 +118,7 @@ def base_path() -> Path:
 def stage_path(name: str) -> Path:
     """The YAML of a stage (D24): where each kind of stage lives.
 
-    - ``base``, ``minimal``, ``desktop``, ``toolbox`` → ``variants/<name>/recipe.yaml``;
+    - ``base``, ``minimal``, ``worker``, ``desktop``, ``toolbox`` → ``variants/<name>/recipe.yaml``;
     - a flavor → ``variants/flavor/<name>/recipe.yaml``.
 
     Every stage is a ``recipe.yaml``, like every axis value: the place of a
@@ -140,8 +140,11 @@ def stage_path(name: str) -> Path:
 
 
 def target_names() -> list[str]:
-    """The images one can build: ``minimal`` and every flavor, in chain order."""
-    return ["minimal", *available_names("flavor")]
+    """The images one can build: the core ones (``minimal``, ``worker``) and every
+    flavor, in chain order."""
+    from shidashi.recipe import CORE_IMAGES
+
+    return [*CORE_IMAGES, *available_names("flavor")]
 
 
 def stage_names() -> list[str]:

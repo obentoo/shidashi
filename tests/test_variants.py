@@ -161,6 +161,16 @@ def test_every_graphical_flavor_is_built_on_desktop_on_minimal(flavor: str) -> N
     assert [p.name for p in recipe.phases if p.emptytree] == ["base"]
 
 
+def test_the_worker_is_a_core_stage_on_minimal_not_a_flavor() -> None:
+    """base ─► minimal ─► worker: no desktop, its own layer at variants/worker."""
+    recipe = _recipe("worker")
+    assert recipe.stages == ("base", "minimal", "worker")
+    assert [p.name for p in recipe.phases if p.ships] == ["minimal", "worker"]
+    assert "worker" in recipe.portage_layers
+    assert not any(layer.startswith("flavor/") for layer in recipe.portage_layers)
+    assert config.target_names()[:2] == ["minimal", "worker"]
+
+
 def test_minimal_is_the_base_plus_the_console_kits() -> None:
     recipe = _recipe("minimal")
     assert recipe.stages == ("base", "minimal")
