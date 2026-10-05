@@ -21,7 +21,9 @@ on:
 jobs:
   quality:
     name: quality (lint + types + tests)
-    runs-on: ubuntu-latest
+    # Pinned image, like the actions below: ubuntu-latest moves to Ubuntu 26 on
+    # 2026-10-19, and the runner should change only by a commit.
+    runs-on: ubuntu-24.04
     # read-only token: this job only checks out and runs the local gates
     permissions:
       contents: read
@@ -61,7 +63,7 @@ jobs:
     # GitHub-hosted runners do not provide. Enable it in OVERVIEW phase 4 by
     # replacing the `if` with a real condition (e.g. github.event_name == 'schedule').
     if: false
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
