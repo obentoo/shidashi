@@ -159,12 +159,16 @@ def gpg_verify(*files: Path, keyring: Path = GENTOO_KEYRING) -> None:
         raise SeedError(f"{keyring} is missing (sec-keys/openpgp-keys-gentoo-release)")
     home = tempfile.mkdtemp(prefix="shidashi-gpg-")
     try:
-        subprocess.run(
+        # a keyring that imports nothing would only show up later as a bare
+        # "No public key" on the signature; name the keyring instead
+        imported = subprocess.run(
             ["gpg", "--homedir", home, "--batch", "--quiet", "--import", str(keyring)],
             capture_output=True,
             text=True,
             check=False,
         )
+        if imported.returncode != 0:
+            raise SeedError(f"failed to import {keyring}:\n{imported.stderr.strip()}")
         result = subprocess.run(
             ["gpg", "--homedir", home, "--batch", "--status-fd", "1", "--verify"]
             + [str(f) for f in files],

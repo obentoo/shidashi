@@ -203,10 +203,27 @@ def test_verify_signature_refuses_a_signer_outside_the_keyring(
     signed_digests: tuple[Path, Path], tmp_path: Path
 ) -> None:
     signed, _ = signed_digests
-    other = tmp_path / "other.asc"
-    other.write_text("")
+    home = tempfile.mkdtemp(prefix="shidashi-t-")
+    try:
+        _gpg(home, "--quick-gen-key", "Other <other@test.invalid>", "ed25519", "sign", "never")
+        other = tmp_path / "other.asc"
+        other.write_text(_gpg(home, "--armor", "--export"))
+    finally:
+        subprocess.run(["gpgconf", "--homedir", home, "--kill", "all"], check=False)
+        shutil.rmtree(home, ignore_errors=True)
     with pytest.raises(SeedError, match="GPG verification failed"):
         verify_signature(signed, keyring=other)
+
+
+@_NO_GPG
+def test_verify_signature_names_a_keyring_that_imports_nothing(
+    signed_digests: tuple[Path, Path], tmp_path: Path
+) -> None:
+    signed, _ = signed_digests
+    empty = tmp_path / "empty.asc"
+    empty.write_text("")
+    with pytest.raises(SeedError, match="failed to import .*empty.asc"):
+        verify_signature(signed, keyring=empty)
 
 
 @_NO_GPG
