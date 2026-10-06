@@ -10,8 +10,9 @@ UNIT (deterministic, non-Gentoo CI):
   monkeypatched to guarantee no emerge is called).
 
 INTEGRATION (host-gated, ``@pytest.mark.skipif`` non-root/non-Gentoo): they exercise the
-real privileged path (nspawn + emerge + snapshot). In CI/sandbox they are SKIPPED —
-Red DEFERRED to the real privileged host (4.1-int, 5.1, 5.2-int, 5.3, 6.2-int).
+real privileged path (nspawn + emerge + snapshot) on the cached ``base`` fork point,
+restored into each test's tmp_path (story 015). In CI/sandbox they are SKIPPED; run
+them as root in the builder VM (see the comment above ``base_rootfs``).
 
 New symbols (``Factory``/``FactoryError``/``FactoryResult``/``_build_binds``/
 ``settle_pass``) are imported tolerantly so as not to abort pytest's
@@ -21,16 +22,21 @@ pending symbol (expected Red of story 003).
 
 import os
 import shutil
+import subprocess
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
 import pytest
+from typer.testing import CliRunner
 
-from shidashi import config, factory, phases
-from shidashi.recipe import Phase, ResolvedRecipe
+from shidashi import cli, config, factory, phases
+from shidashi.container import Container
+from shidashi.flow import StagesFlow
+from shidashi.recipe import Phase, ResolvedRecipe, UseBreak
+from shidashi.resolve import bind_repos, install_sets
 from shidashi.seed import load_pointer
-from shidashi.tree import load_pin_id
+from shidashi.tree import load_pin_id, pinned_repos
 from tests._pending import try_import
 
 Factory: Any = try_import("shidashi.factory", "Factory")
@@ -39,7 +45,7 @@ FactoryResult: Any = try_import("shidashi.factory", "FactoryResult")
 
 _NEEDS_HOST = os.geteuid() != 0 or shutil.which("systemd-nspawn") is None
 _skip_privileged = pytest.mark.skipif(
-    _NEEDS_HOST, reason="requires root + systemd-nspawn + a seeded stage3 (Gentoo host)"
+    _NEEDS_HOST, reason="requires root + systemd-nspawn (run it in the builder VM)"
 )
 
 
@@ -220,6 +226,16 @@ def test_snapshot_restore_real_rootfs_preserves_ownership(tmp_path: Path) -> Non
 #
 # A missing fork point skips the test naming the file; nothing here builds one.
 
+#: Not installed by the base, ~170 KB, every dependency already in the base.
+_SMALL_ATOM = "dev-libs/wayland"
+#: The binhost holds vim with and without ``wayland``; the base installs it without.
+_CUT = UseBreak(atom="app-editors/vim", flag="wayland", enable=True)
+#: The one-atom kit (``variants/kits/system/laptop``) a trimmed stage installs.
+_TRIM_SET = "laptop"
+_TRIM_ATOM = "app-laptop/laptop-mode-tools"
+#: What makes every emerge here binary-only: one that would compile fails instead.
+_BINPKG_ONLY = ("--usepkgonly", "--binpkg-respect-use=y")
+
 
 def _base_fork_point(fork_points_dir: Path) -> Path:
     """The cached ``base`` fork point of the pinned stage3 and pins; skips naming it.
@@ -262,6 +278,82 @@ def base_rootfs(tmp_path: Path) -> Iterator[Path]:
     assert (_mtime_ns(fork_points), _mtime_ns(tarball)) == before, "the cache was written"
 
 
+def _pkgdir() -> Path:
+    """The generation's PKGDIR: the binhost the emerges install from."""
+    snapshot = load_pointer("systemd", seeds_dir=config.seeds_dir()).snapshot
+    return config.pkgdir("v3", snapshot)
+
+
+def _container(rootfs: Path) -> Container:
+    """An nspawn on ``rootfs`` with the pinned repos and the binhost, all READ-ONLY.
+
+    The repos are bound as :meth:`Factory.build` binds them; the PKGDIR is bound
+    read-only too, which binary-only emerges never need to write.
+    """
+    repos = pinned_repos(seeds_dir=config.seeds_dir(), cache_dir=config.cache_dir(), download=False)
+    binds = bind_repos(rootfs / "etc" / "portage" / "repos.conf", pinned=repos)
+    binds.append((_pkgdir(), Path("/var/cache/binpkgs")))
+    return Container(rootfs, binds=binds)
+
+
+def _binpkg_only_flow() -> StagesFlow:
+    """The flow in force, with binary-only emerges and no rebuild from source.
+
+    ``perl-rebuild`` and ``module-rebuild`` rebuild with ``--usepkg=n`` by design;
+    the cached base still holds a perl 5.42 directory, so they would compile
+    ~24 perl modules in every test. Their own tests cover them.
+    """
+    flow = phases.stages_flow()
+    return flow.model_copy(
+        update={
+            "emerge": flow.emerge.model_copy(
+                update={"options": (*flow.emerge.options, *_BINPKG_ONLY)}
+            ),
+            "settle": flow.settle.model_copy(
+                update={"options": (*flow.settle.options, *_BINPKG_ONLY)}
+            ),
+            "steps": tuple(s for s in flow.steps if s.do not in ("perl-rebuild", "module-rebuild")),
+        }
+    )
+
+
+@pytest.fixture
+def binpkg_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    flow = _binpkg_only_flow()
+    monkeypatch.setattr(phases, "stages_flow", lambda: flow)
+
+
+def _trimmed_minimal(*, ships: bool) -> ResolvedRecipe:
+    """The real minimal recipe with its last stage cut down to one small kit.
+
+    The stage keeps the base's layers, so its configuration does not change and
+    ``-uDN @world`` has nothing to rebuild: the run takes seconds, not the hour
+    of the real ``extra-system``.
+    """
+    recipe = config.load_recipe("v3", "minimal", "systemd")
+    base = recipe.phases[0]
+    stage = Phase(
+        name="minimal", stage="minimal", sets=(_TRIM_SET,), layers=base.layers, ships=ships
+    )
+    # only the base's excludes: the minimal stage's and the init's name atoms of
+    # the minimal kits cut out here (an unmatched exclude is a ResolveError)
+    kept = {atom: origin for atom, origin in recipe.exclude_origin.items() if origin == "base"}
+    return recipe.model_copy(
+        update={
+            "phases": (base, stage),
+            "sets": (*base.sets, _TRIM_SET),
+            "exclude": tuple(atom for atom in recipe.exclude if atom in kept),
+            "exclude_origin": kept,
+        }
+    )
+
+
+def _installed_use(rootfs: Path, cp: str) -> set[str]:
+    category, name = cp.split("/")
+    (entry,) = (rootfs / "var" / "db" / "pkg" / category).glob(f"{name}-[0-9]*")
+    return set((entry / "USE").read_text(encoding="utf-8").split())
+
+
 def test_base_rootfs_skips_without_a_fork_point(tmp_path: Path) -> None:
     # 1.1: an empty fork-points directory skips, naming the files it looked for
     with pytest.raises(pytest.skip.Exception, match=r"v3-systemd-.*-base\.tar"):
@@ -280,31 +372,134 @@ def test_base_rootfs_restores_the_cached_fork_point(base_rootfs: Path) -> None:
 
 @_skip_privileged
 @pytest.mark.usefixtures("binpkg_only")
-@_skip_privileged
-def test_run_phase_executes_and_wraps_failure() -> None:
-    # 5.1 (int): run_phase runs a trivial emerge and returns atoms; non-zero →
-    # FactoryError. Requires a real seeded rootfs — deferred to the host.
-    pytest.skip("privileged integration: requires a real seeded rootfs (deferred Red)")
+def test_run_phase_executes_and_wraps_failure(base_rootfs: Path) -> None:
+    # 5.1 (int): run_phase emerges one binpkg and returns it; a target that cannot
+    # resolve raises FactoryError with the phase and emerge's own text
+    recipe = config.load_recipe("v3", "minimal", "systemd")
+    with _container(base_rootfs) as container:
+        ok = phases.run_phase(
+            container, recipe, Phase(name="small", packages=(_SMALL_ATOM,)), emptytree=False
+        )
+        assert any(a.startswith(f"{_SMALL_ATOM}-") for a in ok.reused_atoms), ok.output
+        assert phases.is_installed(base_rootfs, _SMALL_ATOM)
+
+        missing = Phase(name="missing", packages=("dev-libs/shidashi-no-such-package",))
+        with pytest.raises(phases.FactoryError) as caught:
+            phases.run_phase(container, recipe, missing, emptytree=False)
+    assert caught.value.phase == "missing"
+    assert "there are no binary packages to satisfy" in caught.value.output
 
 
 @_skip_privileged
-def test_settle_pass_reemerges_ffmpeg_with_use_on() -> None:
-    # 5.2 (int): settle_pass re-emerges ffmpeg with the USE on after the break-pass.
-    pytest.skip("privileged integration: requires a real seeded rootfs (deferred Red)")
+@pytest.mark.usefixtures("binpkg_only")
+def test_settle_pass_reemerges_a_cut_atom_with_its_final_use(base_rootfs: Path) -> None:
+    # 5.2 (int): the break-pass installs vim with the cut's USE; settle_pass removes
+    # the cut and re-emerges it with the final USE; no breaks, no emerge
+    recipe = config.load_recipe("v3", "minimal", "systemd")
+    assert _CUT.flag not in _installed_use(base_rootfs, _CUT.atom)
+    cut_phase = Phase(name="break", packages=(_CUT.atom,), use_break=(_CUT,))
+    with _container(base_rootfs) as container:
+        phases.run_phase(container, recipe, cut_phase, emptytree=False)
+        assert _CUT.flag in _installed_use(base_rootfs, _CUT.atom)
+
+        settled = phases.settle_pass(container, recipe, (_CUT,))
+        assert _CUT.flag not in _installed_use(base_rootfs, _CUT.atom), settled.output
+        assert not base_rootfs.joinpath(*phases._USE_BREAK_FILE).exists()
+
+        idle = phases.settle_pass(container, recipe, ())
+    assert idle.built_atoms == ()
+    assert idle.output == ""
 
 
 @_skip_privileged
-def test_run_phases_minimal_and_kde() -> None:
-    # 5.3 (int): run_phases minimal (trunk+snapshot, no settle) and kde
-    # (resume + settle).
-    pytest.skip("privileged integration: requires a real seeded rootfs (deferred Red)")
+@pytest.mark.usefixtures("binpkg_only")
+def test_run_phases_resumes_after_the_base_fork_point(base_rootfs: Path, tmp_path: Path) -> None:
+    # 5.3 (int): resuming at the base runs only the stage after it, and writes that
+    # stage's fork point where it is told to -- never into the cache
+    recipe = _trimmed_minimal(ships=False)
+    install_sets(base_rootfs, recipe)
+    fork_points = tmp_path / "fork-points"
+    fork_points.mkdir()
+    snapshot = load_pointer(recipe.init, seeds_dir=config.seeds_dir()).snapshot
+    pins = load_pin_id(config.seeds_dir())
+    with _container(base_rootfs) as container:
+        results = phases.run_phases(
+            container,
+            recipe,
+            emptytree=True,
+            resume_at="base",
+            snapshot=snapshot,
+            pins=pins,
+            fork_points_dir=fork_points,
+        )
+    assert [r.phase.name for r in results] == ["minimal"]
+    assert phases.is_installed(base_rootfs, _TRIM_ATOM)
+    written = phases.stage_fork_point_path(
+        recipe, "minimal", snapshot=snapshot, pins=pins, fork_points_dir=fork_points
+    )
+    assert written.is_file()
+    assert [p.name for p in fork_points.iterdir()] == [written.name]
+
+
+@pytest.fixture
+def overlay_cache(tmp_path: Path) -> Iterator[Path]:
+    """A writable view of the real cache: an overlay whose upper layer is in tmp_path.
+
+    The factory writes into its cache (fork points, binpkgs, its generation
+    file); here every write lands in tmp_path, and the real cache is the
+    overlay's read-only lower layer.
+    """
+    lower = config.cache_dir()
+    upper, work, merged = tmp_path / "upper", tmp_path / "work", tmp_path / "cache"
+    for d in (upper, work, merged):
+        d.mkdir()
+    options = f"lowerdir={lower},upperdir={upper},workdir={work}"
+    subprocess.run(["mount", "-t", "overlay", "overlay", "-o", options, str(merged)], check=True)
+    try:
+        yield merged
+    finally:
+        subprocess.run(["umount", str(merged)], check=True)
 
 
 @_skip_privileged
-def test_full_factory_build_v3_minimal_systemd() -> None:
-    # 6.2 (int): shidashi factory v3 minimal systemd produces a non-empty pkgdir +
-    # fork point. Deferred to the real privileged host.
-    pytest.skip("privileged integration: requires a seeded Gentoo host (deferred Red)")
+@pytest.mark.usefixtures("binpkg_only")
+def test_full_factory_build_v3_minimal_systemd(
+    overlay_cache: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # 6.2 (int): `shidashi factory v3 minimal systemd` resumes from the base fork
+    # point, builds the (trimmed) minimal stage, settles it, checks its binpkgs and
+    # writes its fork point -- every write in the overlay's upper layer
+    real_fork_points = config.fork_points_dir()
+    base = _base_fork_point(real_fork_points)
+    recipe = _trimmed_minimal(ships=True)
+    monkeypatch.setattr(config, "load_recipe", lambda *_a, **_k: recipe)
+    monkeypatch.setenv("SHIDASHI_CACHE", str(overlay_cache))
+    monkeypatch.setenv("SHIDASHI_SCRATCH", str(tmp_path / "scratch"))
+    snapshot = load_pointer(recipe.init, seeds_dir=config.seeds_dir()).snapshot
+    pins = load_pin_id(config.seeds_dir())
+    fork_points = config.fork_points_dir()
+    keyed_base = phases.stage_fork_point_path(
+        recipe, "base", snapshot=snapshot, pins=pins, fork_points_dir=fork_points
+    )
+    if not keyed_base.exists():
+        # an older, unkeyed base fork point: named as the pinned build expects it
+        keyed_base.symlink_to(base)
+    before = _mtime_ns(real_fork_points)
+    pkgdir = config.pkgdir(recipe.arch, snapshot)
+
+    result = CliRunner().invoke(
+        cli.app,
+        ["factory", "v3", "minimal", "systemd", "--no-download", "--pkgdir", str(pkgdir)],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert any(pkgdir.iterdir())
+    written = phases.stage_fork_point_path(
+        recipe, "minimal", snapshot=snapshot, pins=pins, fork_points_dir=fork_points
+    )
+    assert written.is_file()
+    assert (tmp_path / "upper" / "fork-points" / written.name).is_file()
+    assert _mtime_ns(real_fork_points) == before
 
 
 # --- fresh seed: fetch + extract the stage3 ------------------------------------

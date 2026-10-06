@@ -169,6 +169,17 @@ lab/vm/builder.sh status
 shidashi vm test /var/lib/shidashi/vm/builder/out/iso/bentoo-…-kde-systemd-v3.iso   # on the host
 ```
 
+The factory's privileged tests (`tests/test_factory.py`) skip unless run as root. In the
+guest they restore the cached `base` fork point and emerge from the binhost, so point
+`SHIDASHI_SEEDS_DIR` at the pins that fork point was built from:
+
+```sh
+# as the guest's root, in the checkout
+PYTHONPATH="$PWD:$PWD/.venv/lib/python3.14/site-packages" SHIDASHI_CACHE=/work/cache \
+  SHIDASHI_SEEDS_DIR=<seeds> python3 -m pytest -p no:cacheprovider \
+  --basetemp=/mnt/work/scratch/pytest tests/test_factory.py
+```
+
 ## Usage
 
 ```sh
