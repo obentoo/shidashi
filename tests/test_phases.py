@@ -379,6 +379,7 @@ def test_run_phases_settles_each_shipped_stage_and_snapshots_every_stage(
         root,
         "--usepkgonly",
         "--binpkg-respect-use=y",
+        "--use-ebuild-visibility=y",
         "--emptytree",
         "@system",
     ]
@@ -388,6 +389,7 @@ def test_run_phases_settles_each_shipped_stage_and_snapshots_every_stage(
         root,
         "--usepkgonly",
         "--binpkg-respect-use=y",
+        "--use-ebuild-visibility=y",
         "--oneshot",
         "--nodeps",
         "dev-lang/python",

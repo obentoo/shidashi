@@ -203,6 +203,7 @@ def iso_settle_argv(atoms: tuple[str, ...], *, jobs: int | None = None) -> list[
 ISO_BRANCH_OPTIONS = (
     "--usepkgonly",
     "--binpkg-respect-use=y",
+    "--use-ebuild-visibility=y",
     "--update",
     "--deep",
     "--newuse",

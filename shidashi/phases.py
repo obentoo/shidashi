@@ -139,12 +139,27 @@ def phase_target(phase: Phase, recipe: ResolvedRecipe) -> tuple[str, ...]:
 #: stage3's own packages included (OVERVIEW §7). ``--binpkg-respect-use=y``
 #: because --usepkgonly turns it OFF by default: emerge would then take any
 #: instance of a package whatever its USE -- the cut one or the settled one.
+#: ``--use-ebuild-visibility=y`` because --usepkgonly also ignores the ebuild
+#: repositories: emerge would take any binpkg of the binhost, even a version the
+#: pinned tree does not have (systemd-262 into an image pinned to a tree with
+#: 261.3, 2026-10-06), and ignore the tree's masks. With it a binpkg is taken only
+#: when its ebuild is in the pinned tree and visible.
 #: The factory's binpkg check resolves with the same options, so the two
 #: cannot drift apart.
-ISO_EMERGE_OPTIONS = ("--usepkgonly", "--binpkg-respect-use=y", "--emptytree")
+ISO_EMERGE_OPTIONS = (
+    "--usepkgonly",
+    "--binpkg-respect-use=y",
+    "--use-ebuild-visibility=y",
+    "--emptytree",
+)
 
 #: The assembler's settle: the cut packages again, from their final binpkgs.
-ISO_SETTLE_OPTIONS = ("--usepkgonly", "--binpkg-respect-use=y", "--oneshot")
+ISO_SETTLE_OPTIONS = (
+    "--usepkgonly",
+    "--binpkg-respect-use=y",
+    "--use-ebuild-visibility=y",
+    "--oneshot",
+)
 
 #: Where the binpkg check puts the stage3's vdb inside the build rootfs: the
 #: ROOT its emerge resolves against, so it sees what the assembler sees.

@@ -150,12 +150,25 @@ def _pointer() -> object:
 # --- iso_emerge_argv / _dracut_argv (PURE) -----------------------------------
 
 
+def test_every_binpkg_install_keeps_to_the_pinned_tree() -> None:
+    """Regression (2026-10-06): --usepkgonly ignores the ebuild repositories, so
+    emerge took any binpkg in the binhost -- systemd-262 and kernel 7.2.8 into an
+    image pinned to gentoo-20260919, which has neither. --use-ebuild-visibility
+    accepts a binpkg only when the pinned tree has its ebuild, visible."""
+    from shidashi.phases import ISO_EMERGE_OPTIONS, ISO_SETTLE_OPTIONS
+
+    for options in (ISO_EMERGE_OPTIONS, ISO_SETTLE_OPTIONS, asm.ISO_BRANCH_OPTIONS):
+        assert "--usepkgonly" in options
+        assert "--use-ebuild-visibility=y" in options
+
+
 def test_iso_emerge_argv_targets_system_plus_flavor_sets() -> None:
     # §7/§9.3 — --emptytree pulls EVERYTHING arch-native (incl. @system) + the flavor's sets.
     assert iso_emerge_argv(_recipe(sets=("graphics", "kde"))) == [
         "emerge",
         "--usepkgonly",
         "--binpkg-respect-use=y",
+        "--use-ebuild-visibility=y",
         "--emptytree",
         "--verbose",
         "@system",
@@ -166,10 +179,11 @@ def test_iso_emerge_argv_targets_system_plus_flavor_sets() -> None:
 
 def test_iso_emerge_argv_jobs_merges_binpkgs_in_parallel() -> None:
     argv = iso_emerge_argv(_recipe(sets=("kde",)), jobs=8)
-    assert argv[:7] == [
+    assert argv[:8] == [
         "emerge",
         "--usepkgonly",
         "--binpkg-respect-use=y",
+        "--use-ebuild-visibility=y",
         "--emptytree",
         "--verbose",
         "--jobs",
@@ -184,6 +198,7 @@ def test_iso_emerge_argv_empty_sets_falls_back_to_world() -> None:
         "emerge",
         "--usepkgonly",
         "--binpkg-respect-use=y",
+        "--use-ebuild-visibility=y",
         "--emptytree",
         "--verbose",
         "@world",
@@ -530,7 +545,14 @@ def test_assemble_orchestrates_seed_emerge_dracut_squashfs_iso(
     # go (depclean + preserved-rebuild from binpkgs only), then dracut.
     inst = _FakeContainer.instances[0]
     parallel = ["--jobs", str(jobs)] if jobs else []
-    final = ["emerge", "--usepkgonly", "--binpkg-respect-use=y", "--oneshot", *parallel]
+    final = [
+        "emerge",
+        "--usepkgonly",
+        "--binpkg-respect-use=y",
+        "--use-ebuild-visibility=y",
+        "--oneshot",
+        *parallel,
+    ]
     assert inst.runs[0] == iso_emerge_argv(recipe, jobs=jobs)
     # F76: the image installs under the chain's cuts (the cut binpkg), then the
     # cut package is settled from its final binpkg, with the cut file gone
