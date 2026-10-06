@@ -231,6 +231,19 @@ def runs_dir() -> Path:
     return Path("/var/log/shidashi/runs")
 
 
+def workers_dir() -> Path:
+    """Where the paired workers are recorded (:mod:`shidashi.workers`).
+
+    ``$XDG_DATA_HOME/shidashi/worker`` (read on every call), default
+    ``~/.local/share/shidashi/worker``: the worker key (``id_ed25519``), the pinned
+    host keys (``known_hosts``) and the registry (``workers.json``). Per user, not
+    system-wide: the pairing is the person's, and the agent runs as them.
+    """
+    data_home = os.environ.get("XDG_DATA_HOME")
+    base = Path(data_home) if data_home else Path.home() / ".local" / "share"
+    return base / "shidashi" / "worker"
+
+
 def seeds_dir() -> Path:
     """Return the ``seeds/`` directory (the pinned pointers) (R2.1).
 
