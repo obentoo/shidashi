@@ -100,7 +100,7 @@ def _run(
     )
     rootfs = tmp_path / "rootfs"
     (rootfs / "var/db/pkg/dev-lang/python-3.14.7").mkdir(parents=True, exist_ok=True)
-    extra = {"on_phase_emerged": hook} if pass_hook else {}
+    extra: dict[str, Any] = {"on_phase_emerged": hook} if pass_hook else {}
     phases.run_phases(
         _Container(rootfs, log),  # type: ignore[arg-type]
         _recipe(),

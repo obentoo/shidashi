@@ -385,7 +385,12 @@ def test_an_unreadable_pin_file_fails_before_any_work(
     w = wire(monkeypatch, tmp_path)
     write_seeds(w.seeds, gentoo="date = \n")
     fetched: list[str] = []
-    monkeypatch.setattr(factory, "pinned_repos", lambda **_k: fetched.append("repos") or {})
+
+    def pinned_repos(**_k: object) -> dict[str, Path]:
+        fetched.append("repos")
+        return {}
+
+    monkeypatch.setattr(factory, "pinned_repos", pinned_repos)
     monkeypatch.setattr(factory, "_restore_into", lambda *_a: fetched.append("restore"))
     with pytest.raises(tree.TreeError) as err:
         getattr(factory.Factory(recipe(), w.pkgdir), method)(download=False)

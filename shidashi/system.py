@@ -363,7 +363,7 @@ def finalize(rootfs: Path, cfg: SystemConfig, *, init: str) -> dict[str, Any]:
 #: "whatever build_time_secrets matches": an unnamed one still reaches
 #: verify-config and fails the build, so the next leak is caught, not hidden.
 _REGENERATED_AT_BOOT = (
-    # net-dns/bind's pkg_postinst; rndc-keygen (systemd) / local.d (OpenRC).
+    # net-dns/bind's pkg_postinst; rndc-keygen.service (systemd) / init.d/rndc-keygen (OpenRC).
     Path("etc/bind/rndc.key"),
 )
 

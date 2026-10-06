@@ -71,7 +71,9 @@ def wired(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> _Wired:
     tar.parent.mkdir(parents=True)
     tar.write_bytes(b"T")
 
-    def apply_system(container: Any, _cfg: object, *, init: str, build: object = None) -> dict:
+    def apply_system(
+        container: Any, _cfg: object, *, init: str, build: object = None
+    ) -> dict[str, Any]:
         del init, build
         _plant(container.rootfs, *state.planted)
         return {}
