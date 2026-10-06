@@ -83,3 +83,27 @@ squashfs_exclude:
   - root/.bash_history
   - root/.lesshst
   - lost+found
+
+# Files a package or the build GENERATES at merge time that no two machines may
+# share: a private key, a seed, a credential. Every copy of the ISO -- and every
+# system installed from it -- would carry the same one. The assemble does not
+# exclude them quietly: verify-config FAILS on any that is still in the rootfs,
+# so the next package that generates one is a failing build, never a silent
+# leak. Each must be generated on the booted system instead (rndc-keygen,
+# sshd-keygen). Same pattern rules as squashfs_exclude; one comment per entry
+# names what generates it.
+build_time_secrets:
+  # net-dns/bind's pkg_postinst (rndc-confgen -a): the named control channel key.
+  # Removed by the live layer and generated at boot by rndc-keygen.
+  - etc/bind/rndc.key
+  # net-misc/openssh's private host keys (ssh-keygen -A), when anything runs it
+  # at build time; generated at boot by sshd-keygen. The `.pub` halves are public.
+  - etc/ssh/ssh_host_*_key
+  # sys-apps/systemd's random seed (systemd-random-seed.service), saved by a
+  # boot of the image or a systemd-firstboot run in the build.
+  - var/lib/systemd/random-seed
+  # sys-apps/systemd's credential encryption key (systemd-creds setup).
+  - var/lib/systemd/credential.secret
+
+# Paths a build_time_secrets pattern matches that are known not to be secrets.
+build_time_secrets_allow: []

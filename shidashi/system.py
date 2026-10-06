@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 import yaml
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
 
 from shidashi.container import CommandResult
 from shidashi.recipe import ResolvedRecipe
@@ -95,6 +95,20 @@ class LivecdFile(BaseModel):
     empty_machine_id: bool = True
     #: ``mksquashfs -wildcards -ef`` patterns, relative to the rootfs.
     squashfs_exclude: tuple[str, ...] = ()
+    #: Files generated at build time that no copy of the image may share (a
+    #: private key, a seed): verify-config refuses an image carrying one. Same
+    #: pattern rules as ``squashfs_exclude``.
+    build_time_secrets: tuple[str, ...] = ()
+    #: Paths a ``build_time_secrets`` pattern matches that are not secrets.
+    build_time_secrets_allow: tuple[str, ...] = ()
+
+    @field_validator("build_time_secrets", "build_time_secrets_allow")
+    @classmethod
+    def _relative_to_the_rootfs(cls, patterns: tuple[str, ...]) -> tuple[str, ...]:
+        for pattern in patterns:
+            if pattern.startswith("/") or ".." in pattern.split("/"):
+                raise ValueError(f"{pattern!r} is not a pattern relative to the rootfs")
+        return patterns
 
 
 class LiveConfig(BaseModel):
@@ -108,6 +122,8 @@ class LiveConfig(BaseModel):
     #: The display-manager session to log into; ``None`` logs in on the console.
     session: str | None = None
     empty_machine_id: bool = True
+    build_time_secrets: tuple[str, ...] = ()
+    build_time_secrets_allow: tuple[str, ...] = ()
 
 
 class SystemConfig(BaseModel):
