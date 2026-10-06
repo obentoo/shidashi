@@ -90,17 +90,35 @@ squashfs_exclude:
 # exclude them quietly: verify-config FAILS on any that is still in the rootfs,
 # so the next package that generates one is a failing build, never a silent
 # leak. Each must be generated on the booted system instead (rndc-keygen,
-# sshd-keygen). Same pattern rules as squashfs_exclude; one comment per entry
-# names what generates it.
+# sshd-keygen). Same pattern rules as squashfs_exclude; the comment line right
+# above each entry names the package that generates it.
+#
+# Audit of the 2026-10-05 equivalence test (two kde rootfs built apart: of
+# 273,876 paths, only these differed). Class: secret (a key, a seed, a
+# credential: deny-listed below), identity (per build, but public) or derived
+# (computed from the image's content):
+#   etc/bind/rndc.key -- secret: net-dns/bind's pkg_postinst (rndc-confgen -a).
+#   boot/initramfs-*.img -- derived: sys-kernel/dracut, from the image's modules
+#     and its build time; no key inside.
+#   boot/EFI/Linux/*.efi, the UKI -- derived: sys-kernel/installkernel and
+#     systemd's ukify, from the kernel, the initramfs and the command line.
+#   installkernel's files (the kernel copies and boot entries it writes) --
+#     derived: sys-kernel/installkernel, from the installed kernel.
+#   etc/os-release BUILD_ID -- identity: shidashi's build id, printed on purpose.
+#   etc/shadow, the live user's hash salt -- identity: a random salt over the
+#     documented public password (bentoo); nothing to keep secret.
+#   usr/lib*/*.chk, the NSS .chk files -- derived: dev-libs/nss's shlibsign,
+#     a signature of each library with a throwaway key; public.
+#   etc/udev/hwdb.bin -- derived: sys-apps/systemd's systemd-hwdb update, from
+#     the hwdb sources.
+#   etc/passwd and etc/group, their line order -- derived: the order acct-user
+#     and acct-group packages merged in; the same UIDs and GIDs.
 build_time_secrets:
   # net-dns/bind's pkg_postinst (rndc-confgen -a): the named control channel key.
-  # Removed by the live layer and generated at boot by rndc-keygen.
   - etc/bind/rndc.key
-  # net-misc/openssh's private host keys (ssh-keygen -A), when anything runs it
-  # at build time; generated at boot by sshd-keygen. The `.pub` halves are public.
+  # net-misc/openssh's private host keys (ssh-keygen -A), if run at build time.
   - etc/ssh/ssh_host_*_key
-  # sys-apps/systemd's random seed (systemd-random-seed.service), saved by a
-  # boot of the image or a systemd-firstboot run in the build.
+  # sys-apps/systemd's random seed (systemd-random-seed.service).
   - var/lib/systemd/random-seed
   # sys-apps/systemd's credential encryption key (systemd-creds setup).
   - var/lib/systemd/credential.secret
