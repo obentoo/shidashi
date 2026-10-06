@@ -56,8 +56,8 @@ def test_the_toolbox_builds_grub_for_bios_and_uefi() -> None:
 
 def test_the_tarball_is_the_toolbox_stage_fork_point(tmp_path: Path) -> None:
     recipe = config.load_recipe("v3", "kde", "systemd")
-    path = toolbox.tarball_path(recipe, snapshot="SNAP", fork_points_dir=tmp_path)
-    assert path == tmp_path / "v3-systemd-SNAP-toolbox.tar"
+    path = toolbox.tarball_path(recipe, snapshot="SNAP", pins="P", fork_points_dir=tmp_path)
+    assert path == tmp_path / "v3-systemd-SNAP-P-toolbox.tar"
 
 
 # --- path translation and binds --------------------------------------------------

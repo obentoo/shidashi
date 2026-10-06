@@ -253,7 +253,7 @@ def test_parse_built_atoms_empty_on_no_merge() -> None:
 
 
 def test_fork_point_returns_none_when_absent(tmp_path: Path) -> None:
-    assert fork_point(_recipe(), snapshot="20260524", fork_points_dir=tmp_path) is None
+    assert fork_point(_recipe(), snapshot="20260524", pins="P", fork_points_dir=tmp_path) is None
 
 
 def _chain_recipe(flavor: str = "kde") -> ResolvedRecipe:
@@ -275,28 +275,28 @@ def _chain_recipe(flavor: str = "kde") -> ResolvedRecipe:
 def test_stage_fork_point_key_has_no_target_so_images_share_it(tmp_path: Path) -> None:
     """F70: the old key carried the flavor, so the trunk was never shared."""
     kde = stage_fork_point_path(
-        _chain_recipe("kde"), "desktop", snapshot="S", fork_points_dir=tmp_path
+        _chain_recipe("kde"), "desktop", snapshot="S", pins="P", fork_points_dir=tmp_path
     )
     gnome = stage_fork_point_path(
-        _chain_recipe("gnome"), "desktop", snapshot="S", fork_points_dir=tmp_path
+        _chain_recipe("gnome"), "desktop", snapshot="S", pins="P", fork_points_dir=tmp_path
     )
-    assert kde == gnome == tmp_path / "v3-systemd-S-desktop.tar"
+    assert kde == gnome == tmp_path / "v3-systemd-S-P-desktop.tar"
 
 
 def test_fork_point_resumes_from_the_deepest_stage_before_the_target(tmp_path: Path) -> None:
     recipe = _chain_recipe()
     for stage in ("base", "desktop"):
-        (tmp_path / f"v3-systemd-S-{stage}.tar").write_bytes(b"")
-    found = fork_point(recipe, snapshot="S", fork_points_dir=tmp_path)
+        (tmp_path / f"v3-systemd-S-P-{stage}.tar").write_bytes(b"")
+    found = fork_point(recipe, snapshot="S", pins="P", fork_points_dir=tmp_path)
     assert found is not None
     phase, path = found
-    assert (phase.name, path.name) == ("desktop", "v3-systemd-S-desktop.tar")
+    assert (phase.name, path.name) == ("desktop", "v3-systemd-S-P-desktop.tar")
 
 
 def test_fork_point_never_restores_the_target_itself(tmp_path: Path) -> None:
     """Asking for an image is asking to build its last stage."""
-    (tmp_path / "v3-systemd-S-kde.tar").write_bytes(b"")
-    assert fork_point(_chain_recipe(), snapshot="S", fork_points_dir=tmp_path) is None
+    (tmp_path / "v3-systemd-S-P-kde.tar").write_bytes(b"")
+    assert fork_point(_chain_recipe(), snapshot="S", pins="P", fork_points_dir=tmp_path) is None
 
 
 def test_pending_breaks_resets_at_every_shipped_stage() -> None:
@@ -337,6 +337,7 @@ def _run_chain(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, **kw: Any) -> An
         _chain_recipe(),
         emptytree=True,
         snapshot="S",
+        pins="P",
         fork_points_dir=tmp_path,
         **kw,
     )
@@ -356,7 +357,7 @@ def test_run_phases_settles_each_shipped_stage_and_snapshots_every_stage(
         ("flavor", "kde"),
         ("settle", "kde"),
     ]
-    assert snaps == [f"v3-systemd-S-{s}.tar" for s in ("base", "minimal", "desktop", "kde")]
+    assert snaps == [f"v3-systemd-S-P-{s}.tar" for s in ("base", "minimal", "desktop", "kde")]
     # kde's settle has no pending cut, so it runs no emerge
     (
         base,
@@ -416,7 +417,7 @@ def test_run_phases_resumed_from_desktop_builds_only_the_flavor(
     flavor, check, check_settle = container.emerge_calls
     assert "--pretend" not in flavor
     assert "--emptytree" in check and "--nodeps" in check_settle
-    assert snaps == ["v3-systemd-S-kde.tar"]
+    assert snaps == ["v3-systemd-S-P-kde.tar"]
 
 
 def test_trunk_is_everything_up_to_and_including_the_base() -> None:
@@ -584,7 +585,7 @@ def test_run_phases_stop_after_a_stage_ends_with_its_fork_point(
         tmp_path, monkeypatch, resume_at="minimal", stop_after="desktop"
     )
     assert [(r.phase.name, r.phase.stage) for r in results] == [("desktop", "desktop")]
-    assert snaps == ["v3-systemd-S-desktop.tar"]
+    assert snaps == ["v3-systemd-S-P-desktop.tar"]
     assert len(container.emerge_calls) == 1
 
 
@@ -597,7 +598,7 @@ def test_run_phases_stop_after_a_shipped_stage_includes_its_settle(
         ("minimal", "minimal"),
         ("settle", "minimal"),
     ]
-    assert snaps == ["v3-systemd-S-base.tar", "v3-systemd-S-minimal.tar"]
+    assert snaps == ["v3-systemd-S-P-base.tar", "v3-systemd-S-P-minimal.tar"]
 
 
 # --- the stage steps come from variants/flow.yaml ---------------------------------
@@ -653,10 +654,11 @@ def test_the_steps_after_the_emerge_run_in_the_declared_order(
         _chain_recipe(),
         emptytree=True,
         snapshot="S",
+        pins="P",
         fork_points_dir=tmp_path,
         stop_after="minimal",
     )
-    assert events == ["snap:v3-systemd-S-base.tar", "snap:v3-systemd-S-minimal.tar", "settle"]
+    assert events == ["snap:v3-systemd-S-P-base.tar", "snap:v3-systemd-S-P-minimal.tar", "settle"]
 
 
 def test_the_flow_refuses_stage_steps_that_make_no_sense() -> None:

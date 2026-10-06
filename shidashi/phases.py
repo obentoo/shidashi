@@ -422,20 +422,22 @@ def _variant_key(recipe: ResolvedRecipe) -> str:
 
 
 def stage_fork_point_path(
-    recipe: ResolvedRecipe, stage: str, *, snapshot: str, fork_points_dir: Path
+    recipe: ResolvedRecipe, stage: str, *, snapshot: str, pins: str, fork_points_dir: Path
 ) -> Path:
     """Where the fork point of one STAGE lives (D24, F70). Pure.
 
-    ``<arch>-<init>-<snapshot>-<stage>.tar`` -- with no target in it, so that
-    the fork point of ``base``, ``minimal`` or ``desktop`` built on the way to
-    one image is found by every other image of the same arch × init. The old
-    key carried the flavor, so the trunk was never shared between flavors.
+    ``<arch>-<init>-<snapshot>-<pins>-<stage>.tar`` -- with no target in it, so
+    that the fork point of ``base``, ``minimal`` or ``desktop`` built on the way
+    to one image is found by every other image of the same arch × init. The
+    old key carried the flavor, so the trunk was never shared between flavors.
+    ``pins`` (:func:`shidashi.tree.pin_id`) keeps a tree built from one
+    repository pin from being restored under another (story 016, D7).
     """
-    return fork_points_dir / f"{recipe.arch}-{recipe.init}-{snapshot}-{stage}.tar"
+    return fork_points_dir / f"{recipe.arch}-{recipe.init}-{snapshot}-{pins}-{stage}.tar"
 
 
 def fork_point(
-    recipe: ResolvedRecipe, *, snapshot: str, fork_points_dir: Path
+    recipe: ResolvedRecipe, *, snapshot: str, pins: str, fork_points_dir: Path
 ) -> tuple[Phase, Path] | None:
     """The deepest stage fork point on disk BEFORE the target (D24). Probes only.
 
@@ -447,7 +449,7 @@ def fork_point(
     stage_phases = [p for p in recipe.phases if p.stage]
     for phase in reversed(stage_phases[:-1]):
         path = stage_fork_point_path(
-            recipe, phase.stage, snapshot=snapshot, fork_points_dir=fork_points_dir
+            recipe, phase.stage, snapshot=snapshot, pins=pins, fork_points_dir=fork_points_dir
         )
         if path.exists():
             return phase, path
@@ -667,22 +669,24 @@ def plan_phase_run(
 
 
 def phase_snapshot_path(
-    recipe: ResolvedRecipe, *, snapshot: str, phase: str, fork_points_dir: Path
+    recipe: ResolvedRecipe, *, snapshot: str, pins: str, phase: str, fork_points_dir: Path
 ) -> Path:
     """Path of the per-phase snapshot under ``fork_points_dir`` (R5.1/R5.2). Pure.
 
-    The key is ``<arch>-<flavor>-<init>-<snapshot>-<phase>.tar`` — DISTINCT from the key
+    The key is ``<arch>-<flavor>-<init>-<snapshot>-<pins>-<phase>.tar`` (``pins``
+    per story 016, D7) — DISTINCT from the key
     of story 003's trunk fork point (:func:`fork_point`, which omits ``phase``):
     each completed phase materializes its own snapshot for a granular resume. It
     neither probes nor writes anything — it only composes the path.
     """
-    return fork_points_dir / f"{_variant_key(recipe)}-{snapshot}-{phase}.tar"
+    return fork_points_dir / f"{_variant_key(recipe)}-{snapshot}-{pins}-{phase}.tar"
 
 
 def latest_resumable(
     recipe: ResolvedRecipe,
     *,
     snapshot: str,
+    pins: str,
     completed: tuple[str, ...],
     fork_points_dir: Path,
 ) -> tuple[str | None, Path | None]:
@@ -699,7 +703,11 @@ def latest_resumable(
         if phase.name not in completed:
             continue
         candidate = phase_snapshot_path(
-            recipe, snapshot=snapshot, phase=phase.name, fork_points_dir=fork_points_dir
+            recipe,
+            snapshot=snapshot,
+            pins=pins,
+            phase=phase.name,
+            fork_points_dir=fork_points_dir,
         )
         if candidate.exists():
             found = (phase.name, candidate)
@@ -1093,6 +1101,7 @@ def run_phases(
     emptytree: bool,
     resume_at: str | None = None,
     snapshot: str,
+    pins: str,
     fork_points_dir: Path,
     stop_after: str | None = None,
 ) -> tuple[PhaseResult, ...]:
@@ -1144,6 +1153,7 @@ def run_phases(
                             recipe,
                             phase.stage,
                             snapshot=snapshot,
+                            pins=pins,
                             fork_points_dir=fork_points_dir,
                         ),
                     )
@@ -1179,6 +1189,9 @@ class _RunState:
     state_path: Path
     snapshot: str
     completed: tuple[str, ...]
+    #: The pin id the build runs under; persisted so that a resume under the
+    #: same pins is not stale (story 016, R6.12).
+    pins: str = ""
     phase_diffs: tuple[PhaseDiff, ...] = ()
     accumulated_breaks: tuple[UseBreak, ...] = ()
     prior_atoms: tuple[str, ...] = ()
@@ -1201,6 +1214,7 @@ class _RunState:
                 flavor=self.recipe.flavor,
                 init=self.recipe.init,
                 snapshot=self.snapshot,
+                pins=self.pins,
                 recipe_hash=state.recipe_hash(self.recipe),
                 seed_done=True,
                 # phases only ever run after the toolchain bootstrap
@@ -1253,6 +1267,7 @@ def run_phases_stepwise(
     completed: tuple[str, ...],
     until: str | None,
     snapshot: str,
+    pins: str,
     fork_points_dir: Path,
     state_path: Path,
     on_checkpoint: CheckpointHook | None = None,
@@ -1298,6 +1313,7 @@ def run_phases_stepwise(
         state_path=state_path,
         snapshot=snapshot,
         completed=completed,
+        pins=pins,
         accumulated_breaks=pending_breaks(recipe, through=last_done),
     )
     results: list[PhaseResult] = []
@@ -1333,6 +1349,7 @@ def run_phases_stepwise(
                     phase_snapshot_path(
                         recipe,
                         snapshot=snapshot,
+                        pins=pins,
                         phase=phase.name,
                         fork_points_dir=fork_points_dir,
                     ),

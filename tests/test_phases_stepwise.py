@@ -139,14 +139,18 @@ def test_plan_phase_run_invalid_until_raises_valueerror_listing_names() -> None:
 
 def test_phase_snapshot_path_key_composition(tmp_path: Path) -> None:
     path = phase_snapshot_path(
-        _recipe(), snapshot="SNAP", phase="rebuild", fork_points_dir=tmp_path
+        _recipe(), snapshot="SNAP", pins="P", phase="rebuild", fork_points_dir=tmp_path
     )
-    assert path == tmp_path / "v3-minimal-systemd-SNAP-rebuild.tar"
+    assert path == tmp_path / "v3-minimal-systemd-SNAP-P-rebuild.tar"
 
 
 def test_phase_snapshot_path_distinct_per_phase(tmp_path: Path) -> None:
-    a = phase_snapshot_path(_recipe(), snapshot="S", phase="rebuild", fork_points_dir=tmp_path)
-    b = phase_snapshot_path(_recipe(), snapshot="S", phase="graphics", fork_points_dir=tmp_path)
+    a = phase_snapshot_path(
+        _recipe(), snapshot="S", pins="P", phase="rebuild", fork_points_dir=tmp_path
+    )
+    b = phase_snapshot_path(
+        _recipe(), snapshot="S", pins="P", phase="graphics", fork_points_dir=tmp_path
+    )
     assert a != b
 
 
@@ -155,7 +159,11 @@ def test_phase_snapshot_path_distinct_per_phase(tmp_path: Path) -> None:
 
 def test_latest_resumable_none_when_no_tarball(tmp_path: Path) -> None:
     phase, path = latest_resumable(
-        _recipe(), snapshot="S", completed=("rebuild", "graphics"), fork_points_dir=tmp_path
+        _recipe(),
+        snapshot="S",
+        pins="P",
+        completed=("rebuild", "graphics"),
+        fork_points_dir=tmp_path,
     )
     assert phase is None
     assert path is None
@@ -163,23 +171,31 @@ def test_latest_resumable_none_when_no_tarball(tmp_path: Path) -> None:
 
 def test_latest_resumable_picks_last_completed_with_tarball(tmp_path: Path) -> None:
     # snapshots of rebuild and graphics exist; the last completed one with a tarball is graphics
-    (tmp_path / "v3-minimal-systemd-S-rebuild.tar").write_bytes(b"")
-    (tmp_path / "v3-minimal-systemd-S-graphics.tar").write_bytes(b"")
+    (tmp_path / "v3-minimal-systemd-S-P-rebuild.tar").write_bytes(b"")
+    (tmp_path / "v3-minimal-systemd-S-P-graphics.tar").write_bytes(b"")
     phase, path = latest_resumable(
-        _recipe(), snapshot="S", completed=("rebuild", "graphics"), fork_points_dir=tmp_path
+        _recipe(),
+        snapshot="S",
+        pins="P",
+        completed=("rebuild", "graphics"),
+        fork_points_dir=tmp_path,
     )
     assert phase == "graphics"
-    assert path == tmp_path / "v3-minimal-systemd-S-graphics.tar"
+    assert path == tmp_path / "v3-minimal-systemd-S-P-graphics.tar"
 
 
 def test_latest_resumable_skips_completed_without_tarball(tmp_path: Path) -> None:
     # only rebuild has a tarball; graphics completed but without a snapshot → falls back to rebuild
-    (tmp_path / "v3-minimal-systemd-S-rebuild.tar").write_bytes(b"")
+    (tmp_path / "v3-minimal-systemd-S-P-rebuild.tar").write_bytes(b"")
     phase, path = latest_resumable(
-        _recipe(), snapshot="S", completed=("rebuild", "graphics"), fork_points_dir=tmp_path
+        _recipe(),
+        snapshot="S",
+        pins="P",
+        completed=("rebuild", "graphics"),
+        fork_points_dir=tmp_path,
     )
     assert phase == "rebuild"
-    assert path == tmp_path / "v3-minimal-systemd-S-rebuild.tar"
+    assert path == tmp_path / "v3-minimal-systemd-S-P-rebuild.tar"
 
 
 # --- 3.1 parse_emerge_plan ---------------------------------------------------
@@ -313,6 +329,7 @@ def _stepwise(container: Any, recipe: Any, monkeypatch: pytest.MonkeyPatch, **kw
         completed=(),
         until=None,
         snapshot="S",
+        pins="P",
         fork_points_dir=Path("/fp"),
         state_path=Path("/state.json"),
         **kw,
@@ -374,6 +391,7 @@ def test_stepwise_failure_abort_raises_factory_error(monkeypatch: pytest.MonkeyP
             completed=(),
             until=None,
             snapshot="S",
+            pins="P",
             fork_points_dir=Path("/fp"),
             state_path=Path("/state.json"),
             on_failure=lambda *_a: FailureDecision.ABORT,

@@ -84,6 +84,10 @@ class BuildState(BaseModel):
     init: str
     snapshot: str
     recipe_hash: str
+    #: The pin id (:func:`shidashi.tree.pin_id`) the state was saved under.
+    #: Additive and defaulted: older state files load with ``""``, which no
+    #: real pin id equals, so they are stale (story 016, R8.7, R6.13).
+    pins: str = ""
     seed_done: bool = False
     # Unused since the Catalyst seed was removed; always empty. Kept only so
     # older state files (which carry it) still load under extra="forbid".
@@ -158,12 +162,13 @@ def clear_state(path: Path) -> None:
     path.unlink(missing_ok=True)
 
 
-def is_stale(state: BuildState, *, snapshot: str, recipe_hash: str) -> bool:
-    """Tell whether ``state`` is stale against the current ``snapshot``/``recipe_hash`` (R6.2).
+def is_stale(state: BuildState, *, snapshot: str, pins: str, recipe_hash: str) -> bool:
+    """Tell whether ``state`` is stale against the current snapshot, pins and recipe (R6.2).
 
-    Stale (``True``) when the stage3 ``snapshot`` changed **or** the recipe's
-    ``recipe_hash`` changed relative to the persisted one — in both cases the
-    saved progress can no longer be reused. The ``recipe_hash`` parameter is
-    keyword-only and deliberately shadows the name of the :func:`recipe_hash` function.
+    Stale (``True``) when the stage3 ``snapshot``, the repository ``pins``
+    (story 016, R8.7) **or** the recipe's ``recipe_hash`` changed relative to
+    the persisted one — in each case the saved progress can no longer be
+    reused. The ``recipe_hash`` parameter is keyword-only and deliberately
+    shadows the name of the :func:`recipe_hash` function.
     """
-    return state.snapshot != snapshot or state.recipe_hash != recipe_hash
+    return state.snapshot != snapshot or state.pins != pins or state.recipe_hash != recipe_hash

@@ -670,6 +670,7 @@ def test_the_kde_layer_is_not_in_force_until_the_kde_stage(
         recipe,
         emptytree=True,
         snapshot="S",
+        pins="P",
         fork_points_dir=tmp_path,
     )
     # not the settles (--oneshot) nor the binpkg checks (--pretend)

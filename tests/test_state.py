@@ -57,6 +57,7 @@ def _state(**over: Any) -> Any:
         flavor="minimal",
         init="systemd",
         snapshot="20260524",
+        pins="P",
         recipe_hash="deadbeef",
     )
     base.update(over)
@@ -203,14 +204,14 @@ def test_clear_state_removes_and_is_idempotent(tmp_path: Path) -> None:
 
 def test_is_stale_false_when_snapshot_and_hash_match() -> None:
     state = _state(snapshot="SNAP", recipe_hash="HASH")
-    assert is_stale(state, snapshot="SNAP", recipe_hash="HASH") is False
+    assert is_stale(state, snapshot="SNAP", pins="P", recipe_hash="HASH") is False
 
 
 def test_is_stale_true_on_snapshot_mismatch() -> None:
     state = _state(snapshot="OLD", recipe_hash="HASH")
-    assert is_stale(state, snapshot="NEW", recipe_hash="HASH") is True
+    assert is_stale(state, snapshot="NEW", pins="P", recipe_hash="HASH") is True
 
 
 def test_is_stale_true_on_recipe_hash_mismatch() -> None:
     state = _state(snapshot="SNAP", recipe_hash="OLD")
-    assert is_stale(state, snapshot="SNAP", recipe_hash="NEW") is True
+    assert is_stale(state, snapshot="SNAP", pins="P", recipe_hash="NEW") is True

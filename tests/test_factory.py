@@ -285,6 +285,7 @@ def test_seed_or_restore_without_checkpoints_seeds_fresh_and_asks_for_bootstrap(
         tmp_path / "rootfs",
         _pointer(),
         snapshot="S",
+        pins="P",
         fork_points_dir=tmp_path / "fp",
         download=False,
     )
@@ -297,8 +298,10 @@ def test_seed_or_restore_restores_the_bootstrap_checkpoint_instead_of_the_stage3
 ) -> None:
     seeded = _no_fresh_seed(monkeypatch)
     recipe = _staged_recipe()
-    path = factory.bootstrap_fork_point_path(recipe, snapshot="S", fork_points_dir=tmp_path / "fp")
-    assert path.name == "v3-systemd-S-bootstrap.tar"
+    path = factory.bootstrap_fork_point_path(
+        recipe, snapshot="S", pins="P", fork_points_dir=tmp_path / "fp"
+    )
+    assert path.name == "v3-systemd-S-P-bootstrap.tar"
     (tmp_path / "fp").mkdir()
     _tarball_of(tmp_path, path.name, "bootstrapped")
     rootfs = tmp_path / "rootfs"
@@ -308,6 +311,7 @@ def test_seed_or_restore_restores_the_bootstrap_checkpoint_instead_of_the_stage3
         rootfs,
         _pointer(),
         snapshot="S",
+        pins="P",
         fork_points_dir=tmp_path / "fp",
         download=False,
     )
@@ -322,8 +326,8 @@ def test_seed_or_restore_prefers_a_stage_fork_point_over_the_bootstrap(
     _no_fresh_seed(monkeypatch)
     recipe = _staged_recipe()
     (tmp_path / "fp").mkdir()
-    _tarball_of(tmp_path, "v3-systemd-S-bootstrap.tar", "bootstrapped")
-    _tarball_of(tmp_path, "v3-systemd-S-base.tar", "base built")
+    _tarball_of(tmp_path, "v3-systemd-S-P-bootstrap.tar", "bootstrapped")
+    _tarball_of(tmp_path, "v3-systemd-S-P-base.tar", "base built")
     rootfs = tmp_path / "rootfs"
 
     resume, _fp, reused, bootstrapped = factory._seed_or_restore(
@@ -331,6 +335,7 @@ def test_seed_or_restore_prefers_a_stage_fork_point_over_the_bootstrap(
         rootfs,
         _pointer(),
         snapshot="S",
+        pins="P",
         fork_points_dir=tmp_path / "fp",
         download=False,
     )
@@ -384,7 +389,7 @@ def test_update_refuses_when_the_image_was_never_built(
 ) -> None:
     pkgdir = _update_env(monkeypatch, tmp_path)
     recipe = _staged_recipe().model_copy(update={"stages": ("base", "kde")})
-    with pytest.raises(FactoryError, match="nothing to update: v3-systemd-20260524T170105Z-kde"):
+    with pytest.raises(FactoryError, match="nothing to update: v3-systemd-20260524T170105Z-p"):
         Factory(recipe, pkgdir).update(download=False)
 
 
@@ -422,6 +427,7 @@ def test_seed_or_restore_wipes_a_leftover_rootfs_before_a_fresh_seed(
         rootfs,
         _pointer(),
         snapshot="S",
+        pins="P",
         fork_points_dir=tmp_path / "fp",
         download=False,
     )

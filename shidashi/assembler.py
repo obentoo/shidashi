@@ -55,7 +55,7 @@ from shidashi.system import (
     load_system_config,
     verify,
 )
-from shidashi.tree import pinned_repos
+from shidashi.tree import load_pin_id, pinned_repos
 
 __all__ = ["Assembler", "AssemblerError"]
 
@@ -662,9 +662,14 @@ class Assembler:
                 seeds_dir=config.seeds_dir(), cache_dir=config.cache_dir(), download=download
             )
             pointer = load_pointer(recipe.init, seeds_dir=config.seeds_dir())
+            # the toolbox built from this tree: one of an older pin is not it (D7)
+            pins = load_pin_id(config.seeds_dir())
             # checked now, not after the half-hour install that needs it
             toolbox_tar = toolbox.tarball_path(
-                recipe, snapshot=pointer.snapshot, fork_points_dir=config.fork_points_dir()
+                recipe,
+                snapshot=pointer.snapshot,
+                pins=pins,
+                fork_points_dir=config.fork_points_dir(),
             )
             if not toolbox_tar.is_file():
                 raise AssemblerError(

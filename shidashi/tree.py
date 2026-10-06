@@ -20,6 +20,7 @@ locally (like the stage3) and extracted once under ``cache/repos/``.
 
 import datetime
 import hashlib
+import json
 import shutil
 import subprocess
 import tarfile
@@ -27,7 +28,7 @@ import tempfile
 import tomllib
 import urllib.error
 import urllib.request
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, field_validator
@@ -221,6 +222,27 @@ def load_overlay_pins(seeds_dir: Path) -> tuple[OverlayPin, ...]:
         return tuple(OverlayPin(name=name, **table) for name, table in data.items())
     except (OSError, tomllib.TOMLDecodeError, TypeError, ValueError) as err:
         raise TreeError(f"cannot read the overlay pins {path}: {err}") from err
+
+
+def pin_id(tree_pin: TreePin, overlays: Sequence[OverlayPin]) -> str:
+    """``p<gentoo date>.<8 hex>``: one short id for every pinned repository (D7). Pure.
+
+    The hash covers the tree's sha512 and each overlay's name and commit,
+    sorted by name; URLs are where a commit is fetched from, not what it is.
+    The id has no ``-``, so a restore-point key that embeds it parses back.
+    """
+    pinned = sorted((overlay.name, overlay.commit) for overlay in overlays)
+    payload = json.dumps([tree_pin.sha512, pinned])
+    return f"p{tree_pin.date}.{hashlib.sha256(payload.encode('utf-8')).hexdigest()[:8]}"
+
+
+def load_pin_id(seeds_dir: Path) -> str:
+    """The pin id of ``seeds_dir``'s pin files; :class:`TreeError` names an unreadable one.
+
+    Reads the files only: no network and no cooldown (those stay in
+    :func:`pinned_repos`), so a build can key its restore points first.
+    """
+    return pin_id(load_tree_pin(seeds_dir), load_overlay_pins(seeds_dir))
 
 
 def _git(args: list[str]) -> subprocess.CompletedProcess[str]:

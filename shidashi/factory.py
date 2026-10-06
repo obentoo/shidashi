@@ -16,6 +16,7 @@ tests can monkeypatch them in ``shidashi.factory`` and :meth:`build` sees them.
 """
 
 import os
+import re
 import shutil
 import time
 from collections.abc import Mapping
@@ -48,7 +49,7 @@ from shidashi.recipe import ResolvedRecipe
 from shidashi.resolve import apply_portage, apply_rootfs, bind_repos, install_sets
 from shidashi.seed import Stage3Pointer, extract_stage3, fetch_stage3, load_pointer
 from shidashi.state import PhaseDiff
-from shidashi.tree import pinned_repos
+from shidashi.tree import load_pin_id, pinned_repos
 from shidashi.update import run_update
 
 __all__ = [
@@ -149,15 +150,54 @@ def _fresh_seed(rootfs: Path, pointer: Stage3Pointer, *, download: bool) -> None
 
 
 def bootstrap_fork_point_path(
-    recipe: ResolvedRecipe, *, snapshot: str, fork_points_dir: Path
+    recipe: ResolvedRecipe, *, snapshot: str, pins: str, fork_points_dir: Path
 ) -> Path:
     """Where the bootstrap checkpoint lives: the stage3 with its toolchain rebuilt.
 
-    ``<arch>-<init>-<snapshot>-bootstrap.tar``, beside the stage fork points and
-    keyed like them (no target): every image of one arch × init starts here. The
-    arch is in the key because the toolchain is built with the arch's CFLAGS.
+    ``<arch>-<init>-<snapshot>-<pins>-bootstrap.tar``, beside the stage fork
+    points and keyed like them (no target): every image of one arch × init
+    starts here. The arch is in the key because the toolchain is built with the
+    arch's CFLAGS; the pin id because it is built from the pinned tree, and a
+    toolchain of an older pin must never be restored under a newer one (D7).
     """
-    return fork_points_dir / f"{recipe.arch}-{recipe.init}-{snapshot}-bootstrap.tar"
+    return fork_points_dir / f"{recipe.arch}-{recipe.init}-{snapshot}-{pins}-bootstrap.tar"
+
+
+def update_source(
+    recipe: ResolvedRecipe, target: str, *, snapshot: str, pins: str, fork_points_dir: Path
+) -> Path | None:
+    """The image fork point an update starts from (D10, R8.9, R8.10). Probes only.
+
+    The current pin's key when it exists; else the newest image of an older
+    pin of the same stage3 snapshot -- newest pin date, then newest mtime; a
+    date later than the current pin's is never taken; else the pre-fix key
+    (no pin id); else ``None``. An update is the one reader that crosses pins:
+    it exists to bring an older pin's image to the current one, and it writes
+    the result under the current key, never over its source.
+    """
+    current = stage_fork_point_path(
+        recipe, target, snapshot=snapshot, pins=pins, fork_points_dir=fork_points_dir
+    )
+    if current.exists():
+        return current
+    today = re.fullmatch(r"p(\d{8})\.[0-9a-f]{8}", pins)
+    if today is None:
+        raise FactoryError(f"not a pin id: {pins!r}", phase="update")
+    key = re.compile(
+        re.escape(f"{recipe.arch}-{recipe.init}-{snapshot}-")
+        + r"p(\d{8})\.[0-9a-f]{8}"
+        + re.escape(f"-{target}.tar")
+    )
+    older: list[tuple[str, float, Path]] = []
+    if fork_points_dir.is_dir():
+        for path in fork_points_dir.iterdir():
+            match = key.fullmatch(path.name)
+            if match and match.group(1) <= today.group(1) and path.is_file():
+                older.append((match.group(1), path.stat().st_mtime, path))
+    if older:
+        return max(older, key=lambda found: (found[0], found[1]))[2]
+    pre_fix = fork_points_dir / f"{recipe.arch}-{recipe.init}-{snapshot}-{target}.tar"
+    return pre_fix if pre_fix.exists() else None
 
 
 def _bootstrap(
@@ -166,6 +206,7 @@ def _bootstrap(
     *,
     pkgdir: Path,
     snapshot: str,
+    pins: str,
     fork_points_dir: Path,
 ) -> BootstrapResult:
     """Run the toolchain bootstrap and checkpoint it (BOOTSTRAP-PROCESS §5, items 1-2).
@@ -180,7 +221,9 @@ def _bootstrap(
     result = run_bootstrap(
         container, on_generation=lambda: check_or_record(pkgdir, fingerprint(rootfs, recipe))
     )
-    dest = bootstrap_fork_point_path(recipe, snapshot=snapshot, fork_points_dir=fork_points_dir)
+    dest = bootstrap_fork_point_path(
+        recipe, snapshot=snapshot, pins=pins, fork_points_dir=fork_points_dir
+    )
     dest.parent.mkdir(parents=True, exist_ok=True)
     snapshot_fork_point(container.rootfs, dest)
     return result
@@ -198,6 +241,7 @@ def _seed_or_restore(
     pointer: Stage3Pointer,
     *,
     snapshot: str,
+    pins: str,
     fork_points_dir: Path,
     download: bool,
 ) -> tuple[str | None, Path, bool, bool]:
@@ -205,14 +249,14 @@ def _seed_or_restore(
 
     *Seed-or-restore* block extracted from :meth:`Factory.build` WITHOUT a change in
     behavior (R8.2): if :func:`shidashi.phases.fork_point` finds the trunk pinned
-    for ``snapshot``, it restores it into a clean rootfs and returns
+    for ``snapshot`` and ``pins``, it restores it into a clean rootfs and returns
     ``(resume_at, fork_point_path, True, True)`` where ``resume_at`` is the phase of the
     restored stage; otherwise it restores the bootstrap checkpoint, if it exists, or runs
     :func:`_fresh_seed` -- ``(None, <key of the first stage>, False,
     bootstrapped)``. The last flag says whether the toolchain bootstrap is
     already in the rootfs; ``False`` means the caller must run it. PRIVILEGED.
     """
-    found = fork_point(recipe, snapshot=snapshot, fork_points_dir=fork_points_dir)
+    found = fork_point(recipe, snapshot=snapshot, pins=pins, fork_points_dir=fork_points_dir)
     if found is not None:
         # the deepest STAGE already built for this arch × init, by any image
         # (D24, F70): resume right after it
@@ -221,10 +265,10 @@ def _seed_or_restore(
         return phase.name, existing, True, True
     first_stage = next((p.stage for p in recipe.phases if p.stage), "base")
     fork_point_path = stage_fork_point_path(
-        recipe, first_stage, snapshot=snapshot, fork_points_dir=fork_points_dir
+        recipe, first_stage, snapshot=snapshot, pins=pins, fork_points_dir=fork_points_dir
     )
     checkpoint = bootstrap_fork_point_path(
-        recipe, snapshot=snapshot, fork_points_dir=fork_points_dir
+        recipe, snapshot=snapshot, pins=pins, fork_points_dir=fork_points_dir
     )
     if checkpoint.exists():
         _restore_into(checkpoint, rootfs)
@@ -408,6 +452,9 @@ class Factory:
 
         pointer = load_pointer(recipe.init, seeds_dir=config.seeds_dir())
         snapshot = pointer.snapshot
+        # restore points are keyed by the repository pins too (D7); an
+        # unreadable pin file refuses here, before any fetch
+        pins = load_pin_id(config.seeds_dir())
         fork_points_dir = config.fork_points_dir()
         with run.step("seed") as step:
             # first: a pin that is missing or inside the cooldown refuses the build
@@ -420,6 +467,7 @@ class Factory:
                 rootfs,
                 pointer,
                 snapshot=snapshot,
+                pins=pins,
                 fork_points_dir=fork_points_dir,
                 download=download,
             )
@@ -431,6 +479,7 @@ class Factory:
                 fork_point_reused=fork_point_reused,
                 bootstrapped=bootstrapped,
                 layers=list(entry) if entry is not None else None,
+                pins=pins,
             )
 
         binds_ro, binds_rw = _build_binds(
@@ -458,6 +507,7 @@ class Factory:
                             recipe,
                             pkgdir=self.pkgdir,
                             snapshot=snapshot,
+                            pins=pins,
                             fork_points_dir=fork_points_dir,
                         )
                         step.add(
@@ -478,6 +528,7 @@ class Factory:
                         emptytree=emptytree,
                         resume_at=resume_at,
                         snapshot=snapshot,
+                        pins=pins,
                         fork_points_dir=fork_points_dir,
                         stop_after=stop_after,
                     )
@@ -535,21 +586,24 @@ class Factory:
         """Bring a shipped image to the week's pinned tree, within its generation (D26).
 
         1. Root guard; the pinned ::gentoo tree (its cooldown refuses early).
-        2. The image's OWN fork point must exist -- an update updates a built
-           image, it never builds one -- and so must the generation's
+        2. An image fork point must exist (:func:`update_source`: the current
+           pin's, else an older pin's or the pre-fix key, D10) -- an update
+           updates a built image, it never builds one -- and so must the generation's
            fingerprint in the PKGDIR: an empty PKGDIR is a new generation, which
            is a full build, not an update.
         3. Restore it; apply the full configuration (every layer) and the sets.
         4. In the container: the fingerprint must still match, then
            :func:`shidashi.update.run_update` -- plan, refuse a toolchain change,
            ``-uDN --changed-deps`` with ``--usepkg``, ``@preserved-rebuild``.
-        5. Snapshot the updated image over its fork point.
+        5. Write the updated image under the current pin's key -- never over
+           the source, which may be an older pin's image (D10).
         """
         _require_root()
 
         recipe = self.recipe
         rootfs = config.build_root() / f"{recipe.arch}-{recipe.flavor}-{recipe.init}"
         snapshot = load_pointer(recipe.init, seeds_dir=config.seeds_dir()).snapshot
+        pins = load_pin_id(config.seeds_dir())
         fork_points_dir = config.fork_points_dir()
         repos = pinned_repos(
             seeds_dir=config.seeds_dir(), cache_dir=config.cache_dir(), download=download
@@ -557,11 +611,15 @@ class Factory:
 
         target = recipe.stages[-1] if recipe.stages else recipe.flavor
         image = stage_fork_point_path(
-            recipe, target, snapshot=snapshot, fork_points_dir=fork_points_dir
+            recipe, target, snapshot=snapshot, pins=pins, fork_points_dir=fork_points_dir
         )
-        if not image.exists():
+        source = update_source(
+            recipe, target, snapshot=snapshot, pins=pins, fork_points_dir=fork_points_dir
+        )
+        if source is None:
             raise FactoryError(
-                f"nothing to update: {image.name} does not exist -- build the image first",
+                f"nothing to update: {image.name} does not exist, nor an image of an older "
+                "pin -- build the image first",
                 phase="update",
             )
         if not (self.pkgdir / FINGERPRINT_FILE).is_file():
@@ -572,8 +630,8 @@ class Factory:
             )
 
         run = audit.current()
-        with run.step("restore", fork_point=str(image)):
-            _restore_into(image, rootfs)
+        with run.step("restore", fork_point=str(source)):
+            _restore_into(source, rootfs)
             _prepare_portage(rootfs, recipe)
 
         binds_ro, binds_rw = _build_binds(
@@ -669,6 +727,7 @@ class Factory:
         rootfs = config.build_root() / f"{recipe.arch}-{recipe.flavor}-{recipe.init}"
         pointer = load_pointer(recipe.init, seeds_dir=config.seeds_dir())
         snapshot = pointer.snapshot
+        pins = load_pin_id(config.seeds_dir())
         fork_points_dir = config.fork_points_dir()
         state_path = config.build_state_path(recipe)
         rh = state.recipe_hash(recipe)
@@ -684,12 +743,12 @@ class Factory:
             loaded = state.load_state(state_path)
             if (
                 loaded is not None
-                and state.is_stale(loaded, snapshot=snapshot, recipe_hash=rh)
+                and state.is_stale(loaded, snapshot=snapshot, pins=pins, recipe_hash=rh)
                 and not force_resume
             ):
                 raise StaleStateError(
                     f"stale build state for {recipe.arch}-{recipe.flavor}-"
-                    f"{recipe.init} (snapshot/recipe changed); run with --reset to "
+                    f"{recipe.init} (snapshot, pins or recipe changed); run with --reset to "
                     "start over from scratch or --force-resume to resume anyway"
                 )
 
@@ -701,6 +760,7 @@ class Factory:
             rootfs,
             pointer,
             snapshot=snapshot,
+            pins=pins,
             recipe_hash=rh,
             fork_points_dir=fork_points_dir,
             state_path=state_path,
@@ -746,10 +806,13 @@ class Factory:
                         recipe,
                         pkgdir=self.pkgdir,
                         snapshot=snapshot,
+                        pins=pins,
                         fork_points_dir=fork_points_dir,
                     )
                 if seeded is not None:
-                    state.save_state(state_path, seeded.model_copy(update={"bootstrap_done": True}))
+                    state.save_state(
+                        state_path, seeded.model_copy(update={"bootstrap_done": True, "pins": pins})
+                    )
             # before any emerge can reuse a binpkg (D26)
             with run.step("generation"):
                 check_or_record(self.pkgdir, fingerprint(rootfs, recipe))
@@ -760,6 +823,7 @@ class Factory:
                 completed=completed,
                 until=until,
                 snapshot=snapshot,
+                pins=pins,
                 fork_points_dir=fork_points_dir,
                 state_path=state_path,
                 on_checkpoint=on_checkpoint,
@@ -784,6 +848,7 @@ class Factory:
         pointer: Stage3Pointer,
         *,
         snapshot: str,
+        pins: str,
         recipe_hash: str,
         fork_points_dir: Path,
         state_path: Path,
@@ -812,7 +877,11 @@ class Factory:
         """
         if completed:
             phase, path = latest_resumable(
-                recipe, snapshot=snapshot, completed=completed, fork_points_dir=fork_points_dir
+                recipe,
+                snapshot=snapshot,
+                pins=pins,
+                completed=completed,
+                fork_points_dir=fork_points_dir,
             )
             if path is not None:
                 shutil.rmtree(rootfs, ignore_errors=True)
@@ -834,7 +903,7 @@ class Factory:
         # (c) no state. The bootstrap checkpoint, when one exists, replaces
         # the raw stage3 AND the ~15 min toolchain rebuild on top of it.
         checkpoint = bootstrap_fork_point_path(
-            recipe, snapshot=snapshot, fork_points_dir=fork_points_dir
+            recipe, snapshot=snapshot, pins=pins, fork_points_dir=fork_points_dir
         )
         if checkpoint.exists():
             _restore_into(checkpoint, rootfs)
@@ -845,6 +914,7 @@ class Factory:
                     flavor=recipe.flavor,
                     init=recipe.init,
                     snapshot=snapshot,
+                    pins=pins,
                     recipe_hash=recipe_hash,
                     seed_done=True,
                     bootstrap_done=True,
@@ -862,6 +932,7 @@ class Factory:
                 flavor=recipe.flavor,
                 init=recipe.init,
                 snapshot=snapshot,
+                pins=pins,
                 recipe_hash=recipe_hash,
                 seed_done=True,
             ),

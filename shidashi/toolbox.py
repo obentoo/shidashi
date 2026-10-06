@@ -65,14 +65,16 @@ class HostTools:
         return subprocess.run(list(argv), check=True, capture_output=True, text=True).stdout
 
 
-def tarball_path(recipe: ResolvedRecipe, *, snapshot: str, fork_points_dir: Path) -> Path:
+def tarball_path(
+    recipe: ResolvedRecipe, *, snapshot: str, pins: str, fork_points_dir: Path
+) -> Path:
     """The toolbox's fork point for ``recipe``'s arch × init. Pure.
 
-    The same key as every stage fork point: the toolbox of one arch × init
-    serves every image of it.
+    The same key as every stage fork point, pin id included: the toolbox of
+    one arch × init serves every image of it built under the same pins.
     """
     return stage_fork_point_path(
-        recipe, TOOLBOX_STAGE, snapshot=snapshot, fork_points_dir=fork_points_dir
+        recipe, TOOLBOX_STAGE, snapshot=snapshot, pins=pins, fork_points_dir=fork_points_dir
     )
 
 
