@@ -1,0 +1,11 @@
+# variants/kits/system/worker — the worker's thin host: containers, VMs, its own disks
+#
+# LEAF set: a flat list of atoms. See kits/core/base for the layering contract.
+#
+# The worker is core + podman + KVM (2026-10-06): Shidashi, QEMU, OVMF, virtiofsd
+# and syft run INSIDE containers, never in this image. KVM needs no package (the
+# dist kernel carries kvm_amd/kvm_intel). smartmontools stays here because it reads
+# the machine's own disks with no network and no container.
+
+app-containers/podman
+sys-apps/smartmontools

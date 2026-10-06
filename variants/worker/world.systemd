@@ -6,6 +6,7 @@ app-admin/spectre-meltdown-checker
 app-admin/sudo-rs
 app-admin/sysstat
 app-arch/7zip
+app-containers/podman
 app-editors/nano
 app-eselect/eselect-repository
 app-laptop/laptop-mode-tools
@@ -34,6 +35,7 @@ sys-apps/lshw
 sys-apps/memtest86+
 sys-apps/nvme-cli
 sys-apps/pciutils
+sys-apps/smartmontools
 sys-apps/usbutils
 sys-block/fio
 sys-block/zram-init

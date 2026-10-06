@@ -38,7 +38,7 @@ from shidashi.recipe import (
     load_init,
     load_stage,
 )
-from shidashi.resolve import apply_portage, catalog_entry, kit_index
+from shidashi.resolve import apply_portage, catalog_entry, kit_index, world_atoms
 
 # the binpkg check of a shipped stage extracts the stage3's vdb: stubbed here
 pytestmark = pytest.mark.usefixtures("no_stage3_vdb")
@@ -169,6 +169,24 @@ def test_the_worker_is_a_core_stage_on_minimal_not_a_flavor() -> None:
     assert "worker" in recipe.portage_layers
     assert not any(layer.startswith("flavor/") for layer in recipe.portage_layers)
     assert config.target_names()[:2] == ["minimal", "worker"]
+
+
+def test_the_worker_is_a_thin_container_and_vm_host() -> None:
+    """core + podman + KVM (2026-10-06): the pipeline's tools run in containers.
+
+    smartmontools is the one operator tool in the image -- it reads the machine's
+    own disks with no network and no container. QEMU, OVMF, virtiofsd and syft
+    must never creep back in: the worker hosts the boot test, it does not carry it.
+    """
+    atoms = set(world_atoms(_recipe("worker")))
+    assert {"app-containers/podman", "sys-apps/smartmontools"} <= atoms
+    pipeline_tools = {
+        "app-emulation/qemu",
+        "app-emulation/virtiofsd",
+        "app-containers/syft",
+    }
+    assert not atoms & pipeline_tools
+    assert not any(a.startswith("sys-firmware/edk2") for a in atoms)
 
 
 def test_minimal_is_the_base_plus_the_console_kits() -> None:
@@ -605,7 +623,9 @@ def test_no_orphan_sets() -> None:
 
     reachable: set[str] = set()
     # Every init: a stage's init_sets reach a set only under their own init.
-    for flavor, init in itertools.product(("minimal", "kde", "gnome", "wm", "toolbox"), _INITS):
+    for flavor, init in itertools.product(
+        ("minimal", "worker", "kde", "gnome", "wm", "toolbox"), _INITS
+    ):
         recipe = _recipe(flavor, init)
         pending = list(recipe.sets)
         while pending:

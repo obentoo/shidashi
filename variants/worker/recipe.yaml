@@ -1,10 +1,13 @@
 # variants/worker/recipe.yaml — the WORKER image: a live medium that turns a
 # spare machine into a Shidashi build oven, driven by the host over SSH.
 #
-# Built on minimal, not desktop: console only, nothing a build does not need. It adds
-# no package yet (the binhost of minimal is enough), only its rootfs: the console tool
-# `shidashi kyomei` (pairing with the host) and the key-only sshd configuration.
-# podman and smartmontools come with the runtime phase of the worker plan.
+# Built on minimal, not desktop: console only. A thin host (2026-10-06): core +
+# podman + KVM. Shidashi and the pipeline's tools (QEMU, OVMF, virtiofsd, syft) run
+# inside containers, so the image adds only @worker (podman, smartmontools) and its
+# rootfs: the console tool `shidashi kyomei` (pairing with the host) and the
+# key-only sshd configuration.
 stage: worker
 after: minimal
 ships: true
+sets:
+  - worker
