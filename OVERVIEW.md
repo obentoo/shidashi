@@ -313,12 +313,16 @@ arch×init (`checkpoints/<arch>-<init>/`), shared by every image of it. A checkp
 fingerprint is the *rendered* configuration (the same `configure` the image gets,
 hashed), the stage3, the profile, the pins and the install's command line without
 `--jobs`; a layer that configures nothing new leaves it unchanged, so the worker
-resumes from minimal's. The binhost is not in the fingerprint: it is checked apart,
-by what the image actually uses — the index entries of the checkpoint's own packages
-must be unchanged, and `emerge --pretend` with the install's command line, run in the
-restored rootfs, must choose the same binpkgs. A binpkg rebuilt for kde therefore
-leaves minimal's checkpoint alone; a stale candidate is dropped and the next one
-tried. `--fresh` ignores them all.
+resumes from minimal's. The binhost is not in the fingerprint: an `install` or
+`packages` checkpoint is checked apart, by what the image actually uses — the index
+entries of the checkpoint's own packages must be unchanged, and `emerge --pretend`
+with the install's command line, run in the restored rootfs, must choose the same
+binpkgs. A binpkg rebuilt for kde therefore leaves minimal's checkpoint alone; a
+stale candidate is dropped and the next one tried. `install-partial` skips that
+check: fixing the binhost is exactly how a failed install is repaired, and
+`emerge --resume` takes the fixed binpkgs. `--fresh` restores nothing — not a
+checkpoint another image still holds, not the trunk — drops the image's own claims
+and installs the image whole from the stage3.
 
 **The shared trunk.** The `desktop` stage is identical for kde, gnome and wm
 (`trunk_stage`), so it is installed once, straight from the stage3, frozen as a

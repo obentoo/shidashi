@@ -1143,6 +1143,22 @@ def test_fresh_drops_the_checkpoints(tmp_path: Path, monkeypatch: pytest.MonkeyP
     assert wired.extracted == 2
 
 
+def test_fresh_ignores_a_checkpoint_another_image_shares(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """worker shares kde's checkpoints; ``--fresh`` installs from the stage3 anyway."""
+    from shidashi import checkpoint
+
+    wired = _Wired(tmp_path, monkeypatch)
+    wired.assemble(flavor="kde")
+    wired.assemble(flavor="worker", fresh=True)
+    assert wired.extracted == 2
+    assert wired.ran(iso_emerge_argv(_recipe()))
+    assert "restored" not in wired.step("seed")
+    (shared,) = wired.store.marks(checkpoint.PACKAGES)
+    assert "znver5-kde-systemd" in shared.images  # kde's claim survives
+
+
 def test_without_btrfs_the_assemble_runs_as_before(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1314,6 +1330,18 @@ def test_a_flavor_resumes_from_its_own_checkpoint_before_its_trunk(
     wired.assemble(recipe=_chain("kde"))
     wired.assemble(recipe=_chain("kde"))
     assert wired.step("seed")["restored"] == checkpoint.PACKAGES
+    assert not _branch_ran(wired)
+    assert all(s["step"] != "trunk" for s in wired.steps)
+
+
+def test_fresh_installs_the_flavor_whole_without_its_trunk(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    wired = _trunked(tmp_path, monkeypatch)
+    wired.assemble(recipe=_chain("kde"))
+    wired.assemble(recipe=_chain("kde"), fresh=True)
+    assert wired.extracted == 2  # the second run from the stage3 too
+    assert wired.ran(iso_emerge_argv(_chain("kde")))
     assert not _branch_ran(wired)
     assert all(s["step"] != "trunk" for s in wired.steps)
 

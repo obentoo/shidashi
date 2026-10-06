@@ -961,7 +961,7 @@ def assemble(
         bool,
         typer.Option(
             "--fresh",
-            help="Ignore and drop the image's checkpoints: install from the stage3 again.",
+            help="Restore no checkpoint, not even the trunk: install from the stage3 again.",
         ),
     ] = False,
     no_trunk: Annotated[
@@ -1131,7 +1131,7 @@ def build(
         bool,
         typer.Option(
             "--fresh",
-            help="Ignore and drop the image's checkpoints: install from the stage3 again.",
+            help="Restore no checkpoint, not even the trunk: install from the stage3 again.",
         ),
     ] = False,
     no_trunk: Annotated[

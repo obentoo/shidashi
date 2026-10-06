@@ -14,12 +14,15 @@ snapshot -- instant, and sharing every unchanged block with the rootfs:
   was left once the broken binpkg is fixed.
 
 Each checkpoint carries the fingerprint of everything its state depends on (the
-stage3, the pins, the layers, the sets, the binhost index, the command line),
-chained from the previous one. A checkpoint is reused only when the fingerprint
-matches, so a resumed image is the image a clean run makes from the same inputs
-(the "clean rootfs per ISO" guarantee, F77). ``install-partial`` is the one
-controlled exception: its fingerprint leaves the binhost out, because fixing the
-binhost is exactly how such a failure is repaired.
+rendered configuration, the stage3, the profile, the pins, the install's command
+line), chained from the previous one, and is shared by every image whose
+fingerprint matches. The binhost is in no fingerprint: an ``install`` or
+``packages`` checkpoint records the binpkgs it installed and the index entries of
+those alone (:func:`binhost_slice`), and the assembler reuses it only while both
+still hold, so a resumed image is the image a clean run makes from the same
+inputs (OVERVIEW §7.1). ``install-partial`` is the one controlled exception: it is
+not checked against the binhost, because fixing the binhost is exactly how such a
+failure is repaired.
 
 Off a btrfs scratch, checkpoints are off and the assemble works as before. The
 btrfs commands go through a :class:`Backend`, so the logic is tested with a

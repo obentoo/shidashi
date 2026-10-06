@@ -633,8 +633,9 @@ class Assembler:
         and after preserved-rebuild (:mod:`shidashi.checkpoint`); a failed install
         is frozen too, with Portage's resume list. The next run of the same image
         resumes from the deepest checkpoint whose inputs are unchanged, so a
-        failure after the install never pays it again. ``fresh`` drops them and
-        starts from the stage3.
+        failure after the install never pays it again. ``fresh`` drops the image's
+        own, restores none (not those another image still holds, not the trunk)
+        and installs the image whole from the stage3.
 
         With ``trunk`` (the default) a flavor without a checkpoint of its own
         grows from its trunk's (:func:`trunk_stage`, ``desktop``): the trunk is
@@ -701,7 +702,9 @@ class Assembler:
                     store.retain(key, (fps.install, fps.packages, fps.partial))
             resumed: checkpoint.Mark | None = None
             stale: list[str] = []
-            if store is not None and fps is not None:
+            # --fresh restores nothing: neither a checkpoint another image still
+            # holds nor the trunk; the image installs whole from the stage3
+            if store is not None and fps is not None and not fresh:
                 step.add(pruned=store.prune())
                 # deepest first; a stale one goes (it is stale for every image
                 # sharing it: the same inputs, the same binhost) and the next is tried
@@ -717,7 +720,7 @@ class Assembler:
                     stale.append(f"{resumed.step}: {reason}")
                     store.drop(resumed)
             branch: _Trunk | None = None
-            if resumed is None and trunk and store is not None:
+            if resumed is None and trunk and not fresh and store is not None:
                 branch = self._find_trunk(
                     pointer=pointer, repos=repos, store=store, rootfs=rootfs, stale=stale
                 )

@@ -38,14 +38,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   shared by every image of an arch and init: their fingerprint is the rendered
   configuration, the stage3, the profile, the pins and the install's command line,
   so an image whose layers configure nothing new resumes from another's (the worker
-  from minimal's, in 96 s). The binhost is checked apart, by what the image uses: a
-  checkpoint is reused while the index entries of its own packages are unchanged and
-  `emerge --pretend` still chooses the same binpkgs, so a binpkg rebuilt for kde
-  leaves minimal's alone (minimal resumed in 103 s after such a change, against
-  ~13 minutes whole). A resumed image is the image a clean run makes: the same 475
-  packages, checked on a real minimal assemble. `--fresh` drops them. A binpkg that
-  fails its checksum is named instead of ending in Portage's traceback. Off btrfs
-  nothing changes.
+  from minimal's, in 96 s). The binhost is checked apart, by what the image uses: an
+  `install` or `packages` checkpoint is reused while the index entries of its own
+  packages are unchanged and `emerge --pretend` still chooses the same binpkgs, so a
+  binpkg rebuilt for kde leaves minimal's alone (minimal resumed in 103 s after such
+  a change, against ~13 minutes whole); `install-partial` skips that check, since
+  fixing the binhost is how a failed install is repaired. A resumed image is the
+  image a clean run makes: the same 475 packages, checked on a real worker assemble
+  killed after its install. `--fresh` restores no checkpoint, not one another image
+  still holds nor the trunk, drops the image's own and installs from the stage3. A
+  binpkg that fails its checksum is named instead of ending in Portage's traceback.
+  Off btrfs nothing changes.
 - **The worker image: a spare machine as a build oven.** A console image on
   minimal (`base → minimal → worker`), booted like any Bentoo medium (its menu's
   copy-to-RAM entry frees the stick), with key-only sshd that starts only once a
