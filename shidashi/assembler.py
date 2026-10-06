@@ -187,6 +187,37 @@ def merged_reused_atoms(emerge_output: str) -> tuple[str, ...]:
 _CHECKSUM_FAILURE = re.compile(re.escape(str(_BINHOST_DST)) + r"/(\S+?)\._checksum_failure_")
 
 
+#: ``pkg-1.0``, ``pkg-1.0-r1``: a PF split into PN and PV (a version starts with a
+#: digit and holds no hyphen but its ``-rN`` revision).
+_PF = re.compile(r"^(?P<pn>.+?)-(?P<pv>\d[^-]*(?:-r\d+)?)$")
+
+
+def binpkgs_outside_tree(plan: Sequence[str], repos: Mapping[str, Path]) -> tuple[str, ...]:
+    """The plan's binpkgs whose ebuild the pinned trees lack, as ``cat/pkg-1.0::repo``. I/O.
+
+    ``plan`` holds :func:`~shidashi.checkpoint.plan_tokens` (``cat/pkg-1.0-1:slot::repo``),
+    ``repos`` the pinned trees by name. A binpkg from a repository that is not
+    pinned is outside too. Behind ``--use-ebuild-visibility``, which already keeps
+    emerge to the tree: this names what slipped through, if anything ever does.
+    """
+    outside: list[str] = []
+    for token in plan:
+        repo = token.rsplit("::", 1)[1] if "::" in token else ""
+        tree = repos.get(repo)
+        # with its build id (``-1``) or, from a binhost without one, as it is
+        cpvs = dict.fromkeys((checkpoint.token_cpv(token), token.split(":", 1)[0]))
+        if tree is None or not any(_has_ebuild(tree, cpv) for cpv in cpvs):
+            outside.append(f"{checkpoint.token_cpv(token)}::{repo}")
+    return tuple(outside)
+
+
+def _has_ebuild(tree: Path, cpv: str) -> bool:
+    """Whether ``tree`` holds the ebuild of ``cat/pkg-1.0``. I/O."""
+    category, _, pf = cpv.partition("/")
+    match = _PF.match(pf)
+    return match is not None and (tree / category / match["pn"] / f"{pf}.ebuild").is_file()
+
+
 def corrupt_binpkgs(emerge_output: str) -> tuple[str, ...]:
     """The binpkgs (paths in the binhost) Portage found corrupt or truncated. Pure."""
     return tuple(dict.fromkeys(_CHECKSUM_FAILURE.findall(emerge_output)))
@@ -873,6 +904,15 @@ class Assembler:
                                 installed.stdout + installed.stderr
                             )
                         step.add(packages=len(reused), resumed=partial, plan=len(plan))
+                        outside = binpkgs_outside_tree(plan, repos)
+                        if outside:
+                            step.add(outside_tree=list(outside))
+                            raise AssemblerError(
+                                f"{len(outside)} binpkg(s) installed from outside the pinned "
+                                f"tree: {', '.join(outside[:10])}"
+                                + (" ..." if len(outside) > 10 else "")
+                                + ". The image would not match its pins; the trail lists them all."
+                            )
                 with run.step("settle") as step:
                     if resumed is not None and installed_state:
                         step.add(restored=resumed.step)

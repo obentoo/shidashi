@@ -65,7 +65,10 @@ def _system_config_stubbed(monkeypatch: pytest.MonkeyPatch) -> list[str]:
 def _no_tree_download(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """No unit test may fetch the real ::gentoo snapshot (49 MB, D26)."""
     tree = tmp_path / "pinned-gentoo"
-    tree.mkdir()
+    # the packages the fake installs print: the tree has their ebuilds
+    for pn, pf in (("a", "a-1"), ("b", "b-2"), ("c", "c-3")):
+        (tree / "x" / pn).mkdir(parents=True, exist_ok=True)
+        (tree / "x" / pn / f"{pf}.ebuild").touch()
     monkeypatch.setattr(asm, "pinned_repos", lambda **_k: {"gentoo": tree})
 
 
@@ -148,6 +151,30 @@ def _pointer() -> object:
 
 
 # --- iso_emerge_argv / _dracut_argv (PURE) -----------------------------------
+
+
+def test_binpkgs_outside_the_pinned_tree_are_named(tmp_path: Path) -> None:
+    """The safety net behind --use-ebuild-visibility: a planned binpkg whose
+    ebuild the pinned tree lacks (or from a repository that is not pinned)."""
+    gentoo = tmp_path / "gentoo"
+    for rel in (
+        "sys-apps/systemd/systemd-261.3.ebuild",
+        "media-fonts/font-adobe-100dpi/font-adobe-100dpi-1.0.4-r1.ebuild",
+        "sys-kernel/gentoo-kernel-bin/gentoo-kernel-bin-7.2.6.ebuild",
+    ):
+        (gentoo / rel).parent.mkdir(parents=True, exist_ok=True)
+        (gentoo / rel).touch()
+    plan = (
+        "sys-apps/systemd-261.3-1::gentoo",
+        "media-fonts/font-adobe-100dpi-1.0.4-r1-2::gentoo",
+        "sys-kernel/gentoo-kernel-bin-7.2.6-1:7.2.6::gentoo",
+        "sys-apps/systemd-262-1::gentoo",  # newer than the tree
+        "x11-misc/other-1-1::elsewhere",  # a repository that is not pinned
+    )
+    assert asm.binpkgs_outside_tree(plan, {"gentoo": gentoo}) == (
+        "sys-apps/systemd-262::gentoo",
+        "x11-misc/other-1::elsewhere",
+    )
 
 
 def test_every_binpkg_install_keeps_to_the_pinned_tree() -> None:
@@ -822,7 +849,7 @@ class _Wired:
         )
         self.pretend_output: str | None = None
         #: what a failed install prints: its plan, then the merges it got through
-        self.fail_output = "[binary R] x/a-1\n"
+        self.fail_output = "[binary R] x/a-1-1::gentoo\n"
         self.store = checkpoint.Store(tmp_path / "ckpt", FakeBackend())
         self.extracted = 0
         wired = self
@@ -1045,6 +1072,21 @@ def test_a_corrupt_binpkg_is_named_and_the_install_still_resumes(
     with pytest.raises(AssemblerError, match=r"corrupt binpkg.*x/a/a-1-1\.gpkg\.tar"):
         wired.assemble()
     assert wired.has(checkpoint.PARTIAL)  # fixing the binpkg resumes the install
+
+
+def test_an_install_outside_the_pinned_tree_stops_before_any_checkpoint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A binpkg the pinned tree lacks stops the assemble with its name, and the
+    install that holds it is not kept for a later run to reuse."""
+    from shidashi import checkpoint
+
+    wired = _Wired(tmp_path, monkeypatch)
+    wired.install_output += "[binary   N    ] x/z-9-1::gentoo  0 KiB\n"  # not in the tree
+    with pytest.raises(AssemblerError, match=r"outside the pinned tree: x/z-9::gentoo"):
+        wired.assemble()
+    assert wired.step("install")["outside_tree"] == ["x/z-9::gentoo"]
+    assert not wired.has(checkpoint.INSTALL)
 
 
 def test_a_binpkg_rebuilt_for_another_image_keeps_the_checkpoint(
