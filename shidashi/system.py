@@ -22,6 +22,7 @@ Three steps, each audited by the caller:
 
 import subprocess
 from collections.abc import Callable, Mapping, Sequence
+from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -466,6 +467,42 @@ def _enabled(rootfs: Path, unit: str) -> bool:
     return any(base.glob(f"*.wants/{unit}")) or any(base.glob(f"*.requires/{unit}"))
 
 
+def _segments_match(path: str, pattern: str) -> bool:
+    """Whether ``path`` matches ``pattern`` segment by segment, so ``*`` never
+    crosses a ``/``. Pure."""
+    parts, globs = path.split("/"), pattern.split("/")
+    return len(parts) == len(globs) and all(map(fnmatchcase, parts, globs, strict=True))
+
+
+def _expand(rootfs: Path, pattern: str) -> list[str]:
+    """The rootfs paths ``pattern`` matches, relative to it. Only real
+    directories are descended: a symlink is matched by its own path and never
+    followed (on the build host it would lead to the HOST's files). I/O."""
+    found = [""]
+    globs = pattern.split("/")
+    for depth, glob in enumerate(globs):
+        last = depth == len(globs) - 1
+        found = [
+            f"{rel}/{entry.name}" if rel else entry.name
+            for rel in found
+            for entry in sorted((rootfs / rel).iterdir())
+            if fnmatchcase(entry.name, glob)
+            and (last or (entry.is_dir() and not entry.is_symlink()))
+        ]
+    return found
+
+
+def build_time_secrets(rootfs: Path, live: LiveConfig) -> list[str]:
+    """The rootfs paths a ``build_time_secrets`` pattern matches and no
+    ``build_time_secrets_allow`` pattern does, each once, relative. I/O."""
+    matched = {path for pattern in live.build_time_secrets for path in _expand(rootfs, pattern)}
+    return sorted(
+        path
+        for path in matched
+        if not any(_segments_match(path, allow) for allow in live.build_time_secrets_allow)
+    )
+
+
 def verify(rootfs: Path, cfg: SystemConfig, *, init: str, live: bool) -> list[str]:
     """Every declared thing the configured image does not have. I/O, read-only."""
     problems: list[str] = []
@@ -561,4 +598,6 @@ def verify(rootfs: Path, cfg: SystemConfig, *, init: str, live: bool) -> list[st
                     session.is_file() or xsession.is_file(),
                     f"autologin session {cfg.live.session} is not installed",
                 )
+        for path in build_time_secrets(rootfs, cfg.live):
+            problems.append(f"/{path} is a build-time secret: generate it on the booted system")
     return problems
