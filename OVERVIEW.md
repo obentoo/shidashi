@@ -295,6 +295,53 @@ restore points stay on disk untouched.
 
 > **The Assembler is immune to cycles (§18.6):** `--usepkgonly` installs ready-made binaries, **with no build order** — the cycle is a *build-time* phenomenon, resolved in the Factory. The Assembler only navigates the multi-instance graph and extracts its flavor's slice by the **final USE** (not "the last one compiled"). All the cycle complexity stays in the Factory.
 
+### 7.1 Checkpoints and the shared trunk
+
+The install is 80% of an assemble (11 minutes for minimal, 44 for kde), and every
+failure of 2026-10-01/02 came after it. On a btrfs scratch the image's rootfs is a
+subvolume, frozen into read-only **snapshots** after each costly step
+(`shidashi/checkpoint.py`):
+
+| Checkpoint | Taken | A resume skips |
+|---|---|---|
+| `install` | after the install and its settle | the install |
+| `packages` | after depclean and preserved-rebuild — the final package set | everything but seconds-long steps and the squashfs |
+| `install-partial` | when the install **fails**, with Portage's resume list inside | the merged part: `emerge --resume` merges only what was left |
+
+**When one is reused.** Checkpoints are content-addressed and live in one store per
+arch×init (`checkpoints/<arch>-<init>/`), shared by every image of it. A checkpoint's
+fingerprint is the *rendered* configuration (the same `configure` the image gets,
+hashed), the stage3, the profile, the pins and the install's command line without
+`--jobs`; a layer that configures nothing new leaves it unchanged, so the worker
+resumes from minimal's. The binhost is not in the fingerprint: it is checked apart,
+by what the image actually uses — the index entries of the checkpoint's own packages
+must be unchanged, and `emerge --pretend` with the install's command line, run in the
+restored rootfs, must choose the same binpkgs. A binpkg rebuilt for kde therefore
+leaves minimal's checkpoint alone; a stale candidate is dropped and the next one
+tried. `--fresh` ignores them all.
+
+**The shared trunk.** The `desktop` stage is identical for kde, gnome and wm
+(`trunk_stage`), so it is installed once, straight from the stage3, frozen as a
+checkpoint, and each flavor branches from it with `--update --deep --newuse`
+(`ISO_BRANCH_OPTIONS`); `--newuse` swaps the trunk's packages whose USE the flavor
+changes for that flavor's binpkgs. `--no-trunk` installs a flavor whole. Equivalence
+was checked on kde (2026-10-05): the same 1061 packages (version, build id, USE,
+`CONTENTS`) and boot test 50/50; of 273,876 paths only build-generated files differ
+(initramfs, UKI, `BUILD_ID`, salts, hwdb) and the order of `passwd`/`group`. kde took
+630 s on the trunk against 2179 s whole.
+
+**Why only the base's `rootfs/` lands before the install.** The install needs one
+layer file — the base's `locale.gen`, which `locale-gen` reads while glibc merges
+(`INSTALL_ROOTFS_LAYERS`). Every other layer's `rootfs/` lands after preserved-rebuild,
+in the `rootfs` step: the checkpoints then carry no image-specific file and can be
+shared, and the layer's file wins over a package's own with no `._cfg` left behind.
+
+**Snapshots, not tar fork points.** The factory's fork points (§6.5) are tarballs:
+portable, but each costs a full write and a full extract. A btrfs snapshot is
+instant and shares every unchanged block with the rootfs it came from, so the
+assemble can afford one after every costly step. Off btrfs, checkpoints are off and
+the assemble works as before.
+
 ---
 
 ## 8. Variation Matrix
@@ -682,6 +729,13 @@ The reference `make.conf` (already organized into named groups) maps directly:
 - [x] Reproducible snapshot pin. *(stage3 in `seeds/stage3.toml`; `::gentoo` in `seeds/gentoo.toml` — signed daily snapshot, at least 7 days old (cooldown, D26), the overlays by commit in `seeds/overlays.toml`; factory/assemble/pretend bind only these pins, never the host's `/var/db/repos`.)*
 
 - [x] Builder VM: builds as the guest's root, no sudo on the host. *(`lab/vm/builder.sh`: a Bentoo `minimal` ISO under `shidashi vm`, the host's cache read-only under an overlay on the VM's disk; built the minimal, gnome and wm ISOs on 2026-10-02.)*
+- [x] Worker image: a spare machine as a build oven. *(`variants/worker/`: a console image on minimal with key-only sshd; paired with the host by `lab/worker/kyomei.sh [-n NAME]` and `shidashi kyomei <host IP>` — plain HTTP plus a fingerprint comparison for now.)*
+- [ ] Worker tooling: what a full cluster peer needs on bare metal (QEMU with KVM, OVMF, virtiofsd, syft) and the operator's tools (smartmontools, iperf3, fio). *(story 011.)*
+- [ ] Worker pairing with an authenticated exchange, replacing the plain-HTTP `kyomei`. *(story 009.)*
+- [ ] Drive the worker from the host: remote jobs and cache sync. *(story 010.)*
+- [ ] Spike: does `systemd-nspawn` run inside `podman --privileged` on the worker? *(story 012.)*
+- [ ] Spike: network boot of the worker (UEFI HTTP Boot / PXE). *(story 013.)*
+- [ ] Distribute the builds between the host and the workers. *(story 014.)*
 - [ ] Builder image (OCI) under Kata Containers. Shidashi and its dependencies in a Bentoo image, run per job with `podman run --runtime kata`: each build in a disposable micro-VM with its own kernel, no sudo on the host, on any distribution with Podman and Kata — the packaged form of the builder VM, and an isolated self-hosted CI runner (each job in its own micro-VM). First experiment: the `minimal` rootfs as an OCI image under the kata runtime, checking that `systemd-nspawn` runs inside. Open points: the Kata guest kernel needs overlayfs, namespaces and device support (`sys-kernel/kata-guest-kernel` is in the overlay); Kata shares the rootfs over virtiofs, measured ~25% slower for binpkg installs in the builder VM — a block volume for the build tree; the micro-VM's memory is fixed (2 GB by default) and must be sized for builds.
 
 ### Phase 5 — Operations (optional)
@@ -809,6 +863,7 @@ just a test and becomes part of the curation pipeline.
 | **Language** | **Python ≥ 3.14** (on its way to becoming Gentoo's default), modern features (PEP 695/749/750, `match`) (§12). |
 | **Hosting** | **Local now → Cloudflare R2 later** (no egress) for the binhost and ISOs (§16). |
 | **Toolchain-bump** | Explicit phase that triggers `@preserved-rebuild` + subslot-rebuilds (§6.6). |
+| **Assemble trunk** | **A clean trunk per arch×init**, not a clean stage3 per ISO: the `desktop` trunk is installed once from the stage3 and kde, gnome and wm branch from it (`--update --deep --newuse`); `--no-trunk` keeps the whole install. Evidence (2026-10-05): kde on the trunk against kde whole — the same 1061 packages (version, build id, USE, `CONTENTS`), only build-generated files differ, boot test 50/50 (§7.1). |
 
 ### 19.2 Still open
 
