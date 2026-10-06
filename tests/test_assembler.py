@@ -799,6 +799,8 @@ class _Wired:
             '[binary   R    ] x/b-2:0::gentoo  USE="-c*" 0 KiB\n'
         )
         self.pretend_output: str | None = None
+        #: what a failed install prints: its plan, then the merges it got through
+        self.fail_output = "[binary R] x/a-1\n"
         self.store = checkpoint.Store(tmp_path / "ckpt", FakeBackend())
         self.extracted = 0
         wired = self
@@ -858,7 +860,7 @@ class _Wired:
                         (edb / "mtimedb").write_text(
                             json.dumps({"resume": {"mergelist": [["binary", "/", "x/b-1"]]}})
                         )
-                        raise subprocess.CalledProcessError(1, argv, output="[binary R] x/a-1\n")
+                        raise subprocess.CalledProcessError(1, argv, output=wired.fail_output)
                     (self.rootfs / "installed").write_text("yes")
                     return CommandResult(0, wired.install_output, "")
                 return CommandResult(0, "", "")
@@ -971,6 +973,56 @@ def test_a_failed_install_resumes_portages_merge_list(
     assert wired.extracted == 1
     assert not wired.has(checkpoint.PARTIAL)
     assert wired.has(checkpoint.PACKAGES)
+
+
+def test_a_failed_install_records_only_what_it_merged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression (2026-10-06): the partial recorded the whole plan as merged, and
+    the resume added what was left on top -- 476 + 470 = 946 for a 476-package image."""
+    import subprocess
+
+    from shidashi import checkpoint
+
+    wired = _Wired(tmp_path, monkeypatch)
+    wired.fail_output = (
+        "[binary   N    ] x/a-1-1::gentoo  0 KiB\n"
+        "[binary   N    ] x/b-2-1::gentoo  0 KiB\n"
+        ">>> Emerging binary (1 of 2) x/a-1::gentoo\n"
+        ">>> Completed (1 of 2) x/a-1::gentoo\n"
+        ">>> Emerging binary (2 of 2) x/b-2::gentoo\n"
+    )
+    wired.fail_install = True
+    with pytest.raises(subprocess.CalledProcessError):
+        wired.assemble()
+    (partial,) = wired.store.marks(checkpoint.PARTIAL)
+    assert partial.data["reused"] == ["x/a-1-1"]  # merged; x/b-2 was not
+
+    wired.fail_install = False
+    wired.install_output = "[binary   N    ] x/b-2-1::gentoo  0 KiB\n"  # the resume: what was left
+    wired.assemble()
+    assert wired.step("install")["packages"] == 2
+
+
+def test_a_corrupt_binpkg_is_named_and_the_install_still_resumes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression (2026-10-06): a truncated binpkg ended in Portage's traceback (it
+    renames the bad file, and the binhost is bound read-only), naming nothing."""
+    from shidashi import checkpoint
+
+    wired = _Wired(tmp_path, monkeypatch)
+    wired.fail_output = (
+        "[binary   N    ] x/a-1-1::gentoo  0 KiB\n"
+        ">>> Emerging binary (1 of 1) x/a-1::gentoo\n"
+        "Traceback (most recent call last):\n"
+        "OSError: [Errno 30] Read-only file system: "
+        "'/var/cache/binpkgs/x/a/a-1-1.gpkg.tar._checksum_failure_.osz2hdpe'\n"
+    )
+    wired.fail_install = True
+    with pytest.raises(AssemblerError, match=r"corrupt binpkg.*x/a/a-1-1\.gpkg\.tar"):
+        wired.assemble()
+    assert wired.has(checkpoint.PARTIAL)  # fixing the binpkg resumes the install
 
 
 def test_a_binpkg_rebuilt_for_another_image_keeps_the_checkpoint(

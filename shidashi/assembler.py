@@ -162,6 +162,35 @@ INSTALL_ROOTFS_LAYERS = ("base",)
 #: The resume of an interrupted install: Portage replays its own saved command.
 ISO_RESUME_ARGV = ["emerge", "--resume"]
 
+#: ``>>> Completed (3 of 120) cat/pkg-1.0::gentoo``: a merge that went through.
+_COMPLETED = re.compile(r"^>>> Completed \(\d+ of \d+\) ([^\s:]+)")
+
+
+def merged_reused_atoms(emerge_output: str) -> tuple[str, ...]:
+    """The binpkgs a stopped ``emerge`` merged before it stopped, as
+    :func:`~shidashi.phases.parse_reused_atoms` names them. Pure.
+
+    Its ``[binary ...]`` lines are the whole plan, printed before the first merge;
+    only the plan entries with a ``Completed`` line were merged.
+    """
+    done = {
+        m.group(1)
+        for m in (_COMPLETED.match(line.strip()) for line in emerge_output.splitlines())
+        if m is not None
+    }
+    return tuple(a for a in parse_reused_atoms(emerge_output) if checkpoint.token_cpv(a) in done)
+
+
+#: Portage moves a binpkg that fails its size or digest check aside as
+#: ``<file>._checksum_failure_.<random>``; on the read-only binhost the move itself
+#: fails, in a traceback, so the name is the only trace either way.
+_CHECKSUM_FAILURE = re.compile(re.escape(str(_BINHOST_DST)) + r"/(\S+?)\._checksum_failure_")
+
+
+def corrupt_binpkgs(emerge_output: str) -> tuple[str, ...]:
+    """The binpkgs (paths in the binhost) Portage found corrupt or truncated. Pure."""
+    return tuple(dict.fromkeys(_CHECKSUM_FAILURE.findall(emerge_output)))
+
 
 def iso_settle_argv(atoms: tuple[str, ...], *, jobs: int | None = None) -> list[str]:
     """The settle of the cut packages: their final binpkgs. Pure."""
@@ -794,15 +823,14 @@ class Assembler:
                         try:
                             installed = container.run(argv)
                         except subprocess.CalledProcessError as err:
+                            output = (err.output or "") + (err.stderr or "")
+                            saved = False
                             if (
                                 store is not None
                                 and fps is not None
                                 and checkpoint.has_resume_list(rootfs)
                             ):
-                                merged = earlier + parse_reused_atoms(
-                                    (err.output or "") + (err.stderr or "")
-                                )
-                                output = (err.output or "") + (err.stderr or "")
+                                merged = earlier + merged_reused_atoms(output)
                                 store.save(
                                     rootfs,
                                     checkpoint.PARTIAL,
@@ -820,6 +848,20 @@ class Assembler:
                                     },
                                 )
                                 step.add(checkpoint=checkpoint.PARTIAL)
+                                saved = True
+                            corrupt = corrupt_binpkgs(output)
+                            if corrupt:
+                                step.add(corrupt_binpkgs=list(corrupt))
+                                then = (
+                                    "the install resumes where it stopped"
+                                    if saved
+                                    else "the install runs again"
+                                )
+                                raise AssemblerError(
+                                    f"corrupt binpkg in {self.binhost_dir}: "
+                                    f"{', '.join(corrupt)} (its size or digest does not match "
+                                    f"the index). Rebuild or restore it and assemble again: {then}."
+                                ) from err
                             raise
                         reused = earlier + parse_reused_atoms(installed.stdout + installed.stderr)
                         if branched:
