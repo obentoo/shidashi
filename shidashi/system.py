@@ -370,9 +370,16 @@ _REGENERATED_AT_BOOT = (
 
 def remove_generated_secrets(rootfs: Path) -> list[str]:
     """Remove :data:`_REGENERATED_AT_BOOT` from ``rootfs``; the absolute paths
-    removed. I/O."""
+    removed. A secret that is a symlink is removed as the link; a symlinked
+    directory on its way is refused, removing nothing. I/O."""
     removed: list[str] = []
     for rel in _REGENERATED_AT_BOOT:
+        # a symlinked directory resolves on the BUILD HOST: never unlink through it
+        for parent in reversed(rel.parents[:-1]):
+            if (rootfs / parent).is_symlink():
+                raise ConfigurationError(
+                    f"/{parent} is a symlink: refusing to remove /{rel} through it"
+                )
         path = rootfs / rel
         if not (path.exists() or path.is_symlink()):
             continue
