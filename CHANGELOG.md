@@ -29,6 +29,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   output too; it always goes to the run's log, whose path is printed. A failure
   shows the last 50 lines of the failing command instead of all of it. `pretend`
   gains a log of its own.
+- **An assemble resumes after a failure instead of installing again.** The install
+  is 80% of an assemble (11 minutes for minimal, 44 for kde), and every failure came
+  after it. On a btrfs scratch the image's rootfs is frozen into read-only snapshots
+  after the install and after the final package set; a failed install keeps
+  Portage's own resume list, so the next run merges only what was left. A
+  checkpoint is reused only when the fingerprint of what it depends on matches (the
+  stage3, the pins, the layers, the sets, the binhost index, the command line), so a
+  resumed image is the image a clean run makes: the same 475 packages, checked on a
+  real minimal assemble. `--fresh` drops them. A binpkg that fails its checksum is
+  named instead of ending in Portage's traceback. Off btrfs nothing changes.
+- **kde, gnome and wm grow from a shared trunk.** Their desktop stage is identical,
+  so it is installed once and each flavor branches from it; `--no-trunk` installs a
+  flavor whole from the stage3.
+- **The worker image: a spare machine as a build oven.** A console image on
+  minimal (`base → minimal → worker`) with `shidashi kyomei`, which pairs it with the
+  host: it fetches the host's key from `lab/worker/kyomei.sh` and allows it for
+  root; both ends print the key's fingerprint for a person to compare, since the
+  transfer authenticates neither side. sshd takes keys only and starts only once a
+  key is in place.
 
 ### Changed
 
@@ -45,6 +64,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   It is now checked like the `::gentoo` snapshot: against Gentoo's release keys in
   a throwaway keyring, accepted only on GOODSIG and VALIDSIG. A keyring that imports
   nothing is named instead of surfacing as a missing key.
+- **An image could hold packages its pins do not have.** `--usepkgonly` makes emerge
+  ignore the ebuild repositories, so the assemble took the newest binpkg of the
+  binhost, even a version the pinned tree lacks, and ignored the tree's masks; the
+  binhost gathers every pin built on the same stage3. A minimal ISO pinned to
+  gentoo-20260919 shipped 4 such packages, and 28 in the builder VM (systemd-262,
+  gentoo-kernel-bin-7.2.8). The assemble now resolves with
+  `--use-ebuild-visibility=y`, and stops, naming them, if a planned binpkg still has
+  no ebuild in the pinned trees. Images published before this may hold such
+  packages.
+- **`factory --until` with an invalid name did work before refusing it.** It seeded
+  the rootfs, ran the generation check and wrote the build state first; it is now
+  refused right after the root guard.
 
 ## [0.1.1] - 2026-10-03
 
