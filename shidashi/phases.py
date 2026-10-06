@@ -322,8 +322,9 @@ def phase_emerge_argv(
 
     ``--usepkg`` always: a binpkg of the same package, version and USE is
     reused. Safe only because the PKGDIR belongs to ONE generation -- the
-    fingerprint check (:mod:`shidashi.generation`) runs before the first phase,
-    since Portage itself never compares CFLAGS or the toolchain (D26).
+    fingerprint check (:mod:`shidashi.generation`) runs before the first phase
+    and again after every phase's emerge (story 016), since Portage itself
+    never compares CFLAGS or the toolchain (D26).
     """
     emerge = (flow or stages_flow()).emerge
     if phase.emptytree and emptytree:
@@ -1094,6 +1095,10 @@ def _audited_snapshot(rootfs: Path, dest: Path) -> None:
         step.add(size_bytes=dest.stat().st_size if dest.is_file() else None)
 
 
+#: Called with a phase's name right after its emerge (the generation re-check).
+PhaseHook = Callable[[str], None]
+
+
 def run_phases(
     container: Container,
     recipe: ResolvedRecipe,
@@ -1104,6 +1109,7 @@ def run_phases(
     pins: str,
     fork_points_dir: Path,
     stop_after: str | None = None,
+    on_phase_emerged: PhaseHook | None = None,
 ) -> tuple[PhaseResult, ...]:
     """Orchestrate the chain of stages in order (R3.x/R4.x/R5.x, D24).
 
@@ -1123,6 +1129,12 @@ def run_phases(
     ``stop_after`` names a STAGE: the run ends right after that stage's fork
     point (and its settle, when it ships). The next run without it resumes from
     that fork point -- e.g. build the desktop stage alone before a flavor.
+
+    ``on_phase_emerged(phase.name)`` is called right after each phase's emerge,
+    before anything else the phase does (story 016, D5): the settle and the
+    binpkg check emerge too, and the snapshot writes a restore point, so a
+    re-check that refuses there bounds the damage to that one emerge. Its
+    exception propagates; nothing after it runs.
     """
     pending = pending_breaks(recipe, through=resume_at)
     _before, after = stages_flow().split()
@@ -1137,6 +1149,8 @@ def run_phases(
             f"stage:{phase.stage or phase.name}", ships=phase.ships, sets=list(phase.sets)
         ):
             results.append(run_phase(container, recipe, phase, emptytree=emptytree))
+            if on_phase_emerged is not None:
+                on_phase_emerged(phase.name)
             pending += phase.use_break
             # the steps after the emerge, in the order variants/flow.yaml declares them
             for kind in after:
@@ -1272,6 +1286,7 @@ def run_phases_stepwise(
     state_path: Path,
     on_checkpoint: CheckpointHook | None = None,
     on_failure: FailureHook | None = None,
+    on_phase_emerged: PhaseHook | None = None,
 ) -> tuple[PhaseResult, ...]:
     """Orchestrate the build's phases step by step, with checkpoints and retry
     (R1.x/R2.x/R3.x/R5.x).
@@ -1303,6 +1318,13 @@ def run_phases_stepwise(
     A STOP breaks before the next phase, never in the middle of an image. On
     resume, the cuts still pending come from :func:`pending_breaks`. Returns the
     :class:`PhaseResult` that ran, each settle right after its stage.
+
+    ``on_phase_emerged(phase.name)`` is called right after the phase's emerge
+    returns from the retry loop, before the diff, the record, the after-steps,
+    the persist and the checkpoint (story 016, D5). It is outside the retry
+    loop on purpose: its error never reaches ``on_failure`` (a RETRY would
+    redo the emerge with the same new toolchain) and propagates uncaught, so
+    the refused phase is never persisted as completed.
     """
     plan = plan_phase_run(recipe, completed=completed, until=until)
     _before, after = stages_flow().split()
@@ -1327,6 +1349,8 @@ def run_phases_stepwise(
             on_failure=on_failure,
             on_abort=run.persist,
         )
+        if on_phase_emerged is not None:
+            on_phase_emerged(phase.name)
         results.append(result)
 
         entries, blockers = parse_emerge_plan(result.output)

@@ -34,6 +34,7 @@ from shidashi.phases import (
     FactoryError,
     FailureDecision,
     FailureHook,
+    PhaseHook,
     PhaseResult,
     attach_packages,
     fork_point,
@@ -198,6 +199,24 @@ def update_source(
         return max(older, key=lambda found: (found[0], found[1]))[2]
     pre_fix = fork_points_dir / f"{recipe.arch}-{recipe.init}-{snapshot}-{target}.tar"
     return pre_fix if pre_fix.exists() else None
+
+
+def _generation_recheck(pkgdir: Path, rootfs: Path, recipe: ResolvedRecipe) -> PhaseHook:
+    """The re-check run after every phase's emerge, as an audited ``generation`` step (D5).
+
+    Recomputes the rootfs's fingerprint and checks it against the PKGDIR's,
+    naming the phase. A refusal (:class:`GenerationMismatchError`), an
+    unreadable fingerprint (:class:`FactoryError`) or an ``OSError`` propagates:
+    the caller's failure path keeps the rootfs.
+    """
+
+    def recheck(phase: str) -> None:
+        with audit.current().step("generation", after=phase) as step:
+            current = fingerprint(rootfs, recipe)
+            check_or_record(pkgdir, current, after_phase=phase)
+            step.add(fingerprint=current.model_dump())
+
+    return recheck
 
 
 def _bootstrap(
@@ -438,7 +457,8 @@ class Factory:
            (:func:`shidashi.bootstrap.run_bootstrap`), then its checkpoint. Then
            the generation fingerprint is recorded in, or checked against, the
            PKGDIR (:func:`shidashi.generation.check_or_record`, D26).
-        6. :func:`shidashi.phases.run_phases` (phases + settle-pass).
+        6. :func:`shidashi.phases.run_phases` (phases + settle-pass), with the
+           fingerprint re-checked after every phase's emerge (:func:`_generation_recheck`).
         7. Builds the :class:`FactoryResult`. On success and without ``keep``, removes the
            build rootfs; on failure or ``keep``, preserves it (R8.4). An ``emerge``
            failure already comes up as a :class:`FactoryError` from ``run_phase``/
@@ -531,6 +551,7 @@ class Factory:
                         pins=pins,
                         fork_points_dir=fork_points_dir,
                         stop_after=stop_after,
+                        on_phase_emerged=_generation_recheck(self.pkgdir, rootfs, recipe),
                     )
         except BaseException:
             keep_rootfs = True  # preserves the rootfs for debugging on failure (R8.4)
@@ -593,8 +614,9 @@ class Factory:
            is a full build, not an update.
         3. Restore it; apply the full configuration (every layer) and the sets.
         4. In the container: the fingerprint must still match, then
-           :func:`shidashi.update.run_update` -- plan, refuse a toolchain change,
-           ``-uDN --changed-deps`` with ``--usepkg``, ``@preserved-rebuild``.
+           :func:`shidashi.update.run_update` -- plan, refuse a plan that ends
+           the generation, ``-uDN --changed-deps`` with ``--usepkg``,
+           ``@preserved-rebuild`` -- then the fingerprint is re-checked.
         5. Write the updated image under the current pin's key -- never over
            the source, which may be an older pin's image (D10).
         """
@@ -659,6 +681,9 @@ class Factory:
                     result = run_update(container, recipe, current=current)
                     step.add(built=len(result.built_atoms))
                     attach_packages(rootfs, "update", since=since, built=result.built_atoms)
+                # what the plan check could not foresee (a toolchain pulled in by
+                # @preserved-rebuild): refused before the updated image is written
+                _generation_recheck(self.pkgdir, rootfs, recipe)("update")
                 with run.step("fork-point", path=str(image)):
                     snapshot_fork_point(rootfs, image)
         except BaseException:
@@ -828,6 +853,7 @@ class Factory:
                 state_path=state_path,
                 on_checkpoint=on_checkpoint,
                 on_failure=on_failure,
+                on_phase_emerged=_generation_recheck(self.pkgdir, rootfs, recipe),
             )
 
         return self._assemble_result(

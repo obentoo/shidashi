@@ -735,12 +735,14 @@ def _run_factory_oneshot(
                     emptytree=emptytree, download=download, keep=keep, stop_after=stop_after
                 )
     except FactoryError as err:
+        # soft_wrap: a long --pkgdir in the message must not be folded mid-path
         if err.phase:
             _err_console.print(
-                f"[bold red]phase failed[/bold red] {escape(str(err.phase))}: {escape(str(err))}"
+                f"[bold red]phase failed[/bold red] {escape(str(err.phase))}: {escape(str(err))}",
+                soft_wrap=True,
             )
         else:
-            _err_console.print(f"[bold red]error:[/bold red] {escape(str(err))}")
+            _err_console.print(f"[bold red]error:[/bold red] {escape(str(err))}", soft_wrap=True)
         _print_output(err.output, config.build_log_path(resolved))
         raise typer.Exit(1) from err
     except (SeedError, ResolveError, config.UnknownAxisError, RecipeChainError) as err:
@@ -817,13 +819,17 @@ def _run_factory_stepwise(
             _err_console.print(f"[bold red]error:[/bold red] {escape(str(err))}")
             raise typer.Exit(1) from err
         except FactoryError as err:
+            # soft_wrap: a long --pkgdir in the message must not be folded mid-path
             if err.phase:
                 _err_console.print(
                     f"[bold red]phase failed[/bold red] "
-                    f"{escape(str(err.phase))}: {escape(str(err))}"
+                    f"{escape(str(err.phase))}: {escape(str(err))}",
+                    soft_wrap=True,
                 )
             else:
-                _err_console.print(f"[bold red]error:[/bold red] {escape(str(err))}")
+                _err_console.print(
+                    f"[bold red]error:[/bold red] {escape(str(err))}", soft_wrap=True
+                )
             _print_output(err.output, config.build_log_path(resolved))
             raise typer.Exit(1) from err
         except (SeedError, ResolveError, config.UnknownAxisError, RecipeChainError) as err:
