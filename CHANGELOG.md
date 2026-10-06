@@ -33,24 +33,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is 80% of an assemble (11 minutes for minimal, 44 for kde), and every failure came
   after it. On a btrfs scratch the image's rootfs is frozen into read-only snapshots
   after the install and after the final package set; a failed install keeps
-  Portage's own resume list, so the next run merges only what was left. A
-  checkpoint is reused only when the fingerprint of what it depends on matches (the
-  stage3, the pins, the layers, the sets, the binhost index, the command line), so a
-  resumed image is the image a clean run makes: the same 475 packages, checked on a
-  real minimal assemble. `--fresh` drops them. A binpkg that fails its checksum is
-  named instead of ending in Portage's traceback. Off btrfs nothing changes.
-- **kde, gnome and wm grow from a shared trunk.** Their desktop stage is identical,
-  so it is installed once and each flavor branches from it; `--no-trunk` installs a
-  flavor whole from the stage3.
+  Portage's own resume list, so the next run merges only what was left. The
+  checkpoints (`install`, `packages`, `install-partial`) are content-addressed and
+  shared by every image of an arch and init: their fingerprint is the rendered
+  configuration, the stage3, the profile, the pins and the install's command line,
+  so an image whose layers configure nothing new resumes from another's (the worker
+  from minimal's, in 96 s). The binhost is checked apart, by what the image uses: a
+  checkpoint is reused while the index entries of its own packages are unchanged and
+  `emerge --pretend` still chooses the same binpkgs, so a binpkg rebuilt for kde
+  leaves minimal's alone (minimal resumed in 103 s after such a change, against
+  ~13 minutes whole). A resumed image is the image a clean run makes: the same 475
+  packages, checked on a real minimal assemble. `--fresh` drops them. A binpkg that
+  fails its checksum is named instead of ending in Portage's traceback. Off btrfs
+  nothing changes.
 - **The worker image: a spare machine as a build oven.** A console image on
-  minimal (`base → minimal → worker`) with `shidashi kyomei`, which pairs it with the
-  host: it fetches the host's key from `lab/worker/kyomei.sh` and allows it for
-  root; both ends print the key's fingerprint for a person to compare, since the
-  transfer authenticates neither side. sshd takes keys only and starts only once a
-  key is in place.
+  minimal (`base → minimal → worker`), booted like any Bentoo medium (its menu's
+  copy-to-RAM entry frees the stick), with key-only sshd that starts only once a
+  key is in place. Pairing takes two commands: `lab/worker/kyomei.sh [-n NAME]` on
+  the host serves the host's worker key (and, with `-n`, the worker's hostname) for
+  30 minutes, and `shidashi kyomei <host IP>` on the worker's console fetches it,
+  allows it for root and starts sshd. **The pairing is plain HTTP for now:** it
+  authenticates neither side, so both ends print the key's fingerprint for a person
+  to compare; story 009 replaces it with an authenticated protocol.
 
 ### Changed
 
+- **kde, gnome and wm grow from a shared trunk.** Their `desktop` stage is
+  identical, so the assemble installs it once, straight from the stage3, keeps it as
+  a checkpoint and branches each flavor from it with `--update --deep --newuse`; kde
+  took 630 s on the trunk against 2179 s whole (the trunk itself, 1163 s, is paid
+  once). The result was checked against a whole install: the same 1061 packages
+  (version, build id, USE, files) and boot test 50/50, the differing files being
+  only what each build generates. For the checkpoints to be shared, only the base's
+  `rootfs/` lands before the install; every other layer's files land after it, in
+  the new `rootfs` step. `--no-trunk` installs a flavor whole from the stage3.
 - **Package selection.** vim, bash and their completions leave the `shell` kit for
   the binhost catalog (bash stays in every image through `@system`; nano is the
   installed editor); GNOME's USE gains `gtk4`; KDE's drops `qt5`.
