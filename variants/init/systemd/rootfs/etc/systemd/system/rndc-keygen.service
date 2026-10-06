@@ -1,0 +1,25 @@
+# Generate bind's rndc key on the booted system (shidashi, story 007).
+#
+# net-dns/bind's pkg_postinst generates /etc/bind/rndc.key at merge time, so the
+# key was built into the image and every copy of the ISO shared it: whoever had
+# the ISO could drive the named control channel of every machine booted from it.
+# The assembler removes the build's copy (shidashi.system.finalize); this
+# oneshot generates each system's own, once, before named starts. Gentoo's
+# named.service also generates a missing key (generate-rndc-key.sh); this unit
+# does not depend on that, and covers rndc before named was ever started.
+# An image without bind has no rndc-confgen: the unit is skipped.
+[Unit]
+Description=bind rndc key generation
+Before=named.service
+ConditionPathExists=!/etc/bind/rndc.key
+ConditionPathExists=/usr/sbin/rndc-confgen
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/rndc-confgen -a -c /etc/bind/rndc.key
+ExecStartPost=/usr/bin/chown root:named /etc/bind/rndc.key
+ExecStartPost=/usr/bin/chmod 0640 /etc/bind/rndc.key
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

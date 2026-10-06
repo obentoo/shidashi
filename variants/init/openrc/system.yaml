@@ -13,3 +13,9 @@ services:
       - bluetooth
       - cupsd
       - avahi-daemon
+      # bind's rndc key, generated per system instead of shipped in the image
+      # (story 007): net-dns/bind's /etc/init.d/named does not generate a
+      # missing key (read from named.init-r15, bind-9.20.29), so
+      # rootfs/etc/init.d/rndc-keygen does, `before named`. Does nothing in an
+      # image without bind.
+      - rndc-keygen

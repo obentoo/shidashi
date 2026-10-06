@@ -1,0 +1,27 @@
+#!/sbin/openrc-run
+# shellcheck shell=sh
+# Generate bind's rndc key on the booted system (shidashi, story 007).
+#
+# The OpenRC twin of variants/init/systemd's rndc-keygen.service. The assembler
+# removes the key net-dns/bind's pkg_postinst built into the image; Gentoo's
+# named init script does not generate a missing one, so this service does,
+# once, before named. A service, not a local.d script: local starts after
+# every other service, too late for named. Without bind it does nothing.
+
+# shellcheck disable=SC2034  # read by openrc-run
+description="bind rndc key generation"
+
+depend() {
+	before named
+}
+
+start() {
+	if [ -e /etc/bind/rndc.key ] || [ ! -x /usr/sbin/rndc-confgen ]; then
+		return 0
+	fi
+	ebegin "Generating the rndc key"
+	/usr/sbin/rndc-confgen -a -c /etc/bind/rndc.key >/dev/null \
+		&& chown root:named /etc/bind/rndc.key \
+		&& chmod 0640 /etc/bind/rndc.key
+	eend $?
+}

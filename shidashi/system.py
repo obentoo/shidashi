@@ -343,15 +343,47 @@ def finalize(rootfs: Path, cfg: SystemConfig, *, init: str) -> dict[str, Any]:
     nspawn's ``--resolv-conf=copy-host`` (the build's fetches need DNS) writes
     the BUILD HOST's resolv.conf into the rootfs at every command: set earlier,
     the image's own was overwritten, and the first ISO with F80's fix still
-    shipped ``nameserver 8.8.8.8`` (F81).
+    shipped ``nameserver 8.8.8.8`` (F81). The secrets a package generated
+    during the install are removed here too, after the last command that could
+    write them (story 007).
     """
+    removed = _remove_generated_secrets(rootfs)
+    done: dict[str, Any] = {"removed": removed} if removed else {}
     resolv = rootfs / "etc" / "resolv.conf"
     resolv.unlink(missing_ok=True)
     if uses_resolved(rootfs, cfg, init=init):
         resolv.symlink_to(_RESOLVED_STUB)
-        return {"resolv_conf": f"-> {_RESOLVED_STUB}"}
+        return {**done, "resolv_conf": f"-> {_RESOLVED_STUB}"}
     _write(resolv, _RESOLV_STUB_TEXT)
-    return {"resolv_conf": "stub, written at boot"}
+    return {**done, "resolv_conf": "stub, written at boot"}
+
+
+#: Secrets a package generates at merge time that the booted system generates
+#: again, so the image must not keep the build's copy. Named one by one, never
+#: "whatever build_time_secrets matches": an unnamed one still reaches
+#: verify-config and fails the build, so the next leak is caught, not hidden.
+_REGENERATED_AT_BOOT = (
+    # net-dns/bind's pkg_postinst; rndc-keygen (systemd) / local.d (OpenRC).
+    Path("etc/bind/rndc.key"),
+)
+
+
+def _remove_generated_secrets(rootfs: Path) -> list[str]:
+    """Remove :data:`_REGENERATED_AT_BOOT` from ``rootfs``; the absolute paths
+    removed. I/O."""
+    removed: list[str] = []
+    for rel in _REGENERATED_AT_BOOT:
+        path = rootfs / rel
+        if not (path.exists() or path.is_symlink()):
+            continue
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            continue
+        except OSError as err:
+            raise ConfigurationError(f"/{rel}: cannot remove the build's copy: {err}") from err
+        removed.append(f"/{rel}")
+    return removed
 
 
 def hash_password(password: str) -> str:

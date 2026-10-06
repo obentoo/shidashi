@@ -26,6 +26,9 @@ services:
       # NetworkManager"), and the image kept the build host's static
       # nameserver: the first boot test found it (2026-09-30, F81).
       - systemd-resolved.service
+      # bind's rndc key, generated per system instead of shipped in the image
+      # (story 007); skipped by its condition in an image without bind.
+      - rndc-keygen.service
     disable:
       - systemd-networkd.service    # NetworkManager owns the network
       - systemd-networkd-wait-online.service
