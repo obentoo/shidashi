@@ -7,9 +7,28 @@ from typing import Any
 import pytest
 
 from shidashi.container import CommandResult
-from shidashi.phases import FactoryError, parse_emerge_plan
+from shidashi.generation import GenerationFingerprint
+from shidashi.phases import FactoryError
 from shidashi.recipe import ResolvedRecipe
-from shidashi.update import ToolchainChangeError, run_update, toolchain_changes, update_argv
+from shidashi.update import (
+    ToolchainChangeError,
+    run_update,
+    toolchain_changes,
+    toolchain_plan,
+    update_argv,
+)
+
+#: The image before the update: gcc 15, glibc 2.43-r4.
+_CURRENT = GenerationFingerprint(
+    arch="v3",
+    profile="default/linux/amd64/23.0/no-multilib/systemd",
+    common_flags="-O2",
+    chost="x86_64-pc-linux-gnu",
+    llvm_slot="22",
+    gcc="15.3.0",
+    binutils="2.46.1",
+    glibc="2.43-r4",
+)
 
 
 def _recipe() -> ResolvedRecipe:
@@ -79,16 +98,16 @@ def test_update_argv_updates_world_and_the_images_sets_reusing_binpkgs() -> None
 
 
 def test_toolchain_changes_ignore_rebuilds_and_lookalike_names() -> None:
-    assert toolchain_changes(parse_emerge_plan(_PLAN_OK)[0]) == ()
-    assert toolchain_changes(parse_emerge_plan(_PLAN_GCC)[0]) == (
-        "sys-devel/gcc-16.2.0",
-        "sys-libs/glibc-2.44",
-    )
+    assert toolchain_changes(toolchain_plan(_PLAN_OK), _CURRENT) == {}
+    # the glibc upgrade passes (D2); the gcc major does not (D1)
+    assert toolchain_changes(toolchain_plan(_PLAN_GCC), _CURRENT) == {
+        "gcc": ("15.3.0", "16.2.0"),
+    }
 
 
 def test_run_update_plans_then_updates_then_rebuilds_preserved_libs() -> None:
     c = FakeContainer(_PLAN_OK)
-    result = run_update(c, _recipe())  # type: ignore[arg-type]
+    result = run_update(c, _recipe(), current=_CURRENT)  # type: ignore[arg-type]
     assert [("--pretend" in a, a[-1]) for a in c.calls] == [
         (True, "@kde"),
         (False, "@kde"),
@@ -101,13 +120,13 @@ def test_run_update_plans_then_updates_then_rebuilds_preserved_libs() -> None:
 
 def test_run_update_refuses_a_toolchain_change_before_building_anything() -> None:
     c = FakeContainer(_PLAN_GCC)
-    with pytest.raises(ToolchainChangeError, match="sys-devel/gcc-16.2.0 sys-libs/glibc-2.44"):
-        run_update(c, _recipe())  # type: ignore[arg-type]
+    with pytest.raises(ToolchainChangeError, match="gcc: '15.3.0' -> '16.2.0'"):
+        run_update(c, _recipe(), current=_CURRENT)  # type: ignore[arg-type]
     assert len(c.calls) == 1  # the pretend only
 
 
 def test_run_update_reports_a_plan_that_does_not_resolve() -> None:
     c = FakeContainer("!!! Multiple package instances within a single package slot\n", plan_rc=1)
     with pytest.raises(FactoryError, match="does not resolve") as err:
-        run_update(c, _recipe())  # type: ignore[arg-type]
+        run_update(c, _recipe(), current=_CURRENT)  # type: ignore[arg-type]
     assert "Multiple package instances" in err.value.output

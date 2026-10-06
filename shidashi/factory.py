@@ -594,10 +594,11 @@ class Factory:
                 log=config.build_log_path(recipe),
             ) as container:
                 with run.step("generation"):
-                    check_or_record(self.pkgdir, fingerprint(rootfs, recipe))
+                    current = fingerprint(rootfs, recipe)
+                    check_or_record(self.pkgdir, current)
                 with run.step("update") as step:
                     since = int(time.time())
-                    result = run_update(container, recipe)
+                    result = run_update(container, recipe, current=current)
                     step.add(built=len(result.built_atoms))
                     attach_packages(rootfs, "update", since=since, built=result.built_atoms)
                 with run.step("fork-point", path=str(image)):

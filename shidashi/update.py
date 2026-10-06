@@ -5,24 +5,34 @@ image is UPDATED: its own fork point is restored and brought to the week's
 pinned ::gentoo tree with ``emerge -uDN --changed-deps @world``, reusing every
 binpkg of the generation (``--usepkg``) and building only what changed.
 
-One thing an update never does is change the toolchain. gcc, binutils or glibc
-moving under a built system is exactly the contamination a generation exists to
-prevent (D26): the plan is resolved first, and an update that would upgrade any
-of them is refused -- the answer is a new generation (a new stage3 pin).
+One thing an update never does is end its generation. The plan is resolved
+first and judged by the generation's own ABI rules (story 016, D8): a gcc
+release within its major, a glibc upgrade and any binutils change pass; a new
+gcc major or a glibc downgrade is refused -- the answer is a new generation.
+Source builds and binpkg installs of the toolchain are judged alike.
 """
 
 import subprocess
 
+from shidashi.bootstrap import natural_key
 from shidashi.container import Container
-from shidashi.phases import FactoryError, PhaseResult, _category_pn, _run_emerge, parse_emerge_plan
+from shidashi.generation import GenerationFingerprint, abi_differences
+from shidashi.phases import FactoryError, PhaseResult, _category_pn, _run_emerge
 from shidashi.recipe import Phase, ResolvedRecipe
+from shidashi.resolve import _atom_from_ebuild_line
 from shidashi.state import EmergePlanEntry
 
 #: Packages whose version belongs to the generation (its fingerprint).
 TOOLCHAIN = ("sys-devel/gcc", "sys-devel/binutils", "sys-libs/glibc")
 
+#: The fingerprint field each toolchain package fills.
+_FIELD = {"sys-devel/gcc": "gcc", "sys-devel/binutils": "binutils", "sys-libs/glibc": "glibc"}
+
 #: Plan operations that keep the installed version: a rebuild is fine.
 _SAME_VERSION = ("R", "r", "rR")
+
+#: A plan line installs from source or from a binpkg (``--usepkg``).
+_PLAN_PREFIXES = ("[ebuild", "[binary")
 
 
 class ToolchainChangeError(FactoryError):
@@ -45,20 +55,56 @@ def update_argv(recipe: ResolvedRecipe, *, pretend: bool = False) -> list[str]:
     ]
 
 
-def toolchain_changes(plan: tuple[EmergePlanEntry, ...]) -> tuple[str, ...]:
-    """The planned atoms that would change a toolchain package's version. Pure."""
-    return tuple(
-        entry.atom
-        for entry in plan
-        if _category_pn(entry.atom) in TOOLCHAIN and entry.op not in _SAME_VERSION
-    )
+def toolchain_plan(output: str) -> tuple[EmergePlanEntry, ...]:
+    """The toolchain entries of a plan, ``[ebuild`` and ``[binary`` lines alike. Pure.
+
+    :func:`shidashi.phases.parse_emerge_plan` reads source builds only; an
+    update resolves with ``--usepkg``, so a toolchain binpkg must be seen too.
+    A lookalike (``gcc-config``) or a cross gcc is not the toolchain.
+    """
+    entries: list[EmergePlanEntry] = []
+    for line in output.splitlines():
+        stripped = line.strip()
+        for prefix in _PLAN_PREFIXES:
+            atom = _atom_from_ebuild_line(stripped, prefix)
+            if atom is None:
+                continue
+            op_column = stripped[len(prefix) :].split("]", 1)[0].split()
+            if op_column and _category_pn(atom) in TOOLCHAIN:
+                entries.append(EmergePlanEntry(atom=atom, op=op_column[0]))
+            break
+    return tuple(entries)
 
 
-def run_update(container: Container, recipe: ResolvedRecipe) -> PhaseResult:
-    """Resolve, refuse a toolchain change, then update and clean up. PRIVILEGED.
+def toolchain_changes(
+    plan: tuple[EmergePlanEntry, ...], current: GenerationFingerprint
+) -> dict[str, tuple[str, str]]:
+    """The fields the plan would end the generation on, installed and planned. Pure.
 
-    The pretend runs with ``check=False`` so that its output reaches the error:
-    a plan that does not resolve is reported with the resolver's own message.
+    A same-version rebuild is skipped. A package planned more than once (a new
+    gcc slot beside a patch in the old one) counts by its newest planned
+    version, as :func:`shidashi.generation.installed_version` counts the
+    newest installed slot.
+    """
+    planned: dict[str, str] = {}
+    for entry in plan:
+        cp = _category_pn(entry.atom)
+        if cp not in _FIELD or entry.op in _SAME_VERSION:
+            continue
+        field, version = _FIELD[cp], entry.atom[len(cp) + 1 :]
+        if field not in planned or natural_key(version) > natural_key(planned[field]):
+            planned[field] = version
+    return abi_differences(current, current.model_copy(update=planned))
+
+
+def run_update(
+    container: Container, recipe: ResolvedRecipe, *, current: GenerationFingerprint
+) -> PhaseResult:
+    """Resolve, refuse a plan that ends the generation, then update and clean up. PRIVILEGED.
+
+    ``current`` is the image's fingerprint before the update. The pretend runs
+    with ``check=False`` so that its output reaches the error: a plan that
+    does not resolve is reported with the resolver's own message.
     """
     argv = update_argv(recipe, pretend=True)
     try:
@@ -70,11 +116,11 @@ def run_update(container: Container, recipe: ResolvedRecipe) -> PhaseResult:
     plan_output = pretend.stdout + pretend.stderr
     if pretend.exit_code != 0:
         raise FactoryError("the update does not resolve", phase="update", output=plan_output)
-    changed = toolchain_changes(parse_emerge_plan(plan_output)[0])
+    changed = toolchain_changes(toolchain_plan(plan_output), current)
     if changed:
+        detail = "; ".join(f"{k}: {a!r} -> {b!r}" for k, (a, b) in changed.items())
         raise ToolchainChangeError(
-            f"the update would change the toolchain ({' '.join(changed)}); a toolchain "
-            "change ends a generation -- re-pin the stage3 and build a new one (D26)",
+            f"the update would change the toolchain's ABI ({detail}); that ends a generation (D26)",
             phase="update",
             output=plan_output,
         )
