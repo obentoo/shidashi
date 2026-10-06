@@ -21,6 +21,7 @@ pending symbol (expected Red of story 003).
 
 import os
 import shutil
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +29,8 @@ import pytest
 
 from shidashi import config, factory, phases
 from shidashi.recipe import Phase, ResolvedRecipe
+from shidashi.seed import load_pointer
+from shidashi.tree import load_pin_id
 from tests._pending import try_import
 
 Factory: Any = try_import("shidashi.factory", "Factory")
@@ -205,6 +208,78 @@ def test_snapshot_restore_real_rootfs_preserves_ownership(tmp_path: Path) -> Non
     assert st.st_uid == 0  # ownership preserved (root) on a privileged host
 
 
+# --- privileged INTEGRATION on the cached base fork point (story 015) ----------
+#
+# Real nspawn + emerge, in minutes: each test restores the cached ``base`` fork
+# point into its own tmp_path and emerges small binpkgs only. Run as root, with
+# the pins the fork point and the binhost were built from (SHIDASHI_SEEDS_DIR)
+# and a --basetemp on a disk with room for a rootfs (~5 GB) and its snapshot:
+#
+#   python3 -m pytest -q -p no:cacheprovider --basetemp=/mnt/work/scratch/pytest \
+#       tests/test_factory.py
+#
+# A missing fork point skips the test naming the file; nothing here builds one.
+
+
+def _base_fork_point(fork_points_dir: Path) -> Path:
+    """The cached ``base`` fork point of the pinned stage3 and pins; skips naming it.
+
+    The key with the pins (story 016) first, then the older key without them;
+    both carry the pinned stage3's snapshot, so a fork point of another seed is
+    never restored under this one.
+    """
+    recipe = config.load_recipe("v3", "minimal", "systemd")
+    snapshot = load_pointer(recipe.init, seeds_dir=config.seeds_dir()).snapshot
+    keyed = phases.stage_fork_point_path(
+        recipe,
+        "base",
+        snapshot=snapshot,
+        pins=load_pin_id(config.seeds_dir()),
+        fork_points_dir=fork_points_dir,
+    )
+    unkeyed = fork_points_dir / f"{recipe.arch}-{recipe.init}-{snapshot}-base.tar"
+    for candidate in (keyed, unkeyed):
+        if candidate.is_file():
+            return candidate
+    pytest.skip(f"no base fork point in the cache: expected {keyed} or {unkeyed}")
+
+
+def _mtime_ns(path: Path) -> int:
+    return path.stat().st_mtime_ns
+
+
+@pytest.fixture
+def base_rootfs(tmp_path: Path) -> Iterator[Path]:
+    """The cached base fork point restored into ``tmp_path/rootfs``; the cache is
+    only read."""
+    fork_points = config.fork_points_dir()
+    tarball = _base_fork_point(fork_points)
+    before = (_mtime_ns(fork_points), _mtime_ns(tarball))
+    rootfs = tmp_path / "rootfs"
+    rootfs.mkdir()
+    phases.restore_fork_point(tarball, rootfs)
+    yield rootfs
+    assert (_mtime_ns(fork_points), _mtime_ns(tarball)) == before, "the cache was written"
+
+
+def test_base_rootfs_skips_without_a_fork_point(tmp_path: Path) -> None:
+    # 1.1: an empty fork-points directory skips, naming the files it looked for
+    with pytest.raises(pytest.skip.Exception, match=r"v3-systemd-.*-base\.tar"):
+        _base_fork_point(tmp_path)
+
+
+@_skip_privileged
+def test_base_rootfs_restores_the_cached_fork_point(base_rootfs: Path) -> None:
+    # 1.1: a real Gentoo rootfs, root-owned (the cache's mtime: the fixture's teardown)
+    os_release = base_rootfs / "usr" / "lib" / "os-release"
+    assert os_release.is_file()
+    assert os_release.stat().st_uid == 0
+    assert (base_rootfs / "etc" / "passwd").stat().st_uid == 0
+    assert phases.is_installed(base_rootfs, "sys-apps/portage")
+
+
+@_skip_privileged
+@pytest.mark.usefixtures("binpkg_only")
 @_skip_privileged
 def test_run_phase_executes_and_wraps_failure() -> None:
     # 5.1 (int): run_phase runs a trivial emerge and returns atoms; non-zero →
