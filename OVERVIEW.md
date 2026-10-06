@@ -38,7 +38,7 @@
 | **multi-instance** | Portage feature: multiple binpkgs of the same package/version with different USE. |
 | **transient binpkg** | binpkg built only to break a cycle (e.g. `ffmpeg[-sdl]`); discarded after the *settle-pass*, never reaches the ISO. |
 | **build-pool / publish-pool** | Two views of the binhost: the build-pool includes transients (reuse across weeks); the publish-pool only finals (Assembler/users). |
-| **fork-point** | Snapshot of a **stage** (`<arch>-<init>-<stage3>-<stage>.tar`), reused by every image that passes through it. |
+| **fork-point** | Snapshot of a **stage** (`<arch>-<init>-<stage3>-<pin id>-<stage>.tar`), reused by every image that passes through it. |
 | **toolchain-bump** | Major change in GCC/glibc/binutils (or a new snapshot pin) that triggers a full clean rebuild (`--emptytree`). |
 
 ---
@@ -250,11 +250,28 @@ Two situations, two strategies (resolves the "cheap build" × "clean build" tens
 
 A **generation** (D26) is everything that comes out of one verified stage3 with one toolchain.
 Its fingerprint (CFLAGS, CHOST, `LLVM_SLOT`, profile, gcc/binutils/glibc
-versions) is recorded in the PKGDIR and checked before any emerge
-— Portage compares none of this when reusing a binpkg. The update **refuses** a
-plan that changes gcc, binutils or glibc: a new toolchain never slips in underneath a
-built system, it opens a generation. The update ends with
-`@preserved-rebuild`. (See §10 and §18.3.)
+versions) is recorded in the PKGDIR — Portage compares none of this when reusing a
+binpkg. It is compared by ABI, not by exact version: arch, profile, CFLAGS, CHOST and
+`LLVM_SLOT` exactly; gcc by its major (its SLOT — `16.2.0` → `16.2.1_p20260926` is the
+same generation, 16 → 17 is not); glibc may go up but never down; binutils is recorded
+but not compared. It is checked before the first emerge **and again
+after every phase's emerge**, before that phase's settle, fork point or binpkg check, so a phase
+that crosses a gcc major stops the build before anything else is written. The refusal
+names the successor PKGDIR to pass as `--pkgdir`: `<pkgdir>-gcc<major>`, plus
+`-<8 hex>` of the compared values when another field changed; nothing is created.
+The update **refuses** a plan by the same rules (source or binpkg lines alike) and
+re-checks after its emerge: a new toolchain major never slips in underneath a built
+system, it opens a generation. The update ends with `@preserved-rebuild`. (See §10
+and §18.3.)
+
+Restore points — the bootstrap checkpoint, the stage fork points (the toolbox's
+included) and the per-phase snapshots — are keyed by the stage3 snapshot **and the
+pin id** (`p<gentoo date>.<8 hex>` over the `::gentoo` digest and every overlay
+commit): `<arch>-<init>-<stage3>-<pin id>-<stage>.tar`. A build under a new pin never
+restores a tree built from an older one; the stepwise state saved under another pin
+id is stale. Only the update crosses pins: with no image of the current pin, it
+restores the newest older one and writes the result under the current key. Older
+restore points stay on disk untouched.
 
 ---
 

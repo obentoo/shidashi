@@ -59,6 +59,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The generation guard refused a gcc patch release, checked only once and restored
+  trees of an older pin (story 016).** The pilot's `base` phase restored a bootstrap
+  checkpoint built under an older `::gentoo` pin, upgraded gcc `16.2.0` →
+  `16.2.1_p20260926` and wrote its binpkgs into the PKGDIR it had just verified
+  (audit run `20261005T205604Z-f0f216`); the resume was then refused on that
+  ABI-neutral change (`20261005T215023Z-e30ebd`). The fingerprint is now compared by
+  ABI (gcc by major, glibc only refusing a downgrade, binutils not compared), re-checked
+  after every phase's emerge and after the update's, and a refusal names the successor
+  `--pkgdir`. `factory --update` refuses a plan by the same rules, binpkg lines
+  included. The bootstrap checkpoint, the stage fork points, the toolbox and the
+  per-phase snapshots are keyed by the repository pin id too. **After upgrading, the
+  first factory build rebuilds the bootstrap and the stages once, even under unchanged
+  pins** (the old restore points carry no pin id and are left on disk), a stepwise
+  state saved before the upgrade is stale (`--reset`), and the assembler needs the
+  toolbox rebuilt under the current pin.
 - **`sudo shidashi pretend` refused the stage3 with "No public key".** The
   `.DIGESTS` signature was checked against the caller's own keyring (root's, empty).
   It is now checked like the `::gentoo` snapshot: against Gentoo's release keys in
