@@ -347,7 +347,7 @@ def finalize(rootfs: Path, cfg: SystemConfig, *, init: str) -> dict[str, Any]:
     during the install are removed here too, after the last command that could
     write them (story 007).
     """
-    removed = _remove_generated_secrets(rootfs)
+    removed = remove_generated_secrets(rootfs)
     done: dict[str, Any] = {"removed": removed} if removed else {}
     resolv = rootfs / "etc" / "resolv.conf"
     resolv.unlink(missing_ok=True)
@@ -368,7 +368,7 @@ _REGENERATED_AT_BOOT = (
 )
 
 
-def _remove_generated_secrets(rootfs: Path) -> list[str]:
+def remove_generated_secrets(rootfs: Path) -> list[str]:
     """Remove :data:`_REGENERATED_AT_BOOT` from ``rootfs``; the absolute paths
     removed. I/O."""
     removed: list[str] = []

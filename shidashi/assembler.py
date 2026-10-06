@@ -50,9 +50,11 @@ from shidashi.seed import Stage3Pointer, extract_stage3, fetch_stage3, load_poin
 from shidashi.system import (
     apply_live,
     apply_system,
+    build_time_secrets,
     finalize,
     load_livecd,
     load_system_config,
+    remove_generated_secrets,
     verify,
 )
 from shidashi.tree import load_pin_id, pinned_repos
@@ -1003,6 +1005,17 @@ class Assembler:
                 if stage4:
                     # the configured system, BEFORE the live user and autologin
                     with run.step("stage4") as step:
+                        # packed before `live` and `finalize`: the install's
+                        # secrets are removed and refused here too (story 007)
+                        removed = remove_generated_secrets(rootfs)
+                        if removed:
+                            step.add(removed=removed)
+                        secrets = build_time_secrets(rootfs, system_cfg.live)
+                        if secrets:
+                            raise AssemblerError(
+                                "the stage4 would carry build-time secrets: "
+                                + "; ".join(f"/{path}" for path in secrets)
+                            )
                         tarball4 = output_dir / f"{name}.stage4.tar.xz"
                         publish.make_stage4(rootfs, tarball4, exclude_file, threads=self.jobs)
                         artifacts.append(tarball4)
