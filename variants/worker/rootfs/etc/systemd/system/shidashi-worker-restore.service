@@ -1,0 +1,16 @@
+# Bring a persisted pairing back at boot (story 009): the host keys the host pinned,
+# the granted key, the name -- then sshd. Nobody at the console.
+#
+# No Wants=sshd.service: Condition*= does not stop what Wants= pulls in, and a worker
+# with no pairing must not start sshd. The script starts it itself (--no-block).
+[Unit]
+Description=Restore the Shidashi pairing from the work disk
+After=local-fs.target
+ConditionPathExists=/mnt/work/.shidashi/pairing.json
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /usr/local/lib/shidashi/kyomei_worker.py --restore
+
+[Install]
+WantedBy=multi-user.target

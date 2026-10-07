@@ -1,0 +1,18 @@
+# The pairing window (story 009): announce the worker over mDNS, show a one-time code
+# on the console and wait for `shidashi kyomei` on the host. Skipped once a pairing is
+# in RAM -- the restore (or an earlier pairing this boot) wrote /run/shidashi/pairing.json.
+# `shidashi kyomei` at the console stops this unit and opens a new window in the
+# foreground.
+[Unit]
+Description=Shidashi pairing window (kyomei)
+After=network-online.target systemd-resolved.service shidashi-worker-restore.service
+Wants=network-online.target
+ConditionPathExists=!/run/shidashi/pairing.json
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /usr/local/lib/shidashi/kyomei_worker.py --listen
+Restart=no
+
+[Install]
+WantedBy=multi-user.target

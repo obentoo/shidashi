@@ -1,0 +1,7 @@
+# /etc/fstab of the worker image (variants/worker).
+#
+# The work disk is found by its LABEL, never by a kernel name (sda and sdb swap
+# between boots): `shidashi worker disk-init` is the only thing that writes the label.
+# nofail + a 10 s device timeout: a worker without the disk boots on at once instead
+# of waiting 90 s and dropping to emergency mode; its pairing then stays in RAM.
+LABEL=SHIDASHI-WORK /mnt/work btrfs noatime,compress=zstd:1,nofail,x-systemd.device-timeout=10s 0 0
