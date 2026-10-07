@@ -63,6 +63,8 @@ vm_app = typer.Typer(
 app.add_typer(vm_app, name="vm")
 kits_app = typer.Typer(no_args_is_help=True, help="The kit library: every package Bentoo builds.")
 app.add_typer(kits_app, name="kits")
+worker_app = typer.Typer(no_args_is_help=True, help="Drive a paired worker (shidashi kyomei).")
+app.add_typer(worker_app, name="worker")
 
 _err_console = Console(stderr=True)
 
@@ -1837,6 +1839,40 @@ def kyomei_command(
             "check that this fingerprint matches the one on the worker's screen"
         )
     typer.echo(f"reach it with: ssh {entry.name} (or shidashi worker ...)")
+
+
+@worker_app.command("disk-init")
+def worker_disk_init(
+    worker: Annotated[str, typer.Argument(help="The paired worker's name.")],
+    disk: Annotated[str, typer.Argument(help="The disk to prepare, e.g. /dev/sda.")],
+    confirm: Annotated[
+        str, typer.Option("--confirm", help="The disk's serial (lsblk -o NAME,SERIAL).")
+    ],
+) -> None:
+    """Make DISK the worker's SHIDASHI-WORK disk -- only with its serial confirmed."""
+    import shlex
+
+    from shidashi import remote, workers
+
+    try:
+        registry = workers.load_registry(config.workers_dir() / "workers.json")
+        entry = registry.get(worker)
+        if entry is None:
+            known = ", ".join(sorted(registry)) or "none"
+            raise workers.RegistryError(f"no paired worker named {worker!r} (paired: {known})")
+        result = remote.run(
+            remote.Remote.for_worker(entry),
+            f"/usr/local/bin/shidashi disk-init {shlex.quote(disk)} {shlex.quote(confirm)}",
+            timeout=600,
+        )
+    except (workers.RegistryError, remote.RemoteError) as err:
+        _err_console.print(f"[bold red]error:[/bold red] {escape(str(err))}")
+        raise typer.Exit(1) from err
+    if result.stdout:
+        typer.echo(result.stdout, nl=False)
+    if result.stderr:
+        typer.echo(result.stderr, nl=False, err=True)
+    raise typer.Exit(result.exit_code)
 
 
 if __name__ == "__main__":
