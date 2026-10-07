@@ -1701,5 +1701,143 @@ def vm_test(
         raise typer.Exit(1)
 
 
+def _worker_name(value: str | None) -> str | None:
+    """``--name``: one RFC 1123 label (it becomes a known_hosts name and a hostname)."""
+    import re
+
+    from shidashi import kyomei_protocol
+
+    if value is not None and not re.fullmatch(kyomei_protocol.HOSTNAME_RE, value):
+        raise typer.BadParameter("a worker name is lower-case letters, digits and inner dashes")
+    return value
+
+
+def _worker_address(value: str | None) -> str | None:
+    """``--address``: ``IPv4[:PORT]``."""
+    from shidashi import kyomei
+
+    if value is not None:
+        try:
+            kyomei.parse_address(value)
+        except ValueError as err:
+            raise typer.BadParameter(f"expected IPv4[:PORT]: {err}") from err
+    return value
+
+
+def _ensure_worker_key(key: Path) -> None:
+    """The host's worker key (ed25519, no passphrase, 0600), made once."""
+    pub = Path(f"{key}.pub")
+    if key.exists() and pub.exists():
+        return
+    key.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if key.exists():  # the public half went missing: derive it again
+        argv = ["ssh-keygen", "-y", "-f", str(key)]
+    else:
+        argv = ["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", "shidashi-worker-key"]
+        argv += ["-f", str(key)]
+    done = subprocess.run(
+        argv, capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL
+    )
+    if done.returncode != 0:
+        raise OSError(f"ssh-keygen could not create {key}: {done.stderr.strip()}")
+    if argv[1] == "-y":
+        pub.write_text(done.stdout)
+    key.chmod(0o600)
+
+
+def _probe_registry(registry: Path) -> None:
+    """Fail before any worker installs a key the host could not record (R1.8)."""
+    import tempfile
+
+    from shidashi import workers
+
+    workers.load_registry(registry)
+    registry.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    fd, probe = tempfile.mkstemp(dir=registry.parent, prefix=".workers.json.", suffix=".probe")
+    os.close(fd)
+    os.unlink(probe)
+
+
+@app.command("kyomei")
+def kyomei_command(
+    name: Annotated[
+        str | None,
+        typer.Option("--name", callback=_worker_name, help="The worker's name (and hostname)."),
+    ] = None,
+    address: Annotated[
+        str | None,
+        typer.Option(
+            "--address",
+            callback=_worker_address,
+            help="IPv4[:PORT] of the worker, skipping discovery (across networks).",
+        ),
+    ] = None,
+    wait: Annotated[
+        int, typer.Option("--wait", min=1, max=30, help="Seconds to listen for workers.")
+    ] = 3,
+    trusted: Annotated[
+        bool,
+        typer.Option("--trusted", help="Pair a worker booted with this host's shidashi.trust."),
+    ] = False,
+    trust_param: Annotated[
+        bool,
+        typer.Option("--trust-param", help="Print this host's shidashi.trust kernel parameter."),
+    ] = False,
+) -> None:
+    """Find a worker announcing itself, pick it, type the code it shows, pair."""
+    from shidashi import kyomei, kyomei_protocol, mdns, workers
+
+    wdir = config.workers_dir()
+    key = wdir / "id_ed25519"
+    registry = wdir / "workers.json"
+    try:
+        if trust_param:
+            _ensure_worker_key(key)
+            typer.echo(kyomei.trust_param(key, kyomei.default_address()))
+            return
+        _probe_registry(registry)
+        _ensure_worker_key(key)
+        if address is not None:
+            target = kyomei.parse_address(address)
+        else:
+            target = kyomei.choose(mdns.browse(kyomei_protocol.SERVICE, wait))
+        code = None
+        while not trusted:
+            typed = typer.prompt("Code shown on the worker's screen", hide_input=True)
+            try:
+                code = kyomei_protocol.normalize_code(typed)
+                break
+            except ValueError:
+                typer.echo("That is not a code: 8 letters and digits, like ABCD-1234.", err=True)
+        paired = kyomei.pair_with(target, key, code=code, name=name)
+        before = workers.load_registry(registry).get(paired.name)
+        if (
+            before is not None
+            and before.host_key.split()[:2] != paired.welcome.host_key.split()[:2]
+        ):
+            _err_console.print(
+                f"[bold yellow]warning:[/bold yellow] replacing {escape(before.name)} "
+                f"({before.address}, {before.host_key_fingerprint}): a worker of that name "
+                "was paired before with another host key"
+            )
+        entry = kyomei.complete(paired, registry)
+    except (
+        kyomei.PairingError,
+        kyomei_protocol.ProtocolError,
+        workers.RegistryError,
+        OSError,
+    ) as err:
+        _err_console.print(f"[bold red]error:[/bold red] {escape(str(err))}")
+        raise typer.Exit(1) from err
+    typer.echo(f"paired {entry.name} at {entry.address}")
+    typer.echo(f"host key {entry.host_key_fingerprint} pinned")
+    if paired.trusted:
+        typer.echo(
+            "trusted on first use: the key was not authenticated by a code; "
+            "check that this fingerprint matches the one on the worker's screen"
+        )
+    typer.echo(f"reach it with: ssh {entry.name} (or shidashi worker ...)")
+
+
 if __name__ == "__main__":
     app()
