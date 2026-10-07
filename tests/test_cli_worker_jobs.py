@@ -665,3 +665,36 @@ def test_status_name_of_a_disk_smartctl_cannot_identify_says_no_smart_device(
     assert worker.status(fw.remote()).smart == "unknown: no SMART device"
     _, out = _invoke(["status", fw.name], capfd)
     assert "no SMART device" in out and "usage summary" not in out
+
+
+def test_job_from_the_cli_writes_its_own_audit_trail_on_the_host(
+    fw: FakeWorker, cached: dict[str, Path], tmp_path: Path, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """Found on bentoo-lab (7.3): the CLI opened no run, so every job event was dropped."""
+    before = set(config.runs_dir().glob("*")) if config.runs_dir().is_dir() else set()
+    result, out = _invoke(
+        [
+            "job",
+            fw.name,
+            "kde",
+            "--results",
+            str(tmp_path / "res"),
+            "--",
+            "assemble",
+            "v3",
+            "kde",
+            "systemd",
+        ],
+        capfd,
+    )
+    assert result.exit_code == 0, out
+    new = [d for d in config.runs_dir().glob("*") if d not in before and d.is_dir()]
+    events = [
+        json.loads(line)
+        for d in new
+        if (d / "events.jsonl").is_file()
+        for line in (d / "events.jsonl").read_text().splitlines()
+    ]
+    starts = [e for e in events if e.get("kind") == "run.start"]
+    assert any(e.get("command") == "worker-job" for e in starts), [e.get("command") for e in starts]
+    assert any("worker.job" in json.dumps(e) for e in events)

@@ -183,6 +183,27 @@ def _worker_holder(arch: str) -> ownership.Owner | None:
     return holder
 
 
+@contextlib.contextmanager
+def _worker_audit(command: str, **inputs: object) -> Generator[None]:
+    """Run the block as an audited run on this host, so ``shidashi.worker`` records its
+    steps (push, ship, start, follow, pull, the lock, the bytes moved). A runs directory
+    that cannot be written leaves the block unaudited with a visible warning."""
+    try:
+        cm = audit.run(config.runs_dir(), command=command, argv=sys.argv, inputs=inputs)
+        cm.__enter__()
+    except OSError as err:
+        _err_console.print(f"[yellow]warning:[/yellow] audit trail disabled: {escape(str(err))}")
+        yield
+        return
+    try:
+        yield
+    except BaseException as err:
+        if not cm.__exit__(type(err), err, err.__traceback__):
+            raise
+    else:
+        cm.__exit__(None, None, None)
+
+
 def _apply_work_dir(work_dir: Path | None) -> None:
     """Point cache and scratch under a single ``--work-dir`` (takes precedence over env).
 
@@ -2386,16 +2407,17 @@ def worker_job(
     try:
         worker_mod.validate_job_name(job)  # before any contact (R3.11)
         entry = _paired(worker)
-        result = worker_mod.job(
-            remote.Remote.for_worker(entry),
-            entry,
-            job,
-            args,
-            allow_dirty=allow_dirty,
-            follow=not no_follow,
-            results=results,
-            bwlimit=bwlimit,
-        )
+        with _worker_audit("worker-job", worker=worker, job=job, args=list(args)):
+            result = worker_mod.job(
+                remote.Remote.for_worker(entry),
+                entry,
+                job,
+                args,
+                allow_dirty=allow_dirty,
+                follow=not no_follow,
+                results=results,
+                bwlimit=bwlimit,
+            )
     except _job_errors() as err:
         raise _worker_error(err) from err
     except KeyboardInterrupt:
