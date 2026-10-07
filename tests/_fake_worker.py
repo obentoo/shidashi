@@ -366,6 +366,10 @@ class FakeWorker:
         self._write_config(cfg)
         if "mounted" in changes and changes["mounted"]:
             (self.work / ".shidashi").mkdir(parents=True, exist_ok=True)
+        elif "mounted" in changes:
+            # unmounted, /mnt/work is the empty directory on the RAM root: the disk's
+            # .shidashi marker is no longer visible there
+            shutil.rmtree(self.work / ".shidashi", ignore_errors=True)
         if "cpu_flags" in changes:
             self._write_worker_files(tuple(changes["cpu_flags"]))
 

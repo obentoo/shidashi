@@ -28,6 +28,8 @@ from shidashi.workers import WorkerEntry
 
 #: ssh's own exit code for its failures (connection, authentication, host key).
 _SSH_FAILED = 255
+#: Where a pull keeps an interrupted file, inside the destination directory.
+PULL_PARTIAL_DIR = ".rsync-partial"
 _MISMATCH = "Host key verification failed"
 _PRESENTED_RE = re.compile(
     r"key sent by the remote host is\s*\n\s*(SHA256:[A-Za-z0-9+/=]+?)\.?\s*$", re.M
@@ -158,9 +160,21 @@ def rsync_argv(
     """``rsync`` between the host and the worker over the pinned ssh. Pure; never deletes.
 
     ``push``: ``sources`` are host paths and ``dest`` a worker path; otherwise the
-    reverse. ``--partial`` lets an interrupted transfer resume.
+    reverse. A push keeps an interrupted file (``--partial``) to resume it. A pull
+    writes into a host cache shared with root's builds: it keeps an interrupted file in
+    ``.rsync-partial/`` (never a truncated file under its final name) and sets no
+    times, permissions or group on host directories it does not own.
     """
-    argv = ["rsync", "-aH", "--numeric-ids", "--partial"]
+    argv = ["rsync", "-aH", "--numeric-ids"]
+    if push:
+        argv.append("--partial")
+    else:
+        argv += [
+            f"--partial-dir={PULL_PARTIAL_DIR}",
+            "--omit-dir-times",
+            "--no-perms",
+            "--no-group",
+        ]
     if mkpath:
         argv.append("--mkpath")
     argv.append("--info=stats1,progress2")
