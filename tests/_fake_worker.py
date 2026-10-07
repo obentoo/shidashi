@@ -432,9 +432,11 @@ class FakeWorker:
             ),
         )
 
-    def activate_unit(self, unit: str) -> None:
-        """Mark a unit active on the worker (no process behind it)."""
-        (self.state / "units" / f"{_unit_name(unit)}.active").write_text("0")
+    def activate_unit(self, unit: str, state: str = "active") -> None:
+        """Mark a unit active on the worker (no process behind it); ``state`` is the
+        ActiveState ``systemctl show`` reports (``activating``, ``deactivating``)."""
+        marker = self.state / "units" / f"{_unit_name(unit)}.active"
+        marker.write_text("0" if state == "active" else state)
 
     def deactivate_unit(self, unit: str) -> None:
         (self.state / "units" / f"{_unit_name(unit)}.active").unlink(missing_ok=True)
@@ -1064,8 +1066,12 @@ def _systemctl(argv: list[str]) -> int:
     if verb == "show":
         for n in names:
             on = _unit_name(n) in active
+            state = "inactive"
+            if on:
+                written = (units / f"{_unit_name(n)}.active").read_text().strip()
+                state = written if written in ("activating", "deactivating") else "active"
             values = {
-                "ActiveState": "active" if on else "inactive",
+                "ActiveState": state,
                 "SubState": "running" if on else "dead",
                 "Result": "success",
             }
@@ -1452,6 +1458,11 @@ def _smartctl(argv: list[str]) -> int:
     verdict = _cfg().get("smartctl") or "PASSED"
     _log("smartctl", argv=argv)
     print("smartctl 7.4 2023-08-01 r5530 [x86_64-linux] (fake)\n")
+    if verdict == "UNDETECTED":  # a device-mapper disk: a usage error, exit bit 0
+        print(f"{argv[-1]}: Unable to detect device type")
+        print("Please specify device type with the -d option.\n")
+        print("Use smartctl -h to get a usage summary\n")
+        return 1
     print("=== START OF READ SMART DATA SECTION ===")
     print(f"SMART overall-health self-assessment test result: {verdict}")
     return 0 if verdict == "PASSED" else 8

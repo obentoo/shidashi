@@ -879,3 +879,46 @@ def test_orchestration_a_follow_that_fails_keeps_the_lock_and_says_how_to_resume
         if line.strip()
     ]
     assert "worker.job.detached" in kinds
+
+
+# --- group 6 review: an earlier run's rc must not end a job that is still starting ---
+
+
+def test_orchestration_clears_a_stale_rc_as_soon_as_the_lock_is_taken(
+    fw: FakeWorker,
+) -> None:
+    fw.put("out/jobs/fac-v3.rc", "0\n")  # an earlier fac-v3 that ended
+    fw.put("out/jobs/fac-v3.runs", "20261001T000000Z-old001\n")
+    assert _job(fw, "fac-v3", FACTORY) == 0
+    calls = fw.calls()
+    clear = next(
+        i
+        for i, c in enumerate(calls)
+        if c["kind"] == "ssh"
+        and "fac-v3.rc" in c["command"]
+        and "rm -f" in c["command"]
+        and "systemd-run" not in c["command"]
+    )
+    first_rsync = next(i for i, c in enumerate(calls) if c["kind"] == "rsync")
+    assert clear < first_rsync  # gone before the push, while the lock is held
+    assert "v3.owner.json" in calls[first_rsync]["locks"]
+
+
+def test_orchestration_a_failed_clear_of_stale_files_releases_the_lock(
+    fw: FakeWorker, capfd: pytest.CaptureFixture[str]
+) -> None:
+    fw.fail(r"fac-v3\.runs$", code=1, stderr="rm: cannot remove: Read-only file system\n")
+    text = _refused(lambda: _job(fw, "fac-v3", FACTORY), capfd)
+    assert "Read-only" in text
+    _nothing_shipped(fw)
+    assert ownership.current("v3") is None
+
+
+def test_orchestration_an_assemble_job_takes_no_lock_and_clears_nothing_early(
+    fw: FakeWorker,
+) -> None:
+    assert _job(fw, "kde", ASSEMBLE) == 0
+    early = [
+        c for c in fw.ssh_commands() if "rm -f" in c and "kde.rc" in c and "systemd-run" not in c
+    ]
+    assert early == []

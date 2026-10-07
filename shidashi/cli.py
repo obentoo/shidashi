@@ -32,6 +32,8 @@ from rich.prompt import Prompt
 from rich.table import Table
 
 from shidashi import audit, config, doctor, ownership, progress, publish
+from shidashi import worker as worker_mod
+from shidashi import workers as workers_mod
 from shidashi.assembler import Assembler, AssemblerError, AssembleResult
 from shidashi.factory import (
     CheckpointDecision,
@@ -49,6 +51,7 @@ from shidashi.recipe import (
     RecipeChainError,
     ResolvedRecipe,
 )
+from shidashi.remote import Remote
 from shidashi.resolve import KitView, PretendReport, ResolveError, pretend_resolve
 from shidashi.seed import SeedError, load_pointer
 from shidashi.state import PhaseDiff
@@ -67,6 +70,10 @@ kits_app = typer.Typer(no_args_is_help=True, help="The kit library: every packag
 app.add_typer(kits_app, name="kits")
 worker_app = typer.Typer(no_args_is_help=True, help="Drive a paired worker (shidashi kyomei).")
 app.add_typer(worker_app, name="worker")
+sync_app = typer.Typer(
+    no_args_is_help=True, help="Copy an arch's cache to a worker, and results back from it."
+)
+worker_app.add_typer(sync_app, name="sync")
 
 _err_console = Console(stderr=True)
 
@@ -2006,6 +2013,542 @@ def worker_disk_init(
     if result.stderr:
         typer.echo(result.stderr, nl=False, err=True)
     raise typer.Exit(result.exit_code)
+
+
+#: R1.4: the listing waits at most this long for each worker, whole command included.
+_LIST_TIMEOUT = 5.0
+
+
+def _size(nbytes: int) -> str:
+    """Bytes as GiB (MiB below 1 GiB), one decimal."""
+    if nbytes >= 1024**3:
+        return f"{nbytes / 1024**3:.1f} GiB"
+    return f"{nbytes / 1024**2:.1f} MiB"
+
+
+def _job_names(units: tuple[str, ...]) -> str:
+    return ", ".join(u.removeprefix("shidashi-job-") for u in units) or "none"
+
+
+def _print_worker_status(st: worker_mod.WorkerStatus, address: str) -> None:
+    """``status NAME``: every field of the probe (R1.1-R1.3)."""
+    if not st.reachable:
+        typer.echo(f"{st.name} ({address}): unreachable: {_unreachable_reason(st, address)}")
+        return
+    runs = ", ".join(st.runnable_arches) or "none"
+    smart = st.smart if st.smart is not None else "unknown: the image has no smartctl"
+    rows = [
+        ("cpu", f"{st.cpu_model or 'unknown'}, {st.threads} threads"),
+        ("targets", f"{runs} (highest: {st.max_target or 'none'})"),
+        ("load", f"{st.load1:.2f} (1 min)"),
+        ("memory", f"{_size(st.mem_available)} available of {_size(st.mem_total)}"),
+        ("work disk", _work_disk(st)),
+        ("image", st.image or "unknown (no BUILD_ID)"),
+        ("smart", smart),
+        ("checkpoints", ", ".join(st.trunks) or "none"),
+        ("jobs", _job_names(st.jobs)),
+        ("accepts jobs", "yes" if st.accepts_jobs else "no"),
+    ]
+    typer.echo(f"{st.name} ({address}): reachable")
+    for label, value in rows:
+        typer.echo(f"  {label:<13} {value}")
+
+
+def _work_disk(st: worker_mod.WorkerStatus) -> str:
+    """Free space on the work disk, or why there is none to report (R1.2)."""
+    if not st.accepts_jobs:
+        return f"no work disk ({worker_mod.WORK} not mounted: takes no jobs)"
+    if st.work_free is None:
+        return f"{worker_mod.WORK} mounted, free space unknown"
+    return f"{_size(st.work_free)} free on {worker_mod.WORK}"
+
+
+def _unreachable_reason(st: worker_mod.WorkerStatus, address: str) -> str:
+    """The cause alone, on one line: the name and address are already on it."""
+    reason = (st.reason or "").removeprefix(f"{st.name} ({address}) is unreachable")
+    return " ".join(reason.removeprefix(":").split()) or "no answer"
+
+
+def _status_line(
+    entry: workers_mod.WorkerEntry, outcome: worker_mod.WorkerStatus | Exception
+) -> str:
+    """One line of the listing (R1.4)."""
+    if isinstance(outcome, Exception):
+        return f"{entry.name}  refused: {' '.join(str(outcome).split())}"
+    st = outcome
+    if not st.reachable:
+        return f"{st.name}  unreachable: {_unreachable_reason(st, entry.address)}"
+    return (
+        f"{st.name}  reachable  max {st.max_target or 'none'}  {st.threads} threads  "
+        f"load {st.load1:.2f}  {_work_disk(st)}  jobs: {_job_names(st.jobs)}"
+    )
+
+
+def _refresh_flags(entry: workers_mod.WorkerEntry, st: worker_mod.WorkerStatus) -> None:
+    """R1.6; a registry that cannot be written only warns: the probe still stands."""
+    try:
+        worker_mod.refresh_registry(entry, st)
+    except (OSError, workers_mod.RegistryError) as err:
+        _err_console.print(
+            f"[yellow]warning:[/yellow] {escape(entry.name)}'s CPU flags not recorded: "
+            f"{escape(str(err))}",
+            soft_wrap=True,
+        )
+
+
+def _probe_or_error(
+    entry: workers_mod.WorkerEntry, timeout: float
+) -> worker_mod.WorkerStatus | Exception:
+    from shidashi import isaguard, remote
+
+    try:
+        return worker_mod.status(remote.Remote.for_worker(entry), timeout=timeout)
+    except (remote.RemoteError, isaguard.UnknownFlag) as err:
+        return err
+
+
+@worker_app.command("status")
+def worker_status(
+    worker: Annotated[
+        str | None, typer.Argument(help="A paired worker's name; every one when omitted.")
+    ] = None,
+) -> None:
+    """A worker's CPU, targets, load, memory, work disk, image, SMART, checkpoints and
+    jobs; without a name, one line per paired worker (at most 5 s each)."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    try:
+        registry = workers_mod.load_registry(config.workers_dir() / "workers.json")
+    except workers_mod.RegistryError as err:
+        _err_console.print(f"[bold red]error:[/bold red] {escape(str(err))}")
+        raise typer.Exit(1) from err
+    if worker is not None:
+        entry = registry.get(worker)
+        if entry is None:
+            known = ", ".join(sorted(registry)) or "none"
+            _err_console.print(
+                f"[bold red]error:[/bold red] no paired worker named {escape(repr(worker))} "
+                f"(paired: {escape(known)})"
+            )
+            raise typer.Exit(1)
+        outcome = _probe_or_error(entry, worker_mod.STATUS_TIMEOUT)
+        if isinstance(outcome, Exception):
+            _err_console.print(f"[bold red]error:[/bold red] {escape(str(outcome))}")
+            raise typer.Exit(1)
+        _refresh_flags(entry, outcome)
+        _print_worker_status(outcome, entry.address)
+        raise typer.Exit(0 if outcome.reachable else 1)
+    if not registry:
+        typer.echo("no paired worker (pair one with: shidashi kyomei)")
+        return
+    entries = [registry[name] for name in sorted(registry)]
+    # every worker probed at once: the listing takes one timeout, not one per worker
+    with ThreadPoolExecutor(max_workers=min(8, len(entries))) as pool:
+        outcomes = list(pool.map(lambda e: _probe_or_error(e, _LIST_TIMEOUT), entries))
+    for entry, outcome in zip(entries, outcomes, strict=True):
+        if isinstance(outcome, worker_mod.WorkerStatus):
+            _refresh_flags(entry, outcome)
+        typer.echo(_status_line(entry, outcome))
+    if any(isinstance(o, Exception) for o in outcomes):
+        raise typer.Exit(1)
+
+
+def _paired(name: str) -> workers_mod.WorkerEntry:
+    """The paired worker ``name``; :class:`workers.RegistryError` when there is none."""
+    registry = workers_mod.load_registry(config.workers_dir() / "workers.json")
+    entry = registry.get(name)
+    if entry is None:
+        known = ", ".join(sorted(registry)) or "none"
+        raise workers_mod.RegistryError(f"no paired worker named {name!r} (paired: {known})")
+    return entry
+
+
+def _worker_error(message: object) -> typer.Exit:
+    """Print ``message`` as an error; the exit 1 to raise (no traceback)."""
+    _err_console.print(f"[bold red]error:[/bold red] {escape(str(message))}", soft_wrap=True)
+    return typer.Exit(1)
+
+
+@worker_app.command("run")
+def worker_run(
+    worker: Annotated[str, typer.Argument(help="The paired worker's name.")],
+    command: Annotated[list[str], typer.Argument(help="The command and its arguments (after --).")],
+) -> None:
+    """Run COMMAND on the worker, every argument quoted; its output streams here and
+    its exit code is ours."""
+    from shidashi import remote
+
+    try:
+        target = remote.Remote.for_worker(_paired(worker))
+        code = worker_mod.run_command(target, command)
+    except (workers_mod.RegistryError, OSError) as err:
+        raise _worker_error(err) from err
+    except KeyboardInterrupt:
+        raise typer.Exit(130) from None
+    raise typer.Exit(code)
+
+
+@worker_app.command("logs")
+def worker_logs(
+    worker: Annotated[str, typer.Argument(help="The paired worker's name.")],
+    job: Annotated[str, typer.Argument(help="The job's name.")],
+    follow: Annotated[
+        bool, typer.Option("--follow", "-f", help="Follow the log until the job ends.")
+    ] = False,
+) -> None:
+    """Print a job's log; with -f, follow it until the job ends."""
+    from shidashi import remote
+
+    try:
+        worker_mod.validate_job_name(job)  # before any contact (R3.11)
+        target = remote.Remote.for_worker(_paired(worker))
+        code = worker_mod.logs(target, job, follow=follow)
+    except (ValueError, workers_mod.RegistryError, OSError) as err:
+        raise _worker_error(err) from err
+    except KeyboardInterrupt:
+        raise typer.Exit(130) from None
+    if code == 0:
+        return
+    if code == 255:
+        raise _worker_error(f"the connection to {worker} failed or was lost (ssh exit 255)")
+    if follow:
+        raise _worker_error(
+            f"shidashi-job-{job} is not running on {worker} and wrote no exit code "
+            f"(waited {worker_mod.LOGS_GRACE} s): it was stopped, or never started"
+        )
+    raise _worker_error(f"no log of job {job} on {worker} (exit {code})")
+
+
+def _holder_text(holder: ownership.Owner) -> str:
+    if holder.worker.startswith("host:"):
+        return f"{holder.worker} (job {holder.job}, pid {holder.host_pid})"
+    return f"{holder.worker} (job {holder.job}, unit shidashi-job-{holder.job})"
+
+
+def _unlock_refusal(holder: ownership.Owner, arch: str) -> str | None:
+    """Why ``unlock`` without --force must not release ``holder`` yet; None once it has
+    ended. A host holder ends with its pid. A worker holder has ended only when its
+    ``<job>.rc`` exists and its unit no longer runs (R6.9); with neither, it may still be
+    starting -- pushing its cache before its unit exists -- so only --force releases
+    it. Raises :class:`workers.RegistryError`, :class:`remote.RemoteError` and
+    :class:`ValueError` when its state cannot be read."""
+    who = _holder_text(holder)
+    force = f"shidashi worker unlock {arch} --force"
+    if holder.worker.startswith("host:"):
+        if ownership.holder_alive(holder, probe=lambda _: True):
+            return (
+                f"{arch} is held by {who}, which is still running; wait for it to end, "
+                f"or release it anyway with: {force}"
+            )
+        return None
+    state = worker_mod.job_state(Remote.for_worker(_paired(holder.worker)), holder.job)
+    if state.running:
+        return (
+            f"{arch} is held by {who}, which is still running ({state.active_state}); "
+            f"wait for it to end, or release it anyway with: {force}"
+        )
+    if not state.rc:
+        return (
+            f"{arch} is held by {who}, which has not written its exit code and whose unit "
+            f"does not run: it may still be starting (its cache is pushed before its unit "
+            f"exists), or it never started. Once no `shidashi worker job` for "
+            f"{holder.job} runs on any host, release it with: {force}"
+        )
+    return None
+
+
+@worker_app.command("unlock")
+def worker_unlock(
+    arch: Annotated[str, typer.Argument(help="The arch whose owner lock to release.")],
+    force: Annotated[
+        bool,
+        typer.Option("--force", help="Release it without checking that its holder has ended."),
+    ] = False,
+) -> None:
+    """Release ARCH's owner lock once its holder -- a worker job, or a host build by its
+    pid -- has ended; with --force, now."""
+    from shidashi import remote
+
+    try:
+        holder = ownership.current(arch)
+    except ownership.LockError as err:
+        raise _worker_error(err) from err
+    if holder is None:
+        typer.echo(f"{arch} is not locked")
+        return
+    who = _holder_text(holder)
+    if not force:
+        try:
+            refusal = _unlock_refusal(holder, arch)
+        except (workers_mod.RegistryError, remote.RemoteError, ValueError) as err:
+            raise _worker_error(
+                f"cannot tell whether {who} still runs: {err}; if it has ended, "
+                f"release it with: shidashi worker unlock {arch} --force"
+            ) from err
+        if refusal is not None:
+            raise _worker_error(refusal)
+    try:
+        ownership.release(arch, expected=holder)
+    except (ownership.OwnedElsewhere, ownership.LockError) as err:
+        raise _worker_error(err) from err
+    typer.echo(f"released {arch} (was held by {who})")
+
+
+@worker_app.command("poweroff")
+def worker_poweroff(
+    worker: Annotated[str, typer.Argument(help="The paired worker's name.")],
+    force: Annotated[
+        bool, typer.Option("--force", help="Power off even while a Shidashi job runs.")
+    ] = False,
+) -> None:
+    """Power the worker off; refused while a Shidashi job runs on it, unless --force."""
+    from shidashi import remote
+
+    try:
+        target = remote.Remote.for_worker(_paired(worker))
+        if not force:
+            running = worker_mod.active_jobs(target)
+            if running:
+                first = running[0].removeprefix("shidashi-job-")
+                raise _worker_error(
+                    f"{worker} is running {', '.join(running)}; wait for it to end "
+                    f"(shidashi worker logs {worker} {first} -f), or power off anyway with: "
+                    f"shidashi worker poweroff {worker} --force"
+                )
+        worker_mod.poweroff(target)
+    except (workers_mod.RegistryError, remote.RemoteError, OSError) as err:
+        raise _worker_error(err) from err
+    typer.echo(f"{worker} is powering off")
+
+
+def _job_errors() -> tuple[type[Exception], ...]:
+    """What ``job`` and ``sync`` turn into exit 1 with the message and no traceback:
+    refusals, the owner lock, the CPU guard, the transport (``SyncError``,
+    ``HostKeyMismatch``, ``RemoteUnreachable``), the registry, the seed pointer, an
+    invalid job name or arch (``ValueError``) and the host's filesystem."""
+    from shidashi import isaguard, remote
+
+    return (
+        worker_mod.JobRefused,
+        ownership.OwnedElsewhere,
+        ownership.LockError,
+        isaguard.UnknownFlag,
+        remote.RemoteError,
+        workers_mod.RegistryError,
+        SeedError,
+        ValueError,
+        OSError,
+    )
+
+
+def _print_results(log: Path | None, isos: tuple[Path, ...], run_ids: tuple[str, ...]) -> None:
+    """Where a job's log, ISOs and runs landed on the host (stderr: stdout is the log)."""
+    if log is not None:
+        typer.echo(f"  log:  {log}", err=True)
+    for iso in isos:
+        typer.echo(f"  iso:  {iso}", err=True)
+    for run_id in run_ids:
+        typer.echo(f"  run:  {config.runs_dir() / run_id}", err=True)
+
+
+@worker_app.command("job")
+def worker_job(
+    worker: Annotated[str, typer.Argument(help="The paired worker's name.")],
+    job: Annotated[str, typer.Argument(help="The job's name: a-z, 0-9 and '-' only.")],
+    args: Annotated[
+        list[str], typer.Argument(help="The shidashi command and its arguments (after --).")
+    ],
+    allow_dirty: Annotated[
+        bool,
+        typer.Option(
+            "--allow-dirty",
+            help="Run HEAD although the checkout has uncommitted changes (they are not shipped).",
+        ),
+    ] = False,
+    no_follow: Annotated[
+        bool,
+        typer.Option("--no-follow", help="Start the job and return; follow and pull it later."),
+    ] = False,
+    results: Annotated[
+        Path | None,
+        typer.Option(
+            "--results", help="Where its log, rc and ISOs land (default ./worker-results/NAME/JOB)."
+        ),
+    ] = None,
+    bwlimit: Annotated[
+        int | None, typer.Option("--bwlimit", min=1, help="Cap every transfer at K KiB/s.")
+    ] = None,
+) -> None:
+    """Run ``shidashi ARGS…`` on the worker from this checkout's HEAD: follow its log,
+    bring its results back and exit with its exit code."""
+    from shidashi import remote
+
+    try:
+        worker_mod.validate_job_name(job)  # before any contact (R3.11)
+        entry = _paired(worker)
+        result = worker_mod.job(
+            remote.Remote.for_worker(entry),
+            entry,
+            job,
+            args,
+            allow_dirty=allow_dirty,
+            follow=not no_follow,
+            results=results,
+            bwlimit=bwlimit,
+        )
+    except _job_errors() as err:
+        raise _worker_error(err) from err
+    except KeyboardInterrupt:
+        raise typer.Exit(130) from None
+    # worker.job has already printed how to follow, pull and unlock a job left running
+    if result.exit_code is None:
+        raise typer.Exit(130)  # the start was unconfirmed, or the follow broke (R3.8)
+    if not result.followed:
+        raise typer.Exit(0)  # --no-follow: the unit started
+    typer.echo(f"job {job} on {worker} exited {result.exit_code}", err=True)
+    _print_results(result.log, result.isos, result.run_ids)
+    raise typer.Exit(result.exit_code)
+
+
+@sync_app.command("push")
+def worker_sync_push(
+    worker: Annotated[str, typer.Argument(help="The paired worker's name.")],
+    arch: Annotated[str, typer.Option("--arch", help="The arch whose cache to send.")],
+    init: Annotated[
+        str, typer.Option("--init", help="The init whose stage3 generation to send.")
+    ] = "systemd",
+    bwlimit: Annotated[
+        int | None, typer.Option("--bwlimit", min=1, help="Cap every transfer at K KiB/s.")
+    ] = None,
+) -> None:
+    """Send the worker ARCH's cache -- PKGDIR, distfiles, ccache and sccache, the pinned
+    trees and repositories, the stage3 and the fork points -- and the runtime venv."""
+    from shidashi import remote
+
+    try:
+        target = remote.Remote.for_worker(_paired(worker))
+        sent = worker_mod.push(target, arch, init=init, bwlimit=bwlimit)
+    except _job_errors() as err:
+        raise _worker_error(err) from err
+    except KeyboardInterrupt:
+        typer.echo("interrupted: run the same command again to resume the transfer", err=True)
+        raise typer.Exit(130) from None
+    typer.echo(f"pushed {arch} ({init}) to {worker}: {_size(sent)} sent")
+
+
+#: What a pull without the binhost leaves alone (R6.8).
+_BINHOST_KEPT = "{arch}'s binpkgs, fork points and index stay as they are on the host"
+
+
+def _pull_owner(
+    target: Remote, worker: str, arch: str | None, job: str | None
+) -> tuple[ownership.Owner | None, str | None]:
+    """The owner a ``sync pull`` pulls as, or None and why the binhost stays (R6.8-R6.11).
+
+    Only ``--job`` naming the job of this worker that holds ``arch``'s lock pulls the
+    binhost, and only once that job has ended: rc present and unit inactive (R6.9).
+    """
+    if arch is None:
+        return None, None  # an archless job has no binhost
+    kept = _BINHOST_KEPT.format(arch=arch)
+    if job is None:
+        return None, f"a pull without --job never touches the binhost: {kept}"
+    holder = ownership.current(arch)
+    if holder is None:
+        return None, f"job {job} does not hold {arch}'s owner lock (nobody does): {kept}"
+    if holder.worker != worker or holder.job != job:
+        return None, f"{arch} is owned by {_holder_text(holder)}, not by job {job}: {kept}"
+    if not worker_mod.job_ended(target, job):
+        return None, (
+            f"job {job} still runs on {worker} and keeps {arch}'s owner lock (R6.11): {kept}; "
+            "run this pull again once it has ended"
+        )
+    return holder, None
+
+
+def _lock_kept(owner: ownership.Owner | None) -> None:
+    """After a failed pull as ``owner``: its lock stays; how to retry or give up (R5.4)."""
+    if owner is not None:
+        typer.echo(
+            f"{owner.arch}'s owner lock stays held by job {owner.job}: run this pull again, "
+            f"or give its binpkgs up with: shidashi worker unlock {owner.arch}",
+            err=True,
+        )
+
+
+@sync_app.command("pull")
+def worker_sync_pull(
+    worker: Annotated[str, typer.Argument(help="The paired worker's name.")],
+    arch: Annotated[
+        str | None,
+        typer.Option(
+            "--arch", help="The arch whose caches come back (omit only for an archless job)."
+        ),
+    ] = None,
+    init: Annotated[
+        str, typer.Option("--init", help="The init whose stage3 generation the binhost is.")
+    ] = "systemd",
+    job: Annotated[
+        str | None,
+        typer.Option(
+            "--job", help="The job whose log, rc, runs and ISOs come back (./worker-results/)."
+        ),
+    ] = None,
+) -> None:
+    """Bring back ARCH's new distfiles and ccache entries and, with --job, that job's
+    log, rc, runs and ISOs. The binhost comes back, and the arch's owner lock is
+    released, only for the lock holder's job once it has ended."""
+    if arch is None and job is None:
+        raise typer.BadParameter(
+            "name the arch (--arch A); only an archless job's pull (--job JOB) omits it",
+            param_hint="--arch",
+        )
+    owner: ownership.Owner | None = None
+    try:
+        if job is not None:
+            worker_mod.validate_job_name(job)  # before any contact (R3.11)
+        if arch is not None and arch not in config.available_names("arch"):
+            known = ", ".join(config.available_names("arch"))
+            raise ValueError(f"unknown arch {arch!r}: expected one of {known}")
+        target = Remote.for_worker(_paired(worker))
+        # where `job` puts them by default; a job-less pull brings no job file
+        results = Path("worker-results") / worker
+        if job is not None:
+            results /= job
+        results = results.absolute()
+        # R6.5: refuse before any contact when the host cannot take what may come back --
+        # the arch's PKGDIR included, whoever holds its lock
+        gen = worker_mod.generation(init) if arch is not None else None
+        worker_mod.require_writable(
+            worker_mod.pull_destinations(arch, results=results, binhost_generation=gen)
+        )
+        owner, kept = _pull_owner(target, worker, arch, job)
+    except _job_errors() as err:
+        raise _worker_error(err) from err
+    except KeyboardInterrupt:
+        raise typer.Exit(130) from None
+
+    try:
+        pulled = worker_mod.pull(target, arch, job, results=results, init=init, owner=owner)
+    except _job_errors() as err:
+        _lock_kept(owner)
+        raise _worker_error(err) from err
+    except KeyboardInterrupt:
+        _lock_kept(owner)
+        raise typer.Exit(130) from None
+
+    typer.echo(f"pulled from {worker}: {_size(pulled.bytes)} received")
+    _print_results(pulled.log, pulled.isos, pulled.run_ids)
+    if arch is not None and pulled.binhost:
+        typer.echo(f"  binhost: {arch}'s binpkgs, fork points and index updated")
+    elif arch is not None:
+        typer.echo(f"binhost not pulled: {kept or pulled.binhost_reason}", err=True)
+    if owner is not None:
+        try:
+            ownership.release(owner.arch, expected=owner)
+        except (ownership.OwnedElsewhere, ownership.LockError) as err:
+            raise _worker_error(err) from err
+        typer.echo(f"released {owner.arch}'s owner lock (job {owner.job} ended, results pulled)")
 
 
 if __name__ == "__main__":

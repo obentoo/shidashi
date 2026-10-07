@@ -19,12 +19,12 @@ import stat
 import subprocess
 import sys
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
 import shidashi
-from shidashi import audit, config, isaguard, ownership
+from shidashi import audit, config, isaguard, ownership, workers
 from shidashi.remote import (
     Remote,
     RemoteUnreachable,
@@ -106,6 +106,232 @@ class JobRefused(Exception):
         super().__init__(f"{reason}\n  fix: {fix}")
 
 
+@dataclass(frozen=True)
+class WorkerStatus:
+    """One probe of a worker (story 014 consumes it with these names and types).
+
+    Unreachable, every field but ``name``, ``reachable`` and ``reason`` is empty: ``""``,
+    ``0``, ``0.0``, ``()`` or None -- never None where a number is expected. Sizes are
+    bytes. ``work_free`` is None without a mounted ``/mnt/work`` (``df`` on the bare
+    directory answers for the RAM root). ``smart`` is the work disk's SMART verdict,
+    None when the image has no ``smartctl``. ``trunks`` are the assemble checkpoints on
+    the work disk as ``<arch>-<init>/<step>-<fp24>``; ``jobs`` the active
+    ``shidashi-job-*`` units, by exact name without ``.service``.
+    """
+
+    name: str
+    reachable: bool
+    reason: str | None
+    cpu_model: str = ""
+    threads: int = 0
+    cpu_flags: tuple[str, ...] = ()
+    runnable_arches: tuple[str, ...] = ()
+    max_target: str | None = None
+    load1: float = 0.0
+    mem_total: int = 0
+    mem_available: int = 0
+    work_free: int | None = None
+    accepts_jobs: bool = False
+    image: str = ""
+    smart: str | None = None
+    trunks: tuple[str, ...] = ()
+    jobs: tuple[str, ...] = ()
+
+
+#: ``status``'s whole-command bound for one worker (the listing uses 5 s, R1.4).
+STATUS_TIMEOUT = 10.0
+#: The work disk's filesystem label (story 009's ``disk-init``).
+_WORK_LABEL = "SHIDASHI-WORK"
+#: Where the assembler keeps its checkpoints under a job's ``SHIDASHI_SCRATCH``.
+WORKER_CHECKPOINTS = f"{WORK}/scratch/assemble/checkpoints"
+#: The running Shidashi job units, by exact name (``shidashi-worker-*`` is not a job):
+#: a unit still starting (``activating``) or stopping (``deactivating``) runs too.
+_LIST_JOBS = (
+    "systemctl list-units 'shidashi-job-*' --state=active,activating,deactivating,reloading "
+    "--plain --no-legend --full"
+)
+#: The status probe: one shell script, one ssh round trip. Each section starts with an
+#: ``@name`` line; nothing in it is interpolated from input. ``df`` runs only once
+#: ``findmnt`` has proved ``/mnt/work`` mounted. SMART reads the disk holding the work
+#: filesystem, found by its mount or, unmounted, by its label.
+_STATUS_PROBE = f"""\
+echo @threads; nproc 2>/dev/null
+echo @model; grep -m1 '^model name' /proc/cpuinfo 2>/dev/null
+echo @flags; grep -m1 '^flags' /proc/cpuinfo 2>/dev/null
+echo @load; cat /proc/loadavg 2>/dev/null
+echo @mem; grep -E '^(MemTotal|MemAvailable):' /proc/meminfo 2>/dev/null
+echo @image; grep -h -m1 '^BUILD_ID=' /etc/os-release /usr/lib/os-release 2>/dev/null
+echo @work
+if findmnt -no TARGET -M {WORK} >/dev/null 2>&1; then
+  echo mounted
+  echo @free; df -B1 --output=avail {WORK} 2>/dev/null
+  echo @trunks
+  (cd {WORKER_CHECKPOINTS} 2>/dev/null &&
+    for f in */*.json; do if [ -f "$f" ]; then printf '%s\\n' "$f"; fi; done)
+fi
+echo @jobs
+{_LIST_JOBS} 2>/dev/null
+echo @smart
+if command -v smartctl >/dev/null 2>&1; then
+  echo present
+  src=$(findmnt -no SOURCE -M {WORK} 2>/dev/null ||
+    readlink -e /dev/disk/by-label/{_WORK_LABEL} 2>/dev/null)
+  src=${{src%%\\[*}}
+  disk=
+  if [ -n "$src" ]; then
+    parent=$(lsblk -no PKNAME "$src" 2>/dev/null | head -n 1)
+    if [ -n "$parent" ]; then disk=/dev/$parent; else disk=$src; fi
+  fi
+  if [ -n "$disk" ]; then
+    echo "device $disk"; smartctl -H "$disk" 2>&1; echo "smartctl-exit $?"
+  else
+    echo nodevice
+  fi
+fi
+exit 0
+"""
+_SMART_VERDICT_RE = re.compile(
+    r"(?:self-assessment test result|SMART Health Status):\s*(\S.*?)\s*$", re.M
+)
+
+
+def status(remote: Remote, *, timeout: float = STATUS_TIMEOUT) -> WorkerStatus:
+    """Probe the worker once, the whole ssh command bounded by ``timeout`` seconds.
+
+    A worker that does not answer -- refused, silent, or stalled after connecting --
+    is a :class:`WorkerStatus` with ``reachable=False`` and the reason: it never
+    raises for one (R1.5). A changed host key (:class:`HostKeyMismatch`) propagates: a
+    security event, not an outage. :class:`isaguard.UnknownFlag` propagates too: an
+    arch fragment this guard cannot read is the host's problem, not the worker's.
+    """
+    try:
+        result = run(remote, _STATUS_PROBE, timeout=timeout)
+    except RemoteUnreachable as err:
+        return WorkerStatus(name=remote.name, reachable=False, reason=str(err))
+    sections = _probe_sections(result.stdout)
+    flags = tuple(_after_colon(_first(sections, "flags")).split())
+    mounted = "mounted" in sections.get("work", [])
+    meminfo = _meminfo(sections.get("mem", []))
+    runnable = isaguard.runnable(flags) if flags else ()
+    return WorkerStatus(
+        name=remote.name,
+        reachable=True,
+        reason=None,
+        cpu_model=_after_colon(_first(sections, "model")),
+        threads=_int(_first(sections, "threads")),
+        cpu_flags=flags,
+        runnable_arches=runnable,
+        max_target=runnable[0] if runnable else None,
+        load1=_float(_first(sections, "load").partition(" ")[0]),
+        mem_total=meminfo.get("MemTotal", 0),
+        mem_available=meminfo.get("MemAvailable", 0),
+        work_free=_df_avail(sections.get("free", [])) if mounted else None,
+        accepts_jobs=mounted,
+        image=_first(sections, "image").partition("=")[2].strip().strip("\"'"),
+        smart=_smart_verdict(sections.get("smart", [])),
+        # each manifest is <arch>-<init>/<step>-<fp24>.json: the trunk is its name
+        trunks=tuple(sorted(m.removesuffix(".json") for m in sections.get("trunks", []) if m)),
+        jobs=_active_jobs(sections.get("jobs", [])),
+    )
+
+
+def refresh_registry(entry: WorkerEntry, st: WorkerStatus) -> WorkerEntry:
+    """``entry`` with the CPU flags the probe ``st`` read, saved to the host's registry
+    when they changed (R1.6). An unreachable probe, or one that read no flags, changes
+    nothing. ``OSError`` and :class:`workers.RegistryError` propagate."""
+    if not st.reachable or not st.cpu_flags or st.cpu_flags == entry.cpu_flags:
+        return entry
+    fresh = entry.model_copy(update={"cpu_flags": st.cpu_flags})
+    path = config.workers_dir() / "workers.json"
+    registry = workers.load_registry(path)  # re-read: keep what changed meanwhile
+    registry[entry.name] = fresh
+    workers.save_registry(path, registry)
+    return fresh
+
+
+def _probe_sections(stdout: str) -> dict[str, list[str]]:
+    """The probe's output split on its ``@name`` lines (each line stripped)."""
+    sections: dict[str, list[str]] = {}
+    current: list[str] | None = None
+    for raw in stdout.splitlines():
+        line = raw.strip()
+        if re.fullmatch(r"@[a-z]+", line):
+            current = sections.setdefault(line[1:], [])
+        elif current is not None:
+            current.append(line)
+    return sections
+
+
+def _first(sections: dict[str, list[str]], name: str) -> str:
+    return next((line for line in sections.get(name, []) if line), "")
+
+
+def _after_colon(line: str) -> str:
+    return line.partition(":")[2].strip()
+
+
+def _int(text: str) -> int:
+    return int(text) if text.isdigit() else 0
+
+
+def _float(text: str) -> float:
+    try:
+        return float(text)
+    except ValueError:
+        return 0.0
+
+
+def _meminfo(lines: list[str]) -> dict[str, int]:
+    """``MemTotal``/``MemAvailable`` lines of ``/proc/meminfo``, in bytes."""
+    values: dict[str, int] = {}
+    for line in lines:
+        key, _, rest = line.partition(":")
+        words = rest.split()
+        if words and words[0].isdigit():
+            unit = words[1].lower() if len(words) > 1 else ""
+            values[key.strip()] = int(words[0]) * (1024 if unit == "kb" else 1)
+    return values
+
+
+def _df_avail(lines: list[str]) -> int | None:
+    """The byte count of ``df -B1 --output=avail`` (its last numeric line)."""
+    numbers = [line for line in lines if line.isdigit()]
+    return int(numbers[-1]) if numbers else None
+
+
+def _active_jobs(lines: list[str]) -> tuple[str, ...]:
+    """The ``shidashi-job-*`` unit names of ``systemctl list-units``, without
+    ``.service``; any other unit (``shidashi-worker-restore``) is not a job."""
+    jobs = []
+    for line in lines:
+        words = line.replace("\u25cf", " ").split()
+        if words and words[0].startswith("shidashi-job-"):
+            jobs.append(words[0].removesuffix(".service"))
+    return tuple(sorted(jobs))
+
+
+def _smart_verdict(lines: list[str]) -> str | None:
+    """The work disk's SMART verdict; None when the image has no ``smartctl``."""
+    if "present" not in lines:
+        return None
+    if "nodevice" in lines:
+        return "unknown: no work disk device found"
+    match = _SMART_VERDICT_RE.search("\n".join(lines))
+    if match:
+        return match.group(1)
+    exits = [line.removeprefix("smartctl-exit ") for line in lines if line.startswith("smartctl-")]
+    # smartctl's exit bits 0-1: the command line did not parse, or the device could not
+    # be opened or identified (a device-mapper disk: "Unable to detect device type")
+    if exits and exits[-1].isdigit() and int(exits[-1]) & 0b11:
+        return "unknown: no SMART device"
+    said = [
+        line
+        for line in lines
+        if line and line != "present" and not line.startswith(("device ", "smartctl-exit "))
+    ]
+    return f"unknown: {said[-1]}" if said else "unknown: smartctl printed no verdict"
+
+
 def generation(init: str) -> str:
     """The pinned generation (the stage3 snapshot) of ``init``."""
     return load_pointer(init, seeds_dir=config.seeds_dir()).snapshot
@@ -128,8 +354,9 @@ def job_unit_argv(job: str, commit: str, args: Sequence[str]) -> list[str]:
     and ``PYTHONPATH``) with the shipped venv's interpreter, and keeps every path it
     writes on the work disk: cache, scratch and runs through the environment, and for
     ``assemble``/``build`` an ``--output-dir /mnt/work/out/iso/<job>`` unless ``args``
-    already name one. A bash wrapper clears what an earlier job of the same name left
-    (``out/iso/<job>``, ``<job>.rc``, ``<job>.runs``), runs the command into
+    already name one -- appended after ``args`` (before a ``--`` among them). A bash
+    wrapper clears what an earlier job of the same name left (``out/iso/<job>``,
+    ``<job>.rc``, ``<job>.runs``), runs the command into
     ``out/jobs/<job>.log``, writes the ids of the runs that appeared meanwhile to
     ``<job>.runs`` (only when there are some) and finally ``<job>.rc``: systemd-run
     returns when the unit's command has been executed (``--service-type=exec``), not
@@ -148,7 +375,10 @@ def job_unit_argv(job: str, commit: str, args: Sequence[str]) -> list[str]:
     jobs = f"{out}/jobs/{job}"
     command = list(args)
     if command and command[0] in _ISO_COMMANDS and not _has_output_dir(command[1:]):
-        command[1:1] = ["--output-dir", f"{out}/iso/{job}"]
+        # after the user's words, so the worker runs the command line as typed; before an
+        # end-of-options ``--``, after which it would be a positional
+        at = command.index("--", 1) if "--" in command[1:] else len(command)
+        command[at:at] = ["--output-dir", f"{out}/iso/{job}"]
     # $@, $? and $(…) are the unit's shell's, not Python's; ``job`` is [a-z0-9-]+.
     script = (
         f'mkdir -p "{out}/jobs" "{out}/runs"; '
@@ -323,7 +553,7 @@ def _writability_problem(paths: Sequence[Path]) -> tuple[str, str] | None:
 def pull(
     remote: Remote,
     arch: str | None,
-    job: str,
+    job: str | None,
     *,
     results: Path,
     init: str = "systemd",
@@ -335,7 +565,8 @@ def pull(
     Always ``out/jobs/<job>.log``, ``.rc`` and ``.runs`` into ``results`` and the runs
     listed in ``<job>.runs`` into ``config.runs_dir()``; with an ``arch`` also
     ``out/iso/<job>/`` into ``results/iso/`` and the distfiles, ccache and sccache (an
-    archless pull takes only the log, rc and runs). Only with ``owner`` -- and
+    archless pull takes only the log, rc and runs; a pull without a ``job`` takes only
+    the arch's distfiles, ccache and sccache). Only with ``owner`` -- and
     :func:`ownership.require_free` raises :class:`ownership.OwnedElsewhere` when someone
     else holds the arch -- the arch's fork points come, and, when the worker has the
     arch's PKGDIR, its index is regenerated ON THE WORKER, its binpkgs (without the
@@ -346,7 +577,10 @@ def pull(
     before any transfer (:class:`SyncError` naming the directory and the fix). Every
     rsync is capped by ``bwlimit`` (KiB/s) when given.
     """
-    validate_job_name(job)
+    if job is not None:
+        validate_job_name(job)
+    elif arch is None:
+        raise ValueError("a pull names a job, an arch or both")
     if arch is not None:
         _require_arch(arch)
     gen: str | None = None
@@ -358,8 +592,8 @@ def pull(
     require_writable(pull_destinations(arch, results=results, binhost_generation=gen))
 
     cache = config.cache_dir()
-    job_files = [f"{WORK}/out/jobs/{job}{ext}" for ext in (".log", ".rc", ".runs")]
-    iso_dir = f"{WORK}/out/iso/{job}"
+    job_files = [f"{WORK}/out/jobs/{job}{ext}" for ext in (".log", ".rc", ".runs")] if job else []
+    iso_dir = f"{WORK}/out/iso/{job}" if job else None
     caches = [
         (f"{WORKER_CACHE}/{d.relative_to(cache)}", d)
         for d in (config.distdir(), config.ccache_dir(), config.sccache_dir())
@@ -367,7 +601,9 @@ def pull(
     fork_dir = f"{WORKER_CACHE}/{config.fork_points_dir().relative_to(cache)}"
     patterns = list(job_files)
     if arch is not None:
-        patterns += [iso_dir, f"{iso_dir}/*.iso", *(w for w, _ in caches)]
+        if iso_dir is not None:
+            patterns += [iso_dir, f"{iso_dir}/*.iso"]
+        patterns += [w for w, _ in caches]
     worker_pkgdir: str | None = None
     if arch is not None and gen is not None:
         worker_pkgdir = f"{WORKER_CACHE}/binpkgs/{arch}/{gen}"
@@ -395,7 +631,7 @@ def pull(
     pulled_files = [f for f in job_files if f in present]
     if pulled_files:
         received += _fetch(remote, pulled_files, f"{results}/", bwlimit=bwlimit)
-    run_ids = _run_ids(results / f"{job}.runs") if job_files[2] in present else ()
+    run_ids = _run_ids(results / f"{job}.runs") if job_files and job_files[2] in present else ()
     if run_ids:
         runs = [f"{WORK}/out/runs/{run_id}" for run_id in run_ids]
         received += _fetch(
@@ -403,7 +639,7 @@ def pull(
         )
     isos: tuple[Path, ...] = ()
     if arch is not None:
-        if iso_dir in present:
+        if iso_dir is not None and iso_dir in present:
             received += _fetch(remote, [f"{iso_dir}/"], f"{results}/iso/", bwlimit=bwlimit)
             listed = sorted(p for p in present if p.startswith(f"{iso_dir}/"))
             isos = tuple(results / "iso" / Path(p).name for p in listed)
@@ -420,7 +656,7 @@ def pull(
             bwlimit=bwlimit,
         )
 
-    log = results / f"{job}.log" if job_files[0] in present else None
+    log = results / f"{job}.log" if job_files and job_files[0] in present else None
     return PullResult(received, isos, run_ids, log, binhost=index_ready, binhost_reason=reason)
 
 
@@ -511,6 +747,7 @@ def job(
     try:
         if owner is not None:
             rec.event("worker.lock", action="acquired", arch=locked, owner=owner.model_dump())
+            _clear_stale_job_files(remote, job)
         with rec.step("worker.push", worker=name, arch=arch) as step:
             if arch is not None:
                 sent = push(remote, arch, init=init, bwlimit=bwlimit)
@@ -688,8 +925,7 @@ def _probe_for_job(remote: Remote, name: str) -> None:
     """
     script = (
         f"if findmnt -no TARGET -M {WORK} >/dev/null 2>&1; then echo work=mounted; fi; "
-        "systemctl list-units 'shidashi-job-*' --state=active --plain --no-legend --full "
-        "2>/dev/null; true"
+        f"{_LIST_JOBS} 2>/dev/null; true"
     )
     try:
         result = run(remote, script, timeout=_JOB_PROBE_TIMEOUT)
@@ -703,11 +939,7 @@ def _probe_for_job(remote: Remote, name: str) -> None:
             f"check the worker: shidashi worker status {name}",
         )
     lines = result.stdout.splitlines()
-    running = []
-    for line in lines:
-        words = line.replace("\u25cf", " ").split()
-        if words and words[0].startswith("shidashi-job-"):
-            running.append(words[0].removesuffix(".service"))
+    running = _active_jobs(lines)
     if "work=mounted" not in lines:
         raise JobRefused(
             f"{WORK} is not mounted on {name}: a job there would write its RAM root",
@@ -736,9 +968,7 @@ def _start_unit(remote: Remote, job: str, argv: Sequence[str]) -> None:
     command, before the unit exists: a follow must never see an old rc as this
     job's end, whenever the unit's own cleanup runs.
     """
-    jobs = f"{WORK}/out/jobs/{job}"
-    stale = " ".join(shlex.quote(f"{jobs}{ext}") for ext in (".rc", ".rc.tmp", ".runs"))
-    result = run(remote, f"rm -f {stale} && {shlex.join(argv)}", timeout=_START_TIMEOUT)
+    result = run(remote, f"{_clear_command(job)} && {shlex.join(argv)}", timeout=_START_TIMEOUT)
     if result.exit_code != 0:
         raise SyncError(
             f"start: {argv[1].removeprefix('--unit=')}",
@@ -747,20 +977,43 @@ def _start_unit(remote: Remote, job: str, argv: Sequence[str]) -> None:
         )
 
 
-def _follow_command(job: str) -> str:
+def _clear_command(job: str) -> str:
+    """``rm -f`` of what an earlier run of ``job`` left that would read as this run's
+    end or runs: ``<job>.rc``, ``.rc.tmp`` and ``.runs``."""
+    jobs = f"{WORK}/out/jobs/{job}"
+    return "rm -f " + " ".join(shlex.quote(f"{jobs}{ext}") for ext in (".rc", ".rc.tmp", ".runs"))
+
+
+def _clear_stale_job_files(remote: Remote, job: str) -> None:
+    """Remove an earlier run's rc and runs as soon as a writer holds the lock: until the
+    unit exists, ``sync pull --job`` and ``unlock`` must not read an old rc as this
+    job's end. Safe: the probe found no ``shidashi-job-*`` running, and the lock is
+    ours."""
+    result = run(remote, _clear_command(job), timeout=_JOB_PROBE_TIMEOUT)
+    if result.exit_code != 0:
+        raise SyncError(
+            f"clear the stale files of job {job}", result.exit_code, _tail(result.stderr)
+        )
+
+
+def _follow_command(job: str, *, grace: int = 0) -> str:
     """The worker-side follow: the job's log from its first line until its rc exists.
 
     ``tail -F`` never ends by itself: it follows ``--pid`` of a waiter that ends
-    when ``<job>.rc`` appears (or the unit is gone without one), then flushes what
-    is left and exits. The command exits 0 only when the rc exists.
+    when ``<job>.rc`` appears (or the unit has not been active for more than
+    ``grace`` consecutive checks, a second apart, without one), then flushes what is
+    left and exits. The command exits 0 only when the rc exists. ``job`` follows a
+    unit it has just started (``grace`` 0); ``logs -f`` may start on a unit that is
+    not active yet or any more, and waits ``grace`` seconds for its rc.
     """
     jobs = f"{WORK}/out/jobs/{job}"
     log, rc = shlex.quote(f"{jobs}.log"), shlex.quote(f"{jobs}.rc")
     unit = shlex.quote(f"shidashi-job-{job}")
-    return (
-        f"( while [ ! -e {rc} ] && systemctl is-active --quiet {unit}; do sleep 1; done ) & "
-        f"w=$!; tail -n +1 -F --pid=$w {log} 2>/dev/null; wait $w; [ -e {rc} ]"
+    waiter = (
+        f"n=0; while [ ! -e {rc} ]; do if systemctl is-active --quiet {unit}; then n=0; "
+        f"else n=$((n+1)); [ $n -gt {int(grace)} ] && break; fi; sleep 1; done"
     )
+    return f"( {waiter} ) & w=$!; tail -n +1 -F --pid=$w {log} 2>/dev/null; wait $w; [ -e {rc} ]"
 
 
 def _echo(line: str) -> None:
@@ -769,6 +1022,129 @@ def _echo(line: str) -> None:
     encoding = getattr(out, "encoding", None) or "utf-8"
     out.write(line.encode(encoding, errors="replace").decode(encoding, errors="replace"))
     out.flush()
+
+
+#: ``logs -f`` waits this many seconds for the rc of a unit that is not active: a job
+#: stopped by hand (``systemctl stop``) never writes one, and the follow must end.
+LOGS_GRACE = 10
+#: ssh's last words when the worker closed the connection under a sent command.
+_CLOSED_RE = re.compile(
+    r"closed by remote host|^Connection to \S+ closed|client_loop: send disconnect"
+    r"|Connection reset by peer",
+    re.M,
+)
+_POWEROFF_TIMEOUT = 30.0
+
+
+def run_command(remote: Remote, argv: Sequence[str], *, sink: Callable[[str], None] = _echo) -> int:
+    """Run ``argv`` on the worker, each word quoted for its shell, each output line
+    (stderr merged) to ``sink`` as it comes; returns ssh's exit code -- the remote
+    command's, or 255 when ssh itself failed (R2.1)."""
+    return stream(remote, shlex.join(argv), sink=sink)
+
+
+def logs(remote: Remote, job: str, *, follow: bool, sink: Callable[[str], None] = _echo) -> int:
+    """The job's log to ``sink``; with ``follow``, until the job ends (R7.1).
+
+    Raises :class:`ValueError` for an invalid job name, before any contact. Returns
+    ssh's exit code: 0 once the log was printed -- with ``follow``, once
+    ``<job>.rc`` exists; 1 when the unit was not active for :data:`LOGS_GRACE` s
+    without writing an rc; 255 when ssh failed.
+    """
+    validate_job_name(job)
+    if follow:
+        return stream(remote, _follow_command(job, grace=LOGS_GRACE), sink=sink)
+    log = shlex.quote(f"{WORK}/out/jobs/{job}.log")
+    return stream(remote, f"cat -- {log}", sink=sink)
+
+
+def active_jobs(remote: Remote, *, timeout: float = _JOB_PROBE_TIMEOUT) -> tuple[str, ...]:
+    """The worker's active ``shidashi-job-*`` units, without ``.service``; one ssh round
+    trip. Raises :class:`RemoteError` (unreachable, host key) and :class:`SyncError`
+    when ``systemctl`` fails."""
+    result = run(remote, _LIST_JOBS, timeout=timeout)
+    if result.exit_code != 0:
+        raise SyncError("list the jobs", result.exit_code, _tail(result.stderr))
+    return _active_jobs(result.stdout.splitlines())
+
+
+#: A unit's ``ActiveState`` when it does not run; a unit that is not loaded (never
+#: started, or collected after it ended) reads ``inactive``. Every other state --
+#: ``active``, ``activating``, ``deactivating``, ``reloading``... -- is running.
+_STOPPED_STATES = frozenset({"inactive", "failed"})
+
+
+@dataclass(frozen=True)
+class JobState:
+    """A job on the worker: whether its ``<job>.rc`` exists and its unit's ActiveState."""
+
+    rc: bool
+    active_state: str
+
+    @property
+    def running(self) -> bool:
+        """The unit is starting, running or stopping: anything but inactive or failed."""
+        return self.active_state not in _STOPPED_STATES
+
+    @property
+    def ended(self) -> bool:
+        """Ended: the rc exists AND the unit no longer runs (R6.9). The wrapper writes
+        the rc just before the unit ends, and :func:`job` clears an earlier run's rc
+        once it holds the lock, so neither alone is the end."""
+        return self.rc and not self.running
+
+
+def job_state(remote: Remote, job: str, *, timeout: float = _JOB_PROBE_TIMEOUT) -> JobState:
+    """Job ``job``'s :class:`JobState` on the worker; one ssh round trip.
+
+    Raises :class:`ValueError` for an invalid name (before any contact),
+    :class:`RemoteError` when the worker does not answer and :class:`SyncError` when
+    ``systemctl`` itself fails.
+    """
+    validate_job_name(job)
+    rc = shlex.quote(f"{WORK}/out/jobs/{job}.rc")
+    unit = f"shidashi-job-{job}"
+    script = (
+        f"if [ -e {rc} ]; then echo rc=present; fi; "
+        f's=$(systemctl show -p ActiveState --value {shlex.quote(unit)}) && echo "state=$s"'
+    )
+    result = run(remote, script, timeout=timeout)
+    lines = result.stdout.splitlines()
+    states = [line.removeprefix("state=") for line in lines if line.startswith("state=")]
+    if result.exit_code != 0 or len(states) != 1 or not states[0].strip():
+        raise SyncError(f"probe {unit}", result.exit_code, _tail(result.stderr))
+    return JobState(rc="rc=present" in lines, active_state=states[0].strip())
+
+
+def job_active(remote: Remote, job: str, *, timeout: float = _JOB_PROBE_TIMEOUT) -> bool:
+    """Whether ``shidashi-job-<job>`` -- that exact unit -- runs on the worker: starting,
+    active or stopping (:attr:`JobState.running`). Raises what :func:`job_state` raises."""
+    return job_state(remote, job, timeout=timeout).running
+
+
+def job_ended(remote: Remote, job: str, *, timeout: float = _JOB_PROBE_TIMEOUT) -> bool:
+    """Whether job ``job`` has ended on the worker (:attr:`JobState.ended`). Raises what
+    :func:`job_state` raises."""
+    return job_state(remote, job, timeout=timeout).ended
+
+
+def poweroff(remote: Remote, *, timeout: float = _POWEROFF_TIMEOUT) -> None:
+    """``systemctl poweroff`` on the worker (R7.2); whether a job runs is the caller's.
+
+    The worker usually closes the connection under the command: ssh's exit 255 with
+    "closed by remote host" is the poweroff taking effect, not a failure. Any other
+    ssh failure propagates (:class:`RemoteUnreachable`, :class:`HostKeyMismatch`);
+    any other non-zero exit is :class:`SyncError` with systemctl's message.
+    """
+    try:
+        # --no-block: queue the poweroff and return, before the shutdown takes ssh down
+        result = run(remote, "systemctl --no-block poweroff", timeout=timeout)
+    except RemoteUnreachable as err:
+        if err.reason and _CLOSED_RE.search(err.reason):
+            return
+        raise
+    if result.exit_code != 0:
+        raise SyncError("poweroff", result.exit_code, _tail(result.stderr or result.stdout))
 
 
 def _stream_end(code: int, unit: str) -> str:
