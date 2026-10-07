@@ -14,9 +14,11 @@ code is the remote command's, returned as it is.
 
 import math
 import re
+import shlex
+import signal
 import subprocess
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -48,6 +50,15 @@ class HostKeyMismatch(RemoteError):
             f"(expected {expected or 'unknown'}, presented {presented or 'unknown'}); "
             "re-pair with shidashi kyomei if the worker was reinstalled"
         )
+
+
+class SyncError(RemoteError):
+    """A transfer to or from a worker failed: which step, its exit code, its stderr tail."""
+
+    def __init__(self, step: str, exit_code: int | None, stderr_tail: str = "") -> None:
+        self.step, self.exit_code, self.stderr_tail = step, exit_code, stderr_tail
+        detail = f": {stderr_tail.strip()}" if stderr_tail.strip() else ""
+        super().__init__(f"{step} failed (exit {exit_code}){detail}")
 
 
 class RemoteUnreachable(RemoteError):
@@ -92,12 +103,8 @@ class RemoteResult:
     duration_s: float
 
 
-def ssh_argv(remote: Remote, command: str, *, timeout: float = 10) -> list[str]:
-    """``ssh root@<address> <command>``, verifying the pin. Pure.
-
-    ``ConnectTimeout`` is an integer of at most 10 s; the whole command is bounded by
-    :func:`run`'s ``timeout``.
-    """
+def _ssh_options(remote: Remote, timeout: float) -> list[str]:
+    """``ssh`` and the options that verify the pin, with no destination."""
     connect = max(1, math.ceil(min(timeout, 10)))
     return [
         "ssh",
@@ -117,9 +124,136 @@ def ssh_argv(remote: Remote, command: str, *, timeout: float = 10) -> list[str]:
         f"ConnectTimeout={connect}",
         "-o",
         "ServerAliveInterval=30",
-        f"root@{remote.address}",
-        command,
     ]
+
+
+def ssh_argv(remote: Remote, command: str, *, timeout: float = 10) -> list[str]:
+    """``ssh root@<address> <command>``, verifying the pin. Pure.
+
+    ``ConnectTimeout`` is an integer of at most 10 s; the whole command is bounded by
+    :func:`run`'s ``timeout``.
+    """
+    return [*_ssh_options(remote, timeout), f"root@{remote.address}", command]
+
+
+def ssh_command(remote: Remote, *, timeout: float = 10) -> list[str]:
+    """The pinned ``ssh`` prefix for rsync's ``-e``: no destination, no command. Pure.
+
+    rsync names the worker ``root@<name>``; ``HostName`` sends it to the registered
+    address (a worker needs no DNS entry) while ``HostKeyAlias`` keeps the pin.
+    """
+    return [*_ssh_options(remote, timeout), "-o", f"HostName={remote.address}"]
+
+
+def rsync_argv(
+    remote: Remote,
+    sources: Sequence[str],
+    dest: str,
+    *,
+    push: bool,
+    bwlimit: int | None = None,
+    excludes: Sequence[str] = (),
+    mkpath: bool = True,
+) -> list[str]:
+    """``rsync`` between the host and the worker over the pinned ssh. Pure; never deletes.
+
+    ``push``: ``sources`` are host paths and ``dest`` a worker path; otherwise the
+    reverse. ``--partial`` lets an interrupted transfer resume.
+    """
+    argv = ["rsync", "-aH", "--numeric-ids", "--partial"]
+    if mkpath:
+        argv.append("--mkpath")
+    argv.append("--info=stats1,progress2")
+    if bwlimit is not None:
+        argv.append(f"--bwlimit={bwlimit}")
+    argv += [f"--exclude={pattern}" for pattern in excludes]
+    # -e takes ONE string: shlex.join keeps a key path with spaces whole
+    argv += ["-e", shlex.join(ssh_command(remote))]
+    side = f"root@{remote.name}:"
+    if push:
+        return [*argv, *sources, side + dest]
+    return [*argv, *(side + src for src in sources), dest]
+
+
+def _tail(text: str | bytes | None, lines: int = 20) -> str:
+    if isinstance(text, bytes):
+        text = text.decode(errors="replace")
+    return "\n".join((text or "").strip().splitlines()[-lines:])
+
+
+def put_tree(
+    remote: Remote,
+    commit: str,
+    dest: str,
+    *,
+    repo: Path,
+    runner: Callable[..., Any] = subprocess.Popen,
+) -> None:
+    """Ship ``commit`` of ``repo`` (never the working tree) into ``dest`` on the worker.
+
+    ``git archive`` is piped into ``tar -x`` over the pinned ssh; both exit codes are
+    checked and a failure of either raises :class:`SyncError`.
+    """
+    target = shlex.quote(dest)
+    archive = runner(
+        ["git", "-C", str(repo), "archive", "--format=tar", commit],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    unpack = runner(
+        ssh_argv(remote, f"mkdir -p {target} && tar -x -C {target}"),
+        stdin=archive.stdout,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if archive.stdout is not None:
+        archive.stdout.close()  # tar's exit must reach git as SIGPIPE, not a hang
+    _, unpack_err = unpack.communicate()
+    _, archive_err = archive.communicate()
+    # git killed by SIGPIPE is the echo of a tar that stopped reading: report the tar
+    if archive.returncode not in (0, -signal.SIGPIPE):
+        raise SyncError("ship: git archive", archive.returncode, _tail(archive_err))
+    if unpack.returncode != 0:
+        raise SyncError("ship: tar", unpack.returncode, _tail(unpack_err))
+    if archive.returncode != 0:
+        raise SyncError("ship: git archive", archive.returncode, _tail(archive_err))
+
+
+def stream(
+    remote: Remote,
+    command: str,
+    *,
+    sink: Callable[[str], None],
+    runner: Callable[..., Any] = subprocess.Popen,
+) -> int:
+    """Run ``command`` on the worker, each output line to ``sink`` as it comes.
+
+    stderr is merged into stdout; undecodable bytes are replaced, never fatal. On
+    ``KeyboardInterrupt`` (or any error) the local ssh is stopped and the exception
+    re-raised; whatever runs detached on the worker keeps running.
+    """
+    proc = runner(
+        ssh_argv(remote, command),
+        stdin=subprocess.DEVNULL,  # never forward the caller's stdin to the worker
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        encoding="utf-8",
+        errors="replace",  # a log line in Latin-1 must not end the follow
+        bufsize=1,
+    )
+    try:
+        for line in iter(proc.stdout.readline, ""):
+            sink(line)
+        return int(proc.wait())
+    except BaseException:
+        # Ctrl+C or a failing sink: stop the local ssh before propagating
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+        raise
 
 
 def run(
