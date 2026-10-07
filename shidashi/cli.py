@@ -1747,6 +1747,47 @@ def _ensure_worker_key(key: Path) -> None:
     key.chmod(0o600)
 
 
+def _read_code(prompt: str) -> str:
+    """Read the pairing code, one ``*`` per character typed (Backspace corrects).
+
+    On a terminal the code is never echoed -- it would stay in the scrollback -- but a
+    person must see that the typing lands. Elsewhere (a pipe, the tests) it is a plain
+    hidden prompt. Ctrl-C and Ctrl-D abort as in any prompt.
+    """
+    import termios
+    import tty
+
+    try:
+        interactive = sys.stdin.isatty()
+    except AttributeError, ValueError:
+        interactive = False
+    if not interactive:
+        return str(typer.prompt(prompt, hide_input=True))
+    fd = sys.stdin.fileno()
+    saved = termios.tcgetattr(fd)
+    typed: list[str] = []
+    sys.stdout.write(f"{prompt}: ")
+    sys.stdout.flush()
+    try:
+        tty.setcbreak(fd)  # no echo, no line buffering; Ctrl-C still interrupts
+        while (char := os.read(fd, 1).decode(errors="ignore")) not in ("\r", "\n"):
+            if char in ("\x7f", "\b"):
+                if typed:
+                    typed.pop()
+                    sys.stdout.write("\b \b")
+            elif char == "\x04" and not typed:
+                raise EOFError
+            elif char.isprintable():
+                typed.append(char)
+                sys.stdout.write("*")
+            sys.stdout.flush()
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, saved)
+        sys.stdout.write("\n")
+        sys.stdout.flush()
+    return "".join(typed)
+
+
 def _probe_registry(registry: Path) -> None:
     """Fail before any worker installs a key the host could not record (R1.8)."""
     import tempfile
@@ -1809,7 +1850,7 @@ def kyomei_command(
             target = kyomei.choose(mdns.browse(kyomei_protocol.SERVICE, wait))
         code = None
         while not trusted:
-            typed = typer.prompt("Code shown on the worker's screen", hide_input=True)
+            typed = _read_code("Code shown on the worker's screen")
             try:
                 code = kyomei_protocol.normalize_code(typed)
                 break

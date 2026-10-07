@@ -4,7 +4,9 @@ A worker waiting to be paired announces ``<hostname>._shidashi-kyomei._tcp.local
 through systemd-resolved. :func:`browse` sends ONE PTR query to 224.0.0.251:5353 from
 an ephemeral port with the QU bit set, so responders answer by unicast to that port
 (RFC 6762 "legacy unicast"); it never binds UDP 5353, which resolved or avahi may hold
-and which would need no less than the whole mDNS stack to share.
+and which would need no less than the whole mDNS stack to share. systemd-resolved
+answers such a query with the PTR alone, so the SRV, TXT and A are then asked of the
+machine that answered, by unicast (bentoo-lab, 2026-10-07).
 
 :func:`build_query` and :func:`parse_answers` are pure. Every packet is untrusted
 input: :func:`parse_answers` bounds every length and every compression chain and
@@ -28,6 +30,7 @@ _QR = 0x8000  # the header bit that makes a packet a response
 _MAX_HOPS = 16  # compression pointers followed per name
 _MAX_NAME = 255
 _RECV_SIZE = 9000
+_FOLLOW_UP_WAIT = 1.0  # seconds a peer gets to answer the SRV/TXT/A questions
 
 
 class _Malformed(Exception):
@@ -46,8 +49,13 @@ class Found:
 
 def build_query(service: str = SERVICE) -> bytes:
     """One PTR question for ``<service>.local``, ID 0, class IN with the QU bit."""
-    header = struct.pack(">HHHHHH", 0, 0, 1, 0, 0, 0)
-    return header + _encode_name(f"{service}.local") + struct.pack(">HH", _PTR, _CLASS_IN_QU)
+    return _query([(f"{service}.local", _PTR)])
+
+
+def _query(questions: list[tuple[str, int]]) -> bytes:
+    header = struct.pack(">HHHHHH", 0, 0, len(questions), 0, 0, 0)
+    body = b"".join(_encode_name(n) + struct.pack(">HH", t, _CLASS_IN_QU) for n, t in questions)
+    return header + body
 
 
 def parse_answers(packet: bytes, service: str = SERVICE) -> list[Found]:
@@ -57,18 +65,35 @@ def parse_answers(packet: bytes, service: str = SERVICE) -> list[Found]:
     and additional sections. An instance whose SRV target has no A record cannot be
     dialed and is skipped. A packet that breaks off mid-way yields what came before.
     """
+    return _assemble(_response_records(packet), service)
+
+
+def _response_records(packet: bytes) -> list[tuple[str, int, object]]:
+    """The records of a response; ``[]`` for anything that is not one."""
     if len(packet) < 12:
         return []
     _ident, flags, qd, an, ns, ar = struct.unpack_from(">HHHHHH", packet)
     if not flags & _QR:
         return []
-    records = _records(packet, qd, an + ns + ar)
+    return _records(packet, qd, an + ns + ar)
+
+
+def _instances(records: list[tuple[str, int, object]], service: str) -> list[str]:
+    """The full instance names the PTR records of ``service`` point at."""
     owner = f"{service}.local".lower()
-    instances = [rdata for name, rtype, rdata in records if rtype == _PTR and name == owner]
+    return [
+        rdata
+        for name, rtype, rdata in records
+        if rtype == _PTR and name == owner and isinstance(rdata, str)
+        and rdata.endswith("." + owner)
+    ]  # fmt: skip
+
+
+def _assemble(records: list[tuple[str, int, object]], service: str) -> list[Found]:
+    """PTR -> SRV -> TXT -> A, matched by name; an instance without an address is skipped."""
+    owner = f"{service}.local".lower()
     found: list[Found] = []
-    for instance in instances:
-        if not isinstance(instance, str) or not instance.endswith("." + owner):
-            continue
+    for instance in _instances(records, service):
         srv = next((r for n, t, r in records if t == _SRV and n == instance), None)
         if not isinstance(srv, tuple):
             continue
@@ -97,17 +122,63 @@ def browse(
         sock.sendto(build_query(service), MDNS_GROUP)
         deadline = time.monotonic() + wait
         seen: dict[tuple[str, str, int], Found] = {}
+        complete: dict[str, set[str]] = {}  # peer -> instances it answered in full
+        pending: dict[str, list[str]] = {}  # peer -> instances it named by PTR alone
         while (left := deadline - time.monotonic()) > 0:
             sock.settimeout(left)
             try:
-                packet, _peer = sock.recvfrom(_RECV_SIZE)
+                packet, peer = sock.recvfrom(_RECV_SIZE)
             except TimeoutError:
                 break
-            for item in parse_answers(packet, service):
+            records = _response_records(packet)
+            for item in _assemble(records, service):  # each packet on its own
+                seen.setdefault((item.name, item.address, item.port), item)
+                complete.setdefault(str(peer[0]), set()).add(_full(item.name, service))
+            pending.setdefault(str(peer[0]), []).extend(_instances(records, service))
+        for peer_ip, named in pending.items():
+            missing = sorted(set(named) - complete.get(peer_ip, set()))
+            for item in _resolve(sock, peer_ip, missing, service) if missing else ():
                 seen.setdefault((item.name, item.address, item.port), item)
     finally:
         sock.close()
     return sorted(seen.values(), key=lambda f: (f.name, f.address, f.port))
+
+
+def _full(name: str, service: str) -> str:
+    return f"{name}.{service}.local".lower()
+
+
+def _resolve(sock: Any, peer: str, instances: list[str], service: str) -> list[Found]:
+    """Complete instances a peer named by PTR alone: systemd-resolved answers a
+    legacy-unicast PTR query with the PTR only, so ask that peer -- by unicast, so two
+    machines sharing a hostname keep their own address -- for each instance's SRV and
+    TXT, then the A of each SRV target. Only that peer's follow-up answers are used."""
+    owner = f"{service}.local".lower()
+    records: list[tuple[str, int, object]] = [(owner, _PTR, i) for i in instances]
+    records += _ask(sock, peer, [(i, rtype) for i in instances for rtype in (_SRV, _TXT)])
+    targets = {r[1] for _n, t, r in records if t == _SRV and isinstance(r, tuple)}
+    known = {n for n, t, _r in records if t == _A}
+    if targets - known:
+        records += _ask(sock, peer, [(t, _A) for t in sorted(targets - known)])
+    return _assemble(records, service)
+
+
+def _ask(sock: Any, peer: str, questions: list[tuple[str, int]]) -> list[tuple[str, int, object]]:
+    """Send ``questions`` to ``peer``:5353 and keep what that peer answers within a second."""
+    sock.sendto(_query(questions), (peer, 5353))
+    deadline = time.monotonic() + _FOLLOW_UP_WAIT
+    out: list[tuple[str, int, object]] = []
+    while (left := deadline - time.monotonic()) > 0:
+        sock.settimeout(left)
+        try:
+            packet, source = sock.recvfrom(_RECV_SIZE)
+        except TimeoutError:
+            break
+        if str(source[0]) == peer:
+            out.extend(_response_records(packet))
+            if len(out) >= len(questions):
+                break
+    return out
 
 
 # --- the wire ----------------------------------------------------------------------
