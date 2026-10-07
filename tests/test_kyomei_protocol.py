@@ -21,6 +21,7 @@ worker copy).
 
 import base64
 import dataclasses
+import functools
 import hashlib
 import hmac
 import importlib.util
@@ -65,8 +66,18 @@ def _fingerprint(line: str) -> str:
     return "SHA256:" + base64.b64encode(hashlib.sha256(blob).digest()).decode().rstrip("=")
 
 
+@functools.cache
 def _key(code: str = CODE) -> bytes:
-    return hashlib.sha256(b"shidashi-kyomei-v1\x00" + code.encode()).digest()
+    """v4 (R2.11): scrypt of the code; cached -- each derivation costs ~45 ms and 32 MiB."""
+    return hashlib.scrypt(
+        code.encode(),
+        salt=b"shidashi-kyomei-v1",
+        n=2**15,
+        r=8,
+        p=1,
+        maxmem=64 * 1024 * 1024,
+        dklen=32,
+    )
 
 
 def _canonical(obj: Any) -> bytes:
@@ -204,7 +215,7 @@ def test_normalize_code_refuses_what_is_not_eight_alphabet_characters(typed: str
         P.normalize_code(typed)
 
 
-def test_derive_key_is_sha256_of_the_domain_tag_and_the_code() -> None:
+def test_derive_key_is_scrypt_of_the_code_under_the_domain_salt() -> None:
     key = P.derive_key(CODE)
     assert isinstance(key, bytes)
     assert key == _key(CODE)

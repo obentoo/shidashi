@@ -1795,7 +1795,11 @@ def kyomei_command(
     try:
         if trust_param:
             _ensure_worker_key(key)
-            typer.echo(kyomei.trust_param(key, kyomei.default_address()))
+            if address is not None:  # the route towards the worker, not the default one
+                source = kyomei.default_address(dest=kyomei.parse_address(address).address)
+            else:
+                source = kyomei.default_address()
+            typer.echo(kyomei.trust_param(key, source))
             return
         _probe_registry(registry)
         _ensure_worker_key(key)
@@ -1822,6 +1826,22 @@ def kyomei_command(
                 f"({before.address}, {before.host_key_fingerprint}): a worker of that name "
                 "was paired before with another host key"
             )
+            # a trusted welcome is unauthenticated: any LAN responder can claim a name
+            if paired.trusted and name is None:
+                new = kyomei_protocol.fingerprint(paired.welcome.host_key)
+                try:
+                    replace = typer.confirm(
+                        f"Replace it with {paired.address}'s key {new}? Compare it with the "
+                        "host key on the worker's screen",
+                        default=False,
+                    )
+                except typer.Abort:
+                    replace = False
+                if not replace:
+                    raise kyomei.PairingError(
+                        f"{before.name} not replaced; nothing was pinned (the worker already "
+                        "installed this host's key: reboot it to open a new pairing window)"
+                    )
         entry = kyomei.complete(paired, registry)
     except (
         kyomei.PairingError,

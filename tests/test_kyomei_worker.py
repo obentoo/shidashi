@@ -1244,8 +1244,11 @@ def test_listen_answers_500_and_keeps_the_window_open_when_installing_fails(
     assert _key_fields(WORKER_HOST_KEY)[1].encode() not in body  # no welcome
     assert lst.thread.is_alive() and lst.accepts()  # the window stays open...
     assert _dnssd(root).exists()
-    assert lst.code() == code  # ...with the same code
-    status, _body, _h = _good(lst)
+    # ...with a NEW code (R2.13): the hello that failed crossed the LAN under the old one
+    lst.wait(lambda: lst.code() not in (None, code), "no new code after the 500", seconds=5)
+    new = lst.code()
+    assert new is not None and new != code
+    status, _body, _h = lst.post(_hello(new))
     assert status == 200
     lst.join()
     blobs = [_key_fields(ln) for ln in _authorized_keys(root).read_text().splitlines()]
@@ -1330,7 +1333,7 @@ def test_console_show_writes_the_issue_block_and_tty1_and_reloads_agetty(
     _console_call(kw.console_show, runner, root, block)
     issue = root / "run" / "issue.d" / "50-shidashi-kyomei.issue"
     assert block in issue.read_text()
-    assert stat.S_IMODE(issue.stat().st_mode) == 0o644
+    assert stat.S_IMODE(issue.stat().st_mode) == 0o600  # v4 (R2.5): agetty reads it as root
     assert block in (root / "dev" / "tty1").read_text()
     assert ["agetty", "--reload"] in [c[:2] for c in runner.calls] or any(
         c[0].endswith("agetty") and "--reload" in c for c in runner.calls

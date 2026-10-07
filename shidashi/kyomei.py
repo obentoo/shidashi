@@ -256,15 +256,27 @@ def parse_address(text: str) -> Target:
     return Target(address, port, None)
 
 
-def default_address() -> str:
-    """This host's address on the default route (``ip -4 route get 1.1.1.1``)."""
+def default_address(dest: str = "1.1.1.1") -> str:
+    """This host's source address on the route towards ``dest`` (``ip -4 route get``).
+
+    The default route unless the worker's address is given: across a full-tunnel VPN
+    or from a host on several networks, only the route towards the worker names the
+    address the worker will see the hello come from.
+    """
     done = subprocess.run(
-        ["ip", "-4", "route", "get", "1.1.1.1"], capture_output=True, text=True, check=False
+        ["ip", "-4", "route", "get", dest], capture_output=True, text=True, check=False
     )
     fields = done.stdout.split() if done.returncode == 0 else []
     if "src" in fields[:-1]:
         return str(fields[fields.index("src") + 1])
-    raise PairingError("this host has no default route: no address to put in shidashi.trust")
+    hint = (
+        "give the worker's with --address"
+        if dest == "1.1.1.1"
+        else "check the route to the --address given"
+    )
+    raise PairingError(
+        f"this host has no route towards {dest}: no address to put in shidashi.trust ({hint})"
+    )
 
 
 def trust_param(worker_key: Path, address: str) -> str:

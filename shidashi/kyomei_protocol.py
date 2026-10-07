@@ -5,7 +5,9 @@ shows a one-time code on its console; the host sends a HELLO carrying the key it
 granted, and the worker answers with a WELCOME carrying its sshd host key and what it
 is. In code mode both messages carry an HMAC under a key derived from the code, so
 neither end accepts the other's message without the person having read the code off
-the worker's screen. In trusted mode (the worker booted with
+the worker's screen. The key comes from scrypt and a code lives at most ``CODE_TTL``
+seconds: an impostor that answers a hello can only guess offline, slowly, and against
+a code that is replaced before the search ends. In trusted mode (the worker booted with
 ``shidashi.trust=<host IPv4>,<host key fingerprint>``) the MAC is ``null`` and the
 worker checks the peer's address and key fingerprint instead.
 
@@ -35,8 +37,13 @@ MAX_BODY = 16384
 PORT = 8765
 SERVICE = "_shidashi-kyomei._tcp"
 HOSTNAME_RE = r"[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?"  # one RFC 1123 label, lower case
+#: How long the worker shows one code before drawing another, in seconds.
+CODE_TTL = 600.0
 
-_KEY_DOMAIN = b"shidashi-kyomei-v1\x00"
+_KEY_SALT = b"shidashi-kyomei-v1"
+#: scrypt's cost: 32 MiB and ~45 ms per derivation -- once per code here, once per guess
+#: for anyone trying codes offline against a captured or solicited hello.
+_SCRYPT = {"n": 2**15, "r": 8, "p": 1, "maxmem": 64 * 1024 * 1024, "dklen": 32}
 _KEY_TYPE = "ssh-ed25519"
 _MAC_RE = re.compile(r"[0-9a-f]{64}")
 _LOOKALIKES = str.maketrans({"O": "0", "I": "1", "L": "1"})
@@ -112,8 +119,8 @@ def normalize_code(text: str) -> str:
 
 
 def derive_key(code: str) -> bytes:
-    """The MAC key ``K`` for a normalized code."""
-    return hashlib.sha256(_KEY_DOMAIN + code.encode()).digest()
+    """The MAC key ``K`` for a normalized code: scrypt, so offline guessing is costly."""
+    return hashlib.scrypt(code.encode(), salt=_KEY_SALT, **_SCRYPT)
 
 
 # --- encoding and MAC ----------------------------------------------------------------

@@ -87,8 +87,9 @@ class WorkerSession:
     ``handle(body, peer)`` answers ``(status, body, headers)``: 200 with the welcome,
     400 for a malformed hello, 403 for one that does not verify (empty body), 423
     while locked. ``max_failures`` refusals in a row discard the code and lock for
-    ``lockout`` seconds; :meth:`rotate` (the listener calls it once the lock passed)
-    draws a new one. One pairing closes the session.
+    ``lockout`` seconds; :meth:`rotate` draws a new one -- the listener calls it once
+    the lock passed, once the code :meth:`expired` (``code_ttl``) and after a failed
+    install. One pairing closes the session.
     """
 
     def __init__(
@@ -104,6 +105,7 @@ class WorkerSession:
         clock: Callable[[], float] = time.monotonic,
         lockout: float = 30.0,
         max_failures: int = 3,
+        code_ttl: float = P.CODE_TTL,
     ) -> None:
         self.host_key = host_key
         self.hostname = hostname
@@ -115,6 +117,8 @@ class WorkerSession:
         self._clock = clock
         self._lockout = lockout
         self._max_failures = max_failures
+        self._code_ttl = code_ttl
+        self._issued_at = 0.0
         self._code: str | None = None
         self._key: bytes | None = None
         self.seen_nonces: set[str] = set()
@@ -139,12 +143,20 @@ class WorkerSession:
         """A new code: the lock is over and the failures are forgotten."""
         self._code = self._code_factory()
         self._key = P.derive_key(self._code)
+        self._issued_at = self._clock()
         self.failures = 0
         self.locked_until = None
 
     def lock_passed(self) -> bool:
         """Whether the session is locked and the lockout has run out."""
         return self.locked_until is not None and self._clock() >= self.locked_until
+
+    def expired(self) -> bool:
+        """Whether the code shown has lived ``code_ttl`` seconds (never while locked
+        or once paired: the lock rotates on its own, a pairing needs no new code)."""
+        if self.closed or self.locked_until is not None:
+            return False
+        return self._clock() >= self._issued_at + self._code_ttl
 
     def reopen(self) -> None:
         """Forget a grant that could not be installed: the window stays open."""
@@ -154,6 +166,8 @@ class WorkerSession:
     def handle(self, body: bytes, peer: str) -> tuple[int, bytes, Headers]:
         """Answer one request body from ``peer`` (its IPv4 address)."""
         if self.closed:
+            return 403, b"", {}
+        if self.expired():  # a request trickled past the lifetime: the loop rotates next
             return 403, b"", {}
         if self.locked_until is not None:
             wait = max(1, math.ceil(self.locked_until - self._clock()))
@@ -335,7 +349,7 @@ def console_show(text: str, *, root: Path = Path("/"), runner: Runner | None = N
     """Show ``text`` above the login prompt (a tmpfs issue block) and on tty1."""
     run = runner or subprocess.run
     _mkdir((root / _ISSUE).parent, 0o755)
-    _write(root / _ISSUE, (text.rstrip("\n") + "\n").encode(), 0o644)
+    _write(root / _ISSUE, (text.rstrip("\n") + "\n").encode(), 0o600)  # agetty reads it as root
     run(["agetty", "--reload"], capture_output=True, text=True)
     try:
         fd = os.open(root / "dev" / "tty1", os.O_WRONLY | os.O_APPEND | os.O_NOCTTY)
@@ -421,7 +435,9 @@ def listen(
                 try:
                     _install(root, runner, session.result, session.hostname)
                 except Exception as err:  # any failure keeps the window open
+                    # the hello crossed the LAN under this code: never accept it again
                     session.reopen()
+                    session.rotate()
                     print(f"kyomei: pairing failed: {err}", file=sys.stderr)
                     show(block(f"the last pairing failed: {err}"), root=root)
                     self._answer(500, b"", {})
@@ -453,7 +469,7 @@ def listen(
         show(block(), root=root)
         while not state["paired"]:
             server.handle_request()
-            if session.lock_passed():
+            if session.lock_passed() or session.expired():
                 session.rotate()
                 show(block(), root=root)
     finally:
