@@ -24,3 +24,6 @@ build/
 *.tar.zst
 /binhost/
 /releases/
+
+# shidashi worker job: the default results directory (./worker-results/<worker>/<job>)
+/worker-results/
