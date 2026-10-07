@@ -657,31 +657,50 @@ class FakeWorker:
         host_bin = self.base / "host-bin"
         worker_bin = self.base / "worker-bin"
         smart_bin = self.base / "worker-smart-bin"
-        sys_bin = self.base / "worker-sysbin"
-        for d in (host_bin, worker_bin, smart_bin, sys_bin):
+        for d in (host_bin, worker_bin, smart_bin):
             d.mkdir(parents=True, exist_ok=True)
         for name in ("ssh", "rsync", "git"):
             _shim(host_bin / name, name)
         for name in _WORKER_SHIMS:
             _shim(worker_bin / name, name)
         _shim(smart_bin / "smartctl", "smartctl")
-        seen: set[str] = set()
-        for entry in os.environ.get("PATH", "").split(os.pathsep):
-            src = Path(entry)
-            if not entry or "/.venv/" in f"{entry}/" or not src.is_dir():
-                continue
-            with contextlib.suppress(OSError):
-                for item in src.iterdir():
-                    if item.name in _DENY or item.name in seen:
-                        continue
-                    seen.add(item.name)
-                    with contextlib.suppress(OSError):
-                        (sys_bin / item.name).symlink_to(item)
+        sys_bin = _shared_sys_bin(os.environ.get("PATH", ""))
         cfg = self.config()
         cfg["worker_bin"] = str(worker_bin)
         cfg["smart_bin"] = str(smart_bin)
         cfg["sys_bin"] = str(sys_bin)
         self._write_config(cfg)
+
+
+#: One farm of the host's binaries per PATH, shared by every fake worker of this
+#: process: a farm is thousands of symlinks, and one per test exhausts a tmpfs's inodes.
+_SYS_BINS: dict[str, Path] = {}
+
+
+def _shared_sys_bin(path_env: str) -> Path:
+    """The worker's ordinary commands: every binary on ``path_env`` except the denied
+    ones and the project's venv, as symlinks in a directory removed at exit."""
+    if path_env in _SYS_BINS:
+        return _SYS_BINS[path_env]
+    import atexit
+    import tempfile
+
+    sys_bin = Path(tempfile.mkdtemp(prefix="fake-worker-sysbin-"))
+    atexit.register(shutil.rmtree, sys_bin, ignore_errors=True)
+    seen: set[str] = set()
+    for entry in path_env.split(os.pathsep):
+        src = Path(entry)
+        if not entry or "/.venv/" in f"{entry}/" or not src.is_dir():
+            continue
+        with contextlib.suppress(OSError):
+            for item in src.iterdir():
+                if item.name in _DENY or item.name in seen:
+                    continue
+                seen.add(item.name)
+                with contextlib.suppress(OSError):
+                    (sys_bin / item.name).symlink_to(item)
+    _SYS_BINS[path_env] = sys_bin
+    return sys_bin
 
 
 def _shim(path: Path, name: str) -> None:
@@ -949,7 +968,9 @@ def _rsync(argv: list[str]) -> int:
     cfg = _cfg()
     locks = Path(cfg["host_locks_dir"])
     held = sorted(p.name for p in locks.glob("*.owner.json")) if locks.is_dir() else []
-    _log("rsync", argv=argv, cwd=os.getcwd(), locks=held)
+    # the worker side is the one written ``host:path``: a push when it is the destination
+    direction = "push" if argv and re.match(r"[^/]*:", argv[-1]) else "pull"
+    _log("rsync", argv=argv, cwd=os.getcwd(), locks=held, direction=direction)
     os.execv(cfg["real_rsync"], ["rsync", *argv])
     return 127  # pragma: no cover
 
@@ -1130,6 +1151,10 @@ def _systemd_run(argv: list[str]) -> int:
             "loaded or has a fragment file.\n"
         )
         return 1
+    unit_env = {**_worker_env(cfg), **env}
+    # systemd expands the command line as it executes it: ${VAR}, a whole-word $VAR
+    # and $$ (-> $)
+    cmd = cmd[:1] + systemd_expand(cmd[1:], unit_env)
     fake: list[str] = []
     for c in cmd:
         if re.search(r"/runtime/venv/bin/(python[0-9.]*|shidashi)$", c):
@@ -1138,7 +1163,7 @@ def _systemd_run(argv: list[str]) -> int:
                 fake.append("--console-script")
         else:
             fake.append(c)
-    spec = {"cmd": fake, "env": {**_worker_env(cfg), **env}, "wd": wd}
+    spec = {"cmd": fake, "env": unit_env, "wd": wd}
     (_state() / "units" / f"{name}.spec.json").write_text(json.dumps(spec))
     (_state() / "units" / f"{name}.result").unlink(missing_ok=True)
     sync = any(f in flags for f in ("--wait", "-P", "--pipe", "--pty", "-t"))
@@ -1159,6 +1184,27 @@ def _systemd_run(argv: list[str]) -> int:
         time.sleep(0.02)
     sys.stderr.write(f"Running as unit: {name}.service\n")
     return 0
+
+
+def systemd_expand(words: list[str], env: dict[str, str]) -> list[str]:
+    """What systemd makes of a unit's command-line words when it runs them: a word
+    that is exactly ``$VAR`` becomes the variable's value split on whitespace (no
+    word when unset), and inside any word ``${VAR}`` becomes its value (empty when
+    unset) and ``$$`` a single ``$``."""
+    out: list[str] = []
+    for word in words:
+        whole = re.fullmatch(r"\$([A-Za-z_][A-Za-z0-9_]*)", word)
+        if whole:
+            out += env.get(whole.group(1), "").split()
+            continue
+        out.append(
+            re.sub(
+                r"\$\$|\$\{([A-Za-z_][A-Za-z0-9_]*)\}",
+                lambda m: "$" if m.group(0) == "$$" else env.get(m.group(1), ""),
+                word,
+            )
+        )
+    return out
 
 
 def _unit(name: str) -> int:
@@ -1496,7 +1542,14 @@ def _fake_shidashi(argv: list[str]) -> int:
         elif a.startswith("--output-dir="):
             out_dir = a.split("=", 1)[1]
     command = args[0] if args else ""
-    if command in ("factory", "assemble", "build") and len(args) > 1:
+    # positionals as the real CLI reads them: the --output-dir a job adds right after
+    # the command is an option, not the arch
+    rest = args[1:]
+    if rest[:1] in (["--output-dir"], ["-o"]):
+        rest = rest[2:]
+    elif rest[:1] and rest[0].startswith("--output-dir="):
+        rest = rest[1:]
+    if command in ("factory", "assemble", "build") and rest:
         if not all(_inside(w, root) for w in writes) or (out_dir and not _inside(out_dir, root)):
             print(
                 f"fake-shidashi: refusing to write outside the worker: {writes} {out_dir}",
@@ -1504,9 +1557,9 @@ def _fake_shidashi(argv: list[str]) -> int:
                 flush=True,
             )
             return 97
-        arch, gen = args[1], cfg["generation"]
+        arch, gen = rest[0], cfg["generation"]
         cache = Path(str(env["SHIDASHI_CACHE"]))
-        target = args[2] if len(args) > 2 and not args[2].startswith("-") else "minimal"
+        target = rest[1] if len(rest) > 1 and not rest[1].startswith("-") else "minimal"
         writes_pkgdir = command == "factory" or (
             command == "build" and "--skip-factory" not in args
         )
