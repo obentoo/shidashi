@@ -205,6 +205,8 @@ shidashi vm test bentoo-…-kde-systemd-v3.iso   # boot it and check what it dec
 | `assemble` | assemble an image's live ISO from the binhost | ✔ |
 | `build` | the factory, then every ISO, in one audited run | ✔ |
 | `vm start` / `run` / `test` / `stop` | boot an ISO in a VM and drive it over SSH on vsock | |
+| `kyomei` | pair a worker (a spare machine booted from the `worker` ISO) | |
+| `worker disk-init` | turn a disk of a paired worker into its work disk | |
 | `release` | publish a release (not implemented yet) | |
 
 ### Following a build
@@ -219,6 +221,46 @@ The raw output of every command goes to the run's log, under `/var/tmp/shidashi/
 (named when the first command starts). `-v`/`--verbose` prints it on the terminal too. When a
 build fails, the terminal shows the last 50 lines of the failing command's output; the log has
 all of it.
+
+### Pairing a worker
+
+A worker is a spare machine booted from the `worker` ISO; the host reaches it as root over
+SSH. At boot an unpaired worker announces itself on the LAN (mDNS) and shows a one-time code
+on its screen. On the host:
+
+```sh
+shidashi kyomei --name bentoo-lab          # lists the workers it hears, then asks for the code
+shidashi kyomei --address 10.8.0.2         # across networks (a VPN, another subnet)
+```
+
+Pick the worker (or confirm the only one), then type the code shown on its screen —
+`K7M4-Q2XP`, with or without the dash, in either case. Nothing is typed at the worker. The
+host pins the worker's SSH host key under its name, records it in
+`~/.local/share/shidashi/worker/`, and proves the pin with one SSH connection. A code lives
+10 minutes and is replaced after three wrong tries; `shidashi kyomei` on the worker's console
+opens a new pairing window.
+
+The pairing survives a reboot only on a work disk. Prepare one once, naming the disk and
+confirming its serial (`lsblk -o NAME,SERIAL,SIZE,MODEL` at the worker's console):
+
+```sh
+shidashi worker disk-init bentoo-lab /dev/sda --confirm <serial>
+```
+
+It refuses a mounted disk, a serial that is not exactly that disk's, and a second
+`SHIDASHI-WORK` disk.
+
+A worker can also pair with nobody at its screen: boot it with this host's kernel parameter
+(added in GRUB, or served by network boot), then pair without a code:
+
+```sh
+shidashi kyomei --trust-param                      # prints shidashi.trust=<ip>,SHA256:<fp>
+shidashi kyomei --trust-param --address 10.8.0.2   # the address the worker will see, via a VPN
+shidashi kyomei --trusted                          # pairs only with this host's key and address
+```
+
+In trusted mode the worker authenticates the host, but the host cannot authenticate the worker:
+compare the fingerprint it prints with the one on the worker's screen.
 
 ## Contributing
 
