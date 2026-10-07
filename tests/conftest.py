@@ -53,3 +53,21 @@ def _build_host_ok(monkeypatch: pytest.MonkeyPatch) -> None:
     from shidashi import doctor
 
     monkeypatch.setattr(doctor, "require_build_host", lambda _work_dir: None)
+
+
+@pytest.fixture(autouse=True)
+def _locks_in_tmp(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A test that leaves SHIDASHI_CACHE unset takes its owner locks in a temporary
+    directory, never in the real /var/cache/shidashi/locks. A test that sets it (at any
+    point) gets the real ``<cache>/locks`` under its own cache."""
+    from shidashi import ownership
+
+    real = ownership.locks_dir
+    spare = tmp_path_factory.mktemp("locks")
+
+    def _locks_dir() -> Path:
+        return real() if os.environ.get("SHIDASHI_CACHE") else spare
+
+    monkeypatch.setattr(ownership, "locks_dir", _locks_dir)

@@ -15,9 +15,11 @@ user.
 import contextlib
 import json
 import os
+import socket
 import subprocess
 import sys
 from collections.abc import Generator
+from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 from typing import Annotated
@@ -29,7 +31,7 @@ from rich.markup import escape
 from rich.prompt import Prompt
 from rich.table import Table
 
-from shidashi import audit, config, doctor, progress, publish
+from shidashi import audit, config, doctor, ownership, progress, publish
 from shidashi.assembler import Assembler, AssemblerError, AssembleResult
 from shidashi.factory import (
     CheckpointDecision,
@@ -116,6 +118,62 @@ def _require_build_host() -> None:
     except doctor.DoctorError as err:
         _err_console.print(f"[bold red]error:[/bold red] {escape(str(err))}")
         raise typer.Exit(1) from err
+
+
+def _checkout_head() -> str:
+    """The commit of this Shidashi checkout, or ``unknown`` outside one."""
+    repo = Path(__file__).resolve().parent.parent
+    try:
+        done = subprocess.run(
+            ["git", "-C", str(repo), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except OSError, subprocess.TimeoutExpired:
+        return "unknown"
+    return done.stdout.strip() if done.returncode == 0 and done.stdout.strip() else "unknown"
+
+
+def _host_owner(arch: str, command: str) -> ownership.Owner:
+    """This process as the owner of ``arch``'s binhost (contract C5, R5.7)."""
+    return ownership.Owner(
+        arch=arch,
+        worker=f"host:{socket.gethostname()}",
+        job=command,
+        commit=_checkout_head(),
+        since=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        host_pid=os.getpid(),
+    )
+
+
+@contextlib.contextmanager
+def _owner_lock(arch: str, command: str) -> Generator[None]:
+    """Hold ``arch``'s owner lock around a host factory; a held lock or an unwritable
+    locks directory is exit 1 with its message (R5.2, R5.7)."""
+    try:
+        owner = ownership.acquire(arch, _host_owner(arch, command))
+    except (ownership.OwnedElsewhere, ownership.LockError) as err:
+        _err_console.print(f"[bold red]error:[/bold red] {escape(str(err))}", soft_wrap=True)
+        raise typer.Exit(1) from err
+    try:
+        yield
+    finally:
+        with contextlib.suppress(ownership.OwnedElsewhere, ownership.LockError):
+            ownership.release(arch, expected=owner)
+
+
+def _worker_holder(arch: str) -> ownership.Owner | None:
+    """The WORKER holding ``arch``'s lock, if any; exit 1 when the lock cannot be read."""
+    try:
+        holder = ownership.current(arch)
+    except ownership.LockError as err:
+        _err_console.print(f"[bold red]error:[/bold red] {escape(str(err))}", soft_wrap=True)
+        raise typer.Exit(1) from err
+    if holder is None or holder.worker.startswith("host:"):
+        return None
+    return holder
 
 
 def _apply_work_dir(work_dir: Path | None) -> None:
@@ -654,20 +712,21 @@ def factory(
         raise typer.Exit(1)
 
     if not step and until is None and not reset and not force_resume:
-        _run_factory_oneshot(
-            resolved,
-            pkgdir,
-            arch,
-            flavor,
-            init,
-            output_format=output_format,
-            emptytree=emptytree,
-            download=not no_download,
-            keep=keep,
-            update=update,
-            stop_after=stop_after,
-            verbose=verbose,
-        )
+        with _owner_lock(arch, "factory"):
+            _run_factory_oneshot(
+                resolved,
+                pkgdir,
+                arch,
+                flavor,
+                init,
+                output_format=output_format,
+                emptytree=emptytree,
+                download=not no_download,
+                keep=keep,
+                update=update,
+                stop_after=stop_after,
+                verbose=verbose,
+            )
         return
 
     if step and not _stdin_isatty():
@@ -683,21 +742,22 @@ def factory(
         )
         raise typer.Exit(1)
 
-    _run_factory_stepwise(
-        resolved,
-        pkgdir,
-        arch,
-        flavor,
-        init,
-        output_format=output_format,
-        emptytree=emptytree,
-        download=not no_download,
-        until=until,
-        step=step,
-        reset=reset,
-        force_resume=force_resume,
-        verbose=verbose,
-    )
+    with _owner_lock(arch, "factory"):
+        _run_factory_stepwise(
+            resolved,
+            pkgdir,
+            arch,
+            flavor,
+            init,
+            output_format=output_format,
+            emptytree=emptytree,
+            download=not no_download,
+            until=until,
+            step=step,
+            reset=reset,
+            force_resume=force_resume,
+            verbose=verbose,
+        )
 
 
 def _run_factory_oneshot(
@@ -1202,6 +1262,17 @@ def build(
         _err_console.print(f"[bold red]error:[/bold red] {escape(str(err))}")
         raise typer.Exit(1) from err
 
+    if not skip_factory:
+        holder = _worker_holder(arch)
+        if holder is not None:  # R5.8: the worker writes this binhost; read it as it is
+            _err_console.print(
+                f"factory skipped: {arch} is owned by {holder.worker} (job {holder.job})"
+                " — building from the binhost as it is",
+                markup=False,
+                soft_wrap=True,
+            )
+            skip_factory = True
+
     results: list[AssembleResult] = []
     try:
         with _audited(
@@ -1218,11 +1289,12 @@ def build(
         ) as trail:
             run = audit.current()
             if not skip_factory:
-                for target in factory_targets:
-                    with run.step(f"factory:{target}"):
-                        Factory(recipes[target], pkgdir).build(
-                            emptytree=True, download=not no_download, keep=keep
-                        )
+                with _owner_lock(arch, "build"):
+                    for target in factory_targets:
+                        with run.step(f"factory:{target}"):
+                            Factory(recipes[target], pkgdir).build(
+                                emptytree=True, download=not no_download, keep=keep
+                            )
             for target in iso_targets:
                 with run.step(f"assemble:{target}"):
                     results.append(
