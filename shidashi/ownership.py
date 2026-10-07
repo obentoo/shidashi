@@ -100,7 +100,8 @@ def locks_dir() -> Path:
             path.mkdir()
         except FileExistsError:
             return path  # whoever created it set its mode; never loosen it here
-        os.chmod(path, _DIR_MODE)
+        # group-writable on purpose (02775): shared by root and the user, see the module doc
+        os.chmod(path, _DIR_MODE)  # nosemgrep: insecure-file-permissions
         gid = cache.stat().st_gid
         if path.stat().st_gid != gid:
             os.chown(path, -1, gid)
@@ -136,7 +137,9 @@ def acquire(arch: str, owner: Owner) -> Owner:
         fd, name = tempfile.mkstemp(prefix=f".{arch}.", suffix=".tmp", dir=locks)
         tmp = Path(name)
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            os.fchmod(fh.fileno(), _FILE_MODE)
+            # group-writable on purpose: root's host builds and the user's worker jobs
+            # share the lock through the cache's group; it holds no secret
+            os.fchmod(fh.fileno(), _FILE_MODE)  # nosemgrep: insecure-file-permissions
             fh.write(owner.model_dump_json(indent=1) + "\n")
             fh.flush()
             os.fsync(fh.fileno())

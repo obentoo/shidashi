@@ -262,6 +262,53 @@ shidashi kyomei --trusted                          # pairs only with this host's
 In trusted mode the worker authenticates the host, but the host cannot authenticate the worker:
 compare the fingerprint it prints with the one on the worker's screen.
 
+### Using a worker
+
+A paired worker runs Shidashi commands for the host. Its state first:
+
+```sh
+shidashi worker status bentoo-lab     # CPU, targets it can run, load, memory, work disk, SMART, jobs
+shidashi worker status                # one line per paired worker
+```
+
+A job runs this checkout's committed `HEAD` on the worker, detached from the SSH session:
+
+```sh
+shidashi worker job bentoo-lab fac-v3 -- factory v3 minimal systemd
+shidashi worker job bentoo-lab minimal-v3 -- assemble v3 minimal systemd --jobs 16
+```
+
+Before anything is copied, a job is refused when the checkout has uncommitted changes
+(`--allow-dirty` runs `HEAD` anyway), when the worker's CPU cannot run the target arch, when
+the worker has no work disk or already runs a job, or when a host directory the results go to
+is not writable. Then it pushes the arch's cache (`--bwlimit K` caps the rate), ships the
+commit, starts the job, streams its log, pulls the results into
+`./worker-results/<worker>/<job>/` (`--results DIR`) and exits with the job's exit code.
+
+A `factory` job, or a `build` that runs the factory, owns the arch's binhost while it runs:
+the host's own `shidashi factory` for that arch is refused, and a host `build` skips its
+factory. The new binpkgs, fork points and index come home only with that ownership, and it
+is released after they do. An `assemble` job only reads the binhost and takes no ownership.
+
+Ctrl+C, or a lost connection, leaves the job running on the worker and prints how to resume:
+
+```sh
+shidashi worker logs bentoo-lab fac-v3 -f                 # follow it until it ends
+shidashi worker sync pull bentoo-lab --arch v3 --job fac-v3   # bring its results back
+```
+
+The cache can also be moved by hand: `shidashi worker sync push bentoo-lab --arch v3` fills
+the worker; `sync pull` without `--job` brings back caches only, never the binhost. When the
+owner of an arch is gone for good (the worker died mid-job), release it:
+
+```sh
+shidashi worker unlock v3             # refused while its job may still run
+shidashi worker unlock v3 --force
+```
+
+`shidashi worker run bentoo-lab -- CMD…` runs any command there, and
+`shidashi worker poweroff bentoo-lab` turns it off (refused while a job runs).
+
 ## Contributing
 
 Issues and pull requests are welcome. Before pushing, run the checks above; the CI job can be

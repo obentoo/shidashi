@@ -527,6 +527,7 @@ def test_contract_what_the_job_writes_is_what_the_pull_brings_back(
     runs = _setenv(worker.job_unit_argv("kde", COMMIT, ASSEMBLE))["SHIDASHI_RUNS"]
     fw.put(iso_dir.removeprefix("/mnt/work/") + "/bentoo-kde.iso", "ISO")
     fw.put(runs.removeprefix("/mnt/work/") + "/20261005T1-cafe01/events.jsonl", "{}\n")
+    fw.put("out/jobs/kde.runs", "20261005T1-cafe01\n")  # as the job's wrapper records it
     got = worker.pull(fw.remote(), "v3", "kde", results=tmp_path / "res")
     assert any(p.name == "bentoo-kde.iso" for p in (tmp_path / "res").rglob("*"))
     assert any(p.name == "bentoo-kde.iso" for p in got.isos)
