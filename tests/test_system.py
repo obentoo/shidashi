@@ -13,10 +13,16 @@ _UNITS = (
     "NetworkManager.service",
     "systemd-timesyncd.service",
     "plasmalogin.service",
+    "gdm.service",
     "systemd-resolved.service",
     "systemd-networkd.service",
     "sshd.service",
     "systemd-homed.service",
+)
+#: What gnome-base/gdm-50.3 installs as /etc/gdm/custom.conf.
+_GDM_CUSTOM_CONF = (
+    "# GDM configuration storage\n\n[daemon]\n\n[security]\n\n[debug]\n"
+    "# Uncomment the line below to turn on debugging\n#Enable=true\n"
 )
 
 
@@ -31,8 +37,11 @@ def _image(tmp_path: Path) -> Path:
         (units / unit).write_text("[Unit]\n")
     (root / "usr/share/wayland-sessions").mkdir(parents=True)
     (root / "usr/share/wayland-sessions/plasma.desktop").write_text("[Desktop Entry]\n")
+    (root / "usr/share/wayland-sessions/gnome.desktop").write_text("[Desktop Entry]\n")
     etc = root / "etc"
     etc.mkdir()
+    (etc / "gdm").mkdir()
+    (etc / "gdm/custom.conf").write_text(_GDM_CUSTOM_CONF)  # gnome-base/gdm's own
     (etc / "group").write_text("root:x:0:\nwheel:x:10:\naudio:x:18:\nvideo:x:27:\nusers:x:100:\n")
     (etc / "passwd").write_text("root:x:0:0::/root:/bin/bash\n")
     (etc / "shadow").write_text("root:*:20000::::::\n")
@@ -68,7 +77,7 @@ class _Image:
                     unit = line.split()[1]
                     if not system.unit_exists(self.rootfs, unit):
                         continue
-                    if unit == "plasmalogin.service":
+                    if unit in ("plasmalogin.service", "gdm.service"):  # Alias= only
                         (etc / "systemd/system/display-manager.service").symlink_to(
                             f"/usr/lib/systemd/system/{unit}"
                         )
@@ -189,6 +198,55 @@ def test_without_a_display_manager_the_console_logs_the_live_user_in(tmp_path: P
     assert system.verify(image.rootfs, cfg, init="systemd", live=True) == []
 
 
+def _gnome(init: str = "systemd") -> system.SystemConfig:
+    recipe = config.load_recipe("v3", "gnome", init)
+    return system.load_system_config(recipe, variants_dir=config.variants_dir())
+
+
+def test_gnome_runs_gdm_and_logs_the_live_user_into_gnome() -> None:
+    cfg = _gnome()
+    assert cfg.services.systemd.enable[-1] == "gdm.service"
+    assert cfg.live.session == "gnome.desktop"
+    assert system.display_manager(cfg, init="systemd") == "gdm"
+    assert system.display_manager(_gnome("openrc"), init="openrc") == "gdm"
+
+
+def test_gdm_autologin_goes_into_the_packages_custom_conf(tmp_path: Path) -> None:
+    # gdm.service is enabled by its Alias= alone (no *.wants link), and GDM reads
+    # one file, /etc/gdm/custom.conf, with no drop-in directory
+    image, done = _configure(tmp_path, _gnome())
+    assert system.verify(image.rootfs, _gnome(), init="systemd", live=True) == []
+    assert done["autologin"] == "gdm:gnome.desktop"
+    conf = (image.rootfs / "etc/gdm/custom.conf").read_text()
+    daemon = conf.split("[daemon]\n", 1)[1].split("[security]", 1)[0]
+    assert "AutomaticLoginEnable=True\n" in daemon and "AutomaticLogin=bentoo\n" in daemon
+    # the package's other sections are kept as they were
+    assert conf.endswith(
+        "[security]\n\n[debug]\n# Uncomment the line below to turn on debugging\n#Enable=true\n"
+    )
+
+
+def test_gdm_autologin_without_a_daemon_section_adds_one(tmp_path: Path) -> None:
+    root = _image(tmp_path)
+    (root / "etc/gdm/custom.conf").write_text("[security]\n")
+    image = _Image(root)
+    system.apply_system(image, _gnome(), init="systemd")
+    system.apply_live(image, _gnome(), init="systemd", hasher=lambda p: "$6$salt$h")
+    conf = (root / "etc/gdm/custom.conf").read_text()
+    assert conf.startswith("[security]\n")
+    assert "[daemon]\nAutomaticLoginEnable=True\nAutomaticLogin=bentoo\n" in conf
+
+
+def test_verify_names_a_missing_gdm_autologin(tmp_path: Path) -> None:
+    image, _ = _configure(tmp_path, _gnome())
+    (image.rootfs / "etc/gdm/custom.conf").write_text(_GDM_CUSTOM_CONF)
+    (image.rootfs / "etc/systemd/system/display-manager.service").unlink()
+    assert system.verify(image.rootfs, _gnome(), init="systemd", live=True) == [
+        "gdm.service is not enabled",
+        "gdm autologin for bentoo is missing",
+    ]
+
+
 def test_an_unknown_timezone_refuses_to_configure(tmp_path: Path) -> None:
     cfg = _kde().model_copy(update={"timezone": "Mars/Olympus"})
     with pytest.raises(system.ConfigurationError, match="Mars/Olympus"):
@@ -281,7 +339,7 @@ def test_the_live_medium_lives_in_livecd_yaml(tmp_path: Path) -> None:
     import shutil
 
     livecd = system.load_livecd(config.variants_dir())
-    assert livecd.sessions == {"kde": "plasma.desktop"}
+    assert livecd.sessions == {"kde": "plasma.desktop", "gnome": "gnome.desktop"}
     assert "dev/*" in livecd.squashfs_exclude
     tree = tmp_path / "variants"
     shutil.copytree(config.variants_dir(), tree)

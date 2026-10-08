@@ -39,7 +39,10 @@ SYSTEM_FILE = "system.yaml"
 LIVECD_FILE = "livecd.yaml"
 
 #: Display managers this module knows how to autologin, by systemd unit.
-_DM_BY_UNIT = {"plasmalogin.service": "plasmalogin", "sddm.service": "sddm"}
+_DM_BY_UNIT = {"plasmalogin.service": "plasmalogin", "sddm.service": "sddm", "gdm.service": "gdm"}
+#: GDM reads one file, the package's own, with no drop-in directory: the live
+#: autologin goes into its [daemon] section (an installer removes those lines).
+_GDM_CONF = Path("etc/gdm/custom.conf")
 #: Their drop-in directories (both read ``[Autologin] User= Session=``: plasma-
 #: login-manager is SDDM's fork; the keys were read from its binary, 2026-09-30).
 _DM_CONF_DIR = {"plasmalogin": "etc/plasmalogin.conf.d", "sddm": "etc/sddm.conf.d"}
@@ -432,6 +435,23 @@ def display_manager(cfg: SystemConfig, *, init: str) -> str | None:
     return cfg.display_manager.get("openrc")
 
 
+def _gdm_autologin(conf: Path, user: str) -> None:
+    """Log ``user`` in at boot through GDM: its keys at the top of [daemon]. I/O.
+
+    GDM takes the session from the user's AccountsService record, and with none
+    the default one -- the only one an image installs -- so no Session= is written.
+    """
+    keys = f"AutomaticLoginEnable=True\nAutomaticLogin={user}\n"
+    text = conf.read_text(encoding="utf-8") if conf.is_file() else ""
+    if "[daemon]\n" in text:
+        text = text.replace("[daemon]\n", f"[daemon]\n{keys}", 1)
+    else:
+        if text and not text.endswith("\n"):
+            text += "\n"
+        text += f"[daemon]\n{keys}"
+    _write(conf, text)
+
+
 def apply_live(
     container: _Runner,
     cfg: SystemConfig,
@@ -473,6 +493,9 @@ def apply_live(
                 f"[Autologin]\nUser={live.user}\nSession={live.session}\nRelogin=false\n",
             )
             done["autologin"] = f"{manager}:{live.session}"
+        elif live.session and manager == "gdm":
+            _gdm_autologin(rootfs / _GDM_CONF, live.user)
+            done["autologin"] = f"gdm:{live.session}"
         elif init == "systemd":
             _write(
                 rootfs / _GETTY_AUTOLOGIN,
@@ -636,6 +659,14 @@ def verify(rootfs: Path, cfg: SystemConfig, *, init: str, live: bool) -> list[st
                     conf.is_file() and f"User={user}" in conf.read_text(),
                     f"{manager} autologin for {user} is missing",
                 )
+            elif cfg.live.session and manager == "gdm":
+                conf = rootfs / _GDM_CONF
+                text = conf.read_text(encoding="utf-8") if conf.is_file() else ""
+                check(
+                    "AutomaticLoginEnable=True\n" in text and f"AutomaticLogin={user}\n" in text,
+                    f"gdm autologin for {user} is missing",
+                )
+            if cfg.live.session and (manager in _DM_CONF_DIR or manager == "gdm"):
                 session = rootfs / "usr/share/wayland-sessions" / cfg.live.session
                 xsession = rootfs / "usr/share/xsessions" / cfg.live.session
                 check(

@@ -46,6 +46,7 @@ autologin: true
 # is the image's own (flavor/<f>/system.yaml).
 sessions:
   kde: plasma.desktop
+  gnome: gnome.desktop
 
 # Empty /etc/machine-id: systemd then generates one per boot, so no two copies of
 # the ISO share an identity. The first ISO shipped a fixed one (F79).
