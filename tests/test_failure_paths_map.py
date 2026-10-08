@@ -17,7 +17,7 @@ from typing import Any
 import pytest
 from typer.testing import CliRunner, Result
 
-from shidashi import audit, cli, config, ownership, worker, workers
+from shidashi import audit, cli, config, ownership, remote, worker, workers
 from shidashi.assembler import AssembleResult
 from shidashi.cli import app
 from shidashi.remote import HostKeyMismatch, RemoteResult, SyncError
@@ -258,7 +258,7 @@ def test_job_probe_exiting_non_zero_is_refused(
 ) -> None:
     """Row 22: the probe script ends ``; true``, so only a remote shell that cannot
     start exits non-zero (not 255): faked at ``worker.run``."""
-    real = worker.run
+    real = remote.run  # what ``worker.run`` is bound to
 
     def shell_cannot_start(remote: Any, command: str, **kw: Any) -> RemoteResult:
         if "echo work=mounted" in command:

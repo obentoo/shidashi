@@ -104,7 +104,7 @@ class _WorkerRunner:
     def __init__(self) -> None:
         self.calls: list[list[str]] = []
 
-    def __call__(self, argv: Any, *_a: Any, **kw: Any) -> subprocess.CompletedProcess:
+    def __call__(self, argv: Any, *_a: Any, **kw: Any) -> subprocess.CompletedProcess[Any]:
         argv = [str(a) for a in argv]
         self.calls.append(argv)
         out = ""
@@ -137,13 +137,14 @@ class _HostSsh:
     def __init__(self) -> None:
         self.calls: list[list[str]] = []
 
-    def __call__(self, argv: Any, *_a: Any, **kw: Any) -> subprocess.CompletedProcess:
+    def __call__(self, argv: Any, *_a: Any, **kw: Any) -> subprocess.CompletedProcess[Any]:
         argv = [str(a) for a in argv]
         self.calls.append(argv)
         out = ""
         if argv[0] == "ssh-keygen":
             src = kw.get("input")
             src = src.decode() if isinstance(src, bytes) else src
+            assert src is not None
             out = f"256 {_fingerprint(src)} k (ED25519)\n"
         text = kw.get("text") or kw.get("universal_newlines") or kw.get("encoding")
         return subprocess.CompletedProcess(

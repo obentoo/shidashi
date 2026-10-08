@@ -61,11 +61,12 @@ WORKER_HOST_KEY = _ed25519_line("worker-sshd", "root@shidashi-worker")
 
 
 def _out(result: Any) -> str:
-    return result.stdout + (getattr(result, "stderr", "") or "")
+    out: str = result.stdout + (getattr(result, "stderr", "") or "")
+    return out
 
 
 def _found(name: str, address: str, port: int = 8765) -> Any:
-    txt = {"v": "1", "image": "20261006T1200", "trusted": "no"}
+    txt = (("v", "1"), ("image", "20261006T1200"), ("trusted", "no"))
     return mdns.Found(name=name, address=address, port=port, txt=txt)
 
 

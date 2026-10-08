@@ -87,7 +87,7 @@ class _Resolved:
 
     def sendto(self, data: bytes, address: tuple[str, int]) -> int:
         questions = _questions(data)
-        self.sent.append((questions, tuple(address)))
+        self.sent.append((questions, (address[0], address[1])))
         group = address[0] == "224.0.0.251"
         for peer, worker in self.workers.items():
             if not group and address[0] != peer:
@@ -178,7 +178,7 @@ def test_resolve_a_peer_that_never_answers_the_follow_up_is_left_out() -> None:
 
     def _ptr_only(data: bytes, address: tuple[str, int]) -> int:
         if address[0] != "224.0.0.251":
-            lan.sent.append((_questions(data), tuple(address)))
+            lan.sent.append((_questions(data), (address[0], address[1])))
             return len(data)  # the peer went silent after the PTR
         return real_sendto(data, address)
 

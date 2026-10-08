@@ -162,7 +162,7 @@ def test_a_cpu_missing_one_v3_flag_runs_nothing() -> None:
     assert isaguard.max_target(lacking) is None
 
 
-def test_local_cpu_flags_reads_this_machines_first_flags_line(tmp_path) -> None:
+def test_local_cpu_flags_reads_this_machines_first_flags_line(tmp_path: Path) -> None:
     """Story 014's host node: the host's own flags, from its /proc/cpuinfo."""
     from shidashi import isaguard
 

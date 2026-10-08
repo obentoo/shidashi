@@ -312,7 +312,7 @@ class _DiskRunner:
         self.table, self.fail, self.partx_u = table, fail, partx_u
         self.partitioned = False
 
-    def __call__(self, argv: Any, *_a: Any, **kw: Any) -> subprocess.CompletedProcess:
+    def __call__(self, argv: Any, *_a: Any, **kw: Any) -> subprocess.CompletedProcess[Any]:
         assert isinstance(argv, (list, tuple)), "an argv list, never a shell string"
         argv = [str(a) for a in argv]
         self.calls.append(argv)
@@ -509,7 +509,7 @@ def test_apply_unmounts_when_the_label_read_back_is_not_shidashi_work(
     wd: Any, disk_env: dict[str, Any]
 ) -> None:
     class _WrongLabel(_DiskRunner):
-        def __call__(self, argv: Any, *a: Any, **kw: Any) -> subprocess.CompletedProcess:
+        def __call__(self, argv: Any, *a: Any, **kw: Any) -> subprocess.CompletedProcess[Any]:
             if os.path.basename(str(list(argv)[0])) == "blkid":
                 self.calls.append([str(x) for x in argv])
                 out = "DEVNAME=/dev/sda1\nLABEL=sandbox\nTYPE=btrfs\n"
@@ -530,7 +530,7 @@ def test_main_maps_a_refusal_to_exit_1_with_its_message(
 ) -> None:
     listing = json.dumps(_worker_lsblk())
 
-    def _lsblk(argv: Any, *_a: Any, **kw: Any) -> subprocess.CompletedProcess:
+    def _lsblk(argv: Any, *_a: Any, **kw: Any) -> subprocess.CompletedProcess[str]:
         assert os.path.basename(str(list(argv)[0])) == "lsblk"
         return subprocess.CompletedProcess(argv, 0, listing, "")
 
@@ -544,7 +544,7 @@ def test_main_maps_a_refusal_to_exit_1_with_its_message(
 def test_main_exits_1_with_lsblks_stderr_when_lsblk_fails(
     wd: Any, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    def _broken(argv: Any, *_a: Any, **kw: Any) -> subprocess.CompletedProcess:
+    def _broken(argv: Any, *_a: Any, **kw: Any) -> subprocess.CompletedProcess[str]:
         return subprocess.CompletedProcess(argv, 32, "", "lsblk: failed to access sysfs\n")
 
     monkeypatch.setattr(subprocess, "run", _broken)

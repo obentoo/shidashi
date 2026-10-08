@@ -97,7 +97,8 @@ def test_a_host_build_for_a_worker_owned_arch_skips_its_factory_and_still_assemb
     assert "assembler:v3" in lab  # the assembles still run (R5.8, story 014 R3.3)
     skipped = [line for line in result.output.splitlines() if "bentoo-lab" in line]
     assert len(skipped) == 1 and "factory" in skipped[0].lower()  # one line naming the owner
-    assert ownership.current("v3").worker == "bentoo-lab"  # no lock taken over it
+    owner = ownership.current("v3")
+    assert owner is not None and owner.worker == "bentoo-lab"  # no lock taken over it
 
 
 # --- the host's writers hold the lock themselves (R5.7, contract C5) -------------------
@@ -151,7 +152,8 @@ def test_a_build_that_skips_the_factory_neither_takes_nor_is_refused_by_the_lock
     result = runner.invoke(app, ["build", "v3", "systemd", "--images", "minimal", "--skip-factory"])
     assert "shidashi worker unlock v3" not in result.output
     assert not any(b.startswith("factory:") for b in lab)
-    assert ownership.current("v3") is not None and ownership.current("v3").job == "fac-v3"
+    owner = ownership.current("v3")
+    assert owner is not None and owner.job == "fac-v3"
 
 
 @pytest.mark.skipif(__import__("os").geteuid() == 0, reason="root writes anywhere")

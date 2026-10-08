@@ -979,7 +979,8 @@ def _rsync(argv: list[str]) -> int:
 
 def _git_shim(argv: list[str]) -> int:
     cfg = _cfg()
-    real, fake = cfg["real_repo"], cfg["fake_repo"]
+    real: str = cfg["real_repo"]
+    fake: str = cfg["fake_repo"]
     real_resolved = os.path.realpath(real)
 
     def redirect(arg: str) -> str:

@@ -113,7 +113,7 @@ class _Response(io.BytesIO):
     def getcode(self) -> int:
         return self.status
 
-    def read(self, size: int | None = -1) -> bytes:  # type: ignore[override]
+    def read(self, size: int | None = -1) -> bytes:
         self.read_sizes.append(size)
         data = super().read(size)
         self.bytes_read += len(data)
@@ -248,6 +248,7 @@ def test_pair_with_posts_one_code_mode_hello_with_a_ten_second_timeout(worker_ke
 def test_pair_with_derives_the_key_from_the_normalized_code(worker_key: Path, typed: str) -> None:
     worker = _Worker()
     paired = _pair(worker, worker_key, code=typed)
+    assert worker.hello is not None
     assert worker.tag == P.mac(P.derive_key(CODE), "hello", worker.hello)
     assert paired.trusted is False
 
@@ -467,7 +468,7 @@ def test_pair_with_never_logs_or_reports_the_code_its_key_or_a_body(
 
 
 def _found(name: str, address: str, port: int = 8765, trusted: str = "no") -> Any:
-    txt = {"v": "1", "image": "20261006T1200", "trusted": trusted}
+    txt = (("v", "1"), ("image", "20261006T1200"), ("trusted", trusted))
     return mdns.Found(name=name, address=address, port=port, txt=txt)
 
 
@@ -572,7 +573,7 @@ def test_parse_address_refuses_what_is_not_ipv4_and_a_port(text: str) -> None:
 
 
 def _fake_ip(stdout: str, calls: list[list[str]], rc: int = 0) -> Callable[..., Any]:
-    def _run(argv: Any, *_a: Any, **kw: Any) -> subprocess.CompletedProcess:
+    def _run(argv: Any, *_a: Any, **kw: Any) -> subprocess.CompletedProcess[Any]:
         assert isinstance(argv, list), "argv list, never a shell string"
         calls.append([str(a) for a in argv])
         text = kw.get("text") or kw.get("universal_newlines") or kw.get("encoding")
@@ -674,7 +675,7 @@ class _Keygen:
         self.rc = rc
         self.calls: list[list[str]] = []
 
-    def __call__(self, argv: Any, *_a: Any, **kw: Any) -> subprocess.CompletedProcess:
+    def __call__(self, argv: Any, *_a: Any, **kw: Any) -> subprocess.CompletedProcess[Any]:
         argv = [str(a) for a in argv]
         self.calls.append(argv)
         text = kw.get("text") or kw.get("universal_newlines") or kw.get("encoding")

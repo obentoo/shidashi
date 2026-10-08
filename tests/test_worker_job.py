@@ -498,15 +498,13 @@ def test_contract_the_jobs_cache_is_where_the_push_wrote(
     monkeypatch.setenv("SHIDASHI_CACHE", str(tmp_path / "host-cache"))
     gen = "20260823T153057Z"
     plan = {h.rstrip("/"): w.rstrip("/") for h, w in worker.push_plan("v3", gen)}
-    host = {
-        name: str(fn())
-        for name, fn in (
-            ("pkgdir", lambda: config.pkgdir("v3", gen)),
-            ("distfiles", config.distdir),
-            ("ccache", config.ccache_dir),
-            ("sccache", config.sccache_dir),
-        )
-    }
+    dirs: tuple[tuple[str, Callable[[], Path]], ...] = (
+        ("pkgdir", lambda: config.pkgdir("v3", gen)),
+        ("distfiles", config.distdir),
+        ("ccache", config.ccache_dir),
+        ("sccache", config.sccache_dir),
+    )
+    host = {name: str(fn()) for name, fn in dirs}
     env = _setenv(worker.job_unit_argv("fac-v3", COMMIT, FACTORY))
     monkeypatch.setenv("SHIDASHI_CACHE", env["SHIDASHI_CACHE"])
     on_worker = {

@@ -48,7 +48,9 @@ def _options(argv: list[str]) -> dict[str, str]:
     return opts
 
 
-def _remote(tmp_path: Path, name: str = "bentoo-lab", address: str = "192.168.15.7"):
+def _remote(
+    tmp_path: Path, name: str = "bentoo-lab", address: str = "192.168.15.7"
+) -> remote.Remote:
     return remote.Remote(
         name=name, address=address, key=tmp_path / "id_ed25519", known_hosts=tmp_path / "kh"
     )
@@ -62,7 +64,9 @@ class _Runner:
         self.kwargs: list[dict[str, Any]] = []
         self.returncode, self.stdout, self.stderr = returncode, stdout, stderr
 
-    def __call__(self, argv: list[str], *_a: Any, **kwargs: Any) -> subprocess.CompletedProcess:
+    def __call__(
+        self, argv: list[str], *_a: Any, **kwargs: Any
+    ) -> subprocess.CompletedProcess[Any]:
         self.calls.append(list(argv))
         self.kwargs.append(kwargs)
         out, err = self.stdout, self.stderr
@@ -358,7 +362,7 @@ def test_run_bounds_the_whole_command_with_its_timeout(tmp_path: Path) -> None:
 
 def test_a_command_over_its_timeout_is_an_unreachable_worker(tmp_path: Path) -> None:
     def _slow(argv: list[str], *_a: Any, **kw: Any) -> Any:
-        raise subprocess.TimeoutExpired(argv, kw.get("timeout"))
+        raise subprocess.TimeoutExpired(argv, kw["timeout"])
 
     with pytest.raises(remote.RemoteUnreachable) as err:
         remote.run(_remote(tmp_path), "true", timeout=5, runner=_slow)

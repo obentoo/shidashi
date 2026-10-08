@@ -205,6 +205,7 @@ def test_session_records_the_grant_and_closes_after_one_pairing(kw: Any) -> None
     assert status == 200
     assert session.closed
     granted = session.result
+    assert granted is not None
     assert _key_fields(granted.key) == _key_fields(GRANTED_KEY)
     assert granted.name == "bentoo-lab"
     assert granted.trusted is False
@@ -526,7 +527,7 @@ class _Runner:
         self.at_sshd_start: dict[str, Any] | None = None
         self.resolved_reloads: list[bool] = []  # was the .dnssd file there at each reload
 
-    def __call__(self, argv: Any, *_a: Any, **kw: Any) -> subprocess.CompletedProcess:
+    def __call__(self, argv: Any, *_a: Any, **kw: Any) -> subprocess.CompletedProcess[Any]:
         argv = [str(a) for a in argv]
         self.calls.append(argv)
         self.events.append(("run", tuple(argv)))
@@ -606,7 +607,7 @@ def _exit_code(kw: Any, fn: Any, *args: Any, **kwargs: Any) -> int:
             return exit_.code
         print(exit_.code, file=sys.stderr)
         return 1
-    except protocol_error as err:  # type: ignore[misc]
+    except protocol_error as err:
         print(err, file=sys.stderr)
         return 1
     if isinstance(value, bool):
@@ -773,7 +774,7 @@ def test_persist_keeps_only_the_granted_key_never_a_vm_session_key(
 
 
 class _HostnameFails(_Runner):
-    def __call__(self, argv: Any, *a: Any, **kw: Any) -> subprocess.CompletedProcess:
+    def __call__(self, argv: Any, *a: Any, **kw: Any) -> subprocess.CompletedProcess[Any]:
         argv = [str(x) for x in argv]
         if argv[0] == "hostnamectl":
             self.calls.append(argv)
@@ -871,14 +872,14 @@ class _Listening:
         self.events.append(("clear",))
 
     def _factory(self, address: Any, handler: Any, *_a: Any, **_k: Any) -> HTTPServer:
-        self.requested.append(tuple(address))  # type: ignore[arg-type]
+        self.requested.append(tuple(address))
         events, root = self.events, self.root
         if not isinstance(handler, type):  # not a class: serve it as it is, unobserved
             server = HTTPServer(("127.0.0.1", 0), handler)
             self.servers.append(server)
             return server
 
-        class _Spy(handler):  # type: ignore[misc, valid-type]
+        class _Spy(handler):  # type: ignore[misc]
             def send_response_only(self, code: int, message: str | None = None) -> None:
                 keys = _authorized_keys(root)
                 events.append(
@@ -1355,8 +1356,17 @@ def test_console_clear_removes_the_issue_block(
 
 def test_main_dispatches_listen_and_restore(kw: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     seen: list[str] = []
-    monkeypatch.setattr(kw, "listen", lambda *_a, **_k: seen.append("listen") or 0)
-    monkeypatch.setattr(kw, "restore", lambda *_a, **_k: seen.append("restore") or 0)
+
+    def _listen(*_a: Any, **_k: Any) -> int:
+        seen.append("listen")
+        return 0
+
+    def _restore(*_a: Any, **_k: Any) -> int:
+        seen.append("restore")
+        return 0
+
+    monkeypatch.setattr(kw, "listen", _listen)
+    monkeypatch.setattr(kw, "restore", _restore)
     assert _exit_code(kw, kw.main, ["--listen"]) == 0
     assert _exit_code(kw, kw.main, ["--restore"]) == 0
     assert seen == ["listen", "restore"]

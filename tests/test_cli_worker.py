@@ -38,7 +38,8 @@ def _fingerprint(line: str) -> str:
 
 
 def _out(result: Any) -> str:
-    return result.stdout + (getattr(result, "stderr", "") or "")
+    out: str = result.stdout + (getattr(result, "stderr", "") or "")
+    return out
 
 
 def _entry(name: str, address: str) -> workers.WorkerEntry:

@@ -205,7 +205,7 @@ def test_parse_answers_reads_the_same_records_whatever_section_carries_them() ->
 def test_found_is_frozen() -> None:
     (found,) = _parse_bounded(_answer([_w("bentoo-lab", "192.168.15.6")]))
     with pytest.raises(AttributeError):
-        found.address = "10.0.0.1"  # type: ignore[misc]
+        found.address = "10.0.0.1"
 
 
 # Identity of a worker inside a packet -- hostile halves first. Wrongly COLLAPSED: two

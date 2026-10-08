@@ -32,7 +32,9 @@ def _fingerprint(line: str) -> str:
     return "SHA256:" + base64.b64encode(hashlib.sha256(blob).digest()).decode().rstrip("=")
 
 
-def _entry(name: str = "bentoo-lab", seed: str = "k1", address: str = "192.168.15.7"):
+def _entry(
+    name: str = "bentoo-lab", seed: str = "k1", address: str = "192.168.15.7"
+) -> workers.WorkerEntry:
     key = _ed25519_line(seed)
     return workers.WorkerEntry(
         name=name,
@@ -84,9 +86,9 @@ def test_workers_dir_defaults_to_the_xdg_default_under_home(
 def test_a_worker_entry_is_frozen_and_refuses_unknown_fields() -> None:
     entry = _entry()
     with pytest.raises(ValidationError):
-        entry.name = "other"  # type: ignore[misc]
+        entry.name = "other"
     with pytest.raises(ValidationError):
-        workers.WorkerEntry(**entry.model_dump(), password="bentoo")
+        workers.WorkerEntry.model_validate({**entry.model_dump(), "password": "bentoo"})
 
 
 def test_load_registry_of_an_absent_file_is_empty(tmp_path: Path) -> None:

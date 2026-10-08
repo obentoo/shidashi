@@ -121,7 +121,7 @@ def test_current_is_none_for_a_free_arch() -> None:
 def test_owner_is_frozen() -> None:
     owner = _owner()
     with pytest.raises(Exception):  # noqa: B017 - pydantic's ValidationError or TypeError
-        owner.job = "changed"  # type: ignore[misc]
+        owner.job = "changed"
 
 
 # --- R5.6: two real processes (Integration) ------------------------------------------
