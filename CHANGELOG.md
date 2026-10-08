@@ -84,11 +84,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `16.2.1_p20260926` and wrote its binpkgs into the PKGDIR it had just verified
   (audit run `20261005T205604Z-f0f216`); the resume was then refused on that
   ABI-neutral change (`20261005T215023Z-e30ebd`). The fingerprint is now compared by
-  ABI (gcc by major, glibc only refusing a downgrade, binutils not compared), re-checked
+  ABI (a new gcc major or a step down within one ends the generation, glibc may only go
+  up, binutils is not compared; an accepted gcc or glibc upgrade raises the recorded
+  floor, so a later step back is refused), re-checked
   after every phase's emerge and after the update's, and a refusal names the successor
   `--pkgdir`. `factory --update` refuses a plan by the same rules, binpkg lines
   included. The bootstrap checkpoint, the stage fork points, the toolbox and the
-  per-phase snapshots are keyed by the repository pin id too. **After upgrading, the
+  per-phase snapshots are keyed by the repository pin id and a build key (a hash of the
+  profile, CFLAGS, RUSTFLAGS, CPU_FLAGS_X86 and GOAMD64) too, so a flags change never
+  restores a tree built with the old flags. **After upgrading, the
   first factory build rebuilds the bootstrap and the stages once, even under unchanged
   pins** (the old restore points carry no pin id and are left on disk), a stepwise
   state saved before the upgrade is stale (`--reset`), and the assembler needs the
@@ -110,6 +114,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`factory --until` with an invalid name did work before refusing it.** It seeded
   the rootfs, ran the generation check and wrote the build state first; it is now
   refused right after the root guard.
+- **A worker job's binpkgs could be left on the worker.** The push and the pull worked
+  the binhost generation out of the host checkout's pins, not the shipped commit's: a
+  pin bump while a job ran made the pull report "built no binpkg" and release the lock.
+  The job now records its commit's generation in the owner lock and both use it.
+- **Two writers of one binhost during a pull.** `worker unlock` without `--force` let a
+  host build start while the host was still pulling a finished job's results, and the
+  pull's index replaced the build's. A pull now marks itself; `unlock` refuses while it
+  runs and a second pull of the arch is refused.
+- **Pairing a second worker could silently replace the first.** Every worker image is
+  named `shidashi-worker`; a name already paired with another host key is now refused,
+  with nothing pinned, unless `--replace` (a `--trusted` replace always asks to compare
+  the key). A paired worker whose disk appeared late at boot opened a new pairing window
+  instead of restoring its pairing: the restore now waits for the work disk's mount.
+- **A build-time secret pattern could match nothing.** A pattern with a trailing `/`,
+  `./`, `//` or an empty segment loaded and silently matched no file; it is now refused
+  when `livecd.yaml` loads.
+- **A toolbox, checkpoint or OS error ended in a traceback** in `assemble`, `build`,
+  `factory` and `pretend`. It is now an `error:` line and exit 1, naming the path.
 
 ## [0.1.1] - 2026-10-03
 
