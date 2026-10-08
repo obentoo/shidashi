@@ -269,3 +269,22 @@ def test_no_boot_entry_of_the_image_carries_a_trust_parameter() -> None:
     for path in (VARIANTS / "worker").rglob("*"):
         if path.is_file() and path.suffix not in (".py",):
             assert not TRUST_VALUE.search(path.read_text(errors="replace")), path
+
+
+# --- podman's storage on the work disk (review of 2026-10-08) -------------------------
+
+
+def _storage_conf() -> dict[str, str]:
+    import tomllib
+
+    raw = tomllib.loads((ROOTFS / "etc" / "containers" / "storage.conf").read_text())
+    return dict(raw["storage"])
+
+
+def test_podman_stores_images_on_the_work_disk_not_in_the_live_ram() -> None:
+    """The live root is RAM: without this, the first ~8 GB image podman pulls fills
+    the memory that also holds the root overlay."""
+    storage = _storage_conf()
+    assert storage["graphroot"].startswith("/mnt/work/")
+    assert storage["runroot"].startswith("/run/")  # runtime state: RAM, gone at boot
+    assert storage["driver"] == "overlay"
