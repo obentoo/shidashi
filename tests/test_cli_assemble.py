@@ -18,10 +18,12 @@ from typer.testing import CliRunner
 
 from shidashi import cli
 from shidashi.assembler import AssemblerError
+from shidashi.checkpoint import CheckpointError
 from shidashi.cli import app
 from shidashi.image import ImageError
 from shidashi.resolve import ResolveError
 from shidashi.seed import SeedError
+from shidashi.toolbox import ToolboxError
 from tests._variants_tree import write_variants
 
 runner = CliRunner()
@@ -207,6 +209,10 @@ def test_assemble_binhost_default_is_per_arch_and_generation(
         (ImageError("mksquashfs missing on the host"), "mksquashfs"),
         (SeedError("sha512 mismatch for stage3 tarball"), "sha512"),
         (ResolveError("repo 'bentoo' missing; run emerge --sync"), "bentoo"),
+        # regression (review of 2026-10-08): these three ended in a traceback
+        (ToolboxError("no toolbox fork point for v3-systemd"), "toolbox fork point"),
+        (CheckpointError("btrfs subvolume snapshot failed: No space left"), "No space left"),
+        (OSError(28, "No space left on device", "/var/tmp/shidashi/assemble"), "/var/tmp/shidashi"),
     ],
 )
 def test_assemble_known_errors_exit1(

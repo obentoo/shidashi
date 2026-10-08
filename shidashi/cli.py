@@ -35,6 +35,7 @@ from shidashi import audit, config, doctor, ownership, progress, publish
 from shidashi import worker as worker_mod
 from shidashi import workers as workers_mod
 from shidashi.assembler import Assembler, AssemblerError, AssembleResult
+from shidashi.checkpoint import CheckpointError
 from shidashi.factory import (
     CheckpointDecision,
     Factory,
@@ -56,6 +57,7 @@ from shidashi.resolve import KitView, PretendReport, ResolveError, pretend_resol
 from shidashi.seed import SeedError, load_pointer
 from shidashi.state import PhaseDiff
 from shidashi.system import ConfigurationError
+from shidashi.toolbox import ToolboxError
 from shidashi.world import StaleWorldError
 
 app = typer.Typer(no_args_is_help=True, help="Shidashi — catering of bentoo builds and ISOs.")
@@ -377,7 +379,7 @@ def pretend(
     try:
         with progress.reporting(_err_console, verbose=verbose):
             report = pretend_resolve(arch, flavor, init, download=not no_download, keep=keep)
-    except (SeedError, ResolveError, config.UnknownAxisError, RecipeChainError) as err:
+    except (SeedError, ResolveError, config.UnknownAxisError, RecipeChainError, OSError) as err:
         if isinstance(err, ResolveError) and err.raw_output:
             _err_console.print(err.raw_output, markup=False, highlight=False)
         _err_console.print(f"[bold red]error:[/bold red] {escape(str(err))}")
@@ -835,7 +837,7 @@ def _run_factory_oneshot(
             _err_console.print(f"[bold red]error:[/bold red] {escape(str(err))}", soft_wrap=True)
         _print_output(err.output, config.build_log_path(resolved))
         raise typer.Exit(1) from err
-    except (SeedError, ResolveError, config.UnknownAxisError, RecipeChainError) as err:
+    except (SeedError, ResolveError, config.UnknownAxisError, RecipeChainError, OSError) as err:
         if isinstance(err, ResolveError) and err.raw_output:
             _err_console.print(err.raw_output, markup=False, highlight=False)
         _err_console.print(f"[bold red]error:[/bold red] {escape(str(err))}")
@@ -922,7 +924,7 @@ def _run_factory_stepwise(
                 )
             _print_output(err.output, config.build_log_path(resolved))
             raise typer.Exit(1) from err
-        except (SeedError, ResolveError, config.UnknownAxisError, RecipeChainError) as err:
+        except (SeedError, ResolveError, config.UnknownAxisError, RecipeChainError, OSError) as err:
             if isinstance(err, ResolveError) and err.raw_output:
                 _err_console.print(err.raw_output, markup=False, highlight=False)
             _err_console.print(f"[bold red]error:[/bold red] {escape(str(err))}")
@@ -1144,6 +1146,10 @@ def assemble(
         ResolveError,
         ConfigurationError,
         StaleWorldError,
+        ToolboxError,
+        CheckpointError,
+        # a full disk, a read-only scratch: the message names the path
+        OSError,
     ) as err:
         if isinstance(err, ResolveError) and err.raw_output:
             _err_console.print(err.raw_output, markup=False, highlight=False)
@@ -1366,6 +1372,10 @@ def build(
         ResolveError,
         ConfigurationError,
         StaleWorldError,
+        ToolboxError,
+        CheckpointError,
+        # a full disk, a read-only scratch: the message names the path
+        OSError,
     ) as err:
         _err_console.print(f"[bold red]error:[/bold red] {escape(str(err))}")
         raise typer.Exit(1) from err
