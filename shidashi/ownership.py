@@ -136,6 +136,8 @@ def current(arch: str) -> Owner | None:
         return None
     except PermissionError as err:
         raise _lock_error(path) from err
+    except UnicodeDecodeError as err:
+        raise CorruptLock(path, arch, "not UTF-8 text") from err
     try:
         return Owner.model_validate_json(text)
     except pydantic.ValidationError as err:

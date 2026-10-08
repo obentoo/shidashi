@@ -107,3 +107,13 @@ def test_discard_on_an_unwritable_locks_dir_raises_lock_error(cache: Path) -> No
             ownership.discard("v3")
     finally:
         locks.chmod(0o2775)
+
+
+def test_a_lock_file_that_is_not_utf8_is_a_corrupt_lock(cache: Path) -> None:
+    path = ownership.locks_dir() / "v3.owner.json"
+    path.write_bytes(b'{"arch": "v3", "worker": "\xff\xfe\x80"}')
+    with pytest.raises(ownership.CorruptLock):
+        ownership.current("v3")
+    result = runner.invoke(app, ["worker", "unlock", "v3", "--force"])
+    assert result.exit_code == 0, result.output
+    assert not path.exists()
