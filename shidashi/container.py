@@ -8,6 +8,7 @@ root + ``systemd-nspawn`` and are exercised by the host-gated integration tests.
 """
 
 import datetime
+import os
 import shutil
 import subprocess
 import time
@@ -37,6 +38,23 @@ class CommandResult:
 #: image -- the first ISO shipped America/Sao_Paulo that way (F79); the image's
 #: zone is system.yaml's, set by shidashi.system.
 _HOST_OPTIONS = ("--register=no", "--resolv-conf=copy-host", "--timezone=off")
+
+#: Files an OCI runtime leaves in a container: podman's and docker's.
+_CONTAINER_MARKS = (Path("/run/.containerenv"), Path("/.dockerenv"))
+
+
+def inside_container() -> bool:
+    """Whether this process runs inside a container. I/O (environment, two files).
+
+    ``$container`` (set by podman, systemd-nspawn and the OCI convention) or a
+    runtime's marker file. Nested in one, systemd-nspawn needs ``--keep-unit``
+    (spike 012): even with --register=no it asks systemd over D-Bus for a
+    transient scope, and a container has no bus.
+    """
+    # lower case on purpose: systemd's Container Interface names it so, and podman sets it
+    marked = bool(os.environ.get("container"))  # noqa: SIM112
+    return marked or any(mark.exists() for mark in _CONTAINER_MARKS)
+
 
 # Commands (not the interactive shell) add --console=pipe and get stdin from
 # /dev/null. nspawn's default console is INTERACTIVE when it is started from a
@@ -78,6 +96,7 @@ def _nspawn_argv(
     binds: Sequence[tuple[Path, Path]],
     binds_rw: Sequence[tuple[Path, Path]] = (),
     ephemeral: bool,
+    keep_unit: bool = False,
 ) -> list[str]:
     """Build the ``systemd-nspawn`` command line (R4.4/R7.1/R7.2). **Pure**, no side effects.
 
@@ -92,6 +111,7 @@ def _nspawn_argv(
         "--directory",
         str(rootfs),
         *_HOST_OPTIONS,
+        *(("--keep-unit",) if keep_unit else ()),
         "--console=pipe",
         "--as-pid2",
     ]
@@ -108,6 +128,7 @@ def _nspawn_shell_argv(
     *,
     binds: Sequence[tuple[Path, Path]] = (),
     binds_rw: Sequence[tuple[Path, Path]] = (),
+    keep_unit: bool = False,
 ) -> list[str]:
     """Build the line for an interactive ``systemd-nspawn`` shell (R7.1/R7.2). **Pure**.
 
@@ -118,6 +139,8 @@ def _nspawn_shell_argv(
     login shell. Does not change the argv of :func:`_nspawn_argv` (R8.4).
     """
     cmd: list[str] = ["systemd-nspawn", "--directory", str(rootfs), *_HOST_OPTIONS]
+    if keep_unit:
+        cmd.append("--keep-unit")
     cmd.extend(_emit_binds(binds, binds_rw))
     return cmd
 
@@ -170,6 +193,7 @@ class Container:
             binds=self.binds,
             binds_rw=self.binds_rw,
             ephemeral=self.ephemeral,
+            keep_unit=inside_container(),
         )
         if self.log is not None:
             return self._run_logged(cmd, argv, env=env, check=check)
@@ -271,7 +295,12 @@ class Container:
         """
         with progress.current().paused():
             subprocess.run(
-                _nspawn_shell_argv(self.rootfs, binds=self.binds, binds_rw=self.binds_rw)
+                _nspawn_shell_argv(
+                    self.rootfs,
+                    binds=self.binds,
+                    binds_rw=self.binds_rw,
+                    keep_unit=inside_container(),
+                )
             )
 
     def __enter__(self) -> Container:
