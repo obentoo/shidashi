@@ -12,6 +12,7 @@ import pytest
 import shidashi.assembler as asm
 from shidashi import config, world
 from shidashi.assembler import Assembler, AssemblerError
+from shidashi.phases import build_key
 from shidashi.recipe import ResolvedRecipe
 from tests.test_factory_pins import SNAP, current_pins, pointer, write_seeds
 
@@ -40,6 +41,9 @@ def _recipe() -> ResolvedRecipe:
     )
 
 
+BK = build_key(_recipe())
+
+
 def _wire(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[Path, str]:
     monkeypatch.setattr(os, "geteuid", lambda: 0)
     monkeypatch.setenv("SHIDASHI_SCRATCH", str(tmp_path / "scratch"))
@@ -63,11 +67,11 @@ def test_an_older_pins_or_pre_fix_toolbox_is_not_used(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     fps, pins = _wire(monkeypatch, tmp_path)
-    (fps / f"znver5-systemd-{SNAP}-{OLD}-toolbox.tar").write_bytes(b"T")
+    (fps / f"znver5-systemd-{SNAP}-{OLD}-{BK}-toolbox.tar").write_bytes(b"T")
     (fps / f"znver5-systemd-{SNAP}-toolbox.tar").write_bytes(b"T")
     with pytest.raises(AssemblerError) as err:
         Assembler(_recipe(), tmp_path / "binhost").assemble(tmp_path / "out")
-    assert f"znver5-systemd-{SNAP}-{pins}-toolbox.tar" in str(err.value)
+    assert f"znver5-systemd-{SNAP}-{pins}-{BK}-toolbox.tar" in str(err.value)
     assert "shidashi factory znver5 toolbox systemd" in str(err.value)
 
 
@@ -75,6 +79,6 @@ def test_the_current_pins_toolbox_lets_the_assemble_proceed(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     fps, pins = _wire(monkeypatch, tmp_path)
-    (fps / f"znver5-systemd-{SNAP}-{pins}-toolbox.tar").write_bytes(b"T")
+    (fps / f"znver5-systemd-{SNAP}-{pins}-{BK}-toolbox.tar").write_bytes(b"T")
     with pytest.raises(_Reached):
         Assembler(_recipe(), tmp_path / "binhost").assemble(tmp_path / "out")

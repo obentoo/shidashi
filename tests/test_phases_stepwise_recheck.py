@@ -45,6 +45,9 @@ def _recipe() -> ResolvedRecipe:
     )
 
 
+BK = phases.build_key(_recipe())
+
+
 def _fp(gcc: str) -> GenerationFingerprint:
     return GenerationFingerprint(
         arch="v3",
@@ -134,7 +137,7 @@ def test_the_hook_runs_after_the_emerge_before_snapshot_save_and_checkpoint(
             assert kinds[i + 1] == "hook", events  # nothing between the emerge and the hook
     for name in ("graphics", "apps"):
         at = events.index(("hook", name))
-        assert events.index(("snap", f"v3-minimal-systemd-S-{PINS}-{name}.tar")) > at
+        assert events.index(("snap", f"v3-minimal-systemd-S-{PINS}-{BK}-{name}.tar")) > at
         assert events.index(("checkpoint", name)) > at
         saves = [i for i, (k, v) in enumerate(events) if k == "save" and v.endswith(name)]
         assert saves and min(saves) > at
@@ -181,4 +184,4 @@ def test_a_refused_recheck_persists_only_the_earlier_phases_and_never_retries(
     assert len(emerges) == 1
     assert not any(v.endswith("apps") or v.endswith("apps.tar") for _k, v in events)
     assert ("checkpoint", "graphics") not in events
-    assert ("snap", f"v3-minimal-systemd-S-{PINS}-graphics.tar") not in events
+    assert ("snap", f"v3-minimal-systemd-S-{PINS}-{BK}-graphics.tar") not in events

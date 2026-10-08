@@ -32,6 +32,7 @@ from typing import Any
 import pytest
 
 from shidashi import phases
+from shidashi.phases import build_key
 from shidashi.recipe import Phase, ResolvedRecipe, UseBreak
 from tests._pending import try_import
 
@@ -80,6 +81,9 @@ def _recipe(
         phases=phases_,
         portage_layers=("base", "arch/v3", "flavor/minimal", "init/systemd"),
     )
+
+
+BK = build_key(_recipe())
 
 
 # --- 2.1 checkpoint_sequence -------------------------------------------------
@@ -141,7 +145,7 @@ def test_phase_snapshot_path_key_composition(tmp_path: Path) -> None:
     path = phase_snapshot_path(
         _recipe(), snapshot="SNAP", pins="P", phase="rebuild", fork_points_dir=tmp_path
     )
-    assert path == tmp_path / "v3-minimal-systemd-SNAP-P-rebuild.tar"
+    assert path == tmp_path / f"v3-minimal-systemd-SNAP-P-{BK}-rebuild.tar"
 
 
 def test_phase_snapshot_path_distinct_per_phase(tmp_path: Path) -> None:
@@ -171,8 +175,8 @@ def test_latest_resumable_none_when_no_tarball(tmp_path: Path) -> None:
 
 def test_latest_resumable_picks_last_completed_with_tarball(tmp_path: Path) -> None:
     # snapshots of rebuild and graphics exist; the last completed one with a tarball is graphics
-    (tmp_path / "v3-minimal-systemd-S-P-rebuild.tar").write_bytes(b"")
-    (tmp_path / "v3-minimal-systemd-S-P-graphics.tar").write_bytes(b"")
+    (tmp_path / f"v3-minimal-systemd-S-P-{BK}-rebuild.tar").write_bytes(b"")
+    (tmp_path / f"v3-minimal-systemd-S-P-{BK}-graphics.tar").write_bytes(b"")
     phase, path = latest_resumable(
         _recipe(),
         snapshot="S",
@@ -181,12 +185,12 @@ def test_latest_resumable_picks_last_completed_with_tarball(tmp_path: Path) -> N
         fork_points_dir=tmp_path,
     )
     assert phase == "graphics"
-    assert path == tmp_path / "v3-minimal-systemd-S-P-graphics.tar"
+    assert path == tmp_path / f"v3-minimal-systemd-S-P-{BK}-graphics.tar"
 
 
 def test_latest_resumable_skips_completed_without_tarball(tmp_path: Path) -> None:
     # only rebuild has a tarball; graphics completed but without a snapshot → falls back to rebuild
-    (tmp_path / "v3-minimal-systemd-S-P-rebuild.tar").write_bytes(b"")
+    (tmp_path / f"v3-minimal-systemd-S-P-{BK}-rebuild.tar").write_bytes(b"")
     phase, path = latest_resumable(
         _recipe(),
         snapshot="S",
@@ -195,7 +199,7 @@ def test_latest_resumable_skips_completed_without_tarball(tmp_path: Path) -> Non
         fork_points_dir=tmp_path,
     )
     assert phase == "rebuild"
-    assert path == tmp_path / "v3-minimal-systemd-S-P-rebuild.tar"
+    assert path == tmp_path / f"v3-minimal-systemd-S-P-{BK}-rebuild.tar"
 
 
 # --- 3.1 parse_emerge_plan ---------------------------------------------------

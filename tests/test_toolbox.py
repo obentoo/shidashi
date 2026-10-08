@@ -11,6 +11,7 @@ import pytest
 
 from shidashi import config, toolbox
 from shidashi.container import CommandResult
+from shidashi.phases import build_key
 from shidashi.recipe import TOOLBOX_STAGE
 from shidashi.resolve import ResolveError, set_closure
 from shidashi.toolbox import WORK, HostTools, Toolbox, ToolboxError
@@ -57,7 +58,7 @@ def test_the_toolbox_builds_grub_for_bios_and_uefi() -> None:
 def test_the_tarball_is_the_toolbox_stage_fork_point(tmp_path: Path) -> None:
     recipe = config.load_recipe("v3", "kde", "systemd")
     path = toolbox.tarball_path(recipe, snapshot="SNAP", pins="P", fork_points_dir=tmp_path)
-    assert path == tmp_path / "v3-systemd-SNAP-P-toolbox.tar"
+    assert path == tmp_path / f"v3-systemd-SNAP-P-{build_key(recipe)}-toolbox.tar"
 
 
 # --- path translation and binds --------------------------------------------------

@@ -26,6 +26,7 @@ from typing import Any
 import pytest
 
 from shidashi import phases
+from shidashi.phases import build_key
 from shidashi.recipe import Phase, ResolvedRecipe
 from tests._pending import try_import
 
@@ -68,6 +69,10 @@ def _recipe(
         phases=phases,
         portage_layers=("base", "arch/v3", "flavor/kde", "init/systemd"),
     )
+
+
+# every recipe here compiles with the same flags: one build key for all
+BK = build_key(_recipe())
 
 
 def _ffmpeg() -> Any:
@@ -280,22 +285,44 @@ def test_stage_fork_point_key_has_no_target_so_images_share_it(tmp_path: Path) -
     gnome = stage_fork_point_path(
         _chain_recipe("gnome"), "desktop", snapshot="S", pins="P", fork_points_dir=tmp_path
     )
-    assert kde == gnome == tmp_path / "v3-systemd-S-P-desktop.tar"
+    assert kde == gnome == tmp_path / f"v3-systemd-S-P-{BK}-desktop.tar"
+
+
+def test_a_common_flags_change_gives_every_restore_point_another_name(tmp_path: Path) -> None:
+    """Regression: a COMMON_FLAGS change restored the trunk built with the old flags."""
+    old = _chain_recipe()
+    new = old.model_copy(update={"common_flags": "-O3"})
+
+    def names(recipe: ResolvedRecipe) -> tuple[Path, Path]:
+        return (
+            stage_fork_point_path(
+                recipe, "desktop", snapshot="S", pins="P", fork_points_dir=tmp_path
+            ),
+            phases.phase_snapshot_path(
+                recipe, snapshot="S", pins="P", phase="desktop", fork_points_dir=tmp_path
+            ),
+        )
+
+    assert names(old) == names(_chain_recipe())  # the same recipe, the same names
+    old_stage, old_phase = names(old)
+    new_stage, new_phase = names(new)
+    assert new_stage != old_stage
+    assert new_phase != old_phase
 
 
 def test_fork_point_resumes_from_the_deepest_stage_before_the_target(tmp_path: Path) -> None:
     recipe = _chain_recipe()
     for stage in ("base", "desktop"):
-        (tmp_path / f"v3-systemd-S-P-{stage}.tar").write_bytes(b"")
+        (tmp_path / f"v3-systemd-S-P-{BK}-{stage}.tar").write_bytes(b"")
     found = fork_point(recipe, snapshot="S", pins="P", fork_points_dir=tmp_path)
     assert found is not None
     phase, path = found
-    assert (phase.name, path.name) == ("desktop", "v3-systemd-S-P-desktop.tar")
+    assert (phase.name, path.name) == ("desktop", f"v3-systemd-S-P-{BK}-desktop.tar")
 
 
 def test_fork_point_never_restores_the_target_itself(tmp_path: Path) -> None:
     """Asking for an image is asking to build its last stage."""
-    (tmp_path / "v3-systemd-S-P-kde.tar").write_bytes(b"")
+    (tmp_path / f"v3-systemd-S-P-{BK}-kde.tar").write_bytes(b"")
     assert fork_point(_chain_recipe(), snapshot="S", pins="P", fork_points_dir=tmp_path) is None
 
 
@@ -357,7 +384,7 @@ def test_run_phases_settles_each_shipped_stage_and_snapshots_every_stage(
         ("flavor", "kde"),
         ("settle", "kde"),
     ]
-    assert snaps == [f"v3-systemd-S-P-{s}.tar" for s in ("base", "minimal", "desktop", "kde")]
+    assert snaps == [f"v3-systemd-S-P-{BK}-{s}.tar" for s in ("base", "minimal", "desktop", "kde")]
     # kde's settle has no pending cut, so it runs no emerge
     (
         base,
@@ -417,7 +444,7 @@ def test_run_phases_resumed_from_desktop_builds_only_the_flavor(
     flavor, check, check_settle = container.emerge_calls
     assert "--pretend" not in flavor
     assert "--emptytree" in check and "--nodeps" in check_settle
-    assert snaps == ["v3-systemd-S-P-kde.tar"]
+    assert snaps == [f"v3-systemd-S-P-{BK}-kde.tar"]
 
 
 def test_trunk_is_everything_up_to_and_including_the_base() -> None:
@@ -585,7 +612,7 @@ def test_run_phases_stop_after_a_stage_ends_with_its_fork_point(
         tmp_path, monkeypatch, resume_at="minimal", stop_after="desktop"
     )
     assert [(r.phase.name, r.phase.stage) for r in results] == [("desktop", "desktop")]
-    assert snaps == ["v3-systemd-S-P-desktop.tar"]
+    assert snaps == [f"v3-systemd-S-P-{BK}-desktop.tar"]
     assert len(container.emerge_calls) == 1
 
 
@@ -598,7 +625,7 @@ def test_run_phases_stop_after_a_shipped_stage_includes_its_settle(
         ("minimal", "minimal"),
         ("settle", "minimal"),
     ]
-    assert snaps == ["v3-systemd-S-P-base.tar", "v3-systemd-S-P-minimal.tar"]
+    assert snaps == [f"v3-systemd-S-P-{BK}-base.tar", f"v3-systemd-S-P-{BK}-minimal.tar"]
 
 
 # --- the stage steps come from variants/flow.yaml ---------------------------------
@@ -658,7 +685,11 @@ def test_the_steps_after_the_emerge_run_in_the_declared_order(
         fork_points_dir=tmp_path,
         stop_after="minimal",
     )
-    assert events == ["snap:v3-systemd-S-P-base.tar", "snap:v3-systemd-S-P-minimal.tar", "settle"]
+    assert events == [
+        f"snap:v3-systemd-S-P-{BK}-base.tar",
+        f"snap:v3-systemd-S-P-{BK}-minimal.tar",
+        "settle",
+    ]
 
 
 def test_the_flow_refuses_stage_steps_that_make_no_sense() -> None:

@@ -37,6 +37,7 @@ from shidashi.phases import (
     PhaseHook,
     PhaseResult,
     attach_packages,
+    build_key,
     fork_point,
     latest_resumable,
     plan_phase_run,
@@ -155,13 +156,16 @@ def bootstrap_fork_point_path(
 ) -> Path:
     """Where the bootstrap checkpoint lives: the stage3 with its toolchain rebuilt.
 
-    ``<arch>-<init>-<snapshot>-<pins>-bootstrap.tar``, beside the stage fork
+    ``<arch>-<init>-<snapshot>-<pins>-<build key>-bootstrap.tar``, beside the stage fork
     points and keyed like them (no target): every image of one arch × init
     starts here. The arch is in the key because the toolchain is built with the
     arch's CFLAGS; the pin id because it is built from the pinned tree, and a
     toolchain of an older pin must never be restored under a newer one (D7).
     """
-    return fork_points_dir / f"{recipe.arch}-{recipe.init}-{snapshot}-{pins}-bootstrap.tar"
+    return (
+        fork_points_dir
+        / f"{recipe.arch}-{recipe.init}-{snapshot}-{pins}-{build_key(recipe)}-bootstrap.tar"
+    )
 
 
 def update_source(
@@ -171,9 +175,10 @@ def update_source(
 
     The current pin's key when it exists; else the newest image of an older
     pin of the same stage3 snapshot -- newest pin date, then newest mtime; a
-    date later than the current pin's is never taken; else the pre-fix key
-    (no pin id); else ``None``. An update is the one reader that crosses pins:
-    it exists to bring an older pin's image to the current one, and it writes
+    date later than the current pin's is never taken, and only an image of the
+    same build key (:func:`shidashi.phases.build_key`); else ``None``. An update
+    is the one reader that crosses pins: it exists to bring an older pin's image
+    to the current one, and it writes
     the result under the current key, never over its source.
     """
     current = stage_fork_point_path(
@@ -187,7 +192,7 @@ def update_source(
     key = re.compile(
         re.escape(f"{recipe.arch}-{recipe.init}-{snapshot}-")
         + r"p(\d{8})\.[0-9a-f]{8}"
-        + re.escape(f"-{target}.tar")
+        + re.escape(f"-{build_key(recipe)}-{target}.tar")
     )
     older: list[tuple[str, float, Path]] = []
     if fork_points_dir.is_dir():
@@ -197,8 +202,9 @@ def update_source(
                 older.append((match.group(1), path.stat().st_mtime, path))
     if older:
         return max(older, key=lambda found: (found[0], found[1]))[2]
-    pre_fix = fork_points_dir / f"{recipe.arch}-{recipe.init}-{snapshot}-{target}.tar"
-    return pre_fix if pre_fix.exists() else None
+    # no fallback to a key without the pin id and the build key: nothing proves
+    # what such an image was built from (review of 2026-10-08)
+    return None
 
 
 def _generation_recheck(pkgdir: Path, rootfs: Path, recipe: ResolvedRecipe) -> PhaseHook:

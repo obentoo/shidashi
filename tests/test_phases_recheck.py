@@ -48,6 +48,9 @@ def _recipe() -> ResolvedRecipe:
     )
 
 
+BK = phases.build_key(_recipe())
+
+
 def _fp(gcc: str) -> GenerationFingerprint:
     return GenerationFingerprint(
         arch="v3",
@@ -176,7 +179,7 @@ def test_a_refused_recheck_stops_the_run_before_anything_else(
     assert kinds.count("emerge") == 2  # base and minimal, never desktop
     last_emerge = max(i for i, k in enumerate(kinds) if k == "emerge")
     assert log.events[last_emerge + 1 :] == []  # no settle, snapshot or check after it
-    assert ("snap", f"v3-systemd-S-{PINS}-minimal.tar") not in log.events
+    assert ("snap", f"v3-systemd-S-{PINS}-{BK}-minimal.tar") not in log.events
 
 
 def test_without_a_hook_the_run_is_as_before(

@@ -43,6 +43,10 @@ def _recipe(flavor: str = "kde", chain: tuple[Phase, ...] | None = None) -> Reso
     )
 
 
+# the flavor and the chain are not in the build key: one for every recipe here
+BK = phases.build_key(_recipe())
+
+
 def _touch(d: Path, name: str) -> Path:
     (d / name).write_bytes(b"")
     return d / name
@@ -60,9 +64,9 @@ def test_the_keys_carry_the_pin_id_after_the_snapshot(tmp_path: Path) -> None:
         r, snapshot="S", pins=NEW, phase="base", fork_points_dir=tmp_path
     )
     box = toolbox.tarball_path(r, snapshot="S", pins=NEW, fork_points_dir=tmp_path)
-    assert stage == tmp_path / f"v3-systemd-S-{NEW}-base.tar"
-    assert phase == tmp_path / f"v3-kde-systemd-S-{NEW}-base.tar"
-    assert box == tmp_path / f"v3-systemd-S-{NEW}-toolbox.tar"
+    assert stage == tmp_path / f"v3-systemd-S-{NEW}-{BK}-base.tar"
+    assert phase == tmp_path / f"v3-kde-systemd-S-{NEW}-{BK}-base.tar"
+    assert box == tmp_path / f"v3-systemd-S-{NEW}-{BK}-toolbox.tar"
 
 
 def test_two_pin_ids_give_two_keys(tmp_path: Path) -> None:
@@ -88,24 +92,24 @@ def test_two_pin_ids_give_two_keys(tmp_path: Path) -> None:
 
 def test_fork_point_ignores_older_pins_and_pre_fix_keys(tmp_path: Path) -> None:
     """Hostile: a DEEPER stage of an old pin (and of the pre-fix key) is on disk."""
-    _touch(tmp_path, f"v3-systemd-S-{OLD}-desktop.tar")
+    _touch(tmp_path, f"v3-systemd-S-{OLD}-{BK}-desktop.tar")
     _touch(tmp_path, "v3-systemd-S-desktop.tar")
     assert phases.fork_point(_recipe(), snapshot="S", pins=NEW, fork_points_dir=tmp_path) is None
-    _touch(tmp_path, f"v3-systemd-S-{NEW}-base.tar")
+    _touch(tmp_path, f"v3-systemd-S-{NEW}-{BK}-base.tar")
     found = phases.fork_point(_recipe(), snapshot="S", pins=NEW, fork_points_dir=tmp_path)
     assert found is not None
-    assert (found[0].name, found[1].name) == ("base", f"v3-systemd-S-{NEW}-base.tar")
+    assert (found[0].name, found[1].name) == ("base", f"v3-systemd-S-{NEW}-{BK}-base.tar")
 
 
 def test_latest_resumable_ignores_older_pins_and_pre_fix_keys(tmp_path: Path) -> None:
     done = ("base", "minimal")
-    _touch(tmp_path, f"v3-kde-systemd-S-{OLD}-minimal.tar")
+    _touch(tmp_path, f"v3-kde-systemd-S-{OLD}-{BK}-minimal.tar")
     _touch(tmp_path, "v3-kde-systemd-S-minimal.tar")
     r = _recipe()
     assert phases.latest_resumable(
         r, snapshot="S", pins=NEW, completed=done, fork_points_dir=tmp_path
     ) == (None, None)
-    current = _touch(tmp_path, f"v3-kde-systemd-S-{NEW}-base.tar")
+    current = _touch(tmp_path, f"v3-kde-systemd-S-{NEW}-{BK}-base.tar")
     assert phases.latest_resumable(
         r, snapshot="S", pins=NEW, completed=done, fork_points_dir=tmp_path
     ) == ("base", current)
@@ -151,7 +155,7 @@ def test_run_phases_writes_stage_fork_points_under_the_pins(
         fork_points_dir=tmp_path,
         stop_after="minimal",
     )
-    assert snaps == [f"v3-systemd-S-{NEW}-base.tar", f"v3-systemd-S-{NEW}-minimal.tar"]
+    assert snaps == [f"v3-systemd-S-{NEW}-{BK}-base.tar", f"v3-systemd-S-{NEW}-{BK}-minimal.tar"]
 
 
 def test_run_phases_stepwise_writes_phase_snapshots_under_the_pins(
@@ -171,6 +175,6 @@ def test_run_phases_stepwise_writes_phase_snapshots_under_the_pins(
         state_path=tmp_path / "state.json",
     )
     assert snaps == [
-        f"v3-minimal-systemd-S-{NEW}-rebuild.tar",
-        f"v3-minimal-systemd-S-{NEW}-graphics.tar",
+        f"v3-minimal-systemd-S-{NEW}-{BK}-rebuild.tar",
+        f"v3-minimal-systemd-S-{NEW}-{BK}-graphics.tar",
     ]

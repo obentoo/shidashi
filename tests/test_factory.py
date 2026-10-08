@@ -238,11 +238,12 @@ _BINPKG_ONLY = ("--usepkgonly", "--binpkg-respect-use=y")
 
 
 def _base_fork_point(fork_points_dir: Path) -> Path:
-    """The cached ``base`` fork point of the pinned stage3 and pins; skips naming it.
+    """The cached ``base`` fork point of the pinned stage3, pins and build key;
+    skips naming it.
 
-    The key with the pins (story 016) first, then the older key without them;
-    both carry the pinned stage3's snapshot, so a fork point of another seed is
-    never restored under this one.
+    Only that key: a fork point without the pins (story 016) or the build key
+    (review of 2026-10-08) may have been built from another tree or with other
+    flags, and is never restored under this one.
     """
     recipe = config.load_recipe("v3", "minimal", "systemd")
     snapshot = load_pointer(recipe.init, seeds_dir=config.seeds_dir()).snapshot
@@ -253,11 +254,9 @@ def _base_fork_point(fork_points_dir: Path) -> Path:
         pins=load_pin_id(config.seeds_dir()),
         fork_points_dir=fork_points_dir,
     )
-    unkeyed = fork_points_dir / f"{recipe.arch}-{recipe.init}-{snapshot}-base.tar"
-    for candidate in (keyed, unkeyed):
-        if candidate.is_file():
-            return candidate
-    pytest.skip(f"no base fork point in the cache: expected {keyed} or {unkeyed}")
+    if keyed.is_file():
+        return keyed
+    pytest.skip(f"no base fork point in the cache: expected {keyed}")
 
 
 def _mtime_ns(path: Path) -> int:
@@ -482,7 +481,7 @@ def test_full_factory_build_v3_minimal_systemd(
         recipe, "base", snapshot=snapshot, pins=pins, fork_points_dir=fork_points
     )
     if not keyed_base.exists():
-        # an older, unkeyed base fork point: named as the pinned build expects it
+        # the cache's base fork point, under the name the trimmed recipe looks for
         keyed_base.symlink_to(base)
     before = _mtime_ns(real_fork_points)
     pkgdir = config.pkgdir(recipe.arch, snapshot)
@@ -571,7 +570,7 @@ def test_seed_or_restore_restores_the_bootstrap_checkpoint_instead_of_the_stage3
     path = factory.bootstrap_fork_point_path(
         recipe, snapshot="S", pins="P", fork_points_dir=tmp_path / "fp"
     )
-    assert path.name == "v3-systemd-S-P-bootstrap.tar"
+    assert path.name == f"v3-systemd-S-P-{phases.build_key(recipe)}-bootstrap.tar"
     (tmp_path / "fp").mkdir()
     _tarball_of(tmp_path, path.name, "bootstrapped")
     rootfs = tmp_path / "rootfs"
@@ -596,8 +595,9 @@ def test_seed_or_restore_prefers_a_stage_fork_point_over_the_bootstrap(
     _no_fresh_seed(monkeypatch)
     recipe = _staged_recipe()
     (tmp_path / "fp").mkdir()
-    _tarball_of(tmp_path, "v3-systemd-S-P-bootstrap.tar", "bootstrapped")
-    _tarball_of(tmp_path, "v3-systemd-S-P-base.tar", "base built")
+    bk = phases.build_key(recipe)
+    _tarball_of(tmp_path, f"v3-systemd-S-P-{bk}-bootstrap.tar", "bootstrapped")
+    _tarball_of(tmp_path, f"v3-systemd-S-P-{bk}-base.tar", "base built")
     rootfs = tmp_path / "rootfs"
 
     resume, _fp, reused, bootstrapped = factory._seed_or_restore(
@@ -672,7 +672,9 @@ def test_update_refuses_a_pkgdir_without_a_generation(
     fps.mkdir(parents=True)
     (tmp_path / "fp").mkdir()
     _tarball_of(tmp_path, "img", "kde image")
-    (tmp_path / "fp" / "img").replace(fps / "v3-systemd-20260524T170105Z-kde.tar")
+    # an older pin's image of the same build key: the update's source
+    older = f"v3-systemd-20260524T170105Z-p20000101.00000000-{phases.build_key(recipe)}-kde.tar"
+    (tmp_path / "fp" / "img").replace(fps / older)
     with pytest.raises(FactoryError, match="never starts one"):
         Factory(recipe, pkgdir).update(download=False)
 

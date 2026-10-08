@@ -145,8 +145,9 @@ def test_an_update_whose_emerge_crosses_the_gcc_major_writes_no_fork_point(
     image = tmp_path / "image"
     toolchain(image, "16.2.0")
     w.fork_points.mkdir(parents=True, exist_ok=True)
-    # the pre-fix key: found by the lookup both before and after task 3.5 (its last resort)
-    phases_mod.snapshot_fork_point(image, w.fork_points / f"v3-systemd-{SNAP}-kde.tar")
+    # an older pin's image of the same build key: the update's source
+    older = f"v3-systemd-{SNAP}-p20260901.0a1b2c3d-{phases_mod.build_key(recipe())}-kde.tar"
+    phases_mod.snapshot_fork_point(image, w.fork_points / older)
     check_or_record(w.pkgdir, fingerprint(image, recipe()))
     monkeypatch.setattr(factory, "attach_packages", lambda *_a, **_k: None)
 

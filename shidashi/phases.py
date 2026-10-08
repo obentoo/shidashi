@@ -22,6 +22,8 @@ exit) are wrapped in :class:`FactoryError`.
 """
 
 import dataclasses
+import hashlib
+import json
 import os
 import re
 import shutil
@@ -413,6 +415,27 @@ def parse_built_atoms(emerge_output: str) -> tuple[str, ...]:
 # --- 3.4 fork-point decision (PURE, only probes the filesystem) --------------
 
 
+def build_key(recipe: ResolvedRecipe) -> str:
+    """``b`` + 8 hex of what the recipe compiles with: profile, CFLAGS, RUSTFLAGS,
+    CPU_FLAGS_X86, GOAMD64. Pure.
+
+    In every restore point's key, beside the pins: a tree built with other flags
+    is never restored under these ones. Without it, a COMMON_FLAGS change sent
+    to a successor PKGDIR restored the trunk built with the old flags (review of
+    2026-10-08).
+    """
+    payload = json.dumps(
+        [
+            recipe.profile,
+            recipe.common_flags,
+            recipe.rustflags,
+            sorted(recipe.cpu_flags_x86),
+            recipe.goamd64,
+        ]
+    )
+    return "b" + hashlib.sha256(payload.encode("utf-8")).hexdigest()[:8]
+
+
 def _variant_key(recipe: ResolvedRecipe) -> str:
     """Per-variant key prefix: ``<arch>-<flavor>-<init>`` (R5.1/R5.2). Pure.
 
@@ -427,14 +450,17 @@ def stage_fork_point_path(
 ) -> Path:
     """Where the fork point of one STAGE lives (D24, F70). Pure.
 
-    ``<arch>-<init>-<snapshot>-<pins>-<stage>.tar`` -- with no target in it, so
+    ``<arch>-<init>-<snapshot>-<pins>-<build key>-<stage>.tar`` -- with no target in it, so
     that the fork point of ``base``, ``minimal`` or ``desktop`` built on the way
     to one image is found by every other image of the same arch × init. The
     old key carried the flavor, so the trunk was never shared between flavors.
     ``pins`` (:func:`shidashi.tree.pin_id`) keeps a tree built from one
     repository pin from being restored under another (story 016, D7).
     """
-    return fork_points_dir / f"{recipe.arch}-{recipe.init}-{snapshot}-{pins}-{stage}.tar"
+    return (
+        fork_points_dir
+        / f"{recipe.arch}-{recipe.init}-{snapshot}-{pins}-{build_key(recipe)}-{stage}.tar"
+    )
 
 
 def fork_point(
@@ -674,13 +700,16 @@ def phase_snapshot_path(
 ) -> Path:
     """Path of the per-phase snapshot under ``fork_points_dir`` (R5.1/R5.2). Pure.
 
-    The key is ``<arch>-<flavor>-<init>-<snapshot>-<pins>-<phase>.tar`` (``pins``
+    The key is ``<arch>-<flavor>-<init>-<snapshot>-<pins>-<build key>-<phase>.tar`` (``pins``
     per story 016, D7) — DISTINCT from the key
     of story 003's trunk fork point (:func:`fork_point`, which omits ``phase``):
     each completed phase materializes its own snapshot for a granular resume. It
     neither probes nor writes anything — it only composes the path.
     """
-    return fork_points_dir / f"{_variant_key(recipe)}-{snapshot}-{pins}-{phase}.tar"
+    return (
+        fork_points_dir
+        / f"{_variant_key(recipe)}-{snapshot}-{pins}-{build_key(recipe)}-{phase}.tar"
+    )
 
 
 def latest_resumable(

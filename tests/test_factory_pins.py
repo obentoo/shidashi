@@ -51,6 +51,9 @@ def recipe() -> ResolvedRecipe:
     )
 
 
+BK = phases.build_key(recipe())
+
+
 def pointer() -> Stage3Pointer:
     return Stage3Pointer(
         init="systemd",
@@ -185,7 +188,7 @@ def test_the_bootstrap_checkpoint_is_keyed_by_the_pins(tmp_path: Path) -> None:
     path = factory.bootstrap_fork_point_path(
         recipe(), snapshot=SNAP, pins=NEW, fork_points_dir=tmp_path
     )
-    assert path == tmp_path / f"v3-systemd-{SNAP}-{NEW}-bootstrap.tar"
+    assert path == tmp_path / f"v3-systemd-{SNAP}-{NEW}-{BK}-bootstrap.tar"
 
 
 # --- _seed_or_restore (one-shot) -----------------------------------------------------------
@@ -197,8 +200,8 @@ def test_restore_points_of_an_older_pin_or_the_pre_fix_key_are_never_restored(
     seeded = _no_fresh_seed(monkeypatch)
     fps = tmp_path / "fp"
     old = [
-        tarball(tmp_path, fps / f"v3-systemd-{SNAP}-{OLD}-bootstrap.tar", "old pin"),
-        tarball(tmp_path, fps / f"v3-systemd-{SNAP}-{OLD}-base.tar", "old pin"),
+        tarball(tmp_path, fps / f"v3-systemd-{SNAP}-{OLD}-{BK}-bootstrap.tar", "old pin"),
+        tarball(tmp_path, fps / f"v3-systemd-{SNAP}-{OLD}-{BK}-base.tar", "old pin"),
         tarball(tmp_path, fps / f"v3-systemd-{SNAP}-bootstrap.tar", "pre-fix"),
         tarball(tmp_path, fps / f"v3-systemd-{SNAP}-base.tar", "pre-fix"),
     ]
@@ -214,7 +217,7 @@ def test_restore_points_of_an_older_pin_or_the_pre_fix_key_are_never_restored(
     )
     assert (resume, reused, bootstrapped) == (None, False, False)
     assert seeded == ["fresh"]
-    assert first_stage.name == f"v3-systemd-{SNAP}-{NEW}-base.tar"
+    assert first_stage.name == f"v3-systemd-{SNAP}-{NEW}-{BK}-base.tar"
     assert {p: p.read_bytes() for p in old} == before  # R8.8
 
 
@@ -223,8 +226,8 @@ def test_the_current_pins_checkpoint_wins_over_a_deeper_stage_of_an_older_pin(
 ) -> None:
     seeded = _no_fresh_seed(monkeypatch)
     fps = tmp_path / "fp"
-    tarball(tmp_path, fps / f"v3-systemd-{SNAP}-{OLD}-base.tar", "old pin base")
-    tarball(tmp_path, fps / f"v3-systemd-{SNAP}-{NEW}-bootstrap.tar", "current bootstrap")
+    tarball(tmp_path, fps / f"v3-systemd-{SNAP}-{OLD}-{BK}-base.tar", "old pin base")
+    tarball(tmp_path, fps / f"v3-systemd-{SNAP}-{NEW}-{BK}-bootstrap.tar", "current bootstrap")
     rootfs = tmp_path / "rootfs"
     resume, _fp, reused, bootstrapped = factory._seed_or_restore(
         recipe(), rootfs, pointer(), snapshot=SNAP, pins=NEW, fork_points_dir=fps, download=False
@@ -240,7 +243,7 @@ def test_the_current_pins_stage_fork_point_is_restored(
     """R6.11: unchanged pins and snapshot restore as before."""
     _no_fresh_seed(monkeypatch)
     fps = tmp_path / "fp"
-    tarball(tmp_path, fps / f"v3-systemd-{SNAP}-{NEW}-base.tar", "current base")
+    tarball(tmp_path, fps / f"v3-systemd-{SNAP}-{NEW}-{BK}-base.tar", "current base")
     rootfs = tmp_path / "rootfs"
     resume, _fp, reused, _b = factory._seed_or_restore(
         recipe(), rootfs, pointer(), snapshot=SNAP, pins=NEW, fork_points_dir=fps, download=False
@@ -277,7 +280,7 @@ def test_stepwise_seeds_fresh_over_an_older_pins_checkpoint_and_saves_the_pins(
 ) -> None:
     seeded = _no_fresh_seed(monkeypatch)
     fps = tmp_path / "fp"
-    old = tarball(tmp_path, fps / f"v3-systemd-{SNAP}-{OLD}-bootstrap.tar", "old")
+    old = tarball(tmp_path, fps / f"v3-systemd-{SNAP}-{OLD}-{BK}-bootstrap.tar", "old")
     saved = state.load_state(_stepwise_seed(tmp_path, fps))
     assert seeded == ["fresh"]
     assert saved is not None and saved.pins == NEW and saved.bootstrap_done is False
@@ -289,7 +292,7 @@ def test_stepwise_restores_the_current_pins_checkpoint_and_saves_the_pins(
 ) -> None:
     seeded = _no_fresh_seed(monkeypatch)
     fps = tmp_path / "fp"
-    tarball(tmp_path, fps / f"v3-systemd-{SNAP}-{NEW}-bootstrap.tar", "current")
+    tarball(tmp_path, fps / f"v3-systemd-{SNAP}-{NEW}-{BK}-bootstrap.tar", "current")
     saved = state.load_state(_stepwise_seed(tmp_path, fps))
     assert seeded == []
     assert saved is not None and saved.pins == NEW and saved.bootstrap_done is True
@@ -311,7 +314,7 @@ def test_build_hands_the_pins_to_the_bootstrap_the_runner_and_the_audit(
     with audit.run(tmp_path / "runs", command="factory", argv=[]) as trail:
         factory.Factory(recipe(), w.pkgdir).build(download=False)
     assert w.runner_kwargs["pins"] == pins
-    assert w.snapshots == [w.fork_points / f"v3-systemd-{SNAP}-{pins}-bootstrap.tar"]
+    assert w.snapshots == [w.fork_points / f"v3-systemd-{SNAP}-{pins}-{BK}-bootstrap.tar"]
     assert _step_end(trail, "seed")["pins"] == pins
 
 
@@ -322,7 +325,7 @@ def test_build_stepwise_hands_the_pins_to_the_runner_and_the_state(
     pins = current_pins(w.seeds)
     factory.Factory(recipe(), w.pkgdir).build_stepwise(download=False)
     assert w.runner_kwargs["pins"] == pins
-    assert w.snapshots == [w.fork_points / f"v3-systemd-{SNAP}-{pins}-bootstrap.tar"]
+    assert w.snapshots == [w.fork_points / f"v3-systemd-{SNAP}-{pins}-{BK}-bootstrap.tar"]
     saved = state.load_state(config.build_state_path(recipe()))
     assert saved is not None and saved.pins == pins
 
