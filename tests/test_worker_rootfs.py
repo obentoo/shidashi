@@ -117,6 +117,18 @@ def test_the_restore_unit_runs_only_when_a_pairing_was_persisted() -> None:
     assert _unit()["Unit"]["ConditionPathExists"] == "/mnt/work/.shidashi/pairing.json"
 
 
+def test_the_restore_unit_waits_for_the_work_disk_without_requiring_it() -> None:
+    """Regression (review of 2026-10-08): a ``nofail`` mount is only wanted by
+    local-fs.target, not ordered before it (systemd.mount(5)). With After=local-fs.target
+    alone, a late disk made the condition false: no restore, a fresh pairing window and,
+    on an image without host keys, new ones the host's pin no longer matches.
+    WantsMountsFor= orders the unit after the mount and still lets a worker with no disk
+    boot: the condition is then simply false."""
+    unit = _unit()["Unit"]
+    assert unit["WantsMountsFor"].split() == ["/mnt/work"]
+    assert "RequiresMountsFor" not in unit  # a missing disk must not fail the unit
+
+
 def test_the_restore_unit_runs_the_worker_script_in_restore_mode() -> None:
     argv = _unit()["Service"]["ExecStart"].lstrip("-@:+!").split()
     script = next(a for a in argv if a.endswith("kyomei_worker.py"))
