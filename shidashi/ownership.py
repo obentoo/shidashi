@@ -55,6 +55,17 @@ class OwnedElsewhere(Exception):
         )
 
 
+class PullRunning(Exception):
+    """A process on this host is pulling the arch's results into its binhost."""
+
+    def __init__(self, arch: str, pid: int) -> None:
+        self.arch, self.pid = arch, pid
+        super().__init__(
+            f"a pull of {arch}'s results into its binhost is running on this host "
+            f"(pid {pid}); wait for it to end"
+        )
+
+
 class LockError(Exception):
     """The locks directory or a lock file cannot be created or written."""
 
@@ -210,19 +221,75 @@ def require_free(arch: str, *, as_owner: Owner | None = None) -> None:
         raise OwnedElsewhere(holder)
 
 
+def _pid_alive(pid: int) -> bool:
+    """Whether ``pid`` runs on this host (a pid this user may not signal is alive)."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _pull_path(arch: str) -> Path:
+    return locks_dir() / f"{arch}.pull"
+
+
+def pulling_pid(arch: str) -> int | None:
+    """The pid of a live pull of ``arch``'s results on this host, or None. A marker
+    left by a process that died, or one that cannot be read, counts as none."""
+    try:
+        text = _pull_path(arch).read_text(encoding="utf-8")
+        pid = int(text.strip())
+    except OSError, UnicodeDecodeError, ValueError:
+        return None
+    return pid if pid > 0 and _pid_alive(pid) else None
+
+
+@contextlib.contextmanager
+def pulling(arch: str) -> Generator[None]:
+    """Mark this process as pulling ``arch``'s results into its binhost for the block.
+
+    The lock alone does not say a pull is still writing once the job has ended:
+    ``unlock`` without --force refuses while the marker's process lives
+    (:func:`pulling_pid`), and a second pull of the arch raises
+    :class:`PullRunning`. A marker left by a dead process is replaced. Removed
+    however the block ends, and only if it is still this process's.
+    """
+    path = _pull_path(arch)
+    for _attempt in range(2):
+        try:
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, _FILE_MODE)
+        except FileExistsError:
+            other = pulling_pid(arch)
+            if other is not None:
+                raise PullRunning(arch, other) from None
+            path.unlink(missing_ok=True)  # a dead process's marker
+            continue
+        except PermissionError as err:
+            raise _lock_error(path) from err
+        with os.fdopen(fd, "w", encoding="utf-8") as out:
+            out.write(f"{os.getpid()}\n")
+        break
+    else:
+        # someone recreated it between our unlink and our open: a live pull
+        raise PullRunning(arch, pulling_pid(arch) or 0)
+    try:
+        yield
+    finally:
+        try:
+            if path.read_text(encoding="utf-8").strip() == str(os.getpid()):
+                path.unlink()
+        except OSError:
+            pass
+
+
 def holder_alive(owner: Owner, *, probe: Callable[[Owner], bool]) -> bool:
     """Whether the holder still runs: a host holder by its pid on this host (a pid
     this user may not signal is alive), a worker holder by ``probe``."""
     if owner.worker.startswith("host:"):
-        if owner.host_pid is None:
-            return False
-        try:
-            os.kill(owner.host_pid, 0)
-        except ProcessLookupError:
-            return False
-        except PermissionError:
-            return True
-        return True
+        return owner.host_pid is not None and _pid_alive(owner.host_pid)
     return probe(owner)
 
 

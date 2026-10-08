@@ -594,6 +594,33 @@ def pull(
 ) -> PullResult:
     """Bring a job's results back from the worker; never deletes on the host.
 
+    See :func:`_pull_unmarked` for what comes back. A pull as ``owner`` writes the
+    arch's binhost, so it marks itself for that whole time
+    (:func:`ownership.pulling`): ``worker unlock`` without --force refuses while it
+    runs, and a second pull of the arch raises :class:`ownership.PullRunning`.
+    """
+    if owner is None or arch is None:
+        return _pull_unmarked(
+            remote, arch, job, results=results, init=init, owner=owner, bwlimit=bwlimit
+        )
+    with ownership.pulling(arch):
+        return _pull_unmarked(
+            remote, arch, job, results=results, init=init, owner=owner, bwlimit=bwlimit
+        )
+
+
+def _pull_unmarked(
+    remote: Remote,
+    arch: str | None,
+    job: str | None,
+    *,
+    results: Path,
+    init: str = "systemd",
+    owner: ownership.Owner | None = None,
+    bwlimit: int | None = None,
+) -> PullResult:
+    """Bring a job's results back from the worker; never deletes on the host.
+
     Always ``out/jobs/<job>.log``, ``.rc`` and ``.runs`` into ``results`` and the runs
     listed in ``<job>.runs`` into ``config.runs_dir()``; with an ``arch`` also
     ``out/iso/<job>/`` into ``results/iso/`` and the distfiles, ccache and sccache (an

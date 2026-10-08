@@ -2267,6 +2267,15 @@ def _unlock_refusal(holder: ownership.Owner, arch: str) -> str | None:
     :class:`ValueError` when its state cannot be read."""
     who = _holder_text(holder)
     force = f"shidashi worker unlock {arch} --force"
+    # the job may have ended while the host still pulls its results into the
+    # binhost: releasing now lets a host build write it at the same time
+    puller = ownership.pulling_pid(arch)
+    if puller is not None:
+        return (
+            f"{arch} is held by {who}, whose results are still being pulled into the "
+            f"binhost on this host (pid {puller}); wait for the pull to end, or release "
+            f"it anyway with: {force}"
+        )
     if holder.worker.startswith("host:"):
         if ownership.holder_alive(holder, probe=lambda _: True):
             return (
@@ -2373,6 +2382,7 @@ def _job_errors() -> tuple[type[Exception], ...]:
     return (
         worker_mod.JobRefused,
         ownership.OwnedElsewhere,
+        ownership.PullRunning,
         ownership.LockError,
         isaguard.UnknownFlag,
         remote.RemoteError,
