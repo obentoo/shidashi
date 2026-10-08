@@ -743,7 +743,7 @@ def job(
         )
     locked = owner.arch if owner is not None else None
 
-    resume = _resume_commands(name, job, arch, init)
+    resume = _resume_commands(name, job, arch, init, out if results is not None else None)
     try:
         if owner is not None:
             rec.event("worker.lock", action="acquired", arch=locked, owner=owner.model_dump())
@@ -1153,14 +1153,19 @@ def _stream_end(code: int, unit: str) -> str:
     return f"the log stream ended (exit {code}) before {unit} wrote its exit code"
 
 
-def _resume_commands(name: str, job: str, arch: str | None, init: str) -> tuple[str, str]:
-    """The commands that follow the job again and pull its results."""
+def _resume_commands(
+    name: str, job: str, arch: str | None, init: str, results: Path | None = None
+) -> tuple[str, str]:
+    """The commands that follow the job again and pull its results; a job started with
+    its own results directory gets it back in the pull (R6.13), quoted for the shell."""
     pull_cmd = f"shidashi worker sync pull {name}"
     if arch is not None:
         pull_cmd += f" --arch {arch}"
     pull_cmd += f" --job {job}"
     if arch is not None and init != "systemd":
         pull_cmd += f" --init {init}"
+    if results is not None:
+        pull_cmd += f" --results {shlex.quote(str(results))}"
     return f"shidashi worker logs {name} {job} -f", pull_cmd
 
 

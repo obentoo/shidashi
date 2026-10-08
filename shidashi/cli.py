@@ -2516,6 +2516,14 @@ def worker_sync_pull(
             "--job", help="The job whose log, rc, runs and ISOs come back (./worker-results/)."
         ),
     ] = None,
+    results_dir: Annotated[
+        Path | None,
+        typer.Option(
+            "--results",
+            help="Where the job's log, rc, runs and ISOs land (default ./worker-results/NAME/JOB);"
+            " needs --job.",
+        ),
+    ] = None,
 ) -> None:
     """Bring back ARCH's new distfiles and ccache entries and, with --job, that job's
     log, rc, runs and ISOs. The binhost comes back, and the arch's owner lock is
@@ -2524,6 +2532,12 @@ def worker_sync_pull(
         raise typer.BadParameter(
             "name the arch (--arch A); only an archless job's pull (--job JOB) omits it",
             param_hint="--arch",
+        )
+    if results_dir is not None and job is None:
+        raise typer.BadParameter(
+            "--results names where a job's results land; name the job with --job JOB "
+            "(a pull without --job brings back caches only)",
+            param_hint="--results",
         )
     owner: ownership.Owner | None = None
     try:
@@ -2534,10 +2548,13 @@ def worker_sync_pull(
             raise ValueError(f"unknown arch {arch!r}: expected one of {known}")
         target = Remote.for_worker(_paired(worker))
         # where `job` puts them by default; a job-less pull brings no job file
-        results = Path("worker-results") / worker
-        if job is not None:
-            results /= job
-        results = results.absolute()
+        if results_dir is not None:
+            results = results_dir.absolute()  # R6.12
+        else:
+            results = Path("worker-results") / worker
+            if job is not None:
+                results /= job
+            results = results.absolute()
         # R6.5: refuse before any contact when the host cannot take what may come back --
         # the arch's PKGDIR included, whoever holds its lock
         gen = worker_mod.generation(init) if arch is not None else None

@@ -271,6 +271,21 @@ shidashi worker status bentoo-lab     # CPU, targets it can run, load, memory, w
 shidashi worker status                # one line per paired worker
 ```
 
+Once per host, before the first job: host builds run as root and `shidashi worker` as you,
+and both write the cache and the audit trails. Give them one group — `portage` here, which
+already owns the compiler cache — with setgid directories and a default ACL, so what root's
+builds create later stays writable by the group:
+
+```sh
+sudo chgrp -R portage /var/cache/shidashi /var/log/shidashi
+sudo chmod -R g+rwX /var/cache/shidashi /var/log/shidashi
+sudo find /var/cache/shidashi /var/log/shidashi -type d -exec chmod g+s {} +
+sudo setfacl -R -m d:g:portage:rwX /var/cache/shidashi /var/log/shidashi
+```
+
+Without it a job is refused before anything is copied, naming the first directory you cannot
+write and its owner.
+
 A job runs this checkout's committed `HEAD` on the worker, detached from the SSH session:
 
 ```sh
@@ -295,6 +310,7 @@ Ctrl+C, or a lost connection, leaves the job running on the worker and prints ho
 ```sh
 shidashi worker logs bentoo-lab fac-v3 -f                 # follow it until it ends
 shidashi worker sync pull bentoo-lab --arch v3 --job fac-v3   # bring its results back
+shidashi worker sync pull bentoo-lab --arch v3 --job fac-v3 --results ~/isos/fac-v3   # elsewhere
 ```
 
 The cache can also be moved by hand: `shidashi worker sync push bentoo-lab --arch v3` fills
