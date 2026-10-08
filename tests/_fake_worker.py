@@ -299,6 +299,12 @@ class FakeWorker:
         nproc: int = 16,
         watchdog_s: float = 120.0,
     ) -> FakeWorker:
+        # the fake hands every transfer to the real rsync: without it, skip like the
+        # other tests that need a host tool (CI images such as act's lack rsync)
+        if shutil.which("rsync") is None:
+            import pytest  # only TYPE_CHECKING imports it at module level
+
+            pytest.skip("needs rsync: the fake worker runs the real one")
         from shidashi import config
         from shidashi.seed import load_pointer
 
