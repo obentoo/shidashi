@@ -11,6 +11,7 @@ Requirements exercised: R1.6, R2.5.
 import os
 import pty
 import select
+import signal
 import sys
 import time
 
@@ -21,8 +22,12 @@ from shidashi import cli
 CODE = "K7M4Q2XP"
 
 
-def _drive(keys: bytes) -> tuple[str, str]:
-    """Run ``_read_code`` in a child on a pty, type ``keys``; (what it returned, screen)."""
+def _drive(keys: bytes, *, early: bool = False) -> tuple[str, str]:
+    """Run ``_read_code`` in a child on a pty, type ``keys``; (what it returned, screen).
+
+    ``early`` types the keys right after the fork, before the prompt appears (a paste or
+    a fast typist). A child still blocked at the deadline is killed, never waited on
+    forever: a stuck prompt fails its test instead of hanging the suite."""
     read_end, write_end = os.pipe()
     pid, master = pty.fork()
     if pid == 0:  # the child: the pty is its terminal
@@ -38,10 +43,13 @@ def _drive(keys: bytes) -> tuple[str, str]:
     os.close(write_end)
     screen = b""
     deadline = time.monotonic() + 5
+    if early:
+        os.write(master, keys)
     while b"Code:" not in screen and time.monotonic() < deadline:  # wait for the prompt
         if select.select([master], [], [], 0.1)[0]:
             screen += os.read(master, 1024)
-    os.write(master, keys)
+    if not early:
+        os.write(master, keys)
     while time.monotonic() < deadline:
         ready = select.select([master], [], [], 0.1)[0]
         if not ready:
@@ -55,7 +63,9 @@ def _drive(keys: bytes) -> tuple[str, str]:
         if not chunk:
             break
         screen += chunk
-    os.waitpid(pid, 0)
+    if not os.waitpid(pid, os.WNOHANG)[0]:
+        os.kill(pid, signal.SIGKILL)  # still waiting for input: fail, never hang
+        os.waitpid(pid, 0)
     returned = os.read(read_end, 64).decode()
     os.close(read_end)
     os.close(master)
@@ -76,3 +86,11 @@ def test_backspace_corrects_the_last_character() -> None:
     returned, screen = _drive(b"k7m4q2xQ\x7fp\r")
     assert returned == "k7m4q2xp"
     assert "\b \b" in screen
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="pty and termios")
+def test_keys_typed_before_the_prompt_appears_are_kept() -> None:
+    """A code pasted (or typed fast) before the prompt shows must not be discarded."""
+    returned, screen = _drive(b"k7m4-q2xp\r", early=True)
+    assert returned == "k7m4-q2xp", screen
+    assert "*" * 9 in screen

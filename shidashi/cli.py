@@ -1866,10 +1866,12 @@ def _read_code(prompt: str) -> str:
     fd = sys.stdin.fileno()
     saved = termios.tcgetattr(fd)
     typed: list[str] = []
-    sys.stdout.write(f"{prompt}: ")
-    sys.stdout.flush()
     try:
-        tty.setcbreak(fd)  # no echo, no line buffering; Ctrl-C still interrupts
+        # no echo, no line buffering; Ctrl-C still interrupts. Set before the prompt and
+        # with TCSANOW: the default TCSAFLUSH would discard a code typed or pasted ahead
+        tty.setcbreak(fd, termios.TCSANOW)
+        sys.stdout.write(f"{prompt}: ")
+        sys.stdout.flush()
         while (char := os.read(fd, 1).decode(errors="ignore")) not in ("\r", "\n"):
             if char in ("\x7f", "\b"):
                 if typed:
