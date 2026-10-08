@@ -61,6 +61,22 @@ def test_a_pattern_not_relative_to_the_rootfs_is_refused_at_load(
 
 
 @pytest.mark.parametrize("key", ["build_time_secrets", "build_time_secrets_allow"])
+@pytest.mark.parametrize(
+    "pattern", ["", "etc/bind/rndc.key/", "./etc/bind/rndc.key", "etc//bind/rndc.key", "etc/."]
+)
+def test_a_pattern_with_an_empty_or_dot_segment_is_refused_at_load(
+    tmp_path: Path, key: str, pattern: str
+) -> None:
+    """Regression (review of 2026-10-08): these loaded, and the expansion matches a
+    path segment by segment, so an empty or ``.`` segment matched nothing -- a typo
+    switched the guard off for that secret without a word."""
+    tree = _livecd_with(tmp_path, **{key: ["etc/ok", pattern]})
+    with pytest.raises(system.ConfigurationError) as caught:
+        system.load_livecd(tree)
+    assert repr(pattern) in str(caught.value)  # the offending pattern is named
+
+
+@pytest.mark.parametrize("key", ["build_time_secrets", "build_time_secrets_allow"])
 def test_dots_inside_a_name_are_not_a_parent_reference(tmp_path: Path, key: str) -> None:
     """Hostile half of the rule above: only a ``..`` SEGMENT leaves the rootfs;
     a file name with two dots in it is an ordinary relative pattern."""

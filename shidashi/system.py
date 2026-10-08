@@ -109,6 +109,11 @@ class LivecdFile(BaseModel):
         for pattern in patterns:
             if pattern.startswith("/") or ".." in pattern.split("/"):
                 raise ValueError(f"{pattern!r} is not a pattern relative to the rootfs")
+            # matched segment by segment: an empty or "." segment (a trailing "/",
+            # "./", "//", an empty pattern) matches no entry, so the pattern would
+            # silently match nothing
+            if any(segment in ("", ".") for segment in pattern.split("/")):
+                raise ValueError(f"{pattern!r} has an empty or '.' segment and would match nothing")
         return patterns
 
 
