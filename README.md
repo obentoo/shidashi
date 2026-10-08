@@ -240,6 +240,11 @@ host pins the worker's SSH host key under its name, records it in
 10 minutes and is replaced after three wrong tries; `shidashi kyomei` on the worker's console
 opens a new pairing window.
 
+Every worker image is named `shidashi-worker` until it is paired, so give each worker its own
+`--name`. A name already paired with another host key is refused, and nothing is pinned: pair
+the new worker under another name, or pass `--replace` to replace the old one on purpose
+(with `--trusted`, the host still asks you to compare the key with the worker's screen).
+
 The pairing survives a reboot only on a work disk. Prepare one once, naming the disk and
 confirming its serial (`lsblk -o NAME,SERIAL,SIZE,MODEL` at the worker's console):
 

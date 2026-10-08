@@ -1938,6 +1938,13 @@ def kyomei_command(
         bool,
         typer.Option("--trust-param", help="Print this host's shidashi.trust kernel parameter."),
     ] = False,
+    replace: Annotated[
+        bool,
+        typer.Option(
+            "--replace",
+            help="Replace a worker already paired under this name with another host key.",
+        ),
+    ] = False,
 ) -> None:
     """Find a worker announcing itself, pick it, type the code it shows, pair."""
     from shidashi import kyomei, kyomei_protocol, mdns, workers
@@ -1974,13 +1981,24 @@ def kyomei_command(
             before is not None
             and before.host_key.split()[:2] != paired.welcome.host_key.split()[:2]
         ):
+            # every worker image is named shidashi-worker: without this, a second
+            # worker paired without --name silently took the first one's entry and pin
+            if not replace:
+                raise kyomei.PairingError(
+                    f"{before.name} is already paired with another worker "
+                    f"({before.address}, {before.host_key_fingerprint}); nothing was pinned. "
+                    f"Pair this one under another name (shidashi kyomei --name NEW), or "
+                    f"replace {before.name} with --replace. The worker already installed "
+                    "this host's key: reboot it to open a new pairing window"
+                )
             _err_console.print(
                 f"[bold yellow]warning:[/bold yellow] replacing {escape(before.name)} "
                 f"({before.address}, {before.host_key_fingerprint}): a worker of that name "
                 "was paired before with another host key"
             )
-            # a trusted welcome is unauthenticated: any LAN responder can claim a name
-            if paired.trusted and name is None:
+            # a trusted welcome is unauthenticated: any LAN responder can claim a
+            # name, --name included -- the person compares the key on the screen
+            if paired.trusted:
                 new = kyomei_protocol.fingerprint(paired.welcome.host_key)
                 try:
                     replace = typer.confirm(

@@ -474,7 +474,7 @@ def test_host_a_trusted_repin_of_a_known_name_with_another_key_asks_and_a_no_pin
 ) -> None:
     _registered(env["wdir"], (NAME, "192.168.15.9", OLD_KEY))
     known_hosts = (env["wdir"] / "known_hosts").read_text()
-    result = _kyomei("--trusted", "--address", "192.168.15.6", input=answer)
+    result = _kyomei("--trusted", "--replace", "--address", "192.168.15.6", input=answer)
     out = _out(result)
     assert result.exit_code == 1, out
     assert "[y/N]" in out  # asked, and "no" is the default
@@ -489,7 +489,7 @@ def test_host_a_trusted_repin_of_a_known_name_confirmed_with_yes_replaces_the_pi
     harness: _Harness, existing_key: Path, env: dict[str, Path]
 ) -> None:
     _registered(env["wdir"], (NAME, "192.168.15.9", OLD_KEY))
-    result = _kyomei("--trusted", "--address", "192.168.15.6", input="y\n")
+    result = _kyomei("--trusted", "--replace", "--address", "192.168.15.6", input="y\n")
     out = _out(result)
     assert result.exit_code == 0, out
     assert "[y/N]" in out
@@ -505,24 +505,57 @@ def test_host_a_trusted_repin_of_a_known_name_confirmed_with_yes_replaces_the_pi
     ("args", "answers"),
     [
         (("--trusted", "--name", NAME, "--address", "192.168.15.6"), ""),
+        (("--trusted", "--address", "192.168.15.6"), ""),
         (("--address", "192.168.15.6"), "k7m4-q2xp\n"),
     ],
-    ids=["named", "code-mode"],
+    ids=["trusted-named", "trusted", "code-mode"],
 )
-def test_host_a_repin_with_a_name_or_a_code_asks_nothing(
+def test_host_a_repin_of_a_known_name_with_another_key_is_refused_without_replace(
     harness: _Harness,
     existing_key: Path,
     env: dict[str, Path],
     args: tuple[str, ...],
     answers: str,
 ) -> None:
-    """Guard (passes on v3): --name or a code already says which machine is meant."""
+    """Regression (review of 2026-10-08): every worker image is named shidashi-worker,
+    so a second worker paired without --name silently replaced the first one's entry
+    and pin, leaving the first authorized for root but lost to the host."""
     _registered(env["wdir"], (NAME, "192.168.15.9", OLD_KEY))
+    known_hosts = (env["wdir"] / "known_hosts").read_text()
     result = _kyomei(*args, input=answers)
+    out = _out(result)
+    assert result.exit_code == 1, out
+    assert "--replace" in out and "--name" in out
+    assert "Traceback" not in out
+    assert _registry()[NAME].host_key == OLD_KEY
+    assert (env["wdir"] / "known_hosts").read_text() == known_hosts
+
+
+def test_host_a_code_mode_repin_with_replace_replaces_without_asking(
+    harness: _Harness, existing_key: Path, env: dict[str, Path]
+) -> None:
+    """The code authenticated the worker: --replace needs no confirmation."""
+    _registered(env["wdir"], (NAME, "192.168.15.9", OLD_KEY))
+    result = _kyomei("--replace", "--address", "192.168.15.6", input="k7m4-q2xp\n")
     out = _out(result)
     assert result.exit_code == 0, out
     assert "[y/N]" not in out
     assert _key_fields(_registry()[NAME].host_key) == _key_fields(WELCOME_KEY)
+
+
+def test_host_a_trusted_named_repin_with_replace_still_asks(
+    harness: _Harness, existing_key: Path, env: dict[str, Path]
+) -> None:
+    """Review of 2026-10-08: --name used to skip the question, but a trusted welcome is
+    unauthenticated -- whoever answers first could take an authenticated pin."""
+    _registered(env["wdir"], (NAME, "192.168.15.9", OLD_KEY))
+    result = _kyomei(
+        "--trusted", "--replace", "--name", NAME, "--address", "192.168.15.6", input="n\n"
+    )
+    out = _out(result)
+    assert result.exit_code == 1, out
+    assert "[y/N]" in out
+    assert _registry()[NAME].host_key == OLD_KEY
 
 
 def test_host_a_trusted_repin_of_the_same_key_under_another_comment_asks_nothing(
