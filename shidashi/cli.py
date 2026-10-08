@@ -2568,7 +2568,13 @@ def worker_sync_pull(
             results = results.absolute()
         # R6.5: refuse before any contact when the host cannot take what may come back --
         # the arch's PKGDIR included, whoever holds its lock
-        gen = worker_mod.generation(init) if arch is not None else None
+        # the generation the lock's job built, when a job holds the arch (R6.5)
+        holder = ownership.current(arch) if arch is not None else None
+        gen = (
+            (holder.generation if holder is not None else "") or worker_mod.generation(init)
+            if arch is not None
+            else None
+        )
         worker_mod.require_writable(
             worker_mod.pull_destinations(arch, results=results, binhost_generation=gen)
         )

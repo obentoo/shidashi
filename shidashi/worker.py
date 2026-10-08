@@ -18,6 +18,7 @@ import shlex
 import stat
 import subprocess
 import sys
+import tempfile
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -337,6 +338,29 @@ def generation(init: str) -> str:
     return load_pointer(init, seeds_dir=config.seeds_dir()).snapshot
 
 
+def generation_at(repo: Path, commit: str, init: str) -> str:
+    """The generation of ``init`` as commit ``commit`` pins it. I/O (git).
+
+    A job runs the commit it ships, with that commit's ``seeds/``: the binhost it
+    builds is that generation's, whatever the host's checkout pins by the time the
+    results come back. A commit without ``seeds/stage3.toml`` falls back to the host
+    checkout's pin (:func:`generation`).
+    """
+    shown = subprocess.run(
+        ["git", "-C", str(repo), "show", f"{commit}:seeds/stage3.toml"],
+        capture_output=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+    if shown.returncode != 0:
+        return generation(init)
+    text = shown.stdout
+    with tempfile.TemporaryDirectory(prefix="shidashi-seeds-") as tmp:
+        (Path(tmp) / "stage3.toml").write_text(text, encoding="utf-8")
+        return load_pointer(init, seeds_dir=Path(tmp)).snapshot
+
+
 def validate_job_name(job: str) -> None:
     """Raise :class:`ValueError` unless ``job`` is ``[a-z0-9-]+``.
 
@@ -458,18 +482,26 @@ def push_plan(arch: str, generation: str) -> list[tuple[str, str]]:
     ]
 
 
-def push(remote: Remote, arch: str, *, init: str = "systemd", bwlimit: int | None) -> int:
+def push(
+    remote: Remote,
+    arch: str,
+    *,
+    init: str = "systemd",
+    bwlimit: int | None,
+    gen: str | None = None,
+) -> int:
     """Send ``arch``'s cache subset and the runtime venv to the worker; return bytes sent.
 
     Refuses (:class:`SyncError`, before any transfer) a worker without its work disk
     mounted at ``/mnt/work`` and a worker lacking the interpreter the venv's
     ``pyvenv.cfg`` names. The venv goes first (small), the plan after it, fork points
     last. Every rsync is capped by ``bwlimit`` (KiB/s) when given; a non-zero exit
-    raises :class:`SyncError` naming the step.
+    raises :class:`SyncError` naming the step. ``gen`` is the generation to send (a
+    job's, from its commit); without it, the host checkout's.
     """
     _require_arch(arch)
     sent = _push_runtime(remote, bwlimit=bwlimit)
-    for host_path, worker_path in push_plan(arch, generation(init)):
+    for host_path, worker_path in push_plan(arch, gen or generation(init)):
         sources = _expand(host_path)
         if not sources:
             continue  # nothing of that kind on the host yet (no sccache, no fork point)
@@ -588,7 +620,8 @@ def pull(
         if arch is None:
             raise ValueError("an archless pull has no binhost to bring back")
         ownership.require_free(arch, as_owner=owner)
-        gen = generation(init)
+        # the generation the owner's job built, not the one the host pins by now
+        gen = owner.generation or generation(init)
     require_writable(pull_destinations(arch, results=results, binhost_generation=gen))
 
     cache = config.cache_dir()
@@ -712,7 +745,8 @@ def job(
             f"name the arch: shidashi worker job {name} {job} -- {args[0]} ARCH …",
         )
     out = (results if results is not None else Path("worker-results") / name / job).absolute()
-    binhost_gen = generation(init) if writer and arch is not None else None
+    job_gen = generation_at(repo, commit, init) if arch is not None else None
+    binhost_gen = job_gen if writer else None
     problem = _writability_problem(
         pull_destinations(arch, results=out, binhost_generation=binhost_gen)
     )
@@ -738,7 +772,13 @@ def job(
     if writer and arch is not None:
         owner = _take_lock(
             ownership.Owner(
-                arch=arch, worker=name, job=job, commit=commit, since=_utc_now(), host_pid=None
+                arch=arch,
+                worker=name,
+                job=job,
+                commit=commit,
+                since=_utc_now(),
+                host_pid=None,
+                generation=job_gen or "",
             )
         )
     locked = owner.arch if owner is not None else None
@@ -750,7 +790,7 @@ def job(
             _clear_stale_job_files(remote, job)
         with rec.step("worker.push", worker=name, arch=arch) as step:
             if arch is not None:
-                sent = push(remote, arch, init=init, bwlimit=bwlimit)
+                sent = push(remote, arch, init=init, bwlimit=bwlimit, gen=job_gen)
             else:
                 sent = _push_runtime(remote, bwlimit=bwlimit)
             step.add(bytes_sent=sent)

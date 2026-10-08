@@ -38,6 +38,9 @@ class Owner(pydantic.BaseModel):
     commit: str
     since: str
     host_pid: int | None = None
+    #: The binhost generation (stage3 snapshot) the owner writes, as its commit pins
+    #: it; empty in a lock written before it was recorded.
+    generation: str = ""
 
 
 class OwnedElsewhere(Exception):
