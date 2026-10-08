@@ -57,14 +57,23 @@ def test_a_gcc_major_change_is_named_with_both_strings(was: str, now: str) -> No
     ("was", "now"),
     [
         ("16.2.0", "16.2.1_p20260926"),  # the pilot's refusal
-        ("16.2.1_p20260926", "16.2.0"),
-        ("16.2.0", "16"),
         ("16.1.0-r3", "16.3.0"),
+        ("16.2.0", "16.2.0-r1"),  # a Gentoo revision is the same release
     ],
 )
-def test_a_change_within_the_gcc_major_is_the_same_generation(was: str, now: str) -> None:
+def test_a_gcc_upgrade_within_its_major_is_the_same_generation(was: str, now: str) -> None:
     """Hostile (wrong split): an ABI-neutral gcc release must not end the generation (R1.1)."""
     assert abi_differences(_fp(gcc=was), _fp(gcc=now)) == {}
+
+
+@pytest.mark.parametrize(
+    ("was", "now"),
+    [("16.2.1_p20260926", "16.2.0"), ("16.2.0", "16"), ("16.3.0", "16.1.0-r3")],
+)
+def test_a_gcc_downgrade_within_its_major_ends_the_generation(was: str, now: str) -> None:
+    """Review of 2026-10-08: a minor release adds GLIBCXX_* symbols, so binpkgs built
+    by the newer gcc may not run against the older libstdc++."""
+    assert set(abi_differences(_fp(gcc=was), _fp(gcc=now))) == {"gcc"}
 
 
 def test_the_same_gcc_is_the_same_generation() -> None:

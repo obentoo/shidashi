@@ -19,6 +19,7 @@ rebuilt on top, and the error names the successor PKGDIR to use instead.
 
 import hashlib
 import json
+import os
 import re
 from collections.abc import Mapping
 from pathlib import Path
@@ -154,11 +155,16 @@ def glibc_release(version: str) -> tuple[int, ...] | None:
 
 
 def _gcc_differs(was: str, now: str) -> bool:
-    """D1: a new major ends the generation; unparseable versions compare as strings."""
+    """D1: a new major ends the generation, and so does a step down within one (a
+    minor release adds ``GLIBCXX_*`` symbols the binpkgs built since may need);
+    unparseable versions compare as strings."""
     was_major, now_major = gcc_major(was), gcc_major(now)
     if was_major is None or now_major is None:
         return was != now
-    return was_major != now_major
+    if was_major != now_major:
+        return True
+    was_release, now_release = glibc_release(was), glibc_release(now)
+    return was_release is not None and now_release is not None and now_release < was_release
 
 
 def _glibc_differs(was: str, now: str) -> bool:
@@ -197,6 +203,24 @@ def abi_differences(
         if differs:
             differences[field] = (a, b)
     return differences
+
+
+def _raised_floor(
+    recorded: GenerationFingerprint, current: GenerationFingerprint
+) -> GenerationFingerprint:
+    """``recorded`` with gcc and glibc raised to ``current``'s where those are higher. Pure.
+
+    Called on an accepted fingerprint: the generation's binpkgs from now on may be
+    built against the newer gcc or glibc, so the floor a later build is checked
+    against must be the newer one.
+    """
+    raised: dict[str, str] = {}
+    for field in ("gcc", "glibc"):
+        was, now = getattr(recorded, field), getattr(current, field)
+        was_release, now_release = glibc_release(was), glibc_release(now)
+        if was_release is not None and now_release is not None and now_release > was_release:
+            raised[field] = now
+    return recorded.model_copy(update=raised) if raised else recorded
 
 
 def generation_key(fp: GenerationFingerprint) -> tuple[str, ...]:
@@ -243,8 +267,10 @@ def check_or_record(
     naming the successor PKGDIR and ``after_phase`` when given, when the
     PKGDIR was started by another generation, and a :class:`FactoryError`
     naming the file when the recorded fingerprint cannot be read. Never
-    overwrites: ending a generation is a decision, taken by pointing the
-    build at a new PKGDIR.
+    replaces the generation: ending one is a decision, taken by pointing the
+    build at a new PKGDIR. An accept that brings a higher gcc or glibc raises
+    the recorded floor (atomically, same format), so going back below it is
+    refused; any other accept leaves the file byte for byte.
     """
     path = pkgdir / FINGERPRINT_FILE
     if not path.is_file():
@@ -261,6 +287,11 @@ def check_or_record(
         ) from err
     differences = abi_differences(recorded, current)
     if not differences:
+        raised = _raised_floor(recorded, current)
+        if raised != recorded:
+            tmp = path.with_name(f".{path.name}.tmp")
+            tmp.write_text(raised.model_dump_json(indent=1) + "\n", encoding="utf-8")
+            os.replace(tmp, path)
         return False
     successor = successor_pkgdir(pkgdir, current, differences)
     detail = "; ".join(f"{k}: {a!r} -> {b!r}" for k, (a, b) in differences.items())

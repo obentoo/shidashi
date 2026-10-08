@@ -117,7 +117,9 @@ def test_the_pilots_gcc_patch_release_is_accepted(tmp_path: Path) -> None:
     current = fingerprint(rootfs, _recipe())
     assert current.gcc == "16.2.1_p20260926"
     assert check_or_record(pkgdir, current) is False
-    assert path.read_bytes() == before
+    # accepted, and the floor moved up with it (review of 2026-10-08)
+    assert path.read_bytes() != before
+    assert GenerationFingerprint.model_validate_json(path.read_text()).gcc == "16.2.1_p20260926"
 
 
 @pytest.mark.parametrize(
@@ -223,12 +225,53 @@ def test_a_pkgdir_without_a_fingerprint_records_eight_exact_fields(tmp_path: Pat
     assert path.read_text(encoding="utf-8") == _fingerprint_text_as_written_before_the_fix(current)
 
 
-def test_a_file_written_before_the_fix_is_untouched_by_an_accept(tmp_path: Path) -> None:
-    """R6.4, R6.5: no migration, no rewrite."""
+def test_a_file_written_before_the_fix_is_untouched_by_an_accept_that_raises_nothing(
+    tmp_path: Path,
+) -> None:
+    """R6.4, R6.5: no migration. Only a higher gcc or glibc rewrites the file; a
+    binutils change (D3) or the same versions leave it byte for byte."""
     path = _write_recorded(_pkgdir(tmp_path), _fp())
     before = _snapshot(path)
-    assert check_or_record(path.parent, _fp(gcc="16.2.1_p20260926", binutils="2.47")) is False
+    assert check_or_record(path.parent, _fp(binutils="2.47")) is False
+    assert check_or_record(path.parent, _fp()) is False
     assert _snapshot(path) == before
+
+
+# --- the floor (review of 2026-10-08): what a generation accepted, it never goes below --
+
+
+@pytest.mark.parametrize(
+    ("field", "higher", "back"),
+    [
+        ("glibc", "2.44", "2.43-r4"),
+        ("gcc", "16.2.1_p20260926", "16.2.0"),
+    ],
+)
+def test_an_accepted_upgrade_raises_the_floor_and_a_return_is_refused(
+    tmp_path: Path, field: str, higher: str, back: str
+) -> None:
+    """binpkgs built after the upgrade may need the newer symbols (GLIBC_2.44, a
+    GLIBCXX_* of the gcc minor): the older version must no longer reuse them."""
+    path = _write_recorded(_pkgdir(tmp_path), _fp())
+    assert check_or_record(path.parent, _fp(**{field: higher})) is False
+    assert getattr(GenerationFingerprint.model_validate_json(path.read_text()), field) == higher
+    with pytest.raises(GenerationMismatchError) as caught:
+        check_or_record(path.parent, _fp(**{field: back}))
+    assert field in caught.value.differences
+
+
+def test_a_gcc_downgrade_within_its_major_is_refused(tmp_path: Path) -> None:
+    path = _write_recorded(_pkgdir(tmp_path), _fp(gcc="16.2.1"))
+    with pytest.raises(GenerationMismatchError) as caught:
+        check_or_record(path.parent, _fp(gcc="16.2.0"))
+    assert set(caught.value.differences) == {"gcc"}
+
+
+def test_the_floor_is_raised_atomically_and_keeps_the_file_format(tmp_path: Path) -> None:
+    path = _write_recorded(_pkgdir(tmp_path), _fp())
+    assert check_or_record(path.parent, _fp(glibc="2.44")) is False
+    assert path.read_text() == _fingerprint_text_as_written_before_the_fix(_fp(glibc="2.44"))
+    assert [p.name for p in path.parent.iterdir()] == [FINGERPRINT_FILE]  # no temp left
 
 
 def test_a_file_written_before_the_fix_is_untouched_by_a_refusal(tmp_path: Path) -> None:
