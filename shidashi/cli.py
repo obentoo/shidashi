@@ -2294,6 +2294,15 @@ def worker_unlock(
 
     try:
         holder = ownership.current(arch)
+    except ownership.CorruptLock as err:
+        if not force:
+            raise _worker_error(err) from err
+        try:
+            ownership.discard(arch)  # unreadable: nobody can be told apart, --force removes it
+        except ownership.LockError as gone:
+            raise _worker_error(gone) from gone
+        typer.echo(f"removed {arch}'s unreadable owner lock ({err.path})")
+        return
     except ownership.LockError as err:
         raise _worker_error(err) from err
     if holder is None:

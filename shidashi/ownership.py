@@ -60,6 +60,19 @@ class LockError(Exception):
         super().__init__(f"cannot write the owner lock at {path} (owned by {owner}); {fix}")
 
 
+class CorruptLock(LockError):
+    """The lock file exists but is not an :class:`Owner` (truncated or edited)."""
+
+    def __init__(self, path: Path, arch: str, detail: str) -> None:
+        self.arch = arch
+        Exception.__init__(
+            self,
+            f"the owner lock at {path} cannot be read ({detail}); if no build of {arch} "
+            f"runs, remove it with: shidashi worker unlock {arch} --force",
+        )
+        self.path, self.owner, self.fix = path, _owner_of(path), "unlock --force"
+
+
 def writes_pkgdir(args: Sequence[str]) -> bool:
     """Whether a Shidashi command line writes a PKGDIR: ``factory``, or ``build``
     unless ``--skip-factory``. Pure; the same answer for the host and a worker job."""
@@ -123,7 +136,20 @@ def current(arch: str) -> Owner | None:
         return None
     except PermissionError as err:
         raise _lock_error(path) from err
-    return Owner.model_validate_json(text)
+    try:
+        return Owner.model_validate_json(text)
+    except pydantic.ValidationError as err:
+        first = err.errors()[0].get("msg", "invalid") if err.errors() else "invalid"
+        raise CorruptLock(path, arch, str(first)) from err
+
+
+def discard(arch: str) -> None:
+    """Remove the arch's lock file whatever it holds (``unlock --force`` on a corrupt one)."""
+    path = _lock_path(arch)
+    try:
+        path.unlink(missing_ok=True)
+    except PermissionError as err:
+        raise _lock_error(path) from err
 
 
 def acquire(arch: str, owner: Owner) -> Owner:
