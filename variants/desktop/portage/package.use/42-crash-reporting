@@ -1,0 +1,11 @@
+# WORKAROUND (2026-10-08) -- remove at the next ::bentoo pin that carries
+# dev-util/breakpad-2024.02.16-r2.
+#
+# dev-libs/sentry-native[breakpad] (pulled by mail-mta/proton-mail-bridge, in
+# every graphical flavor) failed to compile in the kde stage on the 0928 pins:
+# breakpad's installed headers include <lss/linux_syscall_support.h>, but
+# breakpad-2024.02.16-r1 lists dev-libs/linux-syscall-support in DEPEND only.
+# Merged as a binpkg, breakpad brings no DEPEND, so the header is missing when
+# sentry-native builds against it. Without breakpad, sentry-native uses its
+# in-process backend: crash reports are still sent, no breakpad is installed.
+dev-libs/sentry-native -breakpad
