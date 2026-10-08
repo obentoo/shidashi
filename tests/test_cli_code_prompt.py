@@ -94,3 +94,11 @@ def test_keys_typed_before_the_prompt_appears_are_kept() -> None:
     returned, screen = _drive(b"k7m4-q2xp\r", early=True)
     assert returned == "k7m4-q2xp", screen
     assert "*" * 9 in screen
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="pty and termios")
+def test_a_prompt_that_never_gets_its_enter_is_killed_within_the_deadline() -> None:
+    started = time.monotonic()
+    returned, _screen = _drive(b"k7m4")  # no Enter: the child would wait forever
+    assert returned == ""
+    assert time.monotonic() - started < 7
