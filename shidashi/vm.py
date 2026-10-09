@@ -321,9 +321,20 @@ class Session:
             raise VmError("qemu-system-x86_64 is missing on the host")
         if not Path(_SSH_PROXY).exists():
             raise VmError(f"{_SSH_PROXY} is missing: vsock SSH needs systemd >= 256 on the host")
-        self.directory.mkdir(parents=True, exist_ok=True)
-        for stale in (self.key, self.key.with_suffix(".pub"), self.qmp_socket, self.pidfile):
-            stale.unlink(missing_ok=True)
+        # An existing root-owned directory passes mkdir(exist_ok=True): only the write
+        # probe catches it before QEMU does, with a traceback (2026-10-08).
+        try:
+            self.directory.mkdir(parents=True, exist_ok=True)
+            for stale in (self.key, self.key.with_suffix(".pub"), self.qmp_socket, self.pidfile):
+                stale.unlink(missing_ok=True)
+            probe = self.directory / ".write-probe"
+            probe.touch()
+            probe.unlink()
+        except OSError as err:
+            raise VmError(
+                f"cannot write the VM session directory {self.directory}: {err.strerror}; "
+                "choose another with --work-dir or SHIDASHI_SCRATCH"
+            ) from err
         self.runner(
             [
                 "ssh-keygen",
