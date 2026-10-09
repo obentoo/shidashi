@@ -118,6 +118,7 @@ sys-fs/squashfs-tools
 sys-kernel/dracut
 sys-kernel/gentoo-kernel-bin
 sys-kernel/linux-firmware
+sys-libs/binutils-libs
 sys-process/htop
 sys-process/iotop
 www-client/brave-browser

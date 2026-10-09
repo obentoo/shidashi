@@ -5,5 +5,10 @@
 sys-kernel/dracut
 #sys-kernel/gentoo-kernel
 sys-kernel/gentoo-kernel-bin
+# The kernel's prebuilt objtool links libopcodes from binutils-libs, which
+# gentoo-kernel-bin lists in BDEPEND only: merged as a binpkg, every external
+# module build then dies in linux-mod-r1's objtool check (virtualbox-modules,
+# 2026-10-08). The installed system rebuilds modules too, so it ships.
+sys-libs/binutils-libs
 sys-kernel/linux-firmware
 sys-firmware/intel-microcode
