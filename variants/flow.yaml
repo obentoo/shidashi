@@ -82,6 +82,9 @@ stages:
     - {name: perl, do: perl-rebuild}       # modules left for a perl that is gone: the
                                            # base upgrades perl, the stage3's build-only
                                            # modules stay behind (grub's help2man)
+    - {name: stale, do: stale-binpkgs}     # binpkgs built against a subslot or soname
+                                           # the stage no longer installs: compiled
+                                           # instead of merged, then quarantined (019)
     - {name: emerge, do: emerge-stage}
     # after the emerge
     - {name: modules, do: module-rebuild}  # out-of-tree modules built for a kernel

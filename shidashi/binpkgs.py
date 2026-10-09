@@ -80,6 +80,11 @@ def _cp(head: str) -> str:
     return _VERSION.sub("", head.lstrip("<>=~"))
 
 
+def package_of(cpv: str) -> str:
+    """``cat/pkg`` of a ``cat/pkg-version``: what ``--usepkg-exclude`` takes. Pure."""
+    return _cp(cpv)
+
+
 def parse_slot_deps(text: str) -> tuple[SlotDep, ...]:
     """The built slot-operator atoms of a dependency string. Pure.
 
@@ -233,8 +238,11 @@ class SonameStale:
     offered: tuple[str, ...]
 
 
-def _library(name: str) -> str | None:
-    """The library name of a versioned soname; ``None`` without a version suffix."""
+def library_of(name: str) -> str | None:
+    """The library name of a versioned soname; ``None`` without a version suffix. Pure.
+
+    ``libsimdutf.so.34`` → ``libsimdutf.so``; ``libvte-2.91.so.0`` → ``libvte-2.91.so``.
+    """
     match = _VERSIONED_SONAME.match(name)
     return match["library"] if match else None
 
@@ -246,7 +254,7 @@ def _judge(
     offered = frozenset(pool)
     versions: dict[tuple[str, str], list[str]] = {}
     for soname in offered:
-        library = _library(soname.name)
+        library = library_of(soname.name)
         if library is not None:
             versions.setdefault((soname.category, library), []).append(soname.name)
     found: list[SonameStale] = []
@@ -255,7 +263,7 @@ def _judge(
         for needs in sorted(instance.requires, key=lambda s: (s.category, s.name)):
             if needs in offered:
                 continue
-            library = _library(needs.name)
+            library = library_of(needs.name)
             others = versions.get((needs.category, library), []) if library else []
             if others:
                 found.append(SonameStale(instance, needs, tuple(sorted(others))))

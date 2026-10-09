@@ -109,10 +109,15 @@ def repo_state(repo: Path = _REPO) -> dict[str, Any]:
 
 
 class Step:
-    """A step in progress; :meth:`add` attaches results to its end event."""
+    """A step in progress; :meth:`add` attaches results to its end event.
 
-    def __init__(self, name: str) -> None:
+    ``path`` is its place in the trail (``stage:gnome/stale-binpkgs``): what
+    :meth:`Recorder.amend` names to add results once the step has ended.
+    """
+
+    def __init__(self, name: str, path: str = "") -> None:
         self.name = name
+        self.path = path
         self.fields: dict[str, Any] = {}
 
     def add(self, **fields: Any) -> None:
@@ -132,6 +137,14 @@ class Recorder:
     def step(self, name: str, **fields: Any) -> Generator[Step]:
         del fields
         yield Step(name)
+
+    def amend(self, path: str, **fields: Any) -> None:
+        """Add results to a step that has already ended (``path`` of its :class:`Step`).
+
+        For what a step decides and a later one carries out: the factory's
+        ``stale-binpkgs`` quarantines its binpkgs after the stage's emerge.
+        """
+        self.event("step.amend", target=path, **fields)
 
     def command(self, argv: Sequence[str], **fields: Any) -> None:
         del argv, fields
@@ -201,7 +214,7 @@ class Run(Recorder):
     def step(self, name: str, **fields: Any) -> Generator[Step]:
         """Time a step; nested steps are recorded under their parent's path."""
         self._stack.append(name)
-        handle = Step(name)
+        handle = Step(name, "/".join(self._stack))
         start = self._clock()
         cpu_u, cpu_s, _ = self._usage()
         free = _free_bytes(self._disk) if self._disk is not None else None
@@ -397,6 +410,21 @@ def build_manifest(events: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
                 **{k: v for k, v in event.items() if k not in _ENVELOPE},
             }
             manifest["steps"].append(entry)
+        elif kind == "step.amend":
+            target = event.get("target")
+            ended = [s for s in manifest["steps"] if s["step"] == target]
+            if not ended:  # kept, not dropped: the step it names never ended
+                orphan = {k: v for k, v in event.items() if k not in _ENVELOPE}
+                manifest.setdefault("amendments", []).append(orphan)
+            else:
+                for key, value in event.items():
+                    if key in _ENVELOPE or key == "target":
+                        continue
+                    previous = ended[-1].get(key)
+                    if isinstance(previous, list) and isinstance(value, list):
+                        ended[-1][key] = previous + value
+                    else:
+                        ended[-1][key] = value
         elif kind == "command":
             manifest["commands"]["count"] += 1
             if event.get("exit_code") not in (0, None):

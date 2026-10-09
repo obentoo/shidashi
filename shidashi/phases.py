@@ -29,13 +29,13 @@ import re
 import shutil
 import subprocess
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from enum import StrEnum
 from pathlib import Path
 
 import pydantic
 
-from shidashi import audit, config, progress, state
+from shidashi import audit, binpkgs, checkpoint, config, progress, state
 from shidashi.container import Container
 from shidashi.flow import StagesFlow, active_flow
 from shidashi.recipe import Phase, ResolvedRecipe, UseBreak
@@ -309,7 +309,12 @@ def stages_flow() -> StagesFlow:
 
 
 def phase_emerge_argv(
-    phase: Phase, recipe: ResolvedRecipe, *, emptytree: bool, flow: StagesFlow | None = None
+    phase: Phase,
+    recipe: ResolvedRecipe,
+    *,
+    emptytree: bool,
+    flow: StagesFlow | None = None,
+    usepkg_exclude: Sequence[str] = (),
 ) -> list[str]:
     """Build the ``emerge`` argv for a phase (R3.1, D24). Pure.
 
@@ -327,6 +332,10 @@ def phase_emerge_argv(
     fingerprint check (:mod:`shidashi.generation`) runs before the first phase
     and again after every phase's emerge (story 016), since Portage itself
     never compares CFLAGS or the toolchain (D26).
+
+    ``usepkg_exclude``: one ``--usepkg-exclude=<cat/pkg>`` per package, sorted,
+    after the options and before the targets -- the packages whose binpkgs are
+    all stale (story 019). Empty, the argv is byte-identical to before.
     """
     emerge = (flow or stages_flow()).emerge
     if phase.emptytree and emptytree:
@@ -338,7 +347,10 @@ def phase_emerge_argv(
     target = phase_target(phase, recipe)
     if phase.stage and not phase.emptytree and not emerge.world:
         target = tuple(t for t in target if t != "@world")
-    return ["emerge", *emerge.options, *mode, *target]
+    # GOTCHA: --usepkg-exclude drops EVERY instance of the package; the caller passes
+    # only packages with no fresh instance (story 019, D2).
+    excluded = tuple(f"--usepkg-exclude={cp}" for cp in sorted(set(usepkg_exclude)))
+    return ["emerge", *emerge.options, *mode, *excluded, *target]
 
 
 # --- 3.2 the break-pass's transient package.use ------------------------------
@@ -969,6 +981,350 @@ def perl_rebuild(container: Container, *, phase: str) -> dict[str, object]:
     return {"stale": list(stale), "rebuilt": list(owners)}
 
 
+# --- stale-binpkgs (story 019) ------------------------------------------------------
+
+#: Where the stage's PKGDIR is bound inside the container (``factory._PKGDIR_DST``).
+_PKGDIR_INSIDE = Path("/var/cache/binpkgs")
+
+
+@dataclasses.dataclass(frozen=True)
+class StalePlan:
+    """What the stage does with its stale binpkgs (design D2).
+
+    ``exclude``: packages with no fresh instance of the stale version -- kept from
+    the emerge with ``--usepkg-exclude``, so they are compiled. ``quarantine_now``:
+    stale instances beside a fresh one, moved aside BEFORE the emerge.
+    ``quarantine_after``: the excluded ones' stale instances, moved once the
+    rebuild wrote a fresh one.
+    """
+
+    exclude: tuple[str, ...] = ()
+    quarantine_now: tuple[binpkgs.Instance, ...] = ()
+    quarantine_after: tuple[binpkgs.Instance, ...] = ()
+
+
+def plan_stale(
+    found: Sequence[binpkgs.Stale | binpkgs.SonameStale],
+    instances: Sequence[binpkgs.Instance],
+) -> StalePlan:
+    """Split the stale instances by whether their VERSION has a fresh one. Pure.
+
+    A fresh instance of another version does not rescue a stale one: the emerge
+    picks the version, ``--usepkg-exclude`` only decides binpkg or source. GOTCHA:
+    the exclusion drops every instance of the package, so a version that still
+    has a fresh instance is never excluded -- its stale ones just move aside.
+    """
+    bad = {(f.instance.cpv, f.instance.build_id) for f in found}
+    now: list[binpkgs.Instance] = []
+    after: list[binpkgs.Instance] = []
+    exclude: set[str] = set()
+    for cpv in sorted({cpv for cpv, _build in bad}):
+        mine = [i for i in instances if i.cpv == cpv]
+        stale_ones = [i for i in mine if (i.cpv, i.build_id) in bad]
+        if len(stale_ones) < len(mine):
+            now.extend(stale_ones)
+        else:
+            exclude.add(binpkgs.package_of(cpv))
+            after.extend(stale_ones)
+    return StalePlan(tuple(sorted(exclude)), tuple(now), tuple(after))
+
+
+@dataclasses.dataclass(frozen=True)
+class StaleOutcome:
+    """The ``stale-binpkgs`` step's decision, carried to the emerge and past it."""
+
+    pkgdir: Path | None
+    plan: StalePlan
+    providers: Mapping[str, str]
+    data: dict[str, object]
+
+
+def _host_pkgdir(container: Container) -> Path | None:
+    """The host directory the container's PKGDIR is bound from; ``None`` unbound
+    (a container with no RW binds has no binhost to judge)."""
+    binds: Sequence[tuple[Path, Path]] = getattr(container, "binds_rw", ())
+    return next((src for src, dst in binds if dst == _PKGDIR_INSIDE), None)
+
+
+def _read_index(pkgdir: Path, *, phase: str) -> list[binpkgs.Instance] | None:
+    """The PKGDIR's index; ``None`` when there is none yet. An index that exists
+    and cannot be read is an error: taken as absent, it would judge nothing."""
+    index = pkgdir / "Packages"
+    try:
+        text = index.read_text(encoding="utf-8", errors="replace")
+    except FileNotFoundError:
+        return None
+    except OSError as err:
+        raise FactoryError(f"cannot read the binhost index {index}: {err}", phase=phase) from err
+    return binpkgs.parse_index(text)
+
+
+def quarantine_binpkgs(
+    container: Container,
+    pkgdir: Path,
+    instances: Sequence[binpkgs.Instance],
+    *,
+    arch: str,
+    phase: str,
+) -> list[str]:
+    """Move binpkgs aside by PATH, then regenerate the index. PRIVILEGED.
+
+    To ``<cache>/quarantine/binpkgs/<arch>/<generation>/<category>/`` -- never
+    deleted. By PATH, never by CPV (GOTCHA: a CPV names every instance). The
+    reindex runs in the container (``emaint binhost --fix``, PKGDIR set): an index
+    that still names a moved file fails the next emerge.
+    """
+    if not instances:
+        return []
+    root = config.cache_dir() / "quarantine" / "binpkgs" / arch / pkgdir.name
+    moved: list[str] = []
+    for instance in instances:
+        source = pkgdir / instance.path
+        if not source.exists():
+            # moved by a run that stopped before its reindex: the index still
+            # names it, and the reindex below is what that run owes
+            continue
+        target = root / instance.path.split("/", 1)[0] / Path(instance.path).name
+        serial = 1
+        while target.exists():  # an earlier quarantine of the same file name
+            target = target.with_name(f"{Path(instance.path).name}.{serial}")
+            serial += 1
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(source, target)
+        except OSError as err:
+            raise FactoryError(
+                f"cannot move the stale binpkg {source} to {target}: {err.strerror or err}",
+                phase=phase,
+            ) from err
+        moved.append(str(target))
+    # PKGDIR through the argv: nspawn passes no host environment into the container
+    try:
+        container.run(["env", f"PKGDIR={_PKGDIR_INSIDE}", "emaint", "binhost", "--fix"])
+    except subprocess.CalledProcessError as err:
+        raise FactoryError(
+            f"emaint binhost --fix failed after moving {len(moved)} stale binpkgs aside; "
+            f"the index of {pkgdir} may still name them",
+            phase=phase,
+            output=(err.output or "") + (err.stderr or ""),
+        ) from err
+    return moved
+
+
+#: A plan line: ``[binary   U  ] cat/pkg-ver-BUILD:SLOT::repo`` or ``[ebuild …] cat/pkg-ver::repo``.
+_PLAN_LINE = re.compile(r"^\[(?P<kind>ebuild|binary)[^\]]*\]\s+(?P<token>\S+)")
+
+
+def planned_slots(plan_text: str) -> dict[tuple[str, str], str]:
+    """``(cat/pkg, slot)`` → the cpv the plan merges there, ``[ebuild]`` and ``[binary]``. Pure.
+
+    The slot is the token's (``:0/34`` → ``0``), ``0`` when emerge omits it.
+    """
+    found: dict[tuple[str, str], str] = {}
+    for line in plan_text.splitlines():
+        match = _PLAN_LINE.match(line.strip())
+        if match is None:
+            continue
+        head, _colon, rest = match["token"].partition(":")
+        cpv = checkpoint.token_cpv(head) if match["kind"] == "binary" else head
+        slot = rest.split("::", 1)[0].split("/", 1)[0] if rest and not rest.startswith(":") else ""
+        found[(binpkgs.package_of(cpv), slot or "0")] = cpv
+    return found
+
+
+def _vdb_provides(
+    rootfs: Path, replaced: Mapping[tuple[str, str], str] | None = None
+) -> frozenset[binpkgs.Soname]:
+    """What the rootfs's installed packages offer: their vdb ``PROVIDES``. I/O.
+
+    ``replaced`` (:func:`planned_slots`) leaves out an installed package the plan
+    replaces with another version in its slot: its old sonames are about to go
+    (GOTCHA: an installed simdutf-9.0.0 would keep offering ``.so.34`` to vte).
+    """
+    texts: list[str] = []
+    for provides in sorted((rootfs / _VDB).glob("*/*/PROVIDES")):
+        entry = provides.parent
+        cpv = f"{entry.parent.name}/{entry.name}"
+        try:
+            slot = (entry / "SLOT").read_text(encoding="utf-8").strip().split("/", 1)[0]
+        except OSError:
+            slot = ""
+        planned = (replaced or {}).get((binpkgs.package_of(cpv), slot or "0"))
+        if planned is not None and planned != cpv:
+            continue
+        texts.append(provides.read_text(encoding="utf-8", errors="replace"))
+    return binpkgs.parse_vdb_provides("\n".join(texts))
+
+
+def planned_instances(
+    tokens: Sequence[str], instances: Sequence[binpkgs.Instance]
+) -> list[binpkgs.Instance]:
+    """The index instances a plan's ``[binary]`` tokens denote. Pure.
+
+    ``x11-libs/vte-0.84.1-1:2.91::gentoo`` is CPV ``x11-libs/vte-0.84.1`` with
+    ``BUILD_ID`` 1: matched by both (GOTCHA: by CPV alone, a stale sibling of the
+    planned instance would be judged in its place). A token with no build id
+    matches only a CPV with one instance.
+    """
+    by_key = {(i.cpv, i.build_id): i for i in instances}
+    by_cpv: dict[str, list[binpkgs.Instance]] = {}
+    for instance in instances:
+        by_cpv.setdefault(instance.cpv, []).append(instance)
+    found: list[binpkgs.Instance] = []
+    for token in tokens:
+        head = token.split(":", 1)[0]
+        match = re.fullmatch(r"(.+)-(\d+)", head)
+        if match and (match[1], int(match[2])) in by_key:
+            found.append(by_key[(match[1], int(match[2]))])
+        elif len(by_cpv.get(head, ())) == 1:
+            found.append(by_cpv[head][0])
+    return found
+
+
+def providers_first(
+    missing: Sequence[tuple[binpkgs.Instance, binpkgs.Soname]],
+    instances: Sequence[binpkgs.Instance],
+    ebuilds: Sequence[str],
+) -> list[str]:
+    """The planned ``[ebuild]`` cpvs that provide a library a planned binpkg needs
+    and nothing offers yet (R1.7). Pure.
+
+    The binhost tells which package provides a library: any instance whose
+    ``PROVIDES`` carries the same library name, any version, same category. The
+    version compiled is the one the plan compiles, never the indexed one.
+    """
+    wanted: set[str] = set()
+    for _instance, needs in missing:
+        library = binpkgs.library_of(needs.name)
+        if library is None:
+            continue
+        for candidate in instances:
+            if any(
+                p.category == needs.category and binpkgs.library_of(p.name) == library
+                for p in candidate.provides
+            ):
+                wanted.add(binpkgs.package_of(candidate.cpv))
+    return sorted(f"={cpv}" for cpv in ebuilds if binpkgs.package_of(cpv) in wanted)
+
+
+def stale_binpkgs(
+    container: Container, recipe: ResolvedRecipe, phase: Phase, *, emptytree: bool = False
+) -> StaleOutcome:
+    """The ``stale-binpkgs`` step, before the stage's emerge (R1.1-R1.5). PRIVILEGED.
+
+    Reads the stage's index, asks the stage's tree for each slot dep's provider,
+    moves aside the stale instances that have a fresh sibling, and returns the
+    packages the emerge must compile. No index → nothing judged (``index:
+    absent``), today's emerge; no PKGDIR bind at all → ``index: unbound``.
+    """
+    label = f"{phase.name}:stale-binpkgs"
+    pkgdir = _host_pkgdir(container)
+    if pkgdir is None:
+        return StaleOutcome(None, StalePlan(), {}, {"index": "unbound"})
+    instances = _read_index(pkgdir, phase=label)
+    if instances is None:
+        return StaleOutcome(None, StalePlan(), {}, {"index": "absent"})
+    try:
+        providers = binpkgs.resolve_providers(container, binpkgs.provider_queries(instances))
+    except binpkgs.BinpkgError as err:
+        raise FactoryError(str(err), phase=label, output=err.output) from err
+    found = binpkgs.stale(instances, providers)
+    by_subslot = plan_stale(found, instances)
+    # moved BEFORE the plan, so the plan never picks an instance that is going away
+    moved = quarantine_binpkgs(
+        container, pkgdir, by_subslot.quarantine_now, arch=recipe.arch, phase=label
+    )
+    if moved:
+        instances = _read_index(pkgdir, phase=label) or []
+    # the soname pass (R1.6-R1.8): the stage's own plan -- same mode as its emerge,
+    # its subslot exclusions in it
+    flow = stages_flow()
+    exclusions = tuple(f"--usepkg-exclude={cp}" for cp in by_subslot.exclude)
+    argv = phase_emerge_argv(
+        phase, recipe, emptytree=emptytree, flow=flow, usepkg_exclude=by_subslot.exclude
+    )
+    try:
+        pretended = container.run([*argv, "--pretend"], check=True)
+    except subprocess.CalledProcessError as err:
+        raise FactoryError(
+            "the stage's plan could not be resolved to judge its binpkgs' sonames",
+            phase=label,
+            output=(err.output or "") + (err.stderr or ""),
+        ) from err
+    plan_text = pretended.stdout + pretended.stderr
+    planned = planned_instances(checkpoint.plan_tokens(plan_text), instances)
+    replaced = planned_slots(plan_text)
+    offered = {s for i in planned for s in i.provides}
+    pool = _vdb_provides(container.rootfs, replaced) | offered
+    first = providers_first(
+        binpkgs.unresolved_sonames(planned, pool), instances, parse_built_atoms(plan_text)
+    )
+    if first:
+        oneshot = ["emerge", *flow.emerge.options, *exclusions, "--oneshot", *first]
+        _run_emerge(container, oneshot, phase=label)
+        pool = _vdb_provides(container.rootfs, replaced) | offered
+    by_soname = binpkgs.soname_stale(planned, pool)
+    # a planned instance that goes away lets the emerge pick a sibling: judge those too
+    displaced = {s.instance.cpv for s in by_soname}
+    siblings = [i for i in instances if i.cpv in displaced and i not in planned]
+    by_soname += binpkgs.soname_stale(siblings, pool)
+    plan = plan_stale([*found, *by_soname], instances)
+    moved += quarantine_binpkgs(
+        container, pkgdir, plan.quarantine_now, arch=recipe.arch, phase=label
+    )
+    data: dict[str, object] = {
+        "stale": [
+            {
+                "cpv": s.instance.cpv,
+                "build_id": s.instance.build_id,
+                "dep": s.dep.atom,
+                "built": s.built,
+                "tree": s.tree,
+            }
+            for s in found
+        ],
+        "excluded": list(plan.exclude),
+        "quarantined": moved,
+        "unresolved": sorted({d.atom for d in binpkgs.unresolved(instances, providers)}),
+        "soname": [
+            {
+                "cpv": s.instance.cpv,
+                "build_id": s.instance.build_id,
+                "needs": s.needs.name,
+                "offered": list(s.offered),
+            }
+            for s in by_soname
+        ],
+        "providers_first": first,
+        "unresolved_sonames": [
+            {"cpv": i.cpv, "build_id": i.build_id, "needs": n.name}
+            for i, n in binpkgs.unresolved_sonames(planned, pool)
+        ],
+    }
+    return StaleOutcome(pkgdir, plan, providers, data)
+
+
+def settle_stale(
+    container: Container, recipe: ResolvedRecipe, phase: Phase, outcome: StaleOutcome
+) -> list[str]:
+    """After the emerge: move aside the excluded packages' stale instances whose
+    version now has a fresh one (R1.5). PRIVILEGED."""
+    if outcome.pkgdir is None or not outcome.plan.quarantine_after:
+        return []
+    label = f"{phase.name}:stale-binpkgs"
+    instances = _read_index(outcome.pkgdir, phase=label) or []
+    bad = {s.instance.path for s in binpkgs.stale(instances, outcome.providers)}
+    indexed = {i.path for i in instances}
+    # a fresh sibling is ANOTHER file of the same version, never the old one itself
+    ready = [
+        old
+        for old in outcome.plan.quarantine_after
+        if old.path in indexed
+        and any(i.cpv == old.cpv and i.path != old.path and i.path not in bad for i in instances)
+    ]
+    return quarantine_binpkgs(container, outcome.pkgdir, ready, arch=recipe.arch, phase=label)
+
+
 def run_phase(
     container: Container, recipe: ResolvedRecipe, phase: Phase, *, emptytree: bool
 ) -> PhaseResult:
@@ -993,6 +1349,8 @@ def run_phase(
     built: tuple[str, ...] = ()
     output = ""
     run = audit.current()
+    stale: StaleOutcome | None = None
+    stale_step = ""
     # the steps up to the emerge, in the order variants/flow.yaml declares them
     for kind in before:
         with run.step(kind) as step:
@@ -1011,8 +1369,18 @@ def run_phase(
                 step.add(cuts=list(use_break_lines(phase)))
             elif kind == "perl-rebuild":
                 step.add(**perl_rebuild(container, phase=phase.name))
+            elif kind == "stale-binpkgs":
+                stale = stale_binpkgs(container, recipe, phase, emptytree=emptytree)
+                stale_step = step.path
+                step.add(**stale.data)
             elif kind == "emerge-stage":
-                argv = phase_emerge_argv(phase, recipe, emptytree=emptytree, flow=flow)
+                argv = phase_emerge_argv(
+                    phase,
+                    recipe,
+                    emptytree=emptytree,
+                    flow=flow,
+                    usepkg_exclude=stale.plan.exclude if stale is not None else (),
+                )
                 since = int(time.time())
                 built, output = _run_emerge(container, argv, phase=phase.name)
                 reused = parse_reused_atoms(output)
@@ -1024,6 +1392,10 @@ def run_phase(
                     built=built,
                     reused=reused,
                 )
+                if stale is not None:
+                    moved = settle_stale(container, recipe, phase, stale)
+                    if moved:
+                        run.amend(stale_step, quarantined=moved)
     return PhaseResult(
         phase=phase,
         built_atoms=built,

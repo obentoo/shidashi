@@ -818,10 +818,11 @@ def test_every_stage_and_step_is_in_the_audit_trail(
         _run_chain(tmp_path, monkeypatch)
     manifest = audit.build_manifest(audit.read_events(trail.path / "events.jsonl"))
     steps = [s["step"] for s in manifest["steps"]]
-    assert steps[:6] == [
+    assert steps[:7] == [
         "stage:base/apply-config",
         "stage:base/write-cuts",
         "stage:base/perl-rebuild",
+        "stage:base/stale-binpkgs",
         "stage:base/emerge-stage",
         "stage:base/module-rebuild",
         "stage:base/fork-point",

@@ -27,6 +27,10 @@ by :mod:`shidashi.phases` in the declared order:
 - ``perl-rebuild`` (optional): before the emerge, rebuild what still has
   modules for a perl that is not installed (the base's perl upgrade leaves the
   stage3's build-only modules behind);
+- ``stale-binpkgs`` (optional): right before the emerge, find the binpkgs built
+  against a library the stage no longer installs -- a stale subslot or soname
+  (story 019) -- keep the emerge from merging them, and move them aside once a
+  fresh instance exists;
 - ``emerge-stage``: the stage's emerge -- ``--emptytree`` for the stage whose
   ``update`` is ``emptytree`` (the base), the ``update`` options otherwise, with
   ``@world`` and the stage's sets; its options are in ``stages.emerge``;
@@ -137,6 +141,7 @@ class _StageStep(BaseModel):
         "apply-config",
         "write-cuts",
         "perl-rebuild",
+        "stale-binpkgs",
         "emerge-stage",
         "module-rebuild",
         "settle",
@@ -191,6 +196,13 @@ class StagesFlow(BaseModel):
             raise ValueError(
                 "perl-rebuild must come after apply-config and before emerge-stage: "
                 "the stage's emerge may load the modules it repairs"
+            )
+        if kinds.count("stale-binpkgs") > 1:
+            raise ValueError("stages.steps needs `stale-binpkgs` at most once")
+        if "stale-binpkgs" in kinds and kinds.index("stale-binpkgs") > at:
+            raise ValueError(
+                "stale-binpkgs must come before emerge-stage: it decides what that emerge "
+                "may take from the binhost"
             )
         if kinds.count("module-rebuild") > 1:
             raise ValueError("stages.steps needs `module-rebuild` at most once")
