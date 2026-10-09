@@ -32,7 +32,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
 
-from shidashi import audit, checkpoint, config, image, publish, toolbox, world
+from shidashi import audit, binpkgs, checkpoint, config, image, publish, toolbox, world
 from shidashi.container import Container
 from shidashi.phases import (
     ISO_EMERGE_OPTIONS,
@@ -41,6 +41,7 @@ from shidashi.phases import (
     image_cuts,
     image_targets,
     is_installed,
+    judge_plan,
     parse_reused_atoms,
     write_cuts,
 )
@@ -605,6 +606,40 @@ class Assembler:
         write_cuts(rootfs, tuple(cuts))
         world.write_to_image(rootfs, tuple(atoms))
 
+    def _refuse_stale_plan(
+        self, container: Container, recipe: ResolvedRecipe
+    ) -> tuple[str, ...] | None:
+        """Stop before the install when the image's plan holds a stale binpkg (R2.1, R2.2).
+
+        One ``--pretend`` of the image's install, judged by the subslot and the
+        soname rules (:func:`shidashi.phases.judge_plan`, the factory's
+        ``check-binpkgs`` judge). Returns the plan's tokens, so a branched install
+        does not resolve it a second time; ``None`` without an index -- nothing to
+        judge, and the install runs and fails as today on a missing binhost.
+        """
+        index = self.binhost_dir / "Packages"
+        try:
+            text = index.read_text(encoding="utf-8", errors="replace")
+        except FileNotFoundError:
+            return None
+        except OSError as err:
+            raise AssemblerError(f"cannot read the binhost index {index}: {err}") from err
+        pretended = container.run([*iso_emerge_argv(recipe), "--pretend"])
+        plan_text = pretended.stdout + pretended.stderr
+        try:
+            by_subslot, by_soname = judge_plan(container, binpkgs.parse_index(text), plan_text)
+        except binpkgs.BinpkgError as err:
+            raise AssemblerError(f"{err}:\n{err.output.strip()}") from err
+        if by_subslot or by_soname:
+            detail = binpkgs.describe(
+                by_subslot, by_soname, arch=recipe.arch, image=recipe.flavor, init=recipe.init
+            )
+            raise AssemblerError(
+                f"the {recipe.flavor} image would install binpkgs built against a library "
+                f"its tree no longer ships; nothing was installed.\n{detail}"
+            )
+        return checkpoint.plan_tokens(plan_text)
+
     def assemble(
         self,
         output_dir: Path,
@@ -862,6 +897,11 @@ class Assembler:
                         branched = branch is not None or bool(
                             resumed is not None and resumed.data.get("branch")
                         )
+                        # a resume continues an install whose plan was judged when it began
+                        judged: tuple[str, ...] | None = None
+                        if resumed is None:
+                            judged = self._refuse_stale_plan(container, recipe)
+                            step.add(stale_check="judged" if judged is not None else "no index")
                         try:
                             installed = container.run(argv)
                         except subprocess.CalledProcessError as err:
@@ -906,7 +946,9 @@ class Assembler:
                                 ) from err
                             raise
                         reused = earlier + parse_reused_atoms(installed.stdout + installed.stderr)
-                        if branched:
+                        if branched and judged is not None:
+                            plan = judged  # resolved once, before the install
+                        elif branched:
                             pretended = container.run([*iso_emerge_argv(recipe), "--pretend"])
                             plan = checkpoint.plan_tokens(pretended.stdout + pretended.stderr)
                         else:

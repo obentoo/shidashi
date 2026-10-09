@@ -255,7 +255,7 @@ def _seed_tarball(recipe: ResolvedRecipe) -> Path:
     return fetch_stage3(pointer, cache_dir=config.cache_dir(), download=False)
 
 
-def check_binpkgs(container: Container, recipe: ResolvedRecipe, stage: str) -> None:
+def check_binpkgs(container: Container, recipe: ResolvedRecipe, stage: str) -> dict[str, object]:
     """Fail when the image ending at ``stage`` cannot be installed from binpkgs.
 
     PRIVILEGED. Replays the assembler's plan with ``--pretend``: the install
@@ -268,6 +268,10 @@ def check_binpkgs(container: Container, recipe: ResolvedRecipe, stage: str) -> N
     runs the STAGE3's. Measured on 2026-09-29: portage-3.0.82.2 orders the
     ffmpeg -> libsdl2 -> pipewire cycle with no cut, 3.0.81.3 refuses it -- with
     and without --root. A cycle is caught when this resolver also refuses it.
+
+    Then the plan's binpkgs -- the install's and the settle's -- are judged by the
+    stale rules (story 019, :func:`judge_plan`). Returns the step data:
+    ``index: absent`` when there was no index to judge against.
     """
     root = container.rootfs / _CHECK_ROOT
     inside = "/" + _CHECK_ROOT.as_posix()
@@ -278,11 +282,13 @@ def check_binpkgs(container: Container, recipe: ResolvedRecipe, stage: str) -> N
         _extract_vdb(_seed_tarball(recipe), root)
         write_cuts(container.rootfs, cuts)
         try:
-            container.run(binpkg_check_argv(recipe, stage, root=inside), check=True)
+            planned = container.run(binpkg_check_argv(recipe, stage, root=inside), check=True)
             clear_use_break(container.rootfs)
             atoms = tuple(sorted({c.atom for c in cuts}))
+            settled = ""
             if atoms:
-                container.run(binpkg_settle_check_argv(atoms, root=inside), check=True)
+                done = container.run(binpkg_settle_check_argv(atoms, root=inside), check=True)
+                settled = done.stdout + done.stderr
         except subprocess.CalledProcessError as exc:
             output = (exc.output or "") + (exc.stderr or "")
             missing = re.findall(r'no binary packages to satisfy "([^"]+)"', output)
@@ -298,6 +304,28 @@ def check_binpkgs(container: Container, recipe: ResolvedRecipe, stage: str) -> N
                 phase=phase,
                 output=output,
             ) from exc
+        # binpkgs linked against a library the image no longer installs (R2.3)
+        instances = (
+            _read_index(pkgdir, phase=phase) if (pkgdir := _host_pkgdir(container)) else None
+        )
+        if instances is None:
+            return {"index": "absent"}  # nothing judged -- said, not implied
+        try:
+            # the install and the settle: the cut packages' final binpkgs too
+            plan_text = planned.stdout + planned.stderr + "\n" + settled
+            by_subslot, by_soname = judge_plan(container, instances, plan_text)
+        except binpkgs.BinpkgError as err:
+            raise FactoryError(str(err), phase=phase, output=err.output) from err
+        if by_subslot or by_soname:
+            detail = binpkgs.describe(
+                by_subslot, by_soname, arch=recipe.arch, image=stage, init=recipe.init
+            )
+            raise FactoryError(
+                f"the {stage} image would install binpkgs built against a library it "
+                f"no longer ships. The stage's fork point is saved.\n{detail}",
+                phase=phase,
+            )
+        return {"index": "judged"}
     finally:
         clear_use_break(container.rootfs)
         shutil.rmtree(root, ignore_errors=True)
@@ -1207,6 +1235,24 @@ def providers_first(
     return sorted(f"={cpv}" for cpv in ebuilds if binpkgs.package_of(cpv) in wanted)
 
 
+def judge_plan(
+    container: Container, instances: Sequence[binpkgs.Instance], plan_text: str
+) -> tuple[list[binpkgs.Stale], list[binpkgs.SonameStale]]:
+    """The planned binpkgs of an ``--emptytree`` plan that are stale, by both rules.
+    PRIVILEGED: one resolver run in ``container``.
+
+    Only the instances the plan picks are judged -- a stale binpkg of another image
+    is none of this plan's business. The soname pool is the plan's own ``PROVIDES``:
+    with ``--emptytree`` the plan is the whole root. Shared by the factory's
+    ``check-binpkgs`` and the assemble (D3), so the two cannot disagree. Raises
+    :class:`~shidashi.binpkgs.BinpkgError`; each caller wraps it.
+    """
+    planned = list(dict.fromkeys(planned_instances(checkpoint.plan_tokens(plan_text), instances)))
+    providers = binpkgs.resolve_providers(container, binpkgs.provider_queries(planned))
+    pool = {s for i in planned for s in i.provides}
+    return binpkgs.stale(planned, providers), binpkgs.soname_stale(planned, pool)
+
+
 def stale_binpkgs(
     container: Container, recipe: ResolvedRecipe, phase: Phase, *, emptytree: bool = False
 ) -> StaleOutcome:
@@ -1573,8 +1619,8 @@ def run_phases(
                         ),
                     )
                 elif kind == "check-binpkgs" and phase.ships:
-                    with audit.current().step("check-binpkgs"):
-                        check_binpkgs(container, recipe, phase.stage)
+                    with audit.current().step("check-binpkgs") as checked:
+                        checked.add(**check_binpkgs(container, recipe, phase.stage))
         if stop_after is not None and phase.stage == stop_after:
             break
     return tuple(results)
@@ -1780,8 +1826,8 @@ def run_phases_stepwise(
                     ),
                 )
             elif kind == "check-binpkgs" and phase.ships:
-                with audit.current().step("check-binpkgs"):
-                    check_binpkgs(container, recipe, phase.stage)
+                with audit.current().step("check-binpkgs") as checked:
+                    checked.add(**check_binpkgs(container, recipe, phase.stage))
         run.persist()
 
         if _checkpoint_decision(on_checkpoint, container, phase.name, diff) is (
