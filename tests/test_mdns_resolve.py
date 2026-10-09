@@ -82,6 +82,12 @@ class _Resolved:
     def bind(self, address: Any) -> None:
         self.binds.append(address)
 
+    def connect(self, _address: Any) -> None:
+        return None
+
+    def getsockname(self) -> tuple[str, int]:
+        return ("192.168.15.5", 40000)
+
     def settimeout(self, _value: Any) -> None:
         return None
 

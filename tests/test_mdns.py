@@ -310,6 +310,10 @@ def test_parse_answers_survives_every_truncation_and_every_corrupted_byte() -> N
 # --- browse with a fake socket and a fake clock ----------------------------------------------
 
 
+#: The address the fake host's multicast route leaves from.
+LAN_ADDRESS = "192.168.15.5"
+
+
 class _Clock:
     def __init__(self) -> None:
         self.now = 1000.0
@@ -335,6 +339,7 @@ class _Socket:
         self.sent_at: float | None = None
         self.closed = False
         self.reads = 0
+        self.connected: tuple[str, int] | None = None
 
     # -- socket API ------------------------------------------------------------------
     def setsockopt(self, level: int, option: int, value: Any, *_a: Any) -> None:
@@ -342,6 +347,15 @@ class _Socket:
 
     def bind(self, address: tuple[str, int]) -> None:
         self.binds.append(tuple(address))  # type: ignore[arg-type]
+
+    def connect(self, address: tuple[str, int]) -> None:
+        # a UDP connect only looks the route up; ``no_route`` plays an offline host
+        if self.fail.get("no_route"):
+            raise OSError(101, "Network is unreachable")
+        self.connected = (address[0], address[1])
+
+    def getsockname(self) -> tuple[str, int]:
+        return (LAN_ADDRESS, 40000)
 
     def sendto(self, data: bytes, *args: Any) -> int:
         address = args[-1]
@@ -437,8 +451,12 @@ def test_browse_sends_one_query_to_the_mdns_group_from_an_ephemeral_port(clock: 
     assert sock.sent == [(mdns.build_query(SERVICE), ("224.0.0.251", 5353))]
     # never UDP 5353 on the host: resolved or avahi may hold it, and it needs no root
     assert all(port == 0 for _addr, port in sock.binds), sock.binds
-    assert all(addr == "0.0.0.0" for addr, _port in sock.binds), sock.binds
+    # bound to the address the multicast route leaves from, not 0.0.0.0: answers
+    # arrive there, and the host's container and VM bridges cannot reach the port
+    assert sock.connected == ("224.0.0.251", 5353)
+    assert sock.binds == [(LAN_ADDRESS, 0)], sock.binds
     opts = {(level, option): value for level, option, value in sock.options}
+    assert opts.get((socket.IPPROTO_IP, socket.IP_MULTICAST_IF)) == socket.inet_aton(LAN_ADDRESS)
     ttl = opts.get((socket.IPPROTO_IP, socket.IP_MULTICAST_TTL))
     loop = opts.get((socket.IPPROTO_IP, socket.IP_MULTICAST_LOOP))
     assert ttl in (255, b"\xff", struct.pack("b", -1), struct.pack("B", 255)), ttl
@@ -536,6 +554,13 @@ def test_browse_ignores_another_services_instances(clock: _Clock) -> None:
     sock = _Socket(clock, [(0.1, printer), (0.2, _answer([_w("bentoo-lab", "192.168.15.6")]))])
     found, _factory = _browse(sock)
     assert [f.name for f in found] == ["bentoo-lab"]
+
+
+def test_browse_without_a_multicast_route_fails_and_closes_its_sockets(clock: _Clock) -> None:
+    sock = _Socket(clock, [], no_route=True)
+    with pytest.raises(OSError, match="unreachable"):
+        _browse(sock)
+    assert sock.closed and sock.sent == []
 
 
 def test_browse_closes_its_socket_when_sending_fails(clock: _Clock) -> None:

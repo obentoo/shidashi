@@ -113,12 +113,20 @@ def browse(
     *,
     sock_factory: Callable[..., Any] = socket.socket,
 ) -> list[Found]:
-    """Query once, collect answers for ``wait`` seconds; deduplicated, sorted by name."""
+    """Query once, collect answers for ``wait`` seconds; deduplicated, sorted by name.
+
+    The socket is bound to the address the multicast route leaves from, not to
+    0.0.0.0: the query goes out of that one interface and the unicast answers come
+    back to it, so nothing works less, and the port stays out of reach of the
+    host's container and VM bridges. ``OSError`` when the host has no route.
+    """
     sock = sock_factory(socket.AF_INET, socket.SOCK_DGRAM)
     try:
+        address = _route_source(sock_factory)
         sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 255)
         sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_LOOP, 0)
-        sock.bind(("0.0.0.0", 0))
+        sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_IF, socket.inet_aton(address))
+        sock.bind((address, 0))
         sock.sendto(build_query(service), MDNS_GROUP)
         deadline = time.monotonic() + wait
         seen: dict[tuple[str, str, int], Found] = {}
@@ -142,6 +150,20 @@ def browse(
     finally:
         sock.close()
     return sorted(seen.values(), key=lambda f: (f.name, f.address, f.port))
+
+
+def _route_source(sock_factory: Callable[..., Any]) -> str:
+    """The local address the kernel sends to the mDNS group from. I/O, no packet sent.
+
+    A UDP ``connect`` only looks the route up. It is done on a socket of its own:
+    connected, the browse socket would drop the unicast answers from the peers.
+    """
+    probe = sock_factory(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        probe.connect(MDNS_GROUP)
+        return str(probe.getsockname()[0])
+    finally:
+        probe.close()
 
 
 def _full(name: str, service: str) -> str:
