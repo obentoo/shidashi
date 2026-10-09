@@ -15,7 +15,7 @@ from typer.testing import CliRunner
 
 from shidashi import config, ownership
 from shidashi.cli import app
-from tests._fake_worker import FakeWorker, seed_host_cache
+from tests._fake_worker import FakeWorker, fork_point_names, seed_host_cache
 
 #: A host factory, as a separate process: the host check passes (as the test suite
 #: arranges), and the Factory must never be reached while the arch is owned.
@@ -35,6 +35,7 @@ def fw(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[FakeWorker]:
     monkeypatch.chdir(tmp_path)
     w = FakeWorker.install(tmp_path / "fw", monkeypatch)
     w.register()
+    w.commit_recipes()  # the job's commit: the sync resolves its fork-point keys there
     seed_host_cache(w)
     yield w
     w.close()
@@ -108,7 +109,9 @@ def test_a_factory_job_runs_end_to_end_and_owns_the_arch_meanwhile(
     assert (pkgdir / "Packages").read_text() == (
         fw.work / "cache/binpkgs/v3" / gen / "Packages"
     ).read_text()
-    assert (fw.host_cache / "fork-points" / f"v3-minimal-systemd-{gen}.tar").is_file()
+    # the job's fork point, named under its commit's keys (story 019, R3.1)
+    fork_point = fork_point_names(gen, flavor="minimal", stage="minimal")["stage"]
+    assert (fw.host_cache / "fork-points" / fork_point).is_file()
     assert (config.runs_dir() / "20261005T120000Z-f00d01" / "events.jsonl").is_file()
     assert ownership.current("v3") is None
     fw.assert_pinned()

@@ -9,23 +9,28 @@ ISOs and the shared caches always, and the arch's binpkgs, fork points and index
 for the holder of the arch's owner lock; it never deletes on the host either.
 """
 
+import contextlib
 import datetime
 import grp
 import os
 import pwd
 import re
 import shlex
+import shutil
 import stat
 import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Collection, Generator, Sequence
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+
+import yaml
 
 import shidashi
-from shidashi import audit, config, isaguard, ownership, workers
+from shidashi import audit, config, isaguard, ownership, phases, workers
+from shidashi.recipe import RecipeChainError, RecipeSourceError
 from shidashi.remote import (
     Remote,
     RemoteUnreachable,
@@ -35,7 +40,7 @@ from shidashi.remote import (
     run,
     stream,
 )
-from shidashi.seed import load_pointer
+from shidashi.seed import SeedError, load_pointer
 from shidashi.workers import WorkerEntry
 
 #: The worker's work disk; everything a push writes lives under it (never the RAM root).
@@ -47,6 +52,9 @@ WORKER_VENV = f"{WORK}/runtime/venv"
 
 _SENT_RE = re.compile(r"^sent ([\d.,]+) bytes", re.M)
 _RECEIVED_RE = re.compile(r"^sent [\d.,]+ bytes\s+received ([\d.,]+) bytes", re.M)
+#: A dry run's ``--stats``: the bytes the real run would copy. The separators follow
+#: the locale (``,``, ``.``, a narrow space): everything up to `` bytes`` is kept.
+_TRANSFERRED_RE = re.compile(r"^Total transferred file size: (\d[^\n]*?) bytes", re.M)
 _GLOB_CHARS = frozenset("*?[")
 #: Commands that write ISOs: a job forces their ``--output-dir`` under the work disk.
 _ISO_COMMANDS = frozenset({"assemble", "build"})
@@ -59,6 +67,11 @@ _PROBE_TIMEOUT = 60.0
 _JOB_PROBE_TIMEOUT = 10.0
 #: ``systemd-run`` returns once the unit has started.
 _START_TIMEOUT = 60.0
+_GIB = 1024**3
+#: What a sync leaves free on each destination filesystem (R3.3, R3.6).
+RESERVE = 10 * _GIB
+#: Where a pull stages the arch's index before ``os.replace`` puts it in place.
+_STAGED_INDEX = "Packages.tmp"
 
 
 @dataclass(frozen=True)
@@ -361,6 +374,119 @@ def generation_at(repo: Path, commit: str, init: str) -> str:
         return load_pointer(init, seeds_dir=Path(tmp)).snapshot
 
 
+#: What a recipe, axis or pin file at a commit can raise while its keys resolve:
+#: the commit's tree is broken, not the host -- the caller warns and moves on.
+_KEYS_ERRORS: tuple[type[Exception], ...] = (
+    config.UnknownAxisError,
+    RecipeSourceError,
+    RecipeChainError,
+    SeedError,
+    yaml.YAMLError,
+    ValueError,
+    TypeError,
+    OSError,
+)
+
+
+def keys_at(repo: Path, commit: str, arch: str) -> frozenset[str]:
+    """The restorable keys of ``arch`` as commit ``commit`` resolves them. I/O (git, tar).
+
+    A job builds with ITS commit's flags and pins, whatever the host checkout says
+    by the time the results come back (R3.1, R3.5). ``variants/`` and ``seeds/`` of
+    ``commit`` are exported with ``git archive`` into a temporary directory and
+    :func:`shidashi.phases.restorable_keys` runs with BOTH ``SHIDASHI_VARIANTS_DIR``
+    and ``SHIDASHI_SEEDS_DIR`` pointing there (the pins live in ``seeds/``); both
+    are restored afterwards, set or unset. An unknown commit, a failed export or a
+    broken tree at that commit raises :class:`SyncError` (``step="keys"``) naming
+    the commit and the cause.
+    """
+    git = ["git", "-C", str(repo)]
+    rev = [*git, "rev-parse", "--verify", "--end-of-options", f"{commit}^{{commit}}"]
+    sha = _keys_run(commit, "git rev-parse", rev).decode("ascii").strip()
+    tree = _keys_run(
+        commit, "git archive", [*git, "archive", "--format=tar", sha, "variants", "seeds"]
+    )
+    with tempfile.TemporaryDirectory(prefix="shidashi-keys-") as tmp:
+        _keys_run(commit, "tar -x", ["tar", "-x", "-C", tmp], stdin=tree)
+        root = Path(tmp)
+        try:
+            with _data_dirs(root / "variants", root / "seeds"):
+                return phases.restorable_keys(arch)
+        except _KEYS_ERRORS as err:
+            raise SyncError(
+                "keys", None, f"commit {commit}: its {arch} keys do not resolve: {err}"
+            ) from err
+
+
+def _keys_run(commit: str, what: str, argv: list[str], *, stdin: bytes | None = None) -> bytes:
+    """``argv``'s stdout; a failure is the ``keys`` step's :class:`SyncError` naming ``commit``."""
+    done = subprocess.run(argv, input=stdin, capture_output=True, check=False)
+    if done.returncode != 0:
+        tail = _tail(done.stderr.decode("utf-8", errors="replace"))
+        raise SyncError("keys", done.returncode, f"commit {commit}: {what} failed: {tail}")
+    return done.stdout
+
+
+@contextlib.contextmanager
+def _data_dirs(variants: Path, seeds: Path) -> Generator[None]:
+    """Point ``config`` at ``variants``/``seeds`` for the block; restore both after."""
+    saved = {var: os.environ.get(var) for var in ("SHIDASHI_VARIANTS_DIR", "SHIDASHI_SEEDS_DIR")}
+    os.environ["SHIDASHI_VARIANTS_DIR"] = str(variants)
+    os.environ["SHIDASHI_SEEDS_DIR"] = str(seeds)
+    try:
+        yield
+    finally:
+        for var, value in saved.items():
+            if value is None:
+                os.environ.pop(var, None)
+            else:
+                os.environ[var] = value
+
+
+def select_fork_points(names: Sequence[str], keys: Collection[str]) -> tuple[list[str], int]:
+    """``(kept, skipped)``: the ``names`` whose file name carries ``-<key>-`` for a key
+    of ``keys``, in their order, and how many did not. Pure.
+
+    ``names`` may be paths (host or worker): only the last component is matched, so
+    a directory never makes a fork point look restorable (R3.1, R3.5).
+    """
+    markers = tuple(f"-{key}-" for key in keys)
+    kept = [name for name in names if any(m in PurePosixPath(name).name for m in markers)]
+    return kept, len(names) - len(kept)
+
+
+def _restorable_fork_points(names: Sequence[str], *, commit: str, arch: str) -> list[str]:
+    """The fork points of ``names`` a sync copies: those of ``commit``'s keys. I/O (git).
+
+    Says on stderr how many it leaves behind (R3.2). When ``commit``'s keys cannot be
+    computed (:func:`keys_at`'s ``keys`` step), none is copied and ONE warning names
+    the commit and the cause: the rest of the sync goes on (R3.7). No candidate, no
+    keys computed: there is nothing to select.
+    """
+    if not names:
+        return []
+    rec = audit.current()
+    try:
+        keys = keys_at(_host_repo(), commit, arch)
+    except SyncError as err:
+        if err.step != "keys":
+            raise
+        # one line, whatever the cause's own line breaks (git's stderr tail)
+        cause = " ".join(err.stderr_tail.removeprefix(f"commit {commit}: ").split())
+        print(
+            f"warning: no {arch} fork point copied: the build keys of commit {commit} "
+            f"cannot be computed: {cause}",
+            file=sys.stderr,
+        )
+        rec.event("worker.fork_points", arch=arch, commit=commit, copied=0, error=cause)
+        return []
+    kept, skipped = select_fork_points(names, keys)
+    if skipped:
+        print(f"skipped {skipped} fork points of other pins or build keys", file=sys.stderr)
+    rec.event("worker.fork_points", arch=arch, commit=commit, copied=len(kept), skipped=skipped)
+    return kept
+
+
 def validate_job_name(job: str) -> None:
     """Raise :class:`ValueError` unless ``job`` is ``[a-z0-9-]+``.
 
@@ -451,6 +577,23 @@ def _has_output_dir(options: Sequence[str]) -> bool:
     return False
 
 
+def space_shortfall(needed: int, free: int, reserve: int = RESERVE) -> int:
+    """The bytes ``needed`` lacks to fit in ``free`` with ``reserve`` left; 0 when it
+    fits (exactly ``reserve`` left fits). Pure."""
+    return max(0, needed - (free - reserve))
+
+
+@dataclass(frozen=True)
+class _Transfer:
+    """One rsync of a sync: ``sources`` into ``dest`` -- host to worker on a push,
+    worker to host on a pull -- reported as ``step``."""
+
+    sources: tuple[str, ...]
+    dest: str
+    step: str
+    excludes: tuple[str, ...] = ()
+
+
 def push_plan(arch: str, generation: str) -> list[tuple[str, str]]:
     """``(host path, worker path)`` pairs a push of ``arch`` sends, in order. Pure.
 
@@ -489,45 +632,160 @@ def push(
     init: str = "systemd",
     bwlimit: int | None,
     gen: str | None = None,
+    commit: str | None = None,
 ) -> int:
     """Send ``arch``'s cache subset and the runtime venv to the worker; return bytes sent.
 
     Refuses (:class:`SyncError`, before any transfer) a worker without its work disk
-    mounted at ``/mnt/work`` and a worker lacking the interpreter the venv's
-    ``pyvenv.cfg`` names. The venv goes first (small), the plan after it, fork points
-    last. Every rsync is capped by ``bwlimit`` (KiB/s) when given; a non-zero exit
-    raises :class:`SyncError` naming the step. ``gen`` is the generation to send (a
-    job's, from its commit); without it, the host checkout's.
+    mounted at ``/mnt/work``, a worker lacking the interpreter the venv's
+    ``pyvenv.cfg`` names, and a push that would leave the work disk with less than
+    :data:`RESERVE` free (:func:`_send`, R3.6). The venv goes first (small), the plan
+    after it, fork points last -- only those of ``commit``'s keys
+    (:func:`_push_sources`). Every rsync is capped by ``bwlimit`` (KiB/s) when given;
+    a non-zero exit raises :class:`SyncError` naming the step. ``gen`` is the
+    generation to send (a job's, from its commit); without it, the host checkout's.
+    ``commit`` is the commit the push ships (a job's); without it, the host
+    checkout's HEAD.
     """
     _require_arch(arch)
-    sent = _push_runtime(remote, bwlimit=bwlimit)
-    for host_path, worker_path in push_plan(arch, gen or generation(init)):
-        sources = _expand(host_path)
-        if not sources:
-            continue  # nothing of that kind on the host yet (no sccache, no fork point)
-        step = "push " + worker_path.removeprefix(f"{WORK}/").rstrip("/")
-        sent += _rsync(remote, sources, worker_path, step=step, bwlimit=bwlimit)
-    return sent
+    sources = _push_sources(arch, gen or generation(init), commit or "HEAD")
+    plan = [
+        _Transfer(
+            tuple(host_sources),
+            worker_path,
+            "push " + worker_path.removeprefix(f"{WORK}/").rstrip("/"),
+        )
+        for host_sources, worker_path in sources
+    ]
+    return _send(remote, [_runtime_transfer(remote), *plan], bwlimit=bwlimit)
+
+
+def _push_sources(arch: str, generation: str, commit: str) -> list[tuple[list[str], str]]:
+    """``(host sources, worker path)`` of each :func:`push_plan` entry with something
+    to send, in order. I/O (filesystem, git).
+
+    A glob expands to what exists; an entry with nothing of its kind on the host yet
+    (no sccache, no fork point) drops. The fork points are only those of
+    ``commit``'s keys (:func:`_restorable_fork_points`, R3.5).
+    """
+    fork_points = f"{config.fork_points_dir()}/"
+    planned: list[tuple[list[str], str]] = []
+    for host_path, worker_path in push_plan(arch, generation):
+        found = _expand(host_path)
+        if found and host_path.startswith(fork_points):
+            found = _restorable_fork_points(found, commit=commit, arch=arch)
+        if found:
+            planned.append((found, worker_path))
+    return planned
 
 
 def _push_runtime(remote: Remote, *, bwlimit: int | None) -> int:
     """Send the host's venv (without its host-bound ``.pth``) to the worker; bytes sent.
 
-    Refuses, before the transfer, a worker without its work disk and one lacking the
-    interpreter ``pyvenv.cfg`` names. All an archless job needs besides its commit.
+    Refuses, before the transfer, a worker without its work disk, one lacking the
+    interpreter ``pyvenv.cfg`` names and one whose work disk it would leave with less
+    than :data:`RESERVE` free. All an archless job needs besides its commit.
     """
+    return _send(remote, [_runtime_transfer(remote)], bwlimit=bwlimit)
+
+
+def _runtime_transfer(remote: Remote) -> _Transfer:
+    """The venv's push, once the worker has its work disk and the venv's interpreter
+    (:class:`SyncError` otherwise, before any transfer)."""
     venv = Path(sys.prefix)
     home = _venv_home(venv)
     _require_work_disk(remote)
     _require_interpreter(remote, home)
-    return _rsync(
-        remote,
-        [f"{venv}/"],
-        f"{WORKER_VENV}/",
-        step="push runtime/venv",
-        bwlimit=bwlimit,
-        excludes=_host_bound_pths(venv),
+    return _Transfer(
+        (f"{venv}/",), f"{WORKER_VENV}/", "push runtime/venv", tuple(_host_bound_pths(venv))
     )
+
+
+def _send(remote: Remote, transfers: Sequence[_Transfer], *, bwlimit: int | None) -> int:
+    """Push ``transfers`` in order once they all fit on the work disk; bytes sent.
+
+    Every transfer is measured first (:func:`_measure`) and their sum compared, with
+    :data:`RESERVE` kept, to the work disk's free space read by ONE
+    ``df -B1 --output=avail /mnt/work`` (R3.6): short, :class:`SyncError` (``space``)
+    naming the worker, the bytes needed and the bytes free, and nothing is sent.
+    """
+    needed = sum(_measure(remote, tr, bwlimit=bwlimit, push=True) for tr in transfers)
+    if needed:
+        _check_space(f"{remote.name}:{WORK}", needed, _worker_free(remote))
+    sent = 0
+    for transfer in transfers:
+        sent += _rsync(remote, transfer, bwlimit=bwlimit, push=True)
+    return sent
+
+
+def _worker_free(remote: Remote) -> int:
+    """The work disk's free bytes: ``df -B1 --output=avail /mnt/work`` on the worker.
+
+    A failed call, or output that is not one integer under its header, raises
+    :class:`SyncError` (``space``) carrying the output.
+    """
+    command = f"df -B1 --output=avail {WORK}"
+    result = run(remote, command, timeout=_PROBE_TIMEOUT)
+    output = _tail("\n".join(p for p in (result.stdout, result.stderr) if p.strip()))
+    if result.exit_code != 0:
+        raise SyncError("space", result.exit_code, f"{command} on {remote.name}: {output}")
+    lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    values = lines[1:] if lines and not lines[0].isdigit() else lines  # the header
+    if len(values) != 1 or not values[0].isdigit():
+        raise SyncError(
+            "space", None, f"{command} on {remote.name} printed no single byte count: {output}"
+        )
+    return int(values[0])
+
+
+def _measure(remote: Remote, transfer: _Transfer, *, bwlimit: int | None, push: bool) -> int:
+    """The bytes ``transfer`` would copy -- what its destination does not already hold
+    -- read from a ``--dry-run --stats`` of the same rsync (same sources, destination
+    and options). A failed dry run, or one without the stats, raises
+    :class:`SyncError` with its output.
+    """
+    argv = rsync_argv(
+        remote,
+        transfer.sources,
+        transfer.dest,
+        push=push,
+        bwlimit=bwlimit,
+        excludes=transfer.excludes,
+        dry_run=True,
+    )
+    done = subprocess.run(
+        argv, capture_output=True, encoding="utf-8", errors="replace", check=False
+    )
+    match = _TRANSFERRED_RE.search(done.stdout)
+    if done.returncode != 0 or match is None:
+        output = _tail("\n".join(p for p in (done.stdout, done.stderr) if p.strip()))
+        # the step stays the transfer's own: callers name a failed push or pull by it
+        raise SyncError(transfer.step, done.returncode, f"dry run: {output}")
+    return int(re.sub(r"\D", "", match.group(1)))
+
+
+def _amount(nbytes: int) -> str:
+    """``6.0 GiB``, ``412.5 MiB``, ``4.0 KiB``: never ``0.0 GiB`` for a small transfer."""
+    for unit, size in (("GiB", _GIB), ("MiB", 1024**2), ("KiB", 1024)):
+        if nbytes >= size:
+            return f"{nbytes / size:.1f} {unit}"
+    return f"{nbytes} B"
+
+
+def _check_space(dest: str, needed: int, free: int) -> None:
+    """Record the comparison; refuse (:class:`SyncError`, ``space``, exit 1) when
+    ``needed`` bytes do not fit in ``free`` with :data:`RESERVE` kept."""
+    short = space_shortfall(needed, free)
+    audit.current().event(
+        "worker.space", dest=dest, needed=needed, free=free, reserve=RESERVE, short=short
+    )
+    if short:
+        raise SyncError(
+            "space",
+            1,
+            f"{dest}: needs {_amount(needed)}, {_amount(free)} free "
+            f"({RESERVE // _GIB} GiB kept free)",
+        )
 
 
 def pull_destinations(
@@ -573,13 +831,80 @@ def _writability_problem(paths: Sequence[Path]) -> tuple[str, str] | None:
         if path.exists():
             blocked = _first_unwritable_dir(path)
         else:
-            parent = path
-            while not parent.exists() and parent != parent.parent:
-                parent = parent.parent
+            parent = _nearest_existing(path)
             blocked = None if _writable_dir(parent) else parent
         if blocked is not None:
             return _unwritable(path, blocked)
     return None
+
+
+def _nearest_existing(path: Path) -> Path:
+    """``path`` or its nearest existing parent (rsync creates the missing rest)."""
+    while not path.exists() and path != path.parent:
+        path = path.parent
+    return path
+
+
+def _pool_of(path: Path) -> str:
+    """The free-space pool ``path`` lives on: its mount's device (``MAJ:MIN``). I/O.
+
+    Not ``st_dev``: every btrfs subvolume reports its own, while subvolumes of one
+    filesystem share its free space (``@var_cache`` and ``@var_log`` on this host).
+    The kernel names the filesystem in ``/proc/self/mountinfo`` (field 3) for every
+    mount of it; the mount is the one whose mount point is the longest prefix of
+    ``path``. Without mountinfo, ``st_dev`` is the best left.
+    """
+    resolved = path.resolve()
+    best, device = -1, ""
+    try:
+        lines = Path("/proc/self/mountinfo").read_text(encoding="utf-8").splitlines()
+    except OSError:
+        lines = []
+    for line in lines:
+        fields = line.split()
+        if len(fields) < 5:
+            continue
+        # mount points escape space, tab, newline and backslash as octal (\040)
+        point = Path(re.sub(r"\\([0-7]{3})", lambda m: chr(int(m[1], 8)), fields[4]))
+        if (resolved == point or point in resolved.parents) and len(point.parts) > best:
+            best, device = len(point.parts), fields[2]
+    return device or f"st_dev:{path.stat().st_dev}"
+
+
+def _require_host_space(
+    remote: Remote, fetches: Sequence[_Transfer], *, bwlimit: int | None
+) -> None:
+    """Refuse a pull whose ``fetches`` do not fit on the host, before any runs (R3.3, R3.4).
+
+    Each fetch is measured (:func:`_measure`); the bytes are summed per host
+    FILESYSTEM (:func:`_pool_of`, btrfs subvolumes included) -- several destinations
+    may share one, and files that fit one by one may not fit together -- and
+    compared, with :data:`RESERVE` kept, to that filesystem's free space, read by
+    ``shutil.disk_usage`` at the nearest existing parent of a destination (a
+    missing one has no usage: it raises). Short,
+    :class:`SyncError` (``space``) naming the destinations, the bytes needed and free.
+    """
+    groups: dict[str, tuple[Path, dict[Path, int]]] = {}
+    for fetch in fetches:
+        nbytes = _measure(remote, fetch, bwlimit=bwlimit, push=False)
+        # a directory destination ends with "/"; the staged index is a file
+        target = Path(fetch.dest) if fetch.dest.endswith("/") else Path(fetch.dest).parent
+        existing = _nearest_existing(target)
+        try:
+            device = _pool_of(existing)
+        except OSError as err:
+            raise SyncError("space", None, f"cannot inspect {existing}: {err}") from err
+        _probe, by_dest = groups.setdefault(device, (existing, {}))
+        by_dest[target] = by_dest.get(target, 0) + nbytes
+    for probe, by_dest in groups.values():
+        needed = sum(by_dest.values())
+        if not needed:
+            continue  # nothing to write there: its free space does not matter
+        try:
+            free = shutil.disk_usage(probe).free
+        except OSError as err:
+            raise SyncError("space", None, f"cannot read the free space of {probe}: {err}") from err
+        _check_space(", ".join(str(d) for d, n in by_dest.items() if n), needed, free)
 
 
 def pull(
@@ -627,14 +952,18 @@ def _pull_unmarked(
     archless pull takes only the log, rc and runs; a pull without a ``job`` takes only
     the arch's distfiles, ccache and sccache). Only with ``owner`` -- and
     :func:`ownership.require_free` raises :class:`ownership.OwnedElsewhere` when someone
-    else holds the arch -- the arch's fork points come, and, when the worker has the
+    else holds the arch -- the arch's fork points of ``owner.commit``'s keys come
+    (:func:`_restorable_fork_points`: none, with one warning, when those keys cannot
+    be computed), and, when the worker has the
     arch's PKGDIR, its index is regenerated ON THE WORKER, its binpkgs (without the
     index) come, then the index into a temp sibling that ``os.replace`` puts in
     place: never merged, never replaced without the lock. A worker without that
     PKGDIR (a factory that built nothing) is not an error: the pull succeeds with
     ``binhost=False`` and the reason. Every host destination is checked writable
-    before any transfer (:class:`SyncError` naming the directory and the fix). Every
-    rsync is capped by ``bwlimit`` (KiB/s) when given.
+    before any transfer (:class:`SyncError` naming the directory and the fix), and
+    what comes must fit on each host filesystem with :data:`RESERVE` left
+    (:func:`_require_host_space`): short, nothing is copied and the lock stays. Every
+    rsync -- the measuring dry runs too -- is capped by ``bwlimit`` (KiB/s) when given.
     """
     if job is not None:
         validate_job_name(job)
@@ -669,6 +998,11 @@ def _pull_unmarked(
         worker_pkgdir = f"{WORKER_CACHE}/binpkgs/{arch}/{gen}"
         patterns += [worker_pkgdir, f"{fork_dir}/{arch}-*{gen}*"]
     present = _present(remote, patterns)
+    fork_points: list[str] = []
+    if arch is not None and owner is not None and worker_pkgdir is not None:
+        # only those the owner's commit can restore (R3.1, R3.2, R3.7)
+        candidates = sorted(p for p in present if p.startswith(f"{fork_dir}/"))
+        fork_points = _restorable_fork_points(candidates, commit=owner.commit, arch=arch)
 
     index_ready = False
     if arch is None:
@@ -687,34 +1021,43 @@ def _pull_unmarked(
         _regenerate_index(remote, worker_pkgdir)
         index_ready, reason = True, None
 
-    received = 0
+    # what comes, in order; measured and checked against the host's space before any
+    # of it is copied (R3.3, R3.4)
+    fetches: list[_Transfer] = []
     pulled_files = [f for f in job_files if f in present]
     if pulled_files:
-        received += _fetch(remote, pulled_files, f"{results}/", bwlimit=bwlimit)
-    run_ids = _run_ids(results / f"{job}.runs") if job_files and job_files[2] in present else ()
+        fetches.append(_fetch(pulled_files, f"{results}/"))
+    run_ids = _remote_run_ids(remote, job_files[2]) if job_files and job_files[2] in present else ()
     if run_ids:
         runs = [f"{WORK}/out/runs/{run_id}" for run_id in run_ids]
-        received += _fetch(
-            remote, runs, f"{config.runs_dir()}/", step="pull out/runs", bwlimit=bwlimit
-        )
+        fetches.append(_fetch(runs, f"{config.runs_dir()}/", step="pull out/runs"))
+    # the job's own record -- log, rc, runs: KiB -- always comes, so a job can be
+    # read on a host already short of space; the reserve guards everything else
+    record = len(fetches)
     isos: tuple[Path, ...] = ()
     if arch is not None:
         if iso_dir is not None and iso_dir in present:
-            received += _fetch(remote, [f"{iso_dir}/"], f"{results}/iso/", bwlimit=bwlimit)
+            fetches.append(_fetch([f"{iso_dir}/"], f"{results}/iso/"))
             listed = sorted(p for p in present if p.startswith(f"{iso_dir}/"))
             isos = tuple(results / "iso" / Path(p).name for p in listed)
         for worker_dir, host_dir in caches:
             if worker_dir in present:
-                received += _fetch(remote, [f"{worker_dir}/"], f"{host_dir}/", bwlimit=bwlimit)
+                fetches.append(_fetch([f"{worker_dir}/"], f"{host_dir}/"))
+    staged_index: Path | None = None
     if arch is not None and gen is not None and worker_pkgdir is not None:
-        fork_points = sorted(p for p in present if p.startswith(f"{fork_dir}/"))
-        received += _pull_binhost(
-            remote,
-            worker_pkgdir if index_ready else None,
-            config.pkgdir(arch, gen),
-            fork_points,
-            bwlimit=bwlimit,
+        host_pkgdir = config.pkgdir(arch, gen)
+        fetches += _binhost_fetches(
+            worker_pkgdir if index_ready else None, host_pkgdir, fork_points
         )
+        staged_index = host_pkgdir / _STAGED_INDEX if index_ready else None
+    _require_host_space(remote, fetches[record:], bwlimit=bwlimit)
+
+    received = 0
+    for fetch in fetches:
+        received += _rsync(remote, fetch, bwlimit=bwlimit, push=False)
+    if staged_index is not None:
+        # the index last, atomically: it never names a binpkg not yet on the host
+        os.replace(staged_index, staged_index.with_name("Packages"))
 
     log = results / f"{job}.log" if job_files and job_files[0] in present else None
     return PullResult(received, isos, run_ids, log, binhost=index_ready, binhost_reason=reason)
@@ -817,7 +1160,7 @@ def job(
             _clear_stale_job_files(remote, job)
         with rec.step("worker.push", worker=name, arch=arch) as step:
             if arch is not None:
-                sent = push(remote, arch, init=init, bwlimit=bwlimit, gen=job_gen)
+                sent = push(remote, arch, init=init, bwlimit=bwlimit, gen=job_gen, commit=commit)
             else:
                 sent = _push_runtime(remote, bwlimit=bwlimit)
             step.add(bytes_sent=sent)
@@ -1398,9 +1741,18 @@ def _present(remote: Remote, patterns: Sequence[str]) -> list[str]:
     return [line for line in result.stdout.splitlines() if line]
 
 
-def _run_ids(runs_file: Path) -> tuple[str, ...]:
-    """The run ids a job listed in its ``<job>.runs`` (one per line)."""
-    ids = tuple(line.strip() for line in runs_file.read_text(encoding="utf-8").splitlines())
+def _remote_run_ids(remote: Remote, runs_file: str) -> tuple[str, ...]:
+    """The run ids the worker's ``<job>.runs`` lists, read over ssh before any copy:
+    the runs a pull brings back are part of what it measures (R3.3)."""
+    result = run(remote, f"cat {shlex.quote(runs_file)}", timeout=_PROBE_TIMEOUT)
+    if result.exit_code != 0:
+        raise SyncError("pull out/runs", result.exit_code, _tail(result.stderr))
+    return _run_ids(result.stdout, runs_file)
+
+
+def _run_ids(text: str, runs_file: str) -> tuple[str, ...]:
+    """The run ids of a job's ``<job>.runs`` content ``text`` (one per line). Pure."""
+    ids = tuple(line.strip() for line in text.splitlines())
     ids = tuple(i for i in ids if i)
     for run_id in ids:
         if not _RUN_ID_RE.fullmatch(run_id):
@@ -1410,55 +1762,36 @@ def _run_ids(runs_file: Path) -> tuple[str, ...]:
     return ids
 
 
-def _pull_binhost(
-    remote: Remote,
-    worker_pkgdir: str | None,
-    host_pkgdir: Path,
-    fork_points: Sequence[str],
-    *,
-    bwlimit: int | None = None,
-) -> int:
-    """The arch's binpkgs, then its fork points, then its index -- replaced atomically.
+def _binhost_fetches(
+    worker_pkgdir: str | None, host_pkgdir: Path, fork_points: Sequence[str]
+) -> list[_Transfer]:
+    """The arch's binpkgs, then its fork points, then its index into
+    ``<host_pkgdir>/Packages.tmp`` -- which the caller ``os.replace``\\ s. Pure.
 
     ``worker_pkgdir`` is None when the worker has no PKGDIR (nothing was built): only
     the fork points come, and the host's binpkgs and index are left as they are.
     """
-    received = 0
+    fetches: list[_Transfer] = []
     if worker_pkgdir is not None:
-        received += _fetch(
-            remote,
-            [f"{worker_pkgdir}/"],
-            f"{host_pkgdir}/",
-            excludes=["/Packages"],
-            bwlimit=bwlimit,
-        )
+        fetches.append(_fetch([f"{worker_pkgdir}/"], f"{host_pkgdir}/", excludes=["/Packages"]))
     if fork_points:
         fork_dest = f"{config.fork_points_dir()}/"
-        received += _fetch(
-            remote, list(fork_points), fork_dest, step="pull cache/fork-points", bwlimit=bwlimit
-        )
+        fetches.append(_fetch(fork_points, fork_dest, step="pull cache/fork-points"))
     if worker_pkgdir is not None:
-        staged = host_pkgdir / "Packages.tmp"
-        received += _fetch(remote, [f"{worker_pkgdir}/Packages"], str(staged), bwlimit=bwlimit)
-        os.replace(staged, host_pkgdir / "Packages")
-    return received
+        staged = host_pkgdir / _STAGED_INDEX
+        fetches.append(_fetch([f"{worker_pkgdir}/Packages"], str(staged)))
+    return fetches
 
 
 def _fetch(
-    remote: Remote,
-    sources: list[str],
-    dest: str,
-    *,
-    step: str | None = None,
-    excludes: Sequence[str] = (),
-    bwlimit: int | None = None,
-) -> int:
-    """One pull rsync (worker ``sources`` into host ``dest``); bytes received.
+    sources: Sequence[str], dest: str, *, step: str | None = None, excludes: Sequence[str] = ()
+) -> _Transfer:
+    """One pull rsync: worker ``sources`` into host ``dest``. Pure.
 
     The step defaults to the first source under ``/mnt/work`` (``pull cache/ccache``).
     """
     step = step or "pull " + sources[0].removeprefix(f"{WORK}/").rstrip("/")
-    return _rsync(remote, sources, dest, step=step, bwlimit=bwlimit, excludes=excludes, push=False)
+    return _Transfer(tuple(sources), dest, step, tuple(excludes))
 
 
 def _venv_home(venv: Path) -> str:
@@ -1531,23 +1864,21 @@ def _expand(host_path: str) -> list[str]:
     return [host_path] if path.exists() else []
 
 
-def _rsync(
-    remote: Remote,
-    sources: list[str],
-    dest: str,
-    *,
-    step: str,
-    bwlimit: int | None,
-    excludes: Sequence[str] = (),
-    push: bool = True,
-) -> int:
+def _rsync(remote: Remote, transfer: _Transfer, *, bwlimit: int | None, push: bool) -> int:
     """One rsync; returns the bytes that crossed (sent on a push, received on a pull)."""
-    argv = rsync_argv(remote, sources, dest, push=push, bwlimit=bwlimit, excludes=excludes)
+    argv = rsync_argv(
+        remote,
+        transfer.sources,
+        transfer.dest,
+        push=push,
+        bwlimit=bwlimit,
+        excludes=transfer.excludes,
+    )
     done = subprocess.run(
         argv, capture_output=True, encoding="utf-8", errors="replace", check=False
     )
     if done.returncode != 0:
-        raise SyncError(step, done.returncode, _tail(done.stderr))
+        raise SyncError(transfer.step, done.returncode, _tail(done.stderr))
     return _stat_bytes(done.stdout, _SENT_RE if push else _RECEIVED_RE)
 
 

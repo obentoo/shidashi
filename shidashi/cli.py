@@ -2634,7 +2634,7 @@ def worker_sync_pull(
     typer.echo(f"pulled from {worker}: {_size(pulled.bytes)} received")
     _print_results(pulled.log, pulled.isos, pulled.run_ids)
     if arch is not None and pulled.binhost:
-        typer.echo(f"  binhost: {arch}'s binpkgs, fork points and index updated")
+        typer.echo(f"  binhost: {arch}'s binpkgs and index updated")
     elif arch is not None:
         typer.echo(f"binhost not pulled: {kept or pulled.binhost_reason}", err=True)
     if owner is not None:

@@ -156,6 +156,7 @@ def rsync_argv(
     bwlimit: int | None = None,
     excludes: Sequence[str] = (),
     mkpath: bool = True,
+    dry_run: bool = False,
 ) -> list[str]:
     """``rsync`` between the host and the worker over the pinned ssh. Pure; never deletes.
 
@@ -163,7 +164,9 @@ def rsync_argv(
     reverse. A push keeps an interrupted file (``--partial``) to resume it. A pull
     writes into a host cache shared with root's builds: it keeps an interrupted file in
     ``.rsync-partial/`` (never a truncated file under its final name) and sets no
-    times, permissions or group on host directories it does not own.
+    times, permissions or group on host directories it does not own. ``dry_run``:
+    the same transfer with ``--dry-run --stats`` -- nothing is written, and the stats
+    report its ``Total transferred file size``.
     """
     argv = ["rsync", "-aH", "--numeric-ids"]
     if push:
@@ -177,7 +180,11 @@ def rsync_argv(
         ]
     if mkpath:
         argv.append("--mkpath")
-    argv.append("--info=stats1,progress2")
+    if dry_run:
+        # in place of --info: a later --info=stats1 lowers --stats back to stats1
+        argv += ["--dry-run", "--stats"]
+    else:
+        argv.append("--info=stats1,progress2")
     if bwlimit is not None:
         argv.append(f"--bwlimit={bwlimit}")
     argv += [f"--exclude={pattern}" for pattern in excludes]

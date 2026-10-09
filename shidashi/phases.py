@@ -42,6 +42,7 @@ from shidashi.recipe import Phase, ResolvedRecipe, UseBreak
 from shidashi.resolve import _atom_from_ebuild_line, _iter_atom_lines, apply_portage
 from shidashi.seed import ROOTFS_TAR_FLAGS
 from shidashi.state import EmergePlanEntry, PhaseDiff
+from shidashi.tree import load_pin_id
 
 _USE_BREAK_FILE = ("etc", "portage", "package.use", "zz-shidashi-use-break")
 
@@ -474,6 +475,25 @@ def build_key(recipe: ResolvedRecipe) -> str:
         ]
     )
     return "b" + hashlib.sha256(payload.encode("utf-8")).hexdigest()[:8]
+
+
+def restorable_keys(arch: str) -> frozenset[str]:
+    """Every ``<pins>-<build key>`` a fork point of ``arch`` may carry. Reads config.
+
+    The union over EVERY init: a sync names an arch, not an init, and one init's
+    keys alone would skip the other's valid fork points (R3.1, R3.5). Covers every
+    recipe ``shidashi factory`` builds plus the bootstrap's
+    (:func:`shidashi.factory.bootstrap_fork_point_path`, keyed by the arch × init's
+    base). Resolved under the current ``SHIDASHI_VARIANTS_DIR`` and
+    ``SHIDASHI_SEEDS_DIR`` -- :func:`shidashi.worker.keys_at` points both at a commit.
+    """
+    pins = load_pin_id(config.seeds_dir())
+    keys: set[str] = set()
+    for init in config.available_names("init"):
+        recipes = [config.load_recipe(arch, target, init) for target in config.factory_names()]
+        recipes.append(config.load_recipe(arch, "base", init, any_stage=True))
+        keys.update(f"{pins}-{build_key(recipe)}" for recipe in recipes)
+    return frozenset(keys)
 
 
 def _variant_key(recipe: ResolvedRecipe) -> str:

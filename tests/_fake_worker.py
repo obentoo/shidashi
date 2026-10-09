@@ -31,6 +31,7 @@ from __future__ import annotations
 import contextlib
 import fcntl
 import fnmatch
+import functools
 import json
 import os
 import re
@@ -335,6 +336,9 @@ class FakeWorker:
                 "real_git": shutil.which("git") or "/usr/bin/git",
                 "real_rsync": shutil.which("rsync") or "/usr/bin/rsync",
                 "worker_path": "",
+                "factory_fork_points": _factory_fork_points(
+                    generation, str(config.variants_dir()), str(config.seeds_dir())
+                ),
             }
         )
         fw._write_worker_files(cpu_flags)
@@ -551,6 +555,21 @@ class FakeWorker:
         (self.repo / "README.md").write_text("# edited readme\n")
         return ["shidashi/cli.py", "README.md"]
 
+    def commit_recipes(self) -> str:
+        """Commit this checkout's ``variants/`` and ``seeds/`` to the fake checkout; its HEAD.
+
+        A sync resolves the fork-point keys at a commit (``worker.keys_at``): that
+        commit must exist in the fake checkout and carry both trees.
+        """
+        from shidashi import config
+
+        for name, src in (("variants", config.variants_dir()), ("seeds", config.seeds_dir())):
+            shutil.copytree(src, self.repo / name)
+        self._git("add", "-A")
+        self._git("-c", "commit.gpgsign=false", "commit", "-q", "-m", "the recipes")
+        self.head = self._git("rev-parse", "HEAD")
+        return self.head
+
     def _make_venv(self) -> None:
         site = self.venv / "lib" / "python3.14" / "site-packages"
         site.mkdir(parents=True, exist_ok=True)
@@ -760,15 +779,101 @@ def option_values(argv: list[str], *names: str) -> list[str]:
     return values
 
 
-def seed_host_cache(fw: FakeWorker) -> dict[str, Path]:
+#: A build key and a pins id no checkout resolves: the fork points of an orphan.
+OTHER_BUILD_KEY = "b00000000"
+OTHER_PINS = "p20260101.00000000"
+
+
+def fork_point_names(
+    gen: str,
+    *,
+    arch: str = "v3",
+    init: str = "systemd",
+    flavor: str = "gnome",
+    stage: str = "desktop",
+) -> dict[str, str]:
+    """File names of the fork points this checkout restores at ``gen``: ``stage``'s fork
+    point and the phase snapshot of ``flavor`` (both keyed by ``flavor``'s recipe) and the
+    bootstrap checkpoint (keyed by the base), each ``-<pins>-<build key>-<x>.tar``.
+
+    Composed by the real path functions under this checkout's ``variants/`` and
+    ``seeds/`` (what :meth:`FakeWorker.commit_recipes` commits to the fake checkout).
+    """
+    from shidashi import config, factory, phases
+    from shidashi.tree import load_pin_id
+
+    pins = load_pin_id(config.seeds_dir())
+    recipe = config.load_recipe(arch, flavor, init)
+    base = config.load_recipe(arch, "base", init, any_stage=True)
+    here = Path()
+    stage_fp = phases.stage_fork_point_path(
+        recipe, stage, snapshot=gen, pins=pins, fork_points_dir=here
+    )
+    snapshot = phases.phase_snapshot_path(
+        recipe, snapshot=gen, pins=pins, phase=flavor, fork_points_dir=here
+    )
+    bootstrap = factory.bootstrap_fork_point_path(
+        base, snapshot=gen, pins=pins, fork_points_dir=here
+    )
+    return {"stage": stage_fp.name, "phase_snapshot": snapshot.name, "bootstrap": bootstrap.name}
+
+
+def orphan_fork_point_names(
+    gen: str, *, arch: str = "v3", init: str = "systemd", flavor: str = "gnome"
+) -> dict[str, str]:
+    """The three orphan kinds of ``arch``'s desktop fork point at ``gen``, no longer
+    restorable under this checkout: no build key (the naming before 2026-10-08),
+    another build key, and other pins."""
+    from shidashi import config, phases
+    from shidashi.tree import load_pin_id
+
+    pins = load_pin_id(config.seeds_dir())
+    key = phases.build_key(config.load_recipe(arch, flavor, init))
+    if pins == OTHER_PINS or key == OTHER_BUILD_KEY:
+        raise RuntimeError(f"the orphan names collide with this checkout's: {pins}-{key}")
+    stem = f"{arch}-{init}-{gen}"
+    return {
+        "orphan_no_key": f"{stem}-{pins}-desktop.tar",
+        "orphan_other_key": f"{stem}-{pins}-{OTHER_BUILD_KEY}-desktop.tar",
+        "orphan_other_pins": f"{stem}-{OTHER_PINS}-{key}-desktop.tar",
+    }
+
+
+@functools.cache
+def _factory_fork_points(gen: str, variants: str, seeds: str) -> dict[str, str]:
+    """``{"<arch>/<target>": name}``: the stage fork point a factory of that target
+    leaves, under this checkout's keys (:func:`fork_point_names`, init systemd).
+
+    Handed to the fake ``shidashi`` through its config (the shim imports nothing of
+    shidashi), so a factory job leaves a fork point the pull can restore. ``variants``
+    and ``seeds`` are only the cache key: the directories ``config`` reads.
+    """
+    del variants, seeds
+    from shidashi import config
+
+    return {
+        f"{arch}/{target}": fork_point_names(gen, arch=arch, flavor=target, stage=target)["stage"]
+        for arch in config.available_names("arch")
+        for target in config.factory_names()
+    }
+
+
+def seed_host_cache(fw: FakeWorker, *, orphans: bool = False) -> dict[str, Path]:
     """The host cache a push reads: arch v3 at this generation, plus what must stay home
-    (another generation of v3, znver5's binpkgs and fork points)."""
+    (another generation of v3, znver5's binpkgs and fork points).
+
+    The v3 fork points carry this checkout's keys (:func:`fork_point_names`): the
+    stage fork point (``fork_point``), a phase snapshot and the bootstrap checkpoint.
+    With ``orphans``, the three kinds of :func:`orphan_fork_point_names` wait beside them.
+    """
     from shidashi import config
     from shidashi.seed import load_pointer
 
     gen = fw.config()["generation"]
     pointer = load_pointer("systemd", seeds_dir=config.seeds_dir())
     c = fw.host_cache
+    forks = c / "fork-points"
+    current = fork_point_names(gen)
     files = {
         "binpkg": c / "binpkgs" / "v3" / gen / "app-misc" / "a-1.gpkg.tar",
         "index": c / "binpkgs" / "v3" / gen / "Packages",
@@ -780,9 +885,13 @@ def seed_host_cache(fw: FakeWorker) -> dict[str, Path]:
         "tree": c / "trees" / "gentoo-20260823.tar.xz",
         "repo": c / "repos" / "bentoo" / "profiles" / "repo_name",
         "stage3": c / pointer.filename,
-        "fork_point": c / "fork-points" / f"v3-minimal-systemd-{gen}.tar",
-        "other_fork_point": c / "fork-points" / f"znver5-minimal-systemd-{gen}.tar",
+        "fork_point": forks / current["stage"],
+        "phase_snapshot": forks / current["phase_snapshot"],
+        "bootstrap": forks / current["bootstrap"],
+        "other_fork_point": forks / fork_point_names(gen, arch="znver5")["stage"],
     }
+    if orphans:
+        files.update({key: forks / name for key, name in orphan_fork_point_names(gen).items()})
     for key, path in files.items():
         path.parent.mkdir(parents=True, exist_ok=True)
         if key == "distfile":
@@ -1587,7 +1696,10 @@ def _fake_shidashi(argv: list[str]) -> int:
             (pk / "built-by-job-1.gpkg.tar").write_bytes(b"binpkg built by the job\n")
             fp = cache / "fork-points"
             fp.mkdir(parents=True, exist_ok=True)
-            (fp / f"{arch}-{target}-systemd-{gen}.tar").write_bytes(b"fork point by the job\n")
+            # the current key's name (install computed it), else the pre-key one
+            known: dict[str, str] = cfg.get("factory_fork_points", {})
+            name = known.get(f"{arch}/{target}", f"{arch}-{target}-systemd-{gen}.tar")
+            (fp / name).write_bytes(b"fork point by the job\n")
             (cache / "distfiles").mkdir(parents=True, exist_ok=True)
             (cache / "distfiles" / "fetched-by-job.tar.gz").write_bytes(b"distfile\n")
             (cache / "ccache").mkdir(parents=True, exist_ok=True)

@@ -19,12 +19,13 @@ from typing import Any
 import pytest
 
 from shidashi import config, ownership, remote, worker
-from tests._fake_worker import FakeWorker, option_values, seed_host_cache
+from tests._fake_worker import FakeWorker, fork_point_names, option_values, seed_host_cache
 
 
 @pytest.fixture
 def fw(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[FakeWorker]:
     w = FakeWorker.install(tmp_path, monkeypatch)
+    w.commit_recipes()  # the commit a sync resolves its fork-point keys at
     yield w
     w.close()
 
@@ -85,7 +86,10 @@ def test_push_plan_mirrors_the_arch_subset_under_mnt_work_cache(
 def test_push_copies_exactly_the_arch_subset(fw: FakeWorker, host: dict[str, Path]) -> None:
     sent = worker.push(fw.remote(), "v3", bwlimit=None)
     w = fw.work / "cache"
-    for key in ("binpkg", "distfile", "ccache", "sccache", "tree", "repo", "stage3", "fork_point"):
+    for key in (
+        *("binpkg", "distfile", "ccache", "sccache", "tree", "repo", "stage3"),
+        *("fork_point", "phase_snapshot", "bootstrap"),
+    ):
         rel = host[key].relative_to(fw.host_cache)
         assert (w / rel).is_file(), key
     for key in ("old_gen", "other_arch", "other_fork_point"):
@@ -135,7 +139,8 @@ def test_push_never_deletes_on_the_worker(fw: FakeWorker, host: dict[str, Path])
 def test_push_resumes_without_resending_complete_files(
     fw: FakeWorker, host: dict[str, Path]
 ) -> None:
-    fw.fail(r"rsync --server.*fork-points", code=12, stderr="connection reset\n", times=1)
+    # the real transfer, not the dry run that measures it first (its cluster has -n)
+    fw.fail(r"rsync --server -[^n ]+ .*fork-points", code=12, stderr="connection reset\n", times=1)
     with pytest.raises(remote.SyncError):
         worker.push(fw.remote(), "v3", bwlimit=None)
     big = fw.work / "cache" / host["distfile"].relative_to(fw.host_cache)
@@ -156,12 +161,13 @@ def results(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def owner(fw: FakeWorker) -> ownership.Owner:
-    """The caller holds v3's owner lock, as a factory job does (contract C5)."""
+    """The caller holds v3's owner lock, as a factory job does (contract C5), at a
+    commit the fake checkout has: the pull resolves its fork-point keys there."""
     held = ownership.Owner(
         arch="v3",
         worker=fw.name,
         job="kde",
-        commit="c" * 40,
+        commit=fw.head,
         since="2026-10-05T14:02:31Z",
         host_pid=None,
     )
@@ -170,14 +176,20 @@ def owner(fw: FakeWorker) -> ownership.Owner:
 
 @pytest.fixture
 def produced(fw: FakeWorker, gen: str, host: dict[str, Path]) -> dict[str, Path]:
-    """What jobs left on the worker: two jobs whose names share a prefix."""
+    """What jobs left on the worker: two jobs whose names share a prefix. The fork
+    points are kde's minimal stage, which the host does not have yet (its bootstrap
+    checkpoint is the host's, rebuilt)."""
     put = fw.put
+    job = {"flavor": "kde", "stage": "minimal"}
+    v3, znver5 = fork_point_names(gen, **job), fork_point_names(gen, arch="znver5", **job)
     return {
         "same_binpkg": put(f"cache/binpkgs/v3/{gen}/app-misc/a-1.gpkg.tar", "binpkg\n"),
         "new_binpkg": put(f"cache/binpkgs/v3/{gen}/app-misc/new-2.gpkg.tar", "new\n"),
         "other_arch": put(f"cache/binpkgs/znver5/{gen}/zz-1.gpkg.tar", "z\n"),
-        "fork_point": put(f"cache/fork-points/v3-kde-systemd-{gen}.tar", "fp\n"),
-        "other_fork_point": put(f"cache/fork-points/znver5-kde-systemd-{gen}.tar", "fp\n"),
+        "fork_point": put(f"cache/fork-points/{v3['stage']}", "fp\n"),
+        "phase_snapshot": put(f"cache/fork-points/{v3['phase_snapshot']}", "fp\n"),
+        "bootstrap": put(f"cache/fork-points/{v3['bootstrap']}", "fp\n"),
+        "other_fork_point": put(f"cache/fork-points/{znver5['stage']}", "fp\n"),
         "distfile": put("cache/distfiles/new-1.0.tar.gz", "src\n"),
         "ccache": put("cache/ccache/1/new-entry", "cc\n"),
         "run": put("out/runs/20261005T110000Z-abc123/events.jsonl", "{}\n"),
@@ -202,7 +214,7 @@ def test_pull_brings_only_this_archs_binpkgs_and_fork_points(
 ) -> None:
     worker.pull(fw.remote(), "v3", "kde", results=results, owner=owner)
     assert not (fw.host_cache / "binpkgs" / "znver5" / gen / "zz-1.gpkg.tar").exists()
-    assert not (fw.host_cache / "fork-points" / f"znver5-kde-systemd-{gen}.tar").exists()
+    assert not (fw.host_cache / "fork-points" / produced["other_fork_point"].name).exists()
 
 
 def test_pull_brings_back_binpkgs_fork_points_caches_runs_and_isos(
@@ -211,7 +223,8 @@ def test_pull_brings_back_binpkgs_fork_points_caches_runs_and_isos(
     received = worker.pull(fw.remote(), "v3", "kde", results=results, owner=owner)
     c = fw.host_cache
     assert (c / "binpkgs" / "v3" / gen / "app-misc" / "new-2.gpkg.tar").is_file()
-    assert (c / "fork-points" / f"v3-kde-systemd-{gen}.tar").is_file()
+    for key in ("fork_point", "phase_snapshot", "bootstrap"):
+        assert (c / "fork-points" / produced[key].name).read_text() == "fp\n", key
     assert (c / "distfiles" / "new-1.0.tar.gz").is_file()
     assert (c / "ccache" / "1" / "new-entry").is_file()
     assert (config.runs_dir() / "20261005T110000Z-abc123" / "events.jsonl").is_file()
@@ -337,7 +350,7 @@ def test_pull_without_the_lock_leaves_the_binhost_alone_and_brings_the_rest(
     assert index.read_text() == before  # never replaced without the lock
     c = fw.host_cache
     assert not (c / "binpkgs" / "v3" / gen / "app-misc" / "new-2.gpkg.tar").exists()
-    assert not (c / "fork-points" / f"v3-kde-systemd-{gen}.tar").exists()
+    assert not (c / "fork-points" / produced["fork_point"].name).exists()
     assert not fw.calls("emaint")  # the worker's index is not even regenerated
     assert (c / "distfiles" / "new-1.0.tar.gz").is_file()  # the caches still come
     assert (config.runs_dir() / "20261005T110000Z-abc123" / "events.jsonl").is_file()
@@ -481,7 +494,8 @@ def test_pull_of_a_factory_that_built_nothing_succeeds_without_the_binhost(
 ) -> None:
     """A fresh generation and a factory that built nothing: no PKGDIR on the worker.
     The pull must still succeed (so the lock can be released), saying why."""
-    fw.put(f"cache/fork-points/v3-kde-systemd-{gen}.tar", "fp\n")
+    fork_point = fork_point_names(gen)["stage"]
+    fw.put(f"cache/fork-points/{fork_point}", "fp\n")
     fw.put("out/jobs/kde.rc", "0\n")
     index = fw.host_cache / "binpkgs" / "v3" / gen / "Packages"
     before = index.read_text()
@@ -490,7 +504,7 @@ def test_pull_of_a_factory_that_built_nothing_succeeds_without_the_binhost(
     assert got.binhost_reason and f"binpkgs/v3/{gen}" in got.binhost_reason
     assert not fw.calls("emaint")
     assert index.read_text() == before
-    assert (fw.host_cache / "fork-points" / f"v3-kde-systemd-{gen}.tar").is_file()
+    assert (fw.host_cache / "fork-points" / fork_point).is_file()
     assert (results / "kde.rc").read_text() == "0\n"
 
 
