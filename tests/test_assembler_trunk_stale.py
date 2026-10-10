@@ -60,7 +60,9 @@ def _wire(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, trunk_plan: str) -> _
     class _TrunkPlan(base):  # type: ignore[misc]
         def run(self, argv: list[str], **kw: object) -> object:
             pretend = argv[:1] == ["emerge"] and "--pretend" in argv
-            if pretend and not asked and not _installs(wired.runs):
+            # the image's own plan is judged on its copy (task 9.2): not the trunk's
+            on_copy = Path(self.rootfs).name.endswith(".judge")
+            if pretend and not on_copy and not asked and not _installs(wired.runs):
                 asked.append(True)
                 wired.runs.append(list(argv))
                 return CommandResult(0, trunk_plan, "")  # the trunk recipe's resolution
@@ -113,7 +115,8 @@ def test_the_trunks_plan_is_judged_before_the_trunk_install(
 
     pretends = [i for i, a in enumerate(wired.runs) if a[:1] == ["emerge"] and "--pretend" in a]
     first_install = wired.runs.index(_installs(wired.runs)[0])
-    # the trunk's before its install; the image's after it, before the branch
+    # both before the trunk's install: the image's on its copy (9.2), then the trunk's;
+    # none after it -- the install step reuses the image's plan
     assert pretends and pretends[0] < first_install, wired.runs
-    assert len([i for i in pretends if i < first_install]) == 1, wired.runs
+    assert len([i for i in pretends if i < first_install]) == 2, wired.runs
     assert len(pretends) == 2, wired.runs

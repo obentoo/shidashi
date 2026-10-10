@@ -74,17 +74,16 @@ def test_a_branched_install_with_an_index_runs_exactly_one_pretend(
     wired.assemble(recipe=_chain("kde"))
 
     assert wired.step("trunk")["built"] == "znver5-desktop-systemd"  # a branched install
-    # a trunk built here is judged before it installs (validation fixes round 1):
-    # its own pretend comes first, then exactly one of the image, before the branch
+    # a trunk built here is judged before it installs (validation fixes round 1): the
+    # image's plan once, on a copy (9.2), and the trunk's own (9.1) -- both before the
+    # trunk's install; none after it, so nothing resolves the image's plan again
     trunk_install = next(
         i for i, a in enumerate(wired.runs) if a[:1] == ["emerge"] and "--pretend" not in a
     )
-    after_trunk = _pretends(wired.runs[trunk_install:])
-    assert after_trunk == [[*iso_emerge_argv(_chain("kde")), "--pretend"]]  # one, the image's
-    assert len(_pretends(wired.runs[:trunk_install])) == 1  # the trunk's
-    # the image's pretend is the judge's, before the branch -- none resolves it again after
-    image_pretend = trunk_install + wired.runs[trunk_install:].index(after_trunk[0])
-    assert image_pretend < _branch_index(wired.runs)
+    before = _pretends(wired.runs[:trunk_install])
+    assert before == [[*iso_emerge_argv(_chain("kde")), "--pretend"]] * 2  # image's, trunk's
+    assert _pretends(wired.runs[trunk_install:]) == []
+    assert trunk_install < _branch_index(wired.runs)
     install = wired.step("install")
     assert install["stale_check"] == "judged"
     assert install["plan"] == len(PRETEND_TOKENS)

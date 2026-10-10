@@ -18,6 +18,7 @@ real execution (nspawn + emerge + dracut + mksquashfs + grub-mkrescue) requires 
 and is exercised by the host-gated tests.
 """
 
+import contextlib
 import datetime
 import json
 import os
@@ -653,6 +654,65 @@ class Assembler:
             )
         return checkpoint.plan_tokens(plan_text)
 
+    def _judge_image_before_trunk(
+        self,
+        rootfs: Path,
+        *,
+        cuts: Sequence[UseBreak],
+        atoms: Sequence[str],
+        backend: checkpoint.Backend | None,
+        repos: Mapping[str, Path],
+        log: Path,
+    ) -> tuple[str, ...] | None:
+        """Judge the image's plan before its trunk installs (R2.2, R2.4). PRIVILEGED.
+
+        The image's configuration is written only after the trunk is installed (the
+        trunk checkpoint is every flavor's), so its plan is resolved on a copy of the
+        seeded rootfs, ``<rootfs>.judge``, configured as the image: the same pretend
+        and judge as an install without a trunk. With cycle cuts it is resolved twice:
+        under the cuts (what the install merges first), then without them (what the
+        settle installs and the ISO ships, and what the INSTALL checkpoint is checked
+        against on the next run, :func:`_still_valid`). Returns the cut-free plan's
+        tokens. The copy -- a snapshot on btrfs, else ``cp -a --reflink=auto`` -- is
+        removed afterwards, refusal or not, and a copy a killed run left is removed
+        before it; a failure to remove it never hides the error that ended the judgement.
+        """
+        judge = rootfs.with_name(f"{rootfs.name}.judge")
+        checkpoint.remove_tree(judge, backend)
+        try:
+            if backend is not None:
+                backend.snapshot(rootfs, judge, readonly=False)
+            else:
+                try:
+                    subprocess.run(
+                        ["cp", "-a", "--reflink=auto", str(rootfs), str(judge)],
+                        check=True,
+                        capture_output=True,
+                        text=True,
+                    )
+                except subprocess.CalledProcessError as err:
+                    raise AssemblerError(
+                        f"cannot copy {rootfs} to judge the image's plan: {err.stderr.strip()}"
+                    ) from err
+            self._configure(judge, cuts=cuts, atoms=atoms)
+            binds_ro, binds_rw = _build_binds(
+                self.binhost_dir, judge / "etc" / "portage" / "repos.conf", repos=repos
+            )
+            with Container(
+                judge, ephemeral=False, binds=binds_ro, binds_rw=binds_rw, log=log
+            ) as container:
+                plan = self._refuse_stale_plan(container, self.recipe)
+                if plan is not None and cuts:
+                    clear_use_break(judge)
+                    plan = self._refuse_stale_plan(container, self.recipe)
+        except BaseException:
+            # the judgement's own error is the one to report, not a cleanup's
+            with contextlib.suppress(checkpoint.CheckpointError, OSError):
+                checkpoint.remove_tree(judge, backend)
+            raise
+        checkpoint.remove_tree(judge, backend)
+        return plan
+
     def assemble(
         self,
         output_dir: Path,
@@ -798,10 +858,23 @@ class Assembler:
                 checkpoints="on" if store is not None else "off (scratch is not btrfs)",
             )
 
+        #: the image's plan, judged before a trunk built in this run installs (R2.4)
+        pre_judged: tuple[str, ...] | None = None
         with run.step("configure") as step:
             if resumed is None and branch is None:
                 self._configure(rootfs, cuts=cuts, atoms=atoms)
             elif resumed is None and branch is not None and branch.mark is None:
+                # the seeded rootfs, before the trunk's configuration lands on it, is
+                # the image's fresh install: judge that plan on a copy (R2.2, R2.4)
+                if (self.binhost_dir / "Packages").is_file():
+                    pre_judged = self._judge_image_before_trunk(
+                        rootfs,
+                        cuts=cuts,
+                        atoms=atoms,
+                        backend=backend,
+                        repos=repos,
+                        log=config.scratch_dir() / "logs" / f"assemble-{key}.log",
+                    )
                 # the trunk's own configuration first: the image's comes after it
                 branch.assembler._configure(rootfs, cuts=branch.cuts, atoms=branch.atoms)
             # loaded (and validated) now: a broken system.yaml fails before the
@@ -860,6 +933,8 @@ class Assembler:
                                 step.add(
                                     stale_check="judged" if trunk_judged is not None else "no index"
                                 )
+                            if pre_judged is not None:
+                                step.add(image_check="judged before the trunk")
                             trunk_since = int(time.time())
                             built = container.run(
                                 iso_emerge_argv(branch.assembler.recipe, jobs=self.jobs)
@@ -922,7 +997,11 @@ class Assembler:
                         )
                         # a resume continues an install whose plan was judged when it began
                         judged: tuple[str, ...] | None = None
-                        if resumed is None:
+                        if pre_judged is not None:
+                            # judged on its copy before the trunk: not resolved again
+                            judged = pre_judged
+                            step.add(stale_check="judged")
+                        elif resumed is None:
                             judged = self._refuse_stale_plan(container, recipe)
                             step.add(stale_check="judged" if judged is not None else "no index")
                         try:
