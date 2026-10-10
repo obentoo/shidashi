@@ -8,6 +8,9 @@ and which would need no less than the whole mDNS stack to share. systemd-resolve
 answers such a query with the PTR alone, so the SRV, TXT and A are then asked of the
 machine that answered, by unicast (bentoo-lab, 2026-10-07).
 
+A provisioned worker announces ``<N>._shidashi-worker._tcp.local`` instead; :func:`find`
+is the same browse over that service, narrowed to the one instance named N.
+
 :func:`build_query` and :func:`parse_answers` are pure. Every packet is untrusted
 input: :func:`parse_answers` bounds every length and every compression chain and
 returns what it could read -- never raises, never loops.
@@ -23,6 +26,9 @@ from typing import Any
 from shidashi.kyomei_protocol import SERVICE
 
 MDNS_GROUP = ("224.0.0.251", 5353)
+# A worker booted with a provisioned identity announces ``<N>._shidashi-worker._tcp``
+# (story 020) -- a service of its own, never the pairing service.
+WORKER_SERVICE = "_shidashi-worker._tcp.local"
 
 _PTR, _A, _TXT, _SRV = 12, 1, 16, 33
 _CLASS_IN_QU = 0x8001  # class IN with the "unicast response" bit
@@ -150,6 +156,28 @@ def browse(
     finally:
         sock.close()
     return sorted(seen.values(), key=lambda f: (f.name, f.address, f.port))
+
+
+def find(
+    name: str,
+    *,
+    timeout: float,
+    sock_factory: Callable[..., Any] = socket.socket,
+) -> str | None:
+    """The IPv4 address of the worker announced as ``name``; ``None`` when none answers.
+
+    One :func:`browse` of :data:`WORKER_SERVICE` for ``timeout`` seconds. The instance
+    name must equal ``name`` exactly, compared case-insensitively as DNS labels are: a
+    worker whose name merely resembles it is another worker. ``OSError`` (no route to
+    the mDNS group, a socket failure) is the caller's to report.
+    """
+    # browse() appends ".local" itself; passing it here would ask for "….local.local"
+    service = WORKER_SERVICE.removesuffix(".local")
+    wanted = name.lower()
+    for item in browse(service, timeout, sock_factory=sock_factory):
+        if item.name.lower() == wanted:
+            return item.address
+    return None
 
 
 def _route_source(sock_factory: Callable[..., Any]) -> str:

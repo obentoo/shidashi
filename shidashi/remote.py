@@ -10,6 +10,10 @@ refusal, never a question and never an acceptance.
 start ssh. Exit 255 is ssh's own failure: a host-key refusal becomes
 :class:`HostKeyMismatch`, anything else :class:`RemoteUnreachable`. Any other exit
 code is the remote command's, returned as it is.
+
+An address is ``HOST[:PORT]``: :func:`_ssh_options` sends the port as ``Port=`` (22
+when none is given) and the destination carries the host alone. A worker with no
+recorded address is looked up by name over mDNS (:func:`resolve_address`).
 """
 
 import math
@@ -24,6 +28,7 @@ from pathlib import Path
 from typing import Any
 
 from shidashi import config
+from shidashi.mdns import find
 from shidashi.workers import WorkerEntry
 
 #: ssh's own exit code for its failures (connection, authentication, host key).
@@ -31,11 +36,16 @@ _SSH_FAILED = 255
 #: Where a pull keeps an interrupted file, inside the destination directory.
 PULL_PARTIAL_DIR = ".rsync-partial"
 _MISMATCH = "Host key verification failed"
+#: The ssh port when an address names none.
+SSH_PORT = 22
+#: How long the mDNS lookup of a worker waits for its answer (R3.3).
+FIND_TIMEOUT = 5.0
 _PRESENTED_RE = re.compile(
     r"key sent by the remote host is\s*\n\s*(SHA256:[A-Za-z0-9+/=]+?)\.?\s*$", re.M
 )
 
 Runner = Callable[..., subprocess.CompletedProcess[Any]]
+Finder = Callable[..., str | None]
 
 
 class RemoteError(Exception):
@@ -86,22 +96,65 @@ class Remote:
     expected_fingerprint: str | None = None
 
     @classmethod
-    def for_worker(cls, entry: WorkerEntry) -> Remote:
+    def for_worker(cls, entry: WorkerEntry, address: str | None = None) -> Remote:
         """The registered worker, with shidashi's key and known_hosts (contract C3).
 
-        A provisioned entry that has not been reached yet has no address: that is
-        :class:`RemoteUnreachable`, not a ``None`` handed to ssh.
+        ``address`` -- one :func:`resolve_address` found, or ``--address`` -- replaces
+        the recorded one; the pin is the entry's either way. With neither, the entry
+        has no address: that is :class:`RemoteUnreachable`, not a ``None`` handed to ssh.
         """
-        if entry.address is None:
+        where = address if address is not None else entry.address
+        if where is None:
             raise RemoteUnreachable(entry.name, None, f"{entry.name} has no recorded address")
         base = config.workers_dir()
         return cls(
             name=entry.name,
-            address=entry.address,
+            address=where,
             key=base / "id_ed25519",
             known_hosts=base / "known_hosts",
             expected_fingerprint=entry.host_key_fingerprint,
         )
+
+
+def resolve_address(entry: WorkerEntry, *, finder: Finder | None = None) -> str:
+    """Where to reach ``entry``: its recorded address, else the one N answers from.
+
+    No recorded address: one mDNS lookup of the worker named N (``finder``, by
+    default :func:`mdns.find` as this module's ``find``, looked up at call time) for
+    :data:`FIND_TIMEOUT` seconds. Nobody answering, or a lookup that fails on its
+    socket, is :class:`RemoteUnreachable` -- never a :class:`HostKeyMismatch`. The
+    address found is not trusted: ssh still verifies N's pinned key there
+    (``HostKeyAlias=N``).
+    """
+    if entry.address is not None:
+        return entry.address
+    lookup = finder if finder is not None else find
+    try:
+        found = lookup(entry.name, timeout=FIND_TIMEOUT)
+    except OSError as err:
+        raise RemoteUnreachable(
+            entry.name, None, f"the mDNS lookup of {entry.name} failed: {err}"
+        ) from err
+    if found is None:
+        raise RemoteUnreachable(
+            entry.name,
+            None,
+            f"no worker named {entry.name} answered over mDNS within {FIND_TIMEOUT:g} s; "
+            "pass --address ADDR",
+        )
+    return found
+
+
+def split_address(address: str) -> tuple[str, int]:
+    """``HOST[:PORT]`` -> ``(HOST, PORT)``, the port :data:`SSH_PORT` when none. Pure.
+
+    Lenient: anything that does not end in ``:<digits>`` is a host as it is (the CLI
+    validates ``--address`` at its boundary).
+    """
+    host, sep, port = address.rpartition(":")
+    if sep and host and port.isascii() and port.isdigit():
+        return host, int(port)
+    return address, SSH_PORT
 
 
 @dataclass
@@ -116,8 +169,12 @@ class RemoteResult:
 
 
 def _ssh_options(remote: Remote, timeout: float) -> list[str]:
-    """``ssh`` and the options that verify the pin, with no destination."""
+    """``ssh`` and the options that verify the pin, with no destination.
+
+    The address's port, 22 when it names none, is ``Port=``.
+    """
     connect = max(1, math.ceil(min(timeout, 10)))
+    _host, port = split_address(remote.address)
     return [
         "ssh",
         "-i",
@@ -133,6 +190,8 @@ def _ssh_options(remote: Remote, timeout: float) -> list[str]:
         "-o",
         f"HostKeyAlias={remote.name}",
         "-o",
+        f"Port={port}",
+        "-o",
         f"ConnectTimeout={connect}",
         "-o",
         "ServerAliveInterval=30",
@@ -145,16 +204,19 @@ def ssh_argv(remote: Remote, command: str, *, timeout: float = 10) -> list[str]:
     ``ConnectTimeout`` is an integer of at most 10 s; the whole command is bounded by
     :func:`run`'s ``timeout``.
     """
-    return [*_ssh_options(remote, timeout), f"root@{remote.address}", command]
+    host, _port = split_address(remote.address)
+    return [*_ssh_options(remote, timeout), f"root@{host}", command]
 
 
 def ssh_command(remote: Remote, *, timeout: float = 10) -> list[str]:
     """The pinned ``ssh`` prefix for rsync's ``-e``: no destination, no command. Pure.
 
-    rsync names the worker ``root@<name>``; ``HostName`` sends it to the registered
-    address (a worker needs no DNS entry) while ``HostKeyAlias`` keeps the pin.
+    rsync names the worker ``root@<name>``; ``HostName`` sends it to the address's host
+    and ``Port`` to its port (a worker needs no DNS entry) while ``HostKeyAlias`` keeps
+    the pin.
     """
-    return [*_ssh_options(remote, timeout), "-o", f"HostName={remote.address}"]
+    host, _port = split_address(remote.address)
+    return [*_ssh_options(remote, timeout), "-o", f"HostName={host}"]
 
 
 def rsync_argv(

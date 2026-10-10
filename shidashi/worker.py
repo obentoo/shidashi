@@ -251,11 +251,20 @@ def status(remote: Remote, *, timeout: float = STATUS_TIMEOUT) -> WorkerStatus:
 
 def refresh_registry(entry: WorkerEntry, st: WorkerStatus) -> WorkerEntry:
     """``entry`` with the CPU flags the probe ``st`` read, saved to the host's registry
-    when they changed (R1.6). An unreachable probe, or one that read no flags, changes
-    nothing. ``OSError`` and :class:`workers.RegistryError` propagate."""
-    if not st.reachable or not st.cpu_flags or st.cpu_flags == entry.cpu_flags:
+    when they changed (R1.6); a provisioned entry with no image yet also takes the
+    image the probe read (story 020, R3.5). An unreachable probe, or one that read
+    nothing new, changes nothing. ``OSError`` and :class:`workers.RegistryError`
+    propagate."""
+    if not st.reachable:
         return entry
-    fresh = entry.model_copy(update={"cpu_flags": st.cpu_flags})
+    update: dict[str, object] = {}
+    if st.cpu_flags and st.cpu_flags != entry.cpu_flags:
+        update["cpu_flags"] = st.cpu_flags
+    if entry.provisioned and not entry.image and st.image:
+        update["image"] = st.image
+    if not update:
+        return entry
+    fresh = entry.model_copy(update=update)
     path = config.workers_dir() / "workers.json"
     registry = workers.load_registry(path)  # re-read: keep what changed meanwhile
     registry[entry.name] = fresh

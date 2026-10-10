@@ -18,7 +18,7 @@ import os
 import socket
 import subprocess
 import sys
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
@@ -32,6 +32,7 @@ from rich.prompt import Prompt
 from rich.table import Table
 
 from shidashi import audit, config, doctor, ownership, progress, publish
+from shidashi import remote as remote_mod
 from shidashi import worker as worker_mod
 from shidashi import workers as workers_mod
 from shidashi.assembler import Assembler, AssemblerError, AssembleResult
@@ -1836,6 +1837,34 @@ def _worker_address(value: str | None) -> str | None:
     return value
 
 
+def _ssh_address(value: str | None) -> str | None:
+    """``--address``: ``HOST[:PORT]`` -- an IPv4 address or a host name, port 1-65535."""
+    import re
+
+    if value is None:
+        return None
+    host, port = remote_mod.split_address(value)
+    if host != value and not 1 <= port <= 65535:
+        raise typer.BadParameter(f"expected HOST[:PORT]: port out of range: {port}")
+    # letters, digits, dots and inner dashes only: nothing ssh could read as an option
+    if not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?", host):
+        raise typer.BadParameter(f"expected HOST[:PORT]: not a host: {host!r}")
+    return value
+
+
+#: ``--address`` of the worker commands that take a name (story 020, R3.3).
+_AddressOption = Annotated[
+    str | None,
+    typer.Option(
+        "--address",
+        metavar="HOST[:PORT]",
+        callback=_ssh_address,
+        help="Reach the worker there, without the mDNS lookup; recorded once it answers "
+        "with its pinned key.",
+    ),
+]
+
+
 def _ensure_worker_key(key: Path) -> None:
     """The host's worker key (ed25519, no passphrase, 0600), made once."""
     pub = Path(f"{key}.pub")
@@ -2211,10 +2240,16 @@ def worker_status(
     worker: Annotated[
         str | None, typer.Argument(help="A paired worker's name; every one when omitted.")
     ] = None,
+    address: _AddressOption = None,
 ) -> None:
     """A worker's CPU, targets, load, memory, work disk, image, SMART, checkpoints and
     jobs; without a name, one line per paired worker (at most 5 s each)."""
     from concurrent.futures import ThreadPoolExecutor
+
+    from shidashi import isaguard
+
+    if address is not None and worker is None:
+        raise typer.BadParameter("--address reaches one worker: name it", param_hint="--address")
 
     try:
         registry = workers_mod.load_registry(config.workers_dir() / "workers.json")
@@ -2230,13 +2265,27 @@ def worker_status(
                 f"(paired: {escape(known)})"
             )
             raise typer.Exit(1)
-        outcome = _probe_or_error(entry, worker_mod.STATUS_TIMEOUT)
-        if isinstance(outcome, Exception):
-            _err_console.print(f"[bold red]error:[/bold red] {escape(str(outcome))}")
-            raise typer.Exit(1)
-        _refresh_flags(entry, outcome)
-        _print_worker_status(outcome, entry.address or "-")
-        raise typer.Exit(0 if outcome.reachable else 1)
+        tried: list[str] = []  # where the probe went last: the line names it
+
+        def probe(target: Remote) -> worker_mod.WorkerStatus:
+            tried.append(target.address)
+            return worker_mod.status(target, timeout=worker_mod.STATUS_TIMEOUT)
+
+        try:
+            # status swallows an unanswering worker: an unreachable probe is the retry
+            probed, entry = _on_worker(
+                entry,
+                address,
+                probe,
+                reached=lambda st: st.reachable,
+                unanswered=lambda st: None if st.reachable else st.reason or "no answer",
+            )
+        except (remote_mod.RemoteError, isaguard.UnknownFlag) as err:
+            _err_console.print(f"[bold red]error:[/bold red] {escape(str(err))}", soft_wrap=True)
+            raise typer.Exit(1) from err
+        _refresh_flags(entry, probed)
+        _print_worker_status(probed, tried[-1])
+        raise typer.Exit(0 if probed.reachable else 1)
     if not registry:
         typer.echo("no paired worker (pair one with: shidashi kyomei)")
         return
@@ -2268,19 +2317,128 @@ def _worker_error(message: object) -> typer.Exit:
     return typer.Exit(1)
 
 
+def _record_address(entry: workers_mod.WorkerEntry, address: str) -> workers_mod.WorkerEntry:
+    """Save ``address`` as N's, after a command succeeded there with N's pinned key.
+
+    The registry is re-read and only N's address changes: its pin and every other
+    worker stay as they are. A registry that cannot be written only warns -- the
+    command already succeeded -- and the entry is returned as it was.
+    """
+    path = config.workers_dir() / "workers.json"
+    try:
+        registry = workers_mod.load_registry(path)
+        current = registry.get(entry.name)
+        if current is None:
+            return entry  # unpaired meanwhile: never paired back by an address
+        if current.host_key_fingerprint != entry.host_key_fingerprint:
+            return entry  # re-paired meanwhile: the address was proven for the old key
+        fresh = current.model_copy(update={"address": address})
+        registry[entry.name] = fresh
+        workers_mod.save_registry(path, registry)
+    except (OSError, workers_mod.RegistryError) as err:
+        _err_console.print(
+            f"[yellow]warning:[/yellow] {escape(entry.name)}'s address {escape(address)} "
+            f"not recorded: {escape(str(err))}",
+            soft_wrap=True,
+        )
+        return entry
+    return fresh
+
+
+#: ssh's own exit code: a streamed command that ends with it reached nobody (or a
+#: refused pin -- the two are not told apart in a merged stream).
+_SSH_EXIT = 255
+
+
+def _unanswered(err: Exception) -> bool:
+    """The first contact failed for want of an answer: a retry elsewhere may help."""
+    return isinstance(err, remote_mod.RemoteUnreachable)
+
+
+def _probe_unanswered(err: Exception) -> bool:
+    """``job``'s opening probe found no worker: refused before the lock, the push or
+    the unit, so a retry elsewhere starts nothing twice. A connection lost later is
+    not retried."""
+    return isinstance(err, worker_mod.JobRefused) and isinstance(
+        err.__cause__, remote_mod.RemoteUnreachable
+    )
+
+
+def _on_worker[T](
+    entry: workers_mod.WorkerEntry,
+    address: str | None,
+    attempt: Callable[[Remote], T],
+    *,
+    reached: Callable[[T], bool] = lambda _result: True,
+    unanswered: Callable[[T], str | None] = lambda _result: None,
+    retry_on: Callable[[Exception], bool] = _unanswered,
+) -> tuple[T, workers_mod.WorkerEntry]:
+    """Run ``attempt`` against the named worker, wherever it is now (R3.2-R3.5).
+
+    The address is ``address`` (``--address``: no lookup), else the recorded one, else
+    the one N answers from over mDNS (:func:`remote.resolve_address`). When the
+    RECORDED address does not answer -- an error ``retry_on`` accepts, or a result
+    ``unanswered`` gives a reason for -- N is looked up once and ``attempt`` retried
+    once there; an address that was not the recorded one is never retried. A changed
+    host key is never retried: it propagates as it does today. When that lookup finds
+    nobody, the error carries both why the recorded address failed and the lookup's
+    R3.3 message. An address other than the recorded one is saved only once the
+    result ``reached`` the worker with N's pinned key, so a spoofed mDNS answer is
+    refused and never recorded.
+
+    Returns the result and the entry as now recorded.
+    """
+    recorded = address is None and entry.address is not None
+    where = address if address is not None else remote_mod.resolve_address(entry)
+    failure: str | None  # why the recorded address did not answer
+    try:
+        result = attempt(Remote.for_worker(entry, where))
+    except Exception as err:
+        if not (recorded and retry_on(err)):
+            raise
+        failure = str(err)
+    else:
+        failure = unanswered(result) if recorded else None
+        if failure is None:
+            return result, _record_if_new(entry, where, reached(result))
+    # the recorded address did not answer: one lookup by name, one retry
+    try:
+        where = remote_mod.resolve_address(entry.model_copy(update={"address": None}))
+    except remote_mod.RemoteUnreachable as lookup:
+        reason = f"{' '.join(failure.split())}; {lookup}"
+        raise remote_mod.RemoteUnreachable(entry.name, None, reason) from lookup
+    result = attempt(Remote.for_worker(entry, where))
+    return result, _record_if_new(entry, where, reached(result))
+
+
+def _record_if_new(
+    entry: workers_mod.WorkerEntry, where: str, reached: bool
+) -> workers_mod.WorkerEntry:
+    """``entry``, with ``where`` recorded when the worker answered there and it is new."""
+    if reached and where != entry.address:
+        return _record_address(entry, where)
+    return entry
+
+
 @worker_app.command("run")
 def worker_run(
     worker: Annotated[str, typer.Argument(help="The paired worker's name.")],
     command: Annotated[list[str], typer.Argument(help="The command and its arguments (after --).")],
+    address: _AddressOption = None,
 ) -> None:
     """Run COMMAND on the worker, every argument quoted; its output streams here and
     its exit code is ours."""
-    from shidashi import remote
-
     try:
-        target = remote.Remote.for_worker(_paired(worker))
-        code = worker_mod.run_command(target, command)
-    except (workers_mod.RegistryError, OSError) as err:
+        # never retried: a command that may have run is not run twice; ssh's own 255
+        # (a refused pin included) proves no answer, so no address is recorded on it
+        code, _entry = _on_worker(
+            _paired(worker),
+            address,
+            lambda target: worker_mod.run_command(target, command),
+            reached=lambda rc: rc != _SSH_EXIT,
+            retry_on=lambda _err: False,
+        )
+    except (workers_mod.RegistryError, remote_mod.RemoteError, OSError) as err:
         raise _worker_error(err) from err
     except KeyboardInterrupt:
         raise typer.Exit(130) from None
@@ -2294,21 +2452,26 @@ def worker_logs(
     follow: Annotated[
         bool, typer.Option("--follow", "-f", help="Follow the log until the job ends.")
     ] = False,
+    address: _AddressOption = None,
 ) -> None:
     """Print a job's log; with -f, follow it until the job ends."""
-    from shidashi import remote
-
     try:
         worker_mod.validate_job_name(job)  # before any contact (R3.11)
-        target = remote.Remote.for_worker(_paired(worker))
-        code = worker_mod.logs(target, job, follow=follow)
-    except (ValueError, workers_mod.RegistryError, OSError) as err:
+        # a streamed 255 cannot tell an unanswering worker from a refused pin: no retry
+        code, _entry = _on_worker(
+            _paired(worker),
+            address,
+            lambda target: worker_mod.logs(target, job, follow=follow),
+            reached=lambda rc: rc != _SSH_EXIT,
+            retry_on=lambda _err: False,
+        )
+    except (ValueError, workers_mod.RegistryError, remote_mod.RemoteError, OSError) as err:
         raise _worker_error(err) from err
     except KeyboardInterrupt:
         raise typer.Exit(130) from None
     if code == 0:
         return
-    if code == 255:
+    if code == _SSH_EXIT:
         raise _worker_error(f"the connection to {worker} failed or was lost (ssh exit 255)")
     if follow:
         raise _worker_error(
@@ -2417,12 +2580,11 @@ def worker_poweroff(
     force: Annotated[
         bool, typer.Option("--force", help="Power off even while a Shidashi job runs.")
     ] = False,
+    address: _AddressOption = None,
 ) -> None:
     """Power the worker off; refused while a Shidashi job runs on it, unless --force."""
-    from shidashi import remote
 
-    try:
-        target = remote.Remote.for_worker(_paired(worker))
+    def power_off(target: Remote) -> None:
         if not force:
             running = worker_mod.active_jobs(target)
             if running:
@@ -2433,7 +2595,10 @@ def worker_poweroff(
                     f"shidashi worker poweroff {worker} --force"
                 )
         worker_mod.poweroff(target)
-    except (workers_mod.RegistryError, remote.RemoteError, OSError) as err:
+
+    try:
+        _on_worker(_paired(worker), address, power_off)
+    except (workers_mod.RegistryError, remote_mod.RemoteError, OSError) as err:
         raise _worker_error(err) from err
     typer.echo(f"{worker} is powering off")
 
@@ -2496,24 +2661,29 @@ def worker_job(
     bwlimit: Annotated[
         int | None, typer.Option("--bwlimit", min=1, help="Cap every transfer at K KiB/s.")
     ] = None,
+    address: _AddressOption = None,
 ) -> None:
     """Run ``shidashi ARGS…`` on the worker from this checkout's HEAD: follow its log,
     bring its results back and exit with its exit code."""
-    from shidashi import remote
-
     try:
         worker_mod.validate_job_name(job)  # before any contact (R3.11)
         entry = _paired(worker)
         with _worker_audit("worker-job", worker=worker, job=job, args=list(args)):
-            result = worker_mod.job(
-                remote.Remote.for_worker(entry),
+            result, _entry = _on_worker(
                 entry,
-                job,
-                args,
-                allow_dirty=allow_dirty,
-                follow=not no_follow,
-                results=results,
-                bwlimit=bwlimit,
+                address,
+                lambda target: worker_mod.job(
+                    target,
+                    entry,
+                    job,
+                    args,
+                    allow_dirty=allow_dirty,
+                    follow=not no_follow,
+                    results=results,
+                    bwlimit=bwlimit,
+                ),
+                # only the probe that opens the job is retried: nothing ran yet
+                retry_on=_probe_unanswered,
             )
     except _job_errors() as err:
         raise _worker_error(err) from err
@@ -2539,14 +2709,16 @@ def worker_sync_push(
     bwlimit: Annotated[
         int | None, typer.Option("--bwlimit", min=1, help="Cap every transfer at K KiB/s.")
     ] = None,
+    address: _AddressOption = None,
 ) -> None:
     """Send the worker ARCH's cache -- PKGDIR, distfiles, ccache and sccache, the pinned
     trees and repositories, the stage3 and the fork points -- and the runtime venv."""
-    from shidashi import remote
-
     try:
-        target = remote.Remote.for_worker(_paired(worker))
-        sent = worker_mod.push(target, arch, init=init, bwlimit=bwlimit)
+        sent, _entry = _on_worker(
+            _paired(worker),
+            address,
+            lambda target: worker_mod.push(target, arch, init=init, bwlimit=bwlimit),
+        )
     except _job_errors() as err:
         raise _worker_error(err) from err
     except KeyboardInterrupt:
@@ -2621,6 +2793,7 @@ def worker_sync_pull(
             " needs --job.",
         ),
     ] = None,
+    address: _AddressOption = None,
 ) -> None:
     """Bring back ARCH's new distfiles and ccache entries and, with --job, that job's
     log, rc, runs and ISOs. The binhost comes back, and the arch's owner lock is
@@ -2636,14 +2809,13 @@ def worker_sync_pull(
             "(a pull without --job brings back caches only)",
             param_hint="--results",
         )
-    owner: ownership.Owner | None = None
     try:
         if job is not None:
             worker_mod.validate_job_name(job)  # before any contact (R3.11)
         if arch is not None and arch not in config.available_names("arch"):
             known = ", ".join(config.available_names("arch"))
             raise ValueError(f"unknown arch {arch!r}: expected one of {known}")
-        target = Remote.for_worker(_paired(worker))
+        entry = _paired(worker)
         # where `job` puts them by default; a job-less pull brings no job file
         if results_dir is not None:
             results = results_dir.absolute()  # R6.12
@@ -2664,20 +2836,28 @@ def worker_sync_pull(
         worker_mod.require_writable(
             worker_mod.pull_destinations(arch, results=results, binhost_generation=gen)
         )
-        owner, kept = _pull_owner(target, worker, arch, job)
     except _job_errors() as err:
         raise _worker_error(err) from err
     except KeyboardInterrupt:
         raise typer.Exit(130) from None
 
+    # the owner the pull ran as last: its lock stays held when the pull then fails
+    owners: list[ownership.Owner | None] = [None]
+
+    def pull_from(target: Remote) -> tuple[str | None, worker_mod.PullResult]:
+        owner, kept = _pull_owner(target, worker, arch, job)
+        owners[0] = owner
+        return kept, worker_mod.pull(target, arch, job, results=results, init=init, owner=owner)
+
     try:
-        pulled = worker_mod.pull(target, arch, job, results=results, init=init, owner=owner)
+        (kept, pulled), _entry = _on_worker(entry, address, pull_from)
     except _job_errors() as err:
-        _lock_kept(owner)
+        _lock_kept(owners[0])
         raise _worker_error(err) from err
     except KeyboardInterrupt:
-        _lock_kept(owner)
+        _lock_kept(owners[0])
         raise typer.Exit(130) from None
+    owner = owners[0]
 
     typer.echo(f"pulled from {worker}: {_size(pulled.bytes)} received")
     _print_results(pulled.log, pulled.isos, pulled.run_ids)

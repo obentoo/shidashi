@@ -71,3 +71,13 @@ def _locks_in_tmp(
         return real() if os.environ.get("SHIDASHI_CACHE") else spare
 
     monkeypatch.setattr(ownership, "locks_dir", _locks_dir)
+
+
+@pytest.fixture(autouse=True)
+def _no_mdns_answer(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No worker answers the mDNS lookup of a worker command (story 020) unless a test
+    says otherwise: no test sends a multicast packet or waits the real 5 s. Patched as
+    ``remote.find`` -- ``mdns.find`` itself stays real for its own tests."""
+    from shidashi import remote
+
+    monkeypatch.setattr(remote, "find", lambda _name, **_kw: None)
