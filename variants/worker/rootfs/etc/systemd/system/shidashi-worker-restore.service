@@ -7,11 +7,14 @@
 # WantsMountsFor=: the work disk is a nofail mount, which local-fs.target only wants
 # and is not ordered after; without it a late disk made the condition false and the
 # pairing was not restored. Wants, not Requires: a worker with no disk still boots.
+#
+# Skipped when a pairing is already in RAM: the medium's identity (story 020) wins.
 [Unit]
 Description=Restore the Shidashi pairing from the work disk
 After=local-fs.target
 WantsMountsFor=/mnt/work
 ConditionPathExists=/mnt/work/.shidashi/pairing.json
+ConditionPathExists=!/run/shidashi/pairing.json
 
 [Service]
 Type=oneshot

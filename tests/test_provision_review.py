@@ -18,6 +18,7 @@ import os
 import shutil
 import stat
 import subprocess
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -417,3 +418,96 @@ def test_an_old_identity_that_cannot_be_removed_is_reported_as_leftover(
     assert (leftover / "identity/ssh/ssh_host_ed25519_key").is_file()
     entry = workers.load_registry(host.workers_dir / "workers.json")[NAME]
     assert entry.host_key_fingerprint == result.fingerprint  # the new identity is in place
+
+
+# ===================================================================================
+# 2.1 review, finding 3: the identity on the medium is root's, unreadable to others
+# ===================================================================================
+
+
+def _owners(iso: Path, inside: str = "/shidashi") -> dict[str, tuple[str, str, str]]:
+    """Each path under ``inside`` on ``iso``: its permission string, uid and gid."""
+    done = subprocess.run(
+        ["xorriso", "-no_rc", "-indev", str(iso), "-find", inside, "-exec", "lsdl", "--"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    out: dict[str, tuple[str, str, str]] = {}
+    for line in done.stdout.splitlines():
+        fields = line.split()
+        if len(fields) >= 9 and line.rstrip().endswith("'"):
+            out[line[line.index("'") :].strip().strip("'")] = (fields[0], fields[2], fields[3])
+    return out
+
+
+def test_the_identity_on_the_copy_is_root_owned_and_private(host: _Host) -> None:
+    """Rock Ridge keeps the provisioning user's uid -- 1000, the uid of the worker's live
+    user too, who could then read the private key on /run/initramfs/live."""
+    result = _run(host, _Runner())
+
+    owners = _owners(Path(result.iso_path))
+    assert {"/shidashi", "/shidashi/identity", "/shidashi/identity/pairing.json"} <= set(owners)
+    private = "/shidashi/identity/ssh/ssh_host_ed25519_key"
+    assert private in owners and f"{private}.pub" in owners
+    for path, (perms, uid, gid) in owners.items():
+        assert (uid, gid) == ("0", "0"), (path, perms, uid, gid)
+        assert perms[4:] == "------", (path, perms)  # no group, no other bits
+
+
+def test_a_copy_whose_identity_kept_the_users_ownership_is_refused(
+    tmp_path: Path, host: _Host
+) -> None:
+    """xorriso wrote the identity but not its owner and modes: the copy is refused."""
+
+    def keeps_ownership(argv: list[str]) -> subprocess.CompletedProcess[str] | None:
+        if not _writes_copy(argv):
+            return None
+        kept: list[str] = []
+        skipping = False
+        for arg in argv:
+            if arg in ("-chown_r", "-chgrp_r", "-chmod_r", "-chown", "-chgrp", "-chmod"):
+                skipping = True
+            elif skipping and arg == "--":
+                skipping = False
+            elif not skipping:
+                kept.append(arg)
+        return subprocess.run(kept, capture_output=True, text=True, stdin=subprocess.DEVNULL)
+
+    before = _snapshot(tmp_path)
+    with pytest.raises(provision.ProvisionError) as caught:
+        _run(host, _Runner(before=keeps_ownership))
+    message = _assert_nothing_changed(caught, before, tmp_path)
+    assert "/shidashi" in message
+
+
+def test_a_copy_whose_identity_content_differs_is_still_refused(
+    tmp_path: Path, host: _Host
+) -> None:
+    """Guard: tolerating the owner and modes the copy sets on purpose must not tolerate
+    a different content."""
+
+    def alters_identity(argv: list[str], done: subprocess.CompletedProcess[Any]) -> None:
+        if _writes_copy(argv) and done.returncode == 0:
+            record = Path(argv[argv.index("-map") + 1]) / "pairing.json"
+            record.write_bytes(record.read_bytes().replace(b'"v": 1', b'"v": 2'))
+
+    before = _snapshot(tmp_path)
+    with pytest.raises(provision.ProvisionError) as caught:
+        _run(host, _Runner(after=alters_identity))
+    message = _assert_nothing_changed(caught, before, tmp_path)
+    assert "/shidashi/identity" in message
+
+
+def test_a_copy_written_a_second_after_its_identity_still_verifies(host: _Host) -> None:
+    """Setting the owner and modes stamps each node's ctime, as chown(2) does: across a
+    second boundary ``-compare_r`` reports it (seen ``diff= 1 s``), and that alone must
+    not refuse a correct copy."""
+
+    def later(argv: list[str]) -> subprocess.CompletedProcess[str] | None:
+        if _writes_copy(argv):
+            time.sleep(1.1)
+        return None
+
+    result = _run(host, _Runner(before=later))
+    assert "/shidashi/identity/pairing.json" in _listing(Path(result.iso_path))

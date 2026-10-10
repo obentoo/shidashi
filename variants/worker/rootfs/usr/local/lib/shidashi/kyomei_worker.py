@@ -10,7 +10,10 @@ pairing closes the window: the announcement is withdrawn and the console cleared
 
 ``--restore`` runs at boot when ``/mnt/work/.shidashi/pairing.json`` exists: it puts
 back the host keys the host pinned, the granted key and the name, then starts sshd --
-a reboot comes back paired, with nobody at the console.
+a reboot comes back paired, with nobody at the console. ``--restore-medium`` does the
+same from an identity the host provisioned onto the boot medium
+(``/run/initramfs/live/shidashi/identity``) and announces the worker's name over
+DNS-SD, so the host finds it wherever DHCP placed it.
 
 :class:`WorkerSession` decides every request without touching a socket or the
 system; :func:`listen`, :func:`persist` and :func:`restore` take the root path and the
@@ -19,6 +22,7 @@ key live in the session only -- never in a file but the tmpfs console block, nev
 a log line.
 """
 
+import base64
 import datetime as dt
 import ipaddress
 import json
@@ -46,10 +50,15 @@ Headers = dict[str, str]
 PATH = "/kyomei/v1"
 SSHD = "/usr/sbin/sshd"
 RESOLVED = "systemd-resolved.service"
+#: The service a worker restored from a provisioned identity is found by (story 020).
+WORKER_SERVICE = "_shidashi-worker._tcp"
+#: Where dracut's dmsquash-live mounts the boot medium; the host provisions here.
+MEDIUM_IDENTITY = Path("/run/initramfs/live/shidashi/identity")
 
 _RAM_RECORD = Path("run/shidashi/pairing.json")
 _DISK_DIR = Path("mnt/work/.shidashi")
 _DNSSD = Path("run/systemd/dnssd/shidashi-kyomei.dnssd")
+_WORKER_DNSSD = Path("run/systemd/dnssd/shidashi-worker.dnssd")
 _ISSUE = Path("run/issue.d/50-shidashi-kyomei.issue")
 _AUTHORIZED_KEYS = Path("root/.ssh/authorized_keys")
 _HOST_KEY_PUB = Path("etc/ssh/ssh_host_ed25519_key.pub")
@@ -280,16 +289,32 @@ def persist(root: Path, *, require_mount: bool = False, dest: Path | None = None
         raise PersistError(f"cannot write {target}: {err.strerror or err}") from err
 
 
-def restore(root: Path = Path("/"), runner: Runner = subprocess.run) -> int:
-    """Bring a persisted pairing back at boot; 0 when every step worked.
+@dataclass(frozen=True)
+class _Identity:
+    """A pairing directory that passed every check: what restore installs from it."""
 
-    Refuses (1, nothing changed) a missing or malformed record and a persisted key
-    that is not the one the record names. Otherwise: the pinned host keys go back
-    BEFORE sshd starts (``ssh-keygen -A`` is never run here), the granted key is
-    added beside whatever root holds, the name is set (a failure is reported and the
-    restore goes on) and sshd is ALWAYS started.
+    record: dict[str, Any]
+    name: str | None
+    granted: str
+    host_key_fingerprint: str
+
+
+class _Refused(Exception):
+    """A pairing directory restore will not install from (the reason is the message)."""
+
+
+def _read_identity(source: Path, *, check_pair: bool = False) -> _Identity:
+    """Check a pairing directory -- the work disk's or a medium's -- reading only.
+
+    Raises :class:`_Refused` for a missing or malformed record, an ``authorized_keys``
+    without the key the record names, and a missing ed25519 host key pair or a public
+    half that is not ``ssh-ed25519``: a record installed without its host keys would
+    leave the boot's own key, which the host's pin refuses, and the pairing window
+    would no longer open. With ``check_pair`` (a medium, written by the host) it also
+    refuses a private key that is not an openssh-key-v1 file declaring exactly the
+    public key beside it: sshd would serve a key other than the one announced and
+    pinned. The work disk's keys are the worker's own, copied by :func:`persist`.
     """
-    source = root / _DISK_DIR
     record_path = source / "pairing.json"
     try:
         record = json.loads(record_path.read_text(encoding="utf-8"))
@@ -302,42 +327,178 @@ def restore(root: Path = Path("/"), runner: Runner = subprocess.run) -> int:
         ):
             raise ValueError("unexpected field values")
     except (OSError, ValueError, KeyError) as err:
-        print(f"kyomei: cannot restore: {record_path} is not a pairing ({err})", file=sys.stderr)
-        return 1
+        raise _Refused(f"{record_path} is not a pairing ({err})") from err
     keys_path = source / "authorized_keys"
     granted = _key_line(keys_path, fingerprint)
     if granted is None:
-        print(
-            f"kyomei: cannot restore: {keys_path} does not hold the key {record_path} names",
-            file=sys.stderr,
-        )
+        raise _Refused(f"{keys_path} does not hold the key {record_path} names")
+    private = source / "ssh" / _HOST_KEY_PUB.stem
+    public = source / "ssh" / _HOST_KEY_PUB.name
+    if not private.is_file():
+        raise _Refused(f"{private} is missing: the pairing has no host key")
+    try:
+        public_line = public.read_text(encoding="utf-8")
+        host_key_fingerprint = P.fingerprint(public_line)
+    except (OSError, ValueError, IndexError) as err:
+        raise _Refused(f"{public} is missing or not a public key ({err})") from err
+    if not _is_ed25519(public_line):
+        raise _Refused(f"{public} is not an ssh-ed25519 public key")
+    if check_pair:
+        try:
+            declared = _declared_public_blob(private.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as err:
+            raise _Refused(f"{private} is not an openssh-key-v1 private key ({err})") from err
+        if declared != base64.b64decode(public_line.split()[1], validate=True):
+            raise _Refused(f"{private} is not the private half of {public}")
+    return _Identity(record, name, granted, host_key_fingerprint)
+
+
+_OPENSSH_BEGIN = "-----BEGIN OPENSSH PRIVATE KEY-----"
+_OPENSSH_END = "-----END OPENSSH PRIVATE KEY-----"
+_OPENSSH_MAGIC = b"openssh-key-v1\0"
+
+
+def _declared_public_blob(text: str) -> bytes:
+    """The public key blob an openssh-key-v1 private key file declares, read from its
+    unencrypted header (PROTOCOL.key: magic, cipher, kdf, kdf options, the number of
+    keys, then each public key) -- no tool runs and nothing secret is decoded.
+    ``ValueError`` unless the file is that format and declares exactly one key."""
+    lines = [line.strip() for line in text.strip().splitlines()]
+    if len(lines) < 3 or lines[0] != _OPENSSH_BEGIN or lines[-1] != _OPENSSH_END:
+        raise ValueError("no OPENSSH PRIVATE KEY armour")
+    data = base64.b64decode("".join(lines[1:-1]), validate=True)
+    if not data.startswith(_OPENSSH_MAGIC):
+        raise ValueError("no openssh-key-v1 magic")
+    offset = len(_OPENSSH_MAGIC)
+    for _field in ("cipher", "kdf", "kdf options"):
+        _value, offset = _ssh_string(data, offset)
+    count = _ssh_uint32(data, offset)
+    if count != 1:
+        raise ValueError(f"declares {count} keys, not one")
+    blob, _offset = _ssh_string(data, offset + 4)
+    return blob
+
+
+def _ssh_uint32(data: bytes, offset: int) -> int:
+    if offset + 4 > len(data):
+        raise ValueError("truncated header")
+    return int.from_bytes(data[offset : offset + 4], "big")
+
+
+def _ssh_string(data: bytes, offset: int) -> tuple[bytes, int]:
+    """One length-prefixed string of OpenSSH's wire format, and the offset after it."""
+    end = offset + 4 + _ssh_uint32(data, offset)
+    if end > len(data):
+        raise ValueError("truncated header")
+    return data[offset + 4 : end], end
+
+
+_ED25519 = b"ssh-ed25519"
+
+
+def _is_ed25519(line: str) -> bool:
+    """Whether a public key line is ``ssh-ed25519`` -- its type field AND the type its
+    blob declares (OpenSSH's wire format: a length-prefixed type string first)."""
+    fields = line.split()
+    if len(fields) < 2 or fields[0] != _ED25519.decode():
+        return False
+    blob = base64.b64decode(fields[1], validate=True)  # P.fingerprint already decoded it
+    return blob[:4] == len(_ED25519).to_bytes(4, "big") and blob[4 : 4 + len(_ED25519)] == _ED25519
+
+
+def restore(
+    root: Path = Path("/"),
+    runner: Runner = subprocess.run,
+    *,
+    source: Path | None = None,
+    announce: bool = False,
+) -> int:
+    """Bring a pairing back at boot; 0 when every step worked.
+
+    ``source`` is the pairing directory: the work disk's (the default, ``--restore``)
+    or a provisioned identity on the boot medium (``--restore-medium``). Refuses (1,
+    nothing changed) a missing or malformed record, a key that is not the one the
+    record names and a missing ed25519 host key pair -- from a medium, also a pair
+    whose halves do not belong together. Otherwise: the host keys go
+    back BEFORE sshd starts (``ssh-keygen -A`` is never run here) -- re-owned
+    ``root:root`` and re-moded when they come from a medium, whose Rock Ridge owner
+    and modes are the provisioning user's -- the granted key is added beside whatever
+    root holds, the name is set and sshd is started.
+
+    The RAM record keeps the pairing window and the work-disk restore from running.
+    From the work disk it is written beside the keys and sshd is ALWAYS started (a
+    failed step is reported and the restore goes on), as before. From a medium the
+    first failure ends the restore: sshd is started only once the keys,
+    ``authorized_keys`` and the name are in place, and the record is written last, so
+    a half-installed identity starts no sshd and leaves the pairing window to open.
+    With ``announce`` the worker's name and host key fingerprint are then published
+    over DNS-SD (``_shidashi-worker._tcp``); a failed announcement returns 1 and
+    leaves sshd running.
+    """
+    from_disk = source is None
+    directory = root / _DISK_DIR if source is None else source
+    try:
+        identity = _read_identity(directory, check_pair=not from_disk)
+    except _Refused as err:
+        print(f"kyomei: cannot restore: {err}", file=sys.stderr)
         return 1
 
-    failed = False
     steps: list[tuple[str, Callable[[], None]]] = [
         (
             "host keys",
-            lambda: _copy_host_keys(source / "ssh", root / "etc" / "ssh", dir_mode=0o755),
+            lambda: _copy_host_keys(
+                directory / "ssh", root / "etc" / "ssh", dir_mode=0o755, reown=not from_disk
+            ),
         ),
-        ("authorized_keys", lambda: _add_key(root / _AUTHORIZED_KEYS, granted)),
-        ("RAM record", lambda: _write_record(root, record)),
+        ("authorized_keys", lambda: _add_key(root / _AUTHORIZED_KEYS, identity.granted)),
     ]
-    for what, step in steps:
-        try:
-            step()
-        except OSError as err:
-            print(f"kyomei: restoring the {what} failed: {err}", file=sys.stderr)
-            failed = True
     commands = [["systemctl", "--no-block", "start", "sshd.service"]]
-    if name:
-        commands.insert(0, ["hostnamectl", "hostname", name])
-    for argv in commands:  # each one runs whatever happened to the one before
+    if identity.name:
+        commands.insert(0, ["hostnamectl", "hostname", identity.name])
+    if from_disk:
+        # the work disk keeps its order: the record does not wait for sshd, and sshd is
+        # started whatever failed before it
+        steps.append(("RAM record", lambda: _write_record(root, identity.record)))
+        failed = False
+        for what, step in steps:
+            try:
+                _step(what, step)
+            except InstallError as err:
+                print(f"kyomei: {err}", file=sys.stderr)
+                failed = True
+        for argv in commands:  # each one runs whatever happened to the one before
+            try:
+                _must(runner, argv)
+            except InstallError as err:
+                print(f"kyomei: {err}", file=sys.stderr)
+                failed = True
+        if failed:
+            return 1
+    else:
+        # From a medium the first failure ends the restore, sshd NOT started and no RAM
+        # record: the work-disk restore and the pairing window then run as on a generic
+        # medium. An sshd started here would keep serving the medium's key after the
+        # work-disk restore copied its own over /etc/ssh (its start is a no-op on an
+        # active sshd), and the pin it restores would not match.
         try:
-            _must(runner, argv)
+            for what, step in steps:
+                _step(what, step)
+            for argv in commands:
+                _must(runner, argv)
+            # last: the record says the pairing is whole
+            _step("RAM record", lambda: _write_record(root, identity.record))
         except InstallError as err:
             print(f"kyomei: {err}", file=sys.stderr)
-            failed = True
-    return 1 if failed else 0
+            return 1
+    if announce:
+        try:
+            _announce_worker(
+                root, runner, identity.name or _hostname(), identity.host_key_fingerprint
+            )
+        except OSError as err:  # sshd stays up: the worker is reachable at its address
+            print(f"kyomei: announcing failed: {err}", file=sys.stderr)
+            return 1
+    return 0
 
 
 # ===================================================================================
@@ -519,6 +680,14 @@ def _install(root: Path, runner: Runner, granted: Granted, hostname: str) -> Non
         raise InstallError(str(err)) from err
 
 
+def _step(what: str, step: Callable[[], None]) -> None:
+    """Run one restore step; an ``OSError`` becomes an :class:`InstallError` naming it."""
+    try:
+        step()
+    except OSError as err:
+        raise InstallError(f"restoring the {what} failed: {err}") from err
+
+
 def _must(runner: Runner, argv: list[str]) -> None:
     try:
         done = runner(argv, capture_output=True, text=True, timeout=_COMMAND_TIMEOUT)
@@ -540,17 +709,57 @@ def _announce(root: Path, runner: Runner, port: int, image: str, trusted: bool) 
     )
     _mkdir((root / _DNSSD).parent, 0o755)
     _write(root / _DNSSD, text.encode(), 0o644)
+    _reload_resolved_or_warn(runner)
+
+
+def _announce_worker(root: Path, runner: Runner, name: str, host_key_fingerprint: str) -> None:
+    """Publish the restored worker over DNS-SD under its identity's name.
+
+    The name is written out, never ``%H``: resolved expands that when it reads the
+    file, when the hostname may still be the image's. ``fp`` is informational -- it
+    lets an operator match an announcement to a pin; no consumer reads it.
+    """
+    text = (
+        "[Service]\n"
+        f"Name={name}\n"
+        f"Type={WORKER_SERVICE}\n"
+        "Port=22\n"
+        f"TxtText=v=1 fp={host_key_fingerprint}\n"
+    )
+    _mkdir((root / _WORKER_DNSSD).parent, 0o755)
+    _write(root / _WORKER_DNSSD, text.encode(), 0o644)
     _reload_resolved(runner)
 
 
 def _withdraw(root: Path, runner: Runner) -> None:
     (root / _DNSSD).unlink(missing_ok=True)
-    _reload_resolved(runner)
+    _reload_resolved_or_warn(runner)
+
+
+class _ReloadFailed(OSError):
+    """systemd-resolved did not reload (a non-zero exit, or no answer in time)."""
 
 
 def _reload_resolved(runner: Runner) -> None:
-    done = runner(["systemctl", "reload", RESOLVED], capture_output=True, text=True)
+    """Make systemd-resolved read the ``.dnssd`` files again; :class:`_ReloadFailed`
+    when it did not. Bounded by ``_COMMAND_TIMEOUT``: the restore runs in a oneshot
+    unit, which has no start timeout, and a hung reload would hold the boot."""
+    argv = ["systemctl", "reload", RESOLVED]
+    try:
+        done = runner(argv, capture_output=True, text=True, timeout=_COMMAND_TIMEOUT)
+    except subprocess.TimeoutExpired as err:
+        raise _ReloadFailed(f"{' '.join(argv)} timed out after {_COMMAND_TIMEOUT} s") from err
     if done.returncode != 0:
+        detail = (done.stderr or "").strip().splitlines()
+        raise _ReloadFailed(f"{' '.join(argv)} failed" + (f": {detail[-1]}" if detail else ""))
+
+
+def _reload_resolved_or_warn(runner: Runner) -> None:
+    """The pairing window's reload: a failure is said, never raised -- the window still
+    answers at its address."""
+    try:
+        _reload_resolved(runner)
+    except _ReloadFailed:
         print(
             "kyomei: reloading systemd-resolved failed; discovery may be stale "
             "(shidashi kyomei --address still works)",
@@ -665,14 +874,23 @@ def _add_key(path: Path, line: str) -> None:
     os.chmod(path, 0o600)
 
 
-def _copy_host_keys(source: Path, dest: Path, *, dir_mode: int) -> None:
-    """Copy sshd's host keys: private 0600, public 0644."""
+def _copy_host_keys(source: Path, dest: Path, *, dir_mode: int, reown: bool = False) -> None:
+    """Copy sshd's host keys: private 0600, public 0644.
+
+    ``reown`` also gives each copy to ``root:root`` and sets its mode again, for a
+    source whose owner and modes cannot be trusted (a medium's Rock Ridge metadata).
+    """
     _mkdir(dest, dir_mode)
     keys = sorted({p for pattern in _HOST_KEY_GLOBS for p in source.glob(pattern)})
     if not keys:
         raise FileNotFoundError(2, "no host keys", str(source))
     for key in keys:
-        _write(dest / key.name, key.read_bytes(), 0o644 if key.suffix == ".pub" else 0o600)
+        target = dest / key.name
+        mode = 0o644 if key.suffix == ".pub" else 0o600
+        _write(target, key.read_bytes(), mode)
+        if reown:
+            os.chown(target, 0, 0)
+            os.chmod(target, mode)
 
 
 # ===================================================================================
@@ -681,19 +899,22 @@ def _copy_host_keys(source: Path, dest: Path, *, dir_mode: int) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """``--listen`` (the console and its unit) or ``--restore`` (the boot unit)."""
+    """``--listen`` (the console and its unit), ``--restore`` (the work-disk boot unit)
+    or ``--restore-medium`` (the provisioned-identity boot unit)."""
     args = sys.argv[1:] if argv is None else argv
     try:
         if args == ["--listen"]:
             return listen()
         if args == ["--restore"]:
             return restore()
+        if args == ["--restore-medium"]:
+            return restore(source=MEDIUM_IDENTITY, announce=True)
     except KeyboardInterrupt:
         return 130
     except OSError as err:
         print(f"kyomei: {err}", file=sys.stderr)
         return 1
-    print("usage: kyomei_worker.py --listen | --restore", file=sys.stderr)
+    print("usage: kyomei_worker.py --listen | --restore | --restore-medium", file=sys.stderr)
     return 2
 
 

@@ -7,11 +7,13 @@
 # The name the host and the console show (and mDNS answers, once enabled).
 hostname: shidashi-worker
 
-# The pairing (story 009): the restore brings a persisted pairing back at boot, the
+# The pairing (story 009): the identity unit installs an identity provisioned on the
+# boot medium (story 020), the restore brings a persisted pairing back at boot, the
 # listener opens the pairing window when nothing was restored. resolved (enabled for
 # every systemd image) announces the window over mDNS.
 services:
   systemd:
     enable:
+      - shidashi-worker-identity.service
       - shidashi-worker-restore.service
       - shidashi-kyomei.service

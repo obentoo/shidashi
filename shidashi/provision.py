@@ -87,8 +87,20 @@ def identity_files(name: str, host_pub: str, host_fp: str, now: dt.datetime) -> 
 #: The volume label of the generic worker ISO; the live root is found by it.
 WORKER_VOLUME_ID = "BENTOO_WORKER"
 
-#: Where the identity sits on the medium (outside the squashfs).
+#: Where the identity sits on the medium (outside the squashfs), and the tree it is in.
 MEDIUM_IDENTITY = "/shidashi/identity"
+_MEDIUM_TREE = "/shidashi"
+
+#: The identity's owner and modes on the medium: root's, nothing for group or others.
+#: Rock Ridge would keep the provisioning user's uid -- usually 1000, the uid of the
+#: worker's live user too, who could then read the private key under
+#: /run/initramfs/live without root. The identity is named before its tree so that a
+#: copy without it fails naming it ("Cannot find path '/shidashi/identity'").
+_MEDIUM_OWNERSHIP = [
+    arg
+    for command in (["-chown_r", "0"], ["-chgrp_r", "0"], ["-chmod_r", "go-rwx"])
+    for arg in (*command, MEDIUM_IDENTITY, _MEDIUM_TREE, "--")
+]
 
 #: xorriso, ignoring its startup files: ``-no_rc`` only works as the FIRST argument, and
 #: a ``~/.xorrisorc`` with ``-abort_on NEVER`` / ``-return_with`` can make a failed
@@ -188,7 +200,8 @@ def provision(
                 _XORRISO
                 + ["-indev", str(source), "-outdev", str(copy)]
                 + ["-boot_image", "any", "replay", "-hfsplus", "off"]
-                + ["-map", str(identity), MEDIUM_IDENTITY],
+                + ["-map", str(identity), MEDIUM_IDENTITY]
+                + _MEDIUM_OWNERSHIP,
             )
         except BaseException:
             copy.unlink(missing_ok=True)  # a partial image is no copy
@@ -398,25 +411,65 @@ def _boot_shape(runner: Runner, iso: Path) -> _BootShape:
     return _BootShape(torito, kinds, tuple(sorted(gpt)))
 
 
-#: What ``-compare_r`` prints when the tree on disk and the one on the medium match. A
-#: difference is printed, NOT signalled by the exit code, so only this line proves it.
+#: What ``-compare_r`` prints when the tree on disk and the one on the medium match, and
+#: when they do not. A difference is printed, NOT signalled by the exit code.
 _COMPARE_MATCH = "Both file objects match"
+_COMPARE_DIFFER = "Differences detected"
+
+#: The differences ``-compare_r`` may report and the copy still be right: the owner and
+#: modes :data:`_MEDIUM_OWNERSHIP` sets on purpose, and the ctime that setting them
+#: stamps on each node (as chown(2) does; seen 1 s apart across a second boundary). Any
+#: other (content, size, mtime, a file missing on either side) refuses the copy.
+_SET_ON_PURPOSE = frozenset({"st_uid", "st_gid", "st_mode", "st_ctime"})
+
+#: One ``-compare_r`` difference: ``<type> '<path>' (DISK|ISO) : <attribute> : ...``.
+_COMPARE_LINE = re.compile(r"^\S \'.*\'\s+\((?:DISK|ISO)\) : (?P<attribute>[^:]*?)\s*:")
+
+#: One ``-exec lsdl`` line: permissions, links, uid, gid, size, date, then the path.
+_LSDL_LINE = re.compile(
+    r"^(?P<perms>[-dlbcps][-rwxsStT]{9})\s+\d+\s+(?P<uid>\S+)\s+(?P<gid>\S+)\s+\d+\s.*?"
+    r"\'(?P<path>.*)\'$"
+)
 
 
 def _verify_identity(runner: Runner, copy: Path, identity: Path) -> None:
-    """The copy carries ``identity`` at :data:`MEDIUM_IDENTITY`, file for file."""
+    """The copy carries ``identity`` at :data:`MEDIUM_IDENTITY`, file for file, and its
+    tree is root's and closed to group and others.
+
+    ``-compare_r`` proves the files and their contents; it also reports the owner and
+    modes, which the copy changes on purpose, so those differences -- and only those
+    -- are tolerated. ``-find ... -exec lsdl`` then proves the owner and modes on the
+    medium itself, since a difference report says nothing when disk and medium agree.
+    """
     missing = f"the copy does not carry the identity at {MEDIUM_IDENTITY}"
     try:
         done = _tool(
             runner,
             "verify",
-            _XORRISO + ["-indev", str(copy), "-compare_r", str(identity), MEDIUM_IDENTITY],
+            _XORRISO
+            + ["-indev", str(copy), "-compare_r", str(identity), MEDIUM_IDENTITY]
+            + ["-find", _MEDIUM_TREE, "-exec", "lsdl", "--"],
         )
     except _StepFailed as err:
         raise ProvisionError(f"{missing}: {_gist(str(err))}") from err
     out = _text(done.stdout)
-    if _COMPARE_MATCH not in out or "Differences detected" in out:
+    differences = [m for ln in out.splitlines() if (m := _COMPARE_LINE.match(ln.strip()))]
+    unexpected = [m.string for m in differences if m["attribute"] not in _SET_ON_PURPOSE]
+    if _COMPARE_DIFFER in out:
+        if unexpected or not differences:
+            raise ProvisionError(f"{missing}: {_gist(chr(10).join(unexpected) or out)}")
+    elif _COMPARE_MATCH not in out:
         raise ProvisionError(f"{missing}: {_gist(out)}")
+
+    listed = [m for ln in out.splitlines() if (m := _LSDL_LINE.match(ln.strip()))]
+    if MEDIUM_IDENTITY not in {m["path"] for m in listed}:
+        raise ProvisionError(f"{missing}: no listing of {_MEDIUM_TREE}")
+    for m in listed:
+        if (m["uid"], m["gid"]) != ("0", "0") or m["perms"][4:] != "------":
+            raise ProvisionError(
+                f"the copy's {m['path']} is {m['perms']} {m['uid']}:{m['gid']}, not root's "
+                "alone: the worker's users could read its identity"
+            )
 
 
 def _gist(output: str) -> str:

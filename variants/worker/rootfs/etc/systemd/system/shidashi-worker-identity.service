@@ -1,0 +1,23 @@
+# Install the identity the host provisioned onto the boot medium (story 020): N's host
+# keys, the granted key, the name -- then sshd and N's mDNS announcement. Nobody at the
+# console. dracut mounts the live medium at /run/initramfs/live; the identity sits
+# outside the squashfs, so the generic medium has none and this unit is skipped.
+#
+# It writes /run/shidashi/pairing.json last, on success only: the work-disk restore and
+# the pairing window are then skipped (the medium wins over the disk), and on a failure
+# both still run as on a generic medium.
+#
+# No Wants=sshd.service: the script starts sshd itself (--no-block), only once the keys
+# are in place.
+[Unit]
+Description=Restore the Shidashi identity provisioned on the boot medium
+After=local-fs.target systemd-resolved.service
+Before=shidashi-worker-restore.service shidashi-kyomei.service
+ConditionPathExists=/run/initramfs/live/shidashi/identity/pairing.json
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /usr/local/lib/shidashi/kyomei_worker.py --restore-medium
+
+[Install]
+WantedBy=multi-user.target

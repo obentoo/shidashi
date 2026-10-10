@@ -114,7 +114,14 @@ def test_the_restore_unit_is_a_oneshot_after_local_filesystems() -> None:
 
 
 def test_the_restore_unit_runs_only_when_a_pairing_was_persisted() -> None:
-    assert _unit()["Unit"]["ConditionPathExists"] == "/mnt/work/.shidashi/pairing.json"
+    # Read as a list: systemd ANDs repeated ConditionPathExists= lines (story 020 adds
+    # one), and configparser would keep only the last.
+    conditions = [
+        line.partition("=")[2].strip()
+        for line in UNIT.read_text().splitlines()
+        if line.strip().startswith("ConditionPathExists=")
+    ]
+    assert "/mnt/work/.shidashi/pairing.json" in conditions
 
 
 def test_the_restore_unit_waits_for_the_work_disk_without_requiring_it() -> None:
