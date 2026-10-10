@@ -607,16 +607,24 @@ class Assembler:
         world.write_to_image(rootfs, tuple(atoms))
 
     def _refuse_stale_plan(
-        self, container: Container, recipe: ResolvedRecipe
+        self,
+        container: Container,
+        recipe: ResolvedRecipe,
+        *,
+        image: ResolvedRecipe | None = None,
     ) -> tuple[str, ...] | None:
         """Stop before the install when the image's plan holds a stale binpkg (R2.1, R2.2).
 
-        One ``--pretend`` of the image's install, judged by the subslot and the
+        One ``--pretend`` of ``recipe``'s install, judged by the subslot and the
         soname rules (:func:`shidashi.phases.judge_plan`, the factory's
         ``check-binpkgs`` judge). Returns the plan's tokens, so a branched install
         does not resolve it a second time; ``None`` without an index -- nothing to
         judge, and the install runs and fails as today on a missing binhost.
+
+        With ``image``, ``recipe`` is that image's trunk, judged before the trunk is
+        installed: the refusal and its rebuild hint name the image being assembled.
         """
+        shown = image or recipe
         index = self.binhost_dir / "Packages"
         try:
             text = index.read_text(encoding="utf-8", errors="replace")
@@ -632,10 +640,15 @@ class Assembler:
             raise AssemblerError(f"{err}:\n{err.output.strip()}") from err
         if by_subslot or by_soname:
             detail = binpkgs.describe(
-                by_subslot, by_soname, arch=recipe.arch, image=recipe.flavor, init=recipe.init
+                by_subslot, by_soname, arch=shown.arch, image=shown.flavor, init=shown.init
+            )
+            what = (
+                f"the {shown.flavor} image"
+                if image is None
+                else f"the {recipe.flavor} trunk of the {image.flavor} image"
             )
             raise AssemblerError(
-                f"the {recipe.flavor} image would install binpkgs built against a library "
+                f"{what} would install binpkgs built against a library "
                 f"its tree no longer ships; nothing was installed.\n{detail}"
             )
         return checkpoint.plan_tokens(plan_text)
@@ -837,6 +850,16 @@ class Assembler:
                 if branch is not None:
                     with run.step("trunk") as step:
                         if branch.mark is None:
+                            # judged before the trunk installs: a stale binpkg of the
+                            # trunk would otherwise be merged, the whole trunk with it,
+                            # before the image's judgement below could refuse (R2.2)
+                            if resumed is None:
+                                trunk_judged = self._refuse_stale_plan(
+                                    container, branch.assembler.recipe, image=recipe
+                                )
+                                step.add(
+                                    stale_check="judged" if trunk_judged is not None else "no index"
+                                )
                             trunk_since = int(time.time())
                             built = container.run(
                                 iso_emerge_argv(branch.assembler.recipe, jobs=self.jobs)

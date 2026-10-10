@@ -74,10 +74,17 @@ def test_a_branched_install_with_an_index_runs_exactly_one_pretend(
     wired.assemble(recipe=_chain("kde"))
 
     assert wired.step("trunk")["built"] == "znver5-desktop-systemd"  # a branched install
-    pretends = _pretends(wired.runs)
-    assert pretends == [[*iso_emerge_argv(_chain("kde")), "--pretend"]]  # one, the image's
-    # the one pretend is the judge's, before the branch -- none resolves it again after
-    assert wired.runs.index(pretends[0]) < _branch_index(wired.runs)
+    # a trunk built here is judged before it installs (validation fixes round 1):
+    # its own pretend comes first, then exactly one of the image, before the branch
+    trunk_install = next(
+        i for i, a in enumerate(wired.runs) if a[:1] == ["emerge"] and "--pretend" not in a
+    )
+    after_trunk = _pretends(wired.runs[trunk_install:])
+    assert after_trunk == [[*iso_emerge_argv(_chain("kde")), "--pretend"]]  # one, the image's
+    assert len(_pretends(wired.runs[:trunk_install])) == 1  # the trunk's
+    # the image's pretend is the judge's, before the branch -- none resolves it again after
+    image_pretend = trunk_install + wired.runs[trunk_install:].index(after_trunk[0])
+    assert image_pretend < _branch_index(wired.runs)
     install = wired.step("install")
     assert install["stale_check"] == "judged"
     assert install["plan"] == len(PRETEND_TOKENS)
