@@ -150,7 +150,10 @@ always uses its own `variants/` and `seeds/`, even with the package installed;
 | `/var/log/shidashi/runs` | one audit trail per run | `SHIDASHI_RUNS` |
 | `/var/tmp/shidashi` | scratch: build rootfs, logs, VM sessions | `SHIDASHI_SCRATCH` |
 
-`--work-dir DIR` puts all three under one directory instead.
+`--work-dir DIR` puts all three under one directory instead. `shidashi vm test` keeps its
+session (SSH key, QMP socket) in the scratch too: when that directory cannot be written — a
+`/var/tmp/shidashi` left by a root build, say — it stops before booting and names
+`--work-dir` and `SHIDASHI_SCRATCH` as the way out.
 
 ### The builder VM
 
@@ -319,8 +322,15 @@ shidashi worker sync pull bentoo-lab --arch v3 --job fac-v3 --results ~/isos/fac
 ```
 
 The cache can also be moved by hand: `shidashi worker sync push bentoo-lab --arch v3` fills
-the worker; `sync pull` without `--job` brings back caches only, never the binhost. When the
-owner of an arch is gone for good (the worker died mid-job), release it:
+the worker; `sync pull` without `--job` brings back caches only, never the binhost.
+
+Both directions carry only the fork points the checkout's commit can restore: a fork point of
+other pins or another build key is skipped and named in the report. Before copying, a sync
+measures what it would add on the destination and refuses, copying nothing, when that would
+leave less than 10 GiB free there; the job's own record (log, rc, audit trail) is exempt and
+always comes back.
+
+When the owner of an arch is gone for good (the worker died mid-job), release it:
 
 ```sh
 shidashi worker unlock v3             # refused while its job may still run
