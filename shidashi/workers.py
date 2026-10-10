@@ -26,17 +26,23 @@ class RegistryError(Exception):
 
 
 class WorkerEntry(pydantic.BaseModel):
-    """One paired worker, as the host recorded it after a successful pairing."""
+    """One worker the host trusts: paired over kyomei, or provisioned into its ISO.
+
+    A provisioned entry is recorded before the worker ever booted (R1.3): no address,
+    no CPU flags, no image yet -- the first contact fills them in (R3.5). A registry
+    written before ``provisioned`` existed still loads: the field defaults to ``False``.
+    """
 
     model_config = pydantic.ConfigDict(frozen=True, extra="forbid")
 
     name: str
-    address: str
+    address: str | None = None
     host_key: str
     host_key_fingerprint: str
     paired_at: str
-    cpu_flags: tuple[str, ...]
-    image: str
+    cpu_flags: tuple[str, ...] = ()
+    image: str = ""
+    provisioned: bool = False
 
 
 def load_registry(path: Path) -> dict[str, WorkerEntry]:

@@ -1983,17 +1983,19 @@ def kyomei_command(
         ):
             # every worker image is named shidashi-worker: without this, a second
             # worker paired without --name silently took the first one's entry and pin
+            # (a provisioned worker not reached yet has no address: shown as "-")
+            was = f"{before.address or '-'}, {before.host_key_fingerprint}"
             if not replace:
                 raise kyomei.PairingError(
                     f"{before.name} is already paired with another worker "
-                    f"({before.address}, {before.host_key_fingerprint}); nothing was pinned. "
+                    f"({was}); nothing was pinned. "
                     f"Pair this one under another name (shidashi kyomei --name NEW), or "
                     f"replace {before.name} with --replace. The worker already installed "
                     "this host's key: reboot it to open a new pairing window"
                 )
             _err_console.print(
                 f"[bold yellow]warning:[/bold yellow] replacing {escape(before.name)} "
-                f"({before.address}, {before.host_key_fingerprint}): a worker of that name "
+                f"({was}): a worker of that name "
                 "was paired before with another host key"
             )
             # a trusted welcome is unauthenticated: any LAN responder can claim a
@@ -2030,6 +2032,52 @@ def kyomei_command(
             "check that this fingerprint matches the one on the worker's screen"
         )
     typer.echo(f"reach it with: ssh {entry.name} (or shidashi worker ...)")
+
+
+@worker_app.command("provision")
+def worker_provision(
+    name: Annotated[
+        str, typer.Argument(help="The worker's name (one RFC 1123 label).", callback=_worker_name)
+    ],
+    iso: Annotated[
+        Path,
+        typer.Option("--iso", help="The generic worker ISO to personalize.", exists=True),
+    ],
+    replace: Annotated[
+        bool, typer.Option("--replace", help="Replace NAME's identity (a lost medium).")
+    ] = False,
+) -> None:
+    """Give worker NAME its identity and a personalized ISO that boots already paired."""
+    from shidashi import provision
+
+    wdir = config.workers_dir()
+    try:
+        done = provision.provision(
+            name,
+            iso,
+            workers_dir=wdir,
+            replace=replace,
+            runner=subprocess.run,
+            ensure_host_key=lambda: _ensure_worker_key(wdir / "id_ed25519"),
+        )
+    except (provision.ProvisionError, OSError) as err:
+        _err_console.print(f"[bold red]error:[/bold red] {escape(str(err))}")
+        raise typer.Exit(1) from err
+    typer.echo(f"provisioned {done.name}")
+    typer.echo(f"host key: {done.fingerprint}")
+    typer.echo(f"ISO: {done.iso_path}")
+    typer.echo(
+        f"write it with: sudo dd if={done.iso_path} of=/dev/sdX bs=4M conv=fsync status=progress"
+    )
+    typer.echo(
+        "the medium holds this worker's private key: keep it like a credential, "
+        "and run with --replace if it is lost"
+    )
+    if done.leftover is not None:
+        _err_console.print(
+            f"[yellow]warning:[/yellow] the previous identity, its private key included, "
+            f"could not be removed: {escape(str(done.leftover))}"
+        )
 
 
 @worker_app.command("disk-init")
@@ -2128,7 +2176,7 @@ def _status_line(
         return f"{entry.name}  refused: {' '.join(str(outcome).split())}"
     st = outcome
     if not st.reachable:
-        return f"{st.name}  unreachable: {_unreachable_reason(st, entry.address)}"
+        return f"{st.name}  unreachable: {_unreachable_reason(st, entry.address or '-')}"
     return (
         f"{st.name}  reachable  max {st.max_target or 'none'}  {st.threads} threads  "
         f"load {st.load1:.2f}  {_work_disk(st)}  jobs: {_job_names(st.jobs)}"
@@ -2187,7 +2235,7 @@ def worker_status(
             _err_console.print(f"[bold red]error:[/bold red] {escape(str(outcome))}")
             raise typer.Exit(1)
         _refresh_flags(entry, outcome)
-        _print_worker_status(outcome, entry.address)
+        _print_worker_status(outcome, entry.address or "-")
         raise typer.Exit(0 if outcome.reachable else 1)
     if not registry:
         typer.echo("no paired worker (pair one with: shidashi kyomei)")

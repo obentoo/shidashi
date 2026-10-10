@@ -4,7 +4,11 @@
 ``HostKeyAlias=<name>``, so a name must never end with two keys (R4.3): ssh accepts a
 host whose key matches ANY line naming it, and a left-over key lets an impostor in.
 
-Requirements exercised: R4.1, R4.2, R4.3.
+A provisioned worker is recorded before it ever answered: no address, no CPU flags, no
+image yet (R1.3); the first contact completes it (R3.5). Every ``workers.json`` written
+before story 020 must still load.
+
+Requirements exercised: R4.1, R4.2, R4.3; story 020: R1.3, R3.5.
 """
 
 import base64
@@ -14,6 +18,7 @@ import os
 import stat
 import struct
 from pathlib import Path
+from typing import Any
 
 import pytest
 from pydantic import ValidationError
@@ -190,3 +195,109 @@ def test_pin_creates_an_absent_file_and_repinning_the_same_key_stays_one_line(
     workers.pin(known_hosts, "lab", key)
     assert _keys_for(known_hosts, "lab") == [" ".join(key.split()[:2])]
     assert known_hosts.read_text().endswith("\n")
+
+
+# --- A registry entry that exists before the first boot (story 020: R1.3, R3.5) -----
+
+KEY = _ed25519_line("provisioned-k1")
+
+
+def _provisioned(entry: workers.WorkerEntry) -> object:
+    """The entry's ``provisioned`` flag (read through the dump: type-checks before 020)."""
+    return entry.model_dump()["provisioned"]
+
+
+def _provisioned_raw(**over: Any) -> dict[str, Any]:
+    raw: dict[str, Any] = {
+        "name": "bentoo-lab",
+        "host_key": KEY,
+        "host_key_fingerprint": _fingerprint(KEY),
+        "paired_at": "2026-10-10T12:00:00+00:00",
+        "provisioned": True,
+    }
+    raw.update(over)
+    return raw
+
+
+def test_a_misspelt_field_is_still_refused_not_read_as_a_missing_address() -> None:
+    """Hostile: with ``address`` optional, a typo (``addres``) must not quietly load as
+    an entry with no address -- unknown fields stay refused."""
+    with pytest.raises(ValidationError) as caught:
+        workers.WorkerEntry.model_validate(_provisioned_raw(addres="192.168.15.7"))
+    # the typo is the ONLY complaint: every other field of a provisioned entry is valid
+    assert [(e["type"], e["loc"]) for e in caught.value.errors()] == [
+        ("extra_forbidden", ("addres",))
+    ]
+
+
+def test_an_absent_address_and_a_null_address_are_the_same_entry() -> None:
+    """Hostile (the converse): ``"address": null`` and no ``address`` key both mean
+    "not known yet"."""
+    absent = workers.WorkerEntry.model_validate(_provisioned_raw())
+    null = workers.WorkerEntry.model_validate(_provisioned_raw(address=None))
+    assert absent == null
+    assert absent.address is None
+
+
+def test_a_provisioned_entry_needs_no_address_flags_or_image() -> None:
+    entry = workers.WorkerEntry.model_validate(_provisioned_raw())
+    assert _provisioned(entry) is True
+    assert entry.address is None
+    assert entry.cpu_flags == ()
+    assert entry.image == ""
+    assert entry.host_key_fingerprint == _fingerprint(KEY)
+
+
+def test_a_provisioned_entry_is_still_frozen() -> None:
+    entry = workers.WorkerEntry.model_validate(_provisioned_raw())
+    with pytest.raises(ValidationError):
+        entry.address = "192.168.15.7"
+
+
+def test_a_pre_020_registry_loads_unchanged_and_not_provisioned(tmp_path: Path) -> None:
+    """A ``workers.json`` written before story 020 (every field set, no ``provisioned``)."""
+    path = tmp_path / "workers.json"
+    old = {
+        "bentoo-lab": {
+            "name": "bentoo-lab",
+            "address": "192.168.15.7",
+            "host_key": KEY,
+            "host_key_fingerprint": _fingerprint(KEY),
+            "paired_at": "2026-10-05T12:00:00+00:00",
+            "cpu_flags": ["avx2", "bmi2"],
+            "image": "20261005T1200",
+        }
+    }
+    path.write_text(json.dumps(old, indent=1) + "\n")
+    entry = workers.load_registry(path)["bentoo-lab"]
+    assert entry.address == "192.168.15.7"
+    assert entry.cpu_flags == ("avx2", "bmi2")
+    assert entry.image == "20261005T1200"
+    assert _provisioned(entry) is False
+
+
+def test_a_provisioned_entry_round_trips_through_the_registry_owner_only(tmp_path: Path) -> None:
+    path = tmp_path / "workers.json"
+    entry = workers.WorkerEntry.model_validate(_provisioned_raw())
+    workers.save_registry(path, {"bentoo-lab": entry})
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    assert json.loads(path.read_text())["bentoo-lab"]["address"] is None
+    loaded = workers.load_registry(path)["bentoo-lab"]
+    assert loaded == entry
+    assert _provisioned(loaded) is True
+
+
+def test_a_provisioned_entry_completed_on_first_contact_round_trips(tmp_path: Path) -> None:
+    """R3.5: the address, flags and image filled in later are kept like any entry's."""
+    path = tmp_path / "workers.json"
+    entry = workers.WorkerEntry.model_validate(_provisioned_raw())
+    done = entry.model_copy(
+        update={"address": "192.168.15.42", "cpu_flags": ("avx2",), "image": "20261010T1200"}
+    )
+    workers.save_registry(path, {"bentoo-lab": done})
+    loaded = workers.load_registry(path)["bentoo-lab"]
+    assert (loaded.address, loaded.cpu_flags, loaded.image) == (
+        "192.168.15.42",
+        ("avx2",),
+        "20261010T1200",
+    )

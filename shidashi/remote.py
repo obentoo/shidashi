@@ -66,8 +66,12 @@ class SyncError(RemoteError):
 class RemoteUnreachable(RemoteError):
     """ssh failed for any reason other than the host key."""
 
-    def __init__(self, name: str, address: str, reason: str | None = None) -> None:
+    def __init__(self, name: str, address: str | None, reason: str | None = None) -> None:
         self.name, self.address, self.reason = name, address, reason
+        if address is None:
+            # no address to show: the reason alone says why (never "None")
+            super().__init__(reason or f"{name} is unreachable")
+            return
         super().__init__(f"{name} ({address}) is unreachable" + (f": {reason}" if reason else ""))
 
 
@@ -83,7 +87,13 @@ class Remote:
 
     @classmethod
     def for_worker(cls, entry: WorkerEntry) -> Remote:
-        """The registered worker, with shidashi's key and known_hosts (contract C3)."""
+        """The registered worker, with shidashi's key and known_hosts (contract C3).
+
+        A provisioned entry that has not been reached yet has no address: that is
+        :class:`RemoteUnreachable`, not a ``None`` handed to ssh.
+        """
+        if entry.address is None:
+            raise RemoteUnreachable(entry.name, None, f"{entry.name} has no recorded address")
         base = config.workers_dir()
         return cls(
             name=entry.name,
