@@ -19,6 +19,7 @@ import shutil
 import stat
 import subprocess
 import tempfile
+import uuid
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
@@ -82,6 +83,96 @@ def identity_files(name: str, host_pub: str, host_fp: str, now: dt.datetime) -> 
     }
 
 
+# --- the Wi-Fi connection (story 021) ---------------------------------------------------
+
+#: Where the connection sits in the identity; the worker installs it for NetworkManager.
+WIFI_FILE = Path("wifi") / "shidashi-wifi.nmconnection"
+
+_PRINTABLE_ASCII = re.compile(r"[\x20-\x7e]*")
+_HEX_KEY = re.compile(r"[0-9A-Fa-f]{64}")
+
+
+def check_wifi_ssid(ssid: str) -> None:
+    """:class:`ProvisionError` unless ``ssid`` is 1-32 bytes in UTF-8 (as sent on the air)."""
+    try:
+        raw = ssid.encode("utf-8")
+    except UnicodeEncodeError as err:
+        raise ProvisionError(f"the Wi-Fi SSID {ssid!r} is not valid UTF-8") from err
+    if not 1 <= len(raw) <= 32:
+        raise ProvisionError(
+            f"the Wi-Fi SSID {ssid!r} is {len(raw)} bytes in UTF-8; it must be 1-32 bytes"
+        )
+
+
+def check_wifi_passphrase(psk: str) -> None:
+    """:class:`ProvisionError` unless ``psk`` is 8-63 printable ASCII characters or 64
+    hexadecimal digits. The message names the rule broken, never the passphrase."""
+    rule = "it must be 8-63 printable ASCII characters or 64 hexadecimal digits"
+    if len(psk) == 64:
+        if not _HEX_KEY.fullmatch(psk):
+            raise ProvisionError(f"the Wi-Fi passphrase has 64 characters, not all hex; {rule}")
+    elif not _PRINTABLE_ASCII.fullmatch(psk):
+        raise ProvisionError(
+            f"the Wi-Fi passphrase has a non-printable or non-ASCII character; {rule}"
+        )
+    elif not 8 <= len(psk) <= 63:
+        size = "short" if len(psk) < 8 else "long"
+        raise ProvisionError(f"the Wi-Fi passphrase is too {size}; {rule}")
+
+
+def _keyfile_string(value: str) -> str:
+    """``value`` escaped as a GLib key-file string (the only escapes GLib reads: ``\\\\``,
+    ``\\n``, ``\\t``, ``\\r``, ``\\s``); leading and trailing spaces become ``\\s`` so no
+    reader trims them."""
+    escaped = (
+        value.replace("\\", "\\\\").replace("\n", "\\n").replace("\t", "\\t").replace("\r", "\\r")
+    )
+    body = escaped.strip(" ")
+    lead = len(escaped) - len(escaped.lstrip(" "))
+    trail = len(escaped) - len(escaped.rstrip(" ")) if body else 0
+    return "\\s" * lead + body + "\\s" * trail
+
+
+def _keyfile_ssid(ssid: str) -> str:
+    """The SSID as NetworkManager writes it: plain when plainly readable, else the
+    decimal byte list (``99;97;102;195;169;``) NetworkManager itself uses for non-ASCII,
+    control bytes, ``;``, ``\\`` and edge whitespace."""
+    plain = (
+        _PRINTABLE_ASCII.fullmatch(ssid) is not None
+        and not set(ssid) & {"\\", ";"}
+        and ssid == ssid.strip(" ")
+    )
+    return ssid if plain else "".join(f"{byte};" for byte in ssid.encode("utf-8"))
+
+
+def wifi_connection(ssid: str, psk: str) -> bytes:
+    """A NetworkManager keyfile joining WPA-PSK network ``ssid`` with ``psk``. Pure.
+
+    The uuid is a uuid5 of the exact SSID, so a re-provision replaces the connection
+    instead of adding one, and two SSIDs that differ in any byte stay two connections.
+    """
+    check_wifi_ssid(ssid)
+    check_wifi_passphrase(psk)
+    connection_uuid = uuid.uuid5(uuid.NAMESPACE_URL, "shidashi-wifi:" + ssid)
+    sections = {
+        "connection": {
+            "id": _keyfile_string(ssid),
+            "uuid": str(connection_uuid),
+            "type": "wifi",
+            "autoconnect": "true",
+        },
+        "wifi": {"mode": "infrastructure", "ssid": _keyfile_ssid(ssid)},
+        "wifi-security": {"key-mgmt": "wpa-psk", "psk": _keyfile_string(psk)},
+        "ipv4": {"method": "auto"},
+        "ipv6": {"method": "auto"},
+    }
+    text = "\n".join(
+        f"[{section}]\n" + "".join(f"{key}={value}\n" for key, value in keys.items())
+        for section, keys in sections.items()
+    )
+    return text.encode("utf-8")
+
+
 # --- the transaction (1.3) ------------------------------------------------------------
 
 #: The volume label of the generic worker ISO; the live root is found by it.
@@ -140,6 +231,7 @@ def provision(
     replace: bool,
     runner: Runner,
     ensure_host_key: Callable[[], object] | None = None,
+    wifi: tuple[str, str] | None = None,
 ) -> Provisioned:
     """Give worker ``name`` its identity and a personalized copy of the worker ``iso``.
 
@@ -148,10 +240,15 @@ def provision(
     ``workers_dir/name/``; ``name`` is pinned in ``known_hosts`` and recorded in
     ``workers.json``, the last write. Any failure undoes what was done (R1.8). Nothing
     is written outside ``workers_dir`` (R4.2).
+
+    ``wifi`` -- ``(ssid, passphrase)`` -- adds the Wi-Fi connection the worker installs
+    at boot, as :data:`WIFI_FILE` of the identity; without it the identity has none.
     """
     registry_path = workers_dir / "workers.json"
     known_hosts = workers_dir / "known_hosts"
-    registry = _refuse(name, iso, workers_dir, registry_path, known_hosts, replace=replace)
+    registry = _refuse(
+        name, iso, workers_dir, registry_path, known_hosts, replace=replace, wifi=wifi
+    )
     if ensure_host_key is not None:
         try:
             ensure_host_key()
@@ -191,6 +288,9 @@ def provision(
         files = identity_files(name, host_pub, _fingerprint(runner, host_pub_path), now)
         for filename, content in files.items():
             _write_private(identity / filename, content)
+        if wifi is not None:
+            (identity / WIFI_FILE.parent).mkdir(mode=0o700)
+            _write_private(identity / WIFI_FILE, wifi_connection(*wifi))
         step = "xorriso"
         copy = tmp / f"{name}.iso"
         try:
@@ -267,10 +367,15 @@ def _refuse(
     known_hosts: Path,
     *,
     replace: bool,
+    wifi: tuple[str, str] | None,
 ) -> dict[str, workers.WorkerEntry]:
     """Every refusal, before anything is written; the registry as it stands."""
     if not re.fullmatch(kyomei_protocol.HOSTNAME_RE, name):
         raise ProvisionError(f"{name!r} is not a valid worker name (one lower-case RFC 1123 label)")
+    if wifi is not None:
+        ssid, psk = wifi
+        check_wifi_ssid(ssid)
+        check_wifi_passphrase(psk)
     volume = iso_volume_id(iso)
     if volume != WORKER_VOLUME_ID:
         raise ProvisionError(f"{iso} is not a worker ISO: its volume is {volume}")

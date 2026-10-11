@@ -23,6 +23,7 @@ a log line.
 """
 
 import base64
+import configparser
 import datetime as dt
 import ipaddress
 import json
@@ -63,6 +64,10 @@ _ISSUE = Path("run/issue.d/50-shidashi-kyomei.issue")
 _AUTHORIZED_KEYS = Path("root/.ssh/authorized_keys")
 _HOST_KEY_PUB = Path("etc/ssh/ssh_host_ed25519_key.pub")
 _HOST_KEY_GLOBS = ("ssh_host_*_key", "ssh_host_*_key.pub")
+#: The Wi-Fi connection a provisioned identity may carry (shidashi/provision.py
+#: ``WIFI_FILE``), and where NetworkManager reads it on the worker.
+_MEDIUM_WIFI = Path("wifi/shidashi-wifi.nmconnection")
+_NM_CONNECTION = Path("etc/NetworkManager/system-connections/shidashi-wifi.nmconnection")
 #: Each install command must finish well inside the host's 10 s answer timeout.
 _COMMAND_TIMEOUT = 8
 
@@ -431,6 +436,9 @@ def restore(
     first failure ends the restore: sshd is started only once the keys,
     ``authorized_keys`` and the name are in place, and the record is written last, so
     a half-installed identity starts no sshd and leaves the pairing window to open.
+    Before that record, a medium's Wi-Fi connection (``wifi/shidashi-wifi.nmconnection``)
+    is installed for NetworkManager -- see :func:`_install_wifi`; it never fails the
+    restore. The work disk carries no Wi-Fi connection: only the host writes one.
     With ``announce`` the worker's name and host key fingerprint are then published
     over DNS-SD (``_shidashi-worker._tcp``); a failed announcement returns 1 and
     leaves sshd running.
@@ -485,6 +493,8 @@ def restore(
                 _step(what, step)
             for argv in commands:
                 _must(runner, argv)
+            # never fatal: a wired worker must not lose its pairing to a bad Wi-Fi file
+            _install_wifi(root, runner, directory / _MEDIUM_WIFI)
             # last: the record says the pairing is whole
             _step("RAM record", lambda: _write_record(root, identity.record))
         except InstallError as err:
@@ -891,6 +901,91 @@ def _copy_host_keys(source: Path, dest: Path, *, dir_mode: int, reown: bool = Fa
         if reown:
             os.chown(target, 0, 0)
             os.chmod(target, mode)
+
+
+# --- the Wi-Fi connection a medium may carry --------------------------------------
+
+
+def _wifi_problem(data: bytes) -> str | None:
+    """Why ``data`` is not a NetworkManager Wi-Fi keyfile, or ``None`` when it is one.
+
+    It must be UTF-8 and parse as a key file whose ``[connection]`` section says
+    ``type=wifi``. Only full-line ``#``/``;`` comments are comments (GLib's rule): a
+    ``;`` or ``#`` inside a value -- an SSID byte list ``99;97;102;``, a passphrase --
+    is the value's. The reason never quotes the file: it holds the passphrase.
+    """
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        return "not UTF-8 text"
+    parser = configparser.ConfigParser(
+        delimiters=("=",),
+        comment_prefixes=("#", ";"),
+        inline_comment_prefixes=None,
+        strict=False,
+        interpolation=None,
+    )
+    try:
+        parser.read_string(text)
+    except configparser.Error:
+        return "not a key file"  # the parser's message quotes the offending line
+    if not parser.has_section("connection"):
+        return "no [connection] section"
+    if parser.get("connection", "type", fallback=None) != "wifi":
+        return "[connection] type is not wifi"
+    return None
+
+
+def _install_wifi(root: Path, runner: Runner, source: Path) -> None:
+    """Install a medium's Wi-Fi connection for NetworkManager, then have it reload.
+
+    Nothing happens without ``source``. A malformed one is said and skipped; a failed
+    install or reload is said too. None of them raises: the identity restores anyway.
+    The copy is ``root:root`` 0600 -- NetworkManager ignores a keyfile owned by another
+    user or readable by others, and the medium's Rock Ridge owner and mode are the
+    provisioning user's. The identity unit runs before NetworkManager.service, which
+    then reads the file at its start; the reload covers one already running.
+    """
+    if not os.path.lexists(source):
+        return
+    data = b""
+    if source.is_symlink() or not source.is_file():
+        problem: str | None = "not a regular file"
+    else:
+        try:
+            data = source.read_bytes()
+        except OSError as err:
+            problem = f"cannot read it ({err.strerror or err})"
+        else:
+            problem = _wifi_problem(data)
+    if problem is not None:
+        print(f"kyomei: wifi connection ignored: {source}: {problem}", file=sys.stderr)
+        return
+    target = root / _NM_CONNECTION
+    try:
+        target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        _write(target, data, 0o600)
+        os.chown(target, 0, 0)
+        os.chmod(target, 0o600)
+    except OSError as err:
+        print(f"kyomei: wifi connection not installed: {err}", file=sys.stderr)
+        return
+    argv = ["nmcli", "connection", "reload"]
+    try:
+        done = runner(argv, capture_output=True, text=True, timeout=_COMMAND_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        reason = f"{' '.join(argv)} timed out after {_COMMAND_TIMEOUT} s"
+    except (OSError, subprocess.SubprocessError) as err:
+        reason = f"{' '.join(argv)} failed: {err}"
+    else:
+        if done.returncode == 0:
+            return
+        detail = (done.stderr or "").strip().splitlines()
+        reason = f"{' '.join(argv)} failed" + (f": {detail[-1]}" if detail else "")
+    print(
+        f"kyomei: wifi connection not loaded: {reason} (NetworkManager reads it at its start)",
+        file=sys.stderr,
+    )
 
 
 # ===================================================================================

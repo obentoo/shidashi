@@ -2090,6 +2090,33 @@ def kyomei_command(
     typer.echo(f"reach it with: ssh {entry.name} (or shidashi worker ...)")
 
 
+def _wifi_passphrase(ssid: str) -> str:
+    """The passphrase of Wi-Fi network ``ssid``: typed twice without echo on a terminal,
+    else exactly one line of stdin, its newline stripped. Never printed or logged."""
+    from shidashi import provision
+
+    provision.check_wifi_ssid(ssid)  # a bad SSID is refused before the passphrase is asked
+    if sys.stdin.isatty():
+        psk: str = typer.prompt(
+            f"Wi-Fi passphrase for {ssid}", hide_input=True, confirmation_prompt=True
+        )
+        return psk
+    try:
+        line = sys.stdin.readline()
+    except UnicodeDecodeError:
+        # the codec's message quotes a byte of the passphrase: never chain it
+        raise provision.ProvisionError(
+            "the Wi-Fi passphrase is not ASCII (8-63 printable characters or 64 hex digits)"
+        ) from None
+    if not line:
+        raise provision.ProvisionError("no Wi-Fi passphrase: stdin ended before a line")
+    # a CR is never part of a WPA passphrase: a CRLF line is read as its text
+    psk = line.removesuffix("\n").removesuffix("\r")
+    if not psk:
+        raise provision.ProvisionError("the Wi-Fi passphrase is empty")
+    return psk
+
+
 @worker_app.command("provision")
 def worker_provision(
     name: Annotated[
@@ -2102,12 +2129,22 @@ def worker_provision(
     replace: Annotated[
         bool, typer.Option("--replace", help="Replace NAME's identity (a lost medium).")
     ] = False,
+    wifi: Annotated[
+        str | None,
+        typer.Option(
+            "--wifi",
+            metavar="SSID",
+            help="Join this WPA-PSK Wi-Fi network at boot; the passphrase is asked without "
+            "echo on a terminal, else read as one line from stdin.",
+        ),
+    ] = None,
 ) -> None:
     """Give worker NAME its identity and a personalized ISO that boots already paired."""
     from shidashi import provision
 
     wdir = config.workers_dir()
     try:
+        network = None if wifi is None else (wifi, _wifi_passphrase(wifi))
         done = provision.provision(
             name,
             iso,
@@ -2115,6 +2152,7 @@ def worker_provision(
             replace=replace,
             runner=subprocess.run,
             ensure_host_key=lambda: _ensure_worker_key(wdir / "id_ed25519"),
+            wifi=network,
         )
     except (provision.ProvisionError, OSError) as err:
         _err_console.print(f"[bold red]error:[/bold red] {escape(str(err))}")

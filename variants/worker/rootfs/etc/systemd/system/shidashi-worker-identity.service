@@ -9,10 +9,14 @@
 #
 # No Wants=sshd.service: the script starts sshd itself (--no-block), only once the keys
 # are in place.
+#
+# Before=NetworkManager.service (story 021): an identity's Wi-Fi connection is installed
+# here, so NetworkManager reads it at its start; the script's nmcli reload is only the
+# fallback for a NetworkManager already running.
 [Unit]
 Description=Restore the Shidashi identity provisioned on the boot medium
 After=local-fs.target systemd-resolved.service
-Before=shidashi-worker-restore.service shidashi-kyomei.service
+Before=shidashi-worker-restore.service shidashi-kyomei.service NetworkManager.service
 ConditionPathExists=/run/initramfs/live/shidashi/identity/pairing.json
 
 [Service]
