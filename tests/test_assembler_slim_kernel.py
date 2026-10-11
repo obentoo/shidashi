@@ -39,3 +39,13 @@ def test_pruning_usr_src_keeps_the_kernel_image(
     assert f"{_SRC}/Makefile" in pruned  # the sources go ...
     assert f"{_SRC}/arch/x86/boot/bzImage" not in pruned  # ... the image the ISO boots stays
     assert len(wired.isos_built) == 1
+
+
+def test_only_the_groups_this_kernel_lacks_are_reported_unmatched(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Measured on the first real slim run: the report named every group, the dropped
+    ones too, because it looked after they were gone."""
+    wired = harness._slim_wired(tmp_path, monkeypatch)
+    wired.assemble()
+    assert wired.step("slim")["unmatched_module_groups"] == ["drivers/accel"]

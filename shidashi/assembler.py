@@ -482,6 +482,8 @@ def _slim_image(
     if kver_root is None or not kver_root.is_dir():
         raise AssemblerError(f"slim: the modules of kernel {kver} are not in {rootfs}")
     module_dirs = slim.module_dirs_to_drop(kver_root, cfg.drop_modules)
+    # read before the removal: afterwards every dropped group looks absent too
+    unmatched = slim.unmatched_module_groups(kver_root, cfg.drop_modules)
     _remove_in_image(container, rootfs, module_dirs)
     indexed = container.run(["depmod", "-a", kver], check=False)
     if indexed.exit_code != 0:
@@ -538,7 +540,7 @@ def _slim_image(
     )
     step.add(
         kernel=kver,
-        unmatched_module_groups=slim.unmatched_module_groups(kver_root, cfg.drop_modules),
+        unmatched_module_groups=unmatched,
         **dataclasses.asdict(report),
     )
     run.event(

@@ -249,8 +249,13 @@ def _argv(tmp_path: Path, spec: vm.VmSpec, sockets: tuple[Path, ...] = ()) -> li
 def test_a_disk_is_a_virtio_qcow2_drive(tmp_path: Path) -> None:
     spec = vm.VmSpec(iso=tmp_path / "x.iso", disks=(tmp_path / "work.qcow2",))
     argv = _argv(tmp_path, spec)
-    at = argv.index(f"file={tmp_path / 'work.qcow2'},if=virtio,format=qcow2,discard=unmap")
+    disk = tmp_path / "work.qcow2"
+    at = argv.index(f"file={disk},if=none,id=disk0,format=qcow2,discard=unmap")
     assert argv[at - 1] == "-drive"
+    assert argv[at + 1 : at + 3] == [
+        "-device",
+        f"virtio-blk-pci,drive=disk0,serial={vm.disk_serial(disk)}",
+    ]
 
 
 def test_shares_need_shared_memory_and_one_vhost_user_fs_each(tmp_path: Path) -> None:

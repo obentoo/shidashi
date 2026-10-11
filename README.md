@@ -253,6 +253,33 @@ new key and the old one is no longer accepted.
 shidashi worker provision bentoo-lab --iso <worker iso> --replace
 ```
 
+A worker on Wi-Fi joins its network at boot when its medium carries the connection:
+
+```sh
+shidashi worker provision bentoo-lab --iso <worker iso> --wifi "Home Network"
+printf '%s\n' "$PSK" | shidashi worker provision bentoo-lab --iso <worker iso> --wifi "Home Network"
+```
+
+On a terminal the passphrase is asked twice, without echo; otherwise one line is read from
+stdin. The SSID is 1–32 bytes; the passphrase is 8–63 printable ASCII characters or 64 hex
+digits, and anything else is refused before anything is written. The passphrase is stored
+only in the medium's identity (a NetworkManager connection, root-only), never in the
+registry, the output or the audit trail — one more reason to keep the medium like a key. At
+boot the worker installs it as `/etc/NetworkManager/system-connections/shidashi-wifi.nmconnection`
+(root, 0600); a malformed one is skipped with a message and the wired identity still restores.
+
+To try a provisioned worker before writing a stick, boot its copy in a VM and forward the
+guest's SSH port to the host's loopback:
+
+```sh
+shidashi vm start ~/.local/share/shidashi/worker/vmworker/vmworker.iso --forward 2222:22
+shidashi worker status vmworker --address 127.0.0.1:2222
+```
+
+`--forward HOST:GUEST` makes the guest's TCP port `GUEST` reachable on `127.0.0.1:HOST` (never
+on another interface), and repeats for more ports. A host port already in use is refused
+before QEMU starts.
+
 At boot the worker installs the identity, starts SSH and announces its name on the LAN over
 mDNS. The host has no address for it yet: the `worker` commands look the name up over mDNS
 (5 s), verify the pinned key, and record the address after the first command that succeeds.
@@ -266,6 +293,29 @@ shidashi worker status bentoo-lab --address 10.8.0.2    # HOST[:PORT], recorded 
 ```
 
 A worker booted from the plain `worker` ISO has no identity: pair it with a code, below.
+
+### The worker image
+
+The `worker` ISO is a build oven, not a desktop: its `system.yaml` declares a `slim:` section,
+and its assemble reduces the live system to what a worker runs after the packages are
+installed (the other images are assembled as before):
+
+- the world becomes the keep list — systemd, OpenSSH, Python 3.14, podman, git, GnuPG, tar,
+  binutils, OpenSSL, btrfs-progs, rsync, gptfdisk, smartmontools, NetworkManager and
+  wpa_supplicant, sudo-rs, the kernel, its firmware and microcode, dracut and lvm2 — plus a
+  rescue kit (nano, less, iproute2, pciutils, usbutils, nvme-cli, lm-sensors, htop), and
+  `emerge --depclean` removes the rest;
+- the kernel keeps its network, Wi-Fi, storage, USB and input drivers and drops graphics,
+  media, sound, InfiniBand, Bluetooth and a few others; the firmware the remaining drivers
+  ask for stays, with CPU microcode and the regulatory database;
+- documentation, headers, sources, the compiler's internals, translations and static
+  libraries are pruned;
+- every command the worker runs (its SSH server, the work disk, the native job runner, the
+  rescue kit) is checked present, or the assemble fails naming the missing ones.
+
+Its squashfs has a budget of **600 MiB**: a larger one fails the assemble before that
+compression's ISO is written. The slim report (packages removed, driver groups dropped,
+firmware deleted, files pruned, sizes before and after) is in the run's audit trail.
 
 ### Pairing a worker
 

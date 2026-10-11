@@ -24,6 +24,7 @@ argument list, never through a shell.
 
 import base64
 import contextlib
+import hashlib
 import json
 import os
 import re
@@ -190,6 +191,15 @@ def ovmf() -> tuple[str, str, str]:
     raise VmError("no OVMF firmware on the host (sys-firmware/edk2-bin or edk2-ovmf)")
 
 
+def disk_serial(disk: Path) -> str:
+    """The serial a VM disk shows in ``lsblk`` (``worker disk-init`` confirms it): the
+    file's name, then a digest of its absolute path, so one file keeps its serial and two
+    files of one name differ. At most 20 characters, what virtio-blk keeps. Pure."""
+    stem = re.sub(r"[^a-z0-9]+", "-", disk.name.split(".")[0].lower()).strip("-")[:11]
+    digest = hashlib.sha256(str(disk.absolute()).encode()).hexdigest()[:8]
+    return f"{stem or 'disk'}-{digest}"
+
+
 def qemu_argv(
     spec: VmSpec,
     *,
@@ -265,10 +275,16 @@ def qemu_argv(
                 *(f"hostfwd=tcp:127.0.0.1:{host}-:{guest}" for host, guest in spec.forwards),
             ]
         ),
+        # the serial belongs to the device: QEMU refuses `serial=` on a qcow2 -drive
         *(
             arg
-            for disk in spec.disks
-            for arg in ("-drive", f"file={disk},if=virtio,format=qcow2,discard=unmap")
+            for i, disk in enumerate(spec.disks)
+            for arg in (
+                "-drive",
+                f"file={disk},if=none,id=disk{i},format=qcow2,discard=unmap",
+                "-device",
+                f"virtio-blk-pci,drive=disk{i},serial={disk_serial(disk)}",
+            )
         ),
         *(
             arg
