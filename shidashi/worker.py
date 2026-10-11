@@ -223,7 +223,7 @@ def status(remote: Remote, *, timeout: float = STATUS_TIMEOUT) -> WorkerStatus:
     except RemoteUnreachable as err:
         return WorkerStatus(name=remote.name, reachable=False, reason=str(err))
     sections = _probe_sections(result.stdout)
-    flags = tuple(_after_colon(_first(sections, "flags")).split())
+    flags = _cpu_flags(sections)
     mounted = "mounted" in sections.get("work", [])
     meminfo = _meminfo(sections.get("mem", []))
     runnable = isaguard.runnable(flags) if flags else ()
@@ -241,7 +241,7 @@ def status(remote: Remote, *, timeout: float = STATUS_TIMEOUT) -> WorkerStatus:
         mem_available=meminfo.get("MemAvailable", 0),
         work_free=_df_avail(sections.get("free", [])) if mounted else None,
         accepts_jobs=mounted,
-        image=_first(sections, "image").partition("=")[2].strip().strip("\"'"),
+        image=_image(sections),
         smart=_smart_verdict(sections.get("smart", [])),
         # each manifest is <arch>-<init>/<step>-<fp24>.json: the trunk is its name
         trunks=tuple(sorted(m.removesuffix(".json") for m in sections.get("trunks", []) if m)),
@@ -253,23 +253,43 @@ def refresh_registry(entry: WorkerEntry, st: WorkerStatus) -> WorkerEntry:
     """``entry`` with the CPU flags the probe ``st`` read, saved to the host's registry
     when they changed (R1.6); a provisioned entry with no image yet also takes the
     image the probe read (story 020, R3.5). An unreachable probe, or one that read
-    nothing new, changes nothing. ``OSError`` and :class:`workers.RegistryError`
-    propagate."""
+    nothing new, changes nothing. Only N's entry changes, and not at all when N was
+    unpaired or re-pinned meanwhile (:func:`_save_facts`). ``OSError`` and
+    :class:`workers.RegistryError` propagate."""
     if not st.reachable:
         return entry
-    update: dict[str, object] = {}
-    if st.cpu_flags and st.cpu_flags != entry.cpu_flags:
-        update["cpu_flags"] = st.cpu_flags
-    if entry.provisioned and not entry.image and st.image:
-        update["image"] = st.image
+    update = _facts_update(entry, st.cpu_flags, st.image)
     if not update:
         return entry
-    fresh = entry.model_copy(update=update)
+    _save_facts(entry, update)
+    return entry.model_copy(update=update)
+
+
+def _facts_update(entry: WorkerEntry, cpu_flags: tuple[str, ...], image: str) -> dict[str, object]:
+    """What a probe that read ``cpu_flags`` and ``image`` changes in ``entry``: the
+    flags when they differ, the image only for a provisioned entry that has none."""
+    update: dict[str, object] = {}
+    if cpu_flags and cpu_flags != entry.cpu_flags:
+        update["cpu_flags"] = cpu_flags
+    if entry.provisioned and not entry.image and image:
+        update["image"] = image
+    return update
+
+
+def _save_facts(entry: WorkerEntry, update: dict[str, object]) -> bool:
+    """Apply ``update`` to N's entry in the registry, re-read first: every other
+    worker, and N's other fields, stay as they are now. A worker unpaired meanwhile
+    is not paired back, and one re-pinned meanwhile keeps its entry: the facts were
+    read from the worker behind the old pin. Whether it was saved. ``OSError`` and
+    :class:`workers.RegistryError` propagate."""
     path = config.workers_dir() / "workers.json"
-    registry = workers.load_registry(path)  # re-read: keep what changed meanwhile
-    registry[entry.name] = fresh
+    registry = workers.load_registry(path)
+    current = registry.get(entry.name)
+    if current is None or current.host_key_fingerprint != entry.host_key_fingerprint:
+        return False
+    registry[entry.name] = current.model_copy(update=update)
     workers.save_registry(path, registry)
-    return fresh
+    return True
 
 
 def _probe_sections(stdout: str) -> dict[str, list[str]]:
@@ -287,6 +307,16 @@ def _probe_sections(stdout: str) -> dict[str, list[str]]:
 
 def _first(sections: dict[str, list[str]], name: str) -> str:
     return next((line for line in sections.get(name, []) if line), "")
+
+
+def _cpu_flags(sections: dict[str, list[str]]) -> tuple[str, ...]:
+    """The ``@flags`` section's ``/proc/cpuinfo`` flags."""
+    return tuple(_after_colon(_first(sections, "flags")).split())
+
+
+def _image(sections: dict[str, list[str]]) -> str:
+    """The ``@image`` section's ``BUILD_ID``, unquoted."""
+    return _first(sections, "image").partition("=")[2].strip().strip("\"'")
 
 
 def _after_colon(line: str) -> str:
@@ -1089,7 +1119,11 @@ def job(
     name; a dirty checkout (unless ``allow_dirty``: HEAD ships, the changes do not);
     the CPU guard on the target arch (an archless command has none); the
     writability of every host directory the pull writes; one probe of the worker --
-    reachable, ``/mnt/work`` mounted, no ``shidashi-job-*`` active. A PKGDIR writer
+    reachable, ``/mnt/work`` mounted, no ``shidashi-job-*`` active. A provisioned
+    ``entry`` with no CPU flags or no image yet is probed before the CPU guard instead:
+    the probe also reads them, saves them to N's registry entry (never over an entry
+    unpaired or re-pinned meanwhile) and the guard judges the completed entry (R3.5);
+    the refusals keep their order. A PKGDIR writer
     (:func:`ownership.writes_pkgdir`) then takes the arch's owner lock. Then the
     push (the arch's subset and the venv, or the venv alone for an archless
     command), the commit's tree, and the unit; a failure in any of the three
@@ -1115,6 +1149,12 @@ def job(
     name = entry.name
     repo = _host_repo()
     commit = _checkout_head(repo, allow_dirty=allow_dirty)
+    opening: list[str] | None = None
+    if entry.provisioned and not (entry.cpu_flags and entry.image):
+        # R3.5: nobody has read this worker yet -- the opening probe goes first and
+        # reads its CPU flags and image, and the CPU guard judges the completed entry
+        opening = _probe_for_job(remote, name, facts=True)
+        entry = _complete_entry(entry, opening, rec)
     target = _cpu_guard(name, args, entry.cpu_flags)
     arch, init = target if target is not None else (None, "systemd")
     writer = ownership.writes_pkgdir(args)
@@ -1132,7 +1172,7 @@ def job(
     if problem is not None:
         reason, fix = problem
         raise JobRefused(reason, fix or "make the directory readable and writable by this user")
-    _probe_for_job(remote, name)
+    _require_idle(name, opening if opening is not None else _probe_for_job(remote, name))
 
     unit = f"shidashi-job-{job}"
     rec.event(
@@ -1336,15 +1376,25 @@ def _cpu_guard(name: str, args: Sequence[str], cpu_flags: Sequence[str]) -> tupl
     return target
 
 
-def _probe_for_job(remote: Remote, name: str) -> None:
-    """One ssh round trip: refuse an unreachable worker, one without its work disk,
-    and one already running a Shidashi job (one job at a time per worker).
+#: What the job's opening probe also reads of a provisioned worker nobody has read yet:
+#: the ``@flags`` and ``@image`` sections of :data:`_STATUS_PROBE`, verbatim.
+_JOB_FACTS = (
+    "echo @flags; grep -m1 '^flags' /proc/cpuinfo 2>/dev/null; "
+    "echo @image; grep -h -m1 '^BUILD_ID=' /etc/os-release /usr/lib/os-release 2>/dev/null; "
+)
+
+
+def _probe_for_job(remote: Remote, name: str, *, facts: bool = False) -> list[str]:
+    """The job's opening contact, one ssh round trip: whether the work disk is mounted
+    and which Shidashi jobs run (judged by :func:`_require_idle`) and, with ``facts``,
+    the CPU flags and image (as ``@flags``/``@image`` sections). Its output lines; an
+    unreachable worker or a failed probe is refused here.
 
     A changed host key (:class:`HostKeyMismatch`) propagates: a security event.
     """
     script = (
         f"if findmnt -no TARGET -M {WORK} >/dev/null 2>&1; then echo work=mounted; fi; "
-        f"{_LIST_JOBS} 2>/dev/null; true"
+        f"{_LIST_JOBS} 2>/dev/null; {_JOB_FACTS if facts else ''}true"
     )
     try:
         result = run(remote, script, timeout=_JOB_PROBE_TIMEOUT)
@@ -1357,7 +1407,29 @@ def _probe_for_job(remote: Remote, name: str) -> None:
             f"the probe of {name} failed (exit {result.exit_code}): {_tail(result.stderr)}",
             f"check the worker: shidashi worker status {name}",
         )
-    lines = result.stdout.splitlines()
+    return result.stdout.splitlines()
+
+
+def _complete_entry(entry: WorkerEntry, lines: list[str], rec: audit.Recorder) -> WorkerEntry:
+    """``entry`` completed with the CPU flags and image the opening probe read (R3.5),
+    saved as :func:`refresh_registry` saves them. A registry that cannot be written
+    only warns: the CPU guard still judges what the probe read."""
+    sections = _probe_sections("\n".join(lines))
+    update = _facts_update(entry, _cpu_flags(sections), _image(sections))
+    if not update:
+        return entry
+    try:
+        saved = _save_facts(entry, update)
+    except (OSError, workers.RegistryError) as err:
+        print(f"warning: {entry.name}'s CPU flags and image not recorded: {err}", file=sys.stderr)
+        saved = False
+    rec.event("worker.entry.completed", worker=entry.name, fields=sorted(update), saved=saved)
+    return entry.model_copy(update=update)
+
+
+def _require_idle(name: str, lines: list[str]) -> None:
+    """Refuse a worker without its work disk, and one already running a Shidashi job
+    (one job at a time per worker), from the opening probe's ``lines``."""
     running = _active_jobs(lines)
     if "work=mounted" not in lines:
         raise JobRefused(
