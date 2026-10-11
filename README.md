@@ -208,6 +208,7 @@ shidashi vm test bentoo-…-kde-systemd-v3.iso   # boot it and check what it dec
 | `assemble` | assemble an image's live ISO from the binhost | ✔ |
 | `build` | the factory, then every ISO, in one audited run | ✔ |
 | `vm start` / `run` / `test` / `stop` | boot an ISO in a VM and drive it over SSH on vsock | |
+| `worker provision` | write a worker ISO that boots already paired | |
 | `kyomei` | pair a worker (a spare machine booted from the `worker` ISO) | |
 | `worker disk-init` | turn a disk of a paired worker into its work disk | |
 | `release` | publish a release (not implemented yet) | |
@@ -225,11 +226,51 @@ The raw output of every command goes to the run's log, under `/var/tmp/shidashi/
 build fails, the terminal shows the last 50 lines of the failing command's output; the log has
 all of it.
 
-### Pairing a worker
+### Provisioning a worker
 
 A worker is a spare machine booted from the `worker` ISO; the host reaches it as root over
-SSH. At boot an unpaired worker announces itself on the LAN (mDNS) and shows a one-time code
-on its screen. On the host:
+SSH. The simplest way to get one is to give it its identity before it ever boots: the host
+writes a personalized copy of the worker ISO that boots already paired, with nobody at the
+worker's screen.
+
+```sh
+shidashi worker provision bentoo-lab --iso bentoo-…-worker-systemd-v3.iso
+sudo dd if=~/.local/share/shidashi/worker/bentoo-lab/bentoo-lab.iso of=/dev/sdX bs=4M conv=fsync status=progress
+```
+
+`provision` generates the worker's SSH host key, pins it under the name, records the worker,
+and writes the copy to `~/.local/share/shidashi/worker/<name>/<name>.iso` with the identity
+in `/shidashi/identity/`, outside the squashfs — the generic ISO stays generic. It prints the
+fingerprint and the `dd` line to write the stick. It refuses an ISO that is not a worker ISO
+(its volume must be `BENTOO_WORKER`), a name already paired with another key, and a data
+directory inside a git work tree; a failure leaves nothing changed.
+
+**The written medium is a credential:** it holds the worker's private host key. Keep it like
+one. If it is lost or stolen, provision the name again with `--replace`: the worker gets a
+new key and the old one is no longer accepted.
+
+```sh
+shidashi worker provision bentoo-lab --iso <worker iso> --replace
+```
+
+At boot the worker installs the identity, starts SSH and announces its name on the LAN over
+mDNS. The host has no address for it yet: the `worker` commands look the name up over mDNS
+(5 s), verify the pinned key, and record the address after the first command that succeeds.
+When the recorded address stops answering (a new DHCP lease), `status`, `sync`, `poweroff`
+and `job` look the name up again and retry once; `run` and `logs` do not (a command may
+already have run), so run `worker status` first. Across networks, where mDNS does not reach, pass the address yourself:
+
+```sh
+shidashi worker status bentoo-lab                       # found by name on the LAN
+shidashi worker status bentoo-lab --address 10.8.0.2    # HOST[:PORT], recorded once it answers
+```
+
+A worker booted from the plain `worker` ISO has no identity: pair it with a code, below.
+
+### Pairing a worker
+
+At boot an unpaired worker announces itself on the LAN (mDNS) and shows a one-time code on its
+screen. On the host:
 
 ```sh
 shidashi kyomei --name bentoo-lab          # lists the workers it hears, then asks for the code

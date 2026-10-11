@@ -1,0 +1,6 @@
+# Synthetic test fixtures, not real keys (story 020): an openssh-key-v1 file built from a fixed
+# seed by tests/test_kyomei_worker_medium.py::_openssh_private, and PEM armour around placeholder
+# bodies in tests/test_kyomei_worker_medium_review.py::BAD_PRIVATE_KEYS. One fingerprint per finding.
+3e741a535e8fc0351e80712ba7336eb820c5fb98:tests/test_kyomei_worker_medium_review.py:private-key:260
+3e741a535e8fc0351e80712ba7336eb820c5fb98:tests/test_kyomei_worker_medium_review.py:private-key:266
+3e741a535e8fc0351e80712ba7336eb820c5fb98:tests/test_kyomei_worker_medium.py:private-key:89
