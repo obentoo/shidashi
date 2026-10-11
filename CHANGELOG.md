@@ -75,6 +75,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   lost medium is revoked with `--replace`, which re-keys N. **The written medium is
   a credential**: it holds the worker's private host key. Checked on a VM (default,
   reboot and copy-to-RAM boots) and on a real worker reached by name, twice.
+- **The worker ISO is a lean build oven: 656 MiB instead of 2 GiB (story 021).** An
+  image whose `system.yaml` declares `slim:` gets a `slim` assemble step after the
+  shared packages checkpoint: its world becomes the keep list and `emerge --depclean`
+  removes the rest, kernel-module groups it never loads are dropped (graphics, media,
+  sound, InfiniBand, Bluetooth…) and `depmod` re-run, firmware no remaining module
+  asks for is deleted (patterns, symlink chains resolved inside the image, the
+  firmware of built-in drivers, iwlwifi's older APIs), documentation, headers,
+  sources, the compiler's internals and static libraries are pruned, and every
+  command the worker runs is checked present, or the assemble fails naming them. The
+  squashfs has a budget (the worker's: 600 MiB; it measured 521) and a larger one
+  fails before that compression's ISO is written. The worker keeps systemd, OpenSSH,
+  Python 3.14, podman, the job runner's tools, NetworkManager, dracut and lvm2, plus
+  a rescue kit. Other images are assembled as before. Checked by an assemble in the
+  builder VM and BIOS and UEFI boots with a work disk and a native job.
+- **`worker provision N --wifi SSID`: a worker on Wi-Fi joins its network at boot
+  (story 021).** The passphrase is asked twice without echo on a terminal or read as
+  one line of stdin, and is stored only as a NetworkManager connection in the
+  identity (0600; never printed, logged, registered or audited). The worker installs
+  it root-only before NetworkManager starts; a malformed one is skipped and the wired
+  identity still restores.
+- **`shidashi vm start --forward HOST:GUEST` (story 021).** A guest TCP port becomes
+  reachable on the host's `127.0.0.1:HOST` (repeatable); a host port already in use
+  is refused before QEMU starts. Each `--disk` now carries a serial, so `worker
+  disk-init` can prepare a VM worker's disk.
 
 ### Changed
 
@@ -95,6 +119,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Stale Python bytecode could ship in an image (story 021).** A layer's `rootfs/`
+  was copied as it stood in the working tree, `__pycache__/*.pyc` included; the copy
+  now skips them.
 - **The generation guard refused a gcc patch release, checked only once and restored
   trees of an older pin (story 016).** The pilot's `base` phase restored a bootstrap
   checkpoint built under an older `::gentoo` pin, upgraded gcc `16.2.0` →
