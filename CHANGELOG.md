@@ -119,6 +119,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`shidashi doctor` reported `gcc ok` on a host whose gcc cannot name its CPU, and
+  the factory's ISA check was then skipped in silence (story 023).** The slim worker
+  keeps the gcc driver but prunes `cc1`, so `gcc -march=native` names nothing. The
+  `gcc` line now runs that probe and is ok only with the arch it names (`names this
+  CPU: znver5`); otherwise it is an optional failure saying the ISA check is skipped.
+  The factory's `isa-check` step records `skipped: host CPU unknown` instead of
+  reading like a clean scan.
+- **The README placed the Wi-Fi passphrase only on the medium (story 023).** The host
+  keeps a copy of the identity too, under
+  `~/.local/share/shidashi/worker/<name>/identity/wifi/` (0600 in a 0700 directory).
 - **Stale Python bytecode could ship in an image (story 021).** A layer's `rootfs/`
   was copied as it stood in the working tree, `__pycache__/*.pyc` included; the copy
   now skips them.
