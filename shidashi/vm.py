@@ -26,6 +26,7 @@ import base64
 import contextlib
 import json
 import os
+import re
 import shutil
 import signal
 import socket
@@ -91,6 +92,8 @@ class VmSpec:
     #: qcow2 disks attached as virtio (/dev/vda, /dev/vdb... in the guest).
     disks: tuple[Path, ...] = ()
     shares: tuple[Share, ...] = ()
+    #: TCP forwards ``(host port, guest port)``; the host side listens on 127.0.0.1 only.
+    forwards: tuple[tuple[int, int], ...] = ()
 
 
 def _credential(name: str, value: str) -> list[str]:
@@ -112,6 +115,34 @@ def parse_share(text: str) -> Share:
     if not path.is_dir():
         raise VmError(f"--share {text!r}: {path} is not a directory")
     return Share(tag, path, readonly)
+
+
+def parse_forward(text: str) -> tuple[int, int]:
+    """``HOST:GUEST``, both TCP ports 1-65535; :class:`ValueError` otherwise. Pure."""
+    match = re.fullmatch(r"([0-9]{1,5}):([0-9]{1,5})", text)
+    if match is None:
+        raise ValueError(f"{text!r} is not two port numbers")
+    pair = (int(match[1]), int(match[2]))
+    if not all(1 <= port <= 65535 for port in pair):
+        raise ValueError(f"{text!r}: a port is 1-65535")
+    return pair
+
+
+def check_host_ports(forwards: Sequence[tuple[int, int]]) -> None:
+    """Refuse a host port something already holds on 127.0.0.1. I/O.
+
+    QEMU only reports a taken ``hostfwd`` port after it has started ("Could not set
+    up host forwarding rule"), so each port is bound here once and released. Like
+    slirp's own listener, the probe sets SO_REUSEADDR: a port left in TIME_WAIT is
+    not refused, one that is listening is.
+    """
+    for host, _guest in forwards:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                probe.bind(("127.0.0.1", host))
+            except OSError as err:
+                raise VmError(f"host port {host} is in use") from err
 
 
 def ensure_disk(path: Path, size: str | None) -> Path:
@@ -228,7 +259,12 @@ def qemu_argv(
         "-serial",
         f"file:{serial}",
         "-nic",
-        "user,model=virtio-net-pci",
+        ",".join(
+            [
+                "user,model=virtio-net-pci",
+                *(f"hostfwd=tcp:127.0.0.1:{host}-:{guest}" for host, guest in spec.forwards),
+            ]
+        ),
         *(
             arg
             for disk in spec.disks
@@ -321,6 +357,7 @@ class Session:
             raise VmError("qemu-system-x86_64 is missing on the host")
         if not Path(_SSH_PROXY).exists():
             raise VmError(f"{_SSH_PROXY} is missing: vsock SSH needs systemd >= 256 on the host")
+        check_host_ports(self.spec.forwards)
         # An existing root-owned directory passes mkdir(exist_ok=True): only the write
         # probe catches it before QEMU does, with a traceback (2026-10-08).
         try:
@@ -374,6 +411,7 @@ class Session:
             self._stop_shares()
             raise VmError(f"qemu failed to start: {done.stderr.strip()}")
         self.started = time.monotonic()
+        forwards = [[host, guest] for host, guest in self.spec.forwards]
         (self.directory / "session.json").write_text(
             json.dumps(
                 {
@@ -387,11 +425,16 @@ class Session:
                         {"tag": s.tag, "path": str(s.path), "readonly": s.readonly}
                         for s in self.spec.shares
                     ],
+                    "forwards": forwards,
                 }
             )
         )
         audit.current().event(
-            "vm.start", iso=str(self.spec.iso), uefi=self.spec.uefi, cid=self.spec.cid
+            "vm.start",
+            iso=str(self.spec.iso),
+            uefi=self.spec.uefi,
+            cid=self.spec.cid,
+            forwards=forwards,
         )
 
     def _start_shares(self) -> list[Path]:
@@ -545,6 +588,7 @@ def load_session(name: str) -> Session:
         shares=tuple(
             Share(s["tag"], Path(s["path"]), s["readonly"]) for s in data.get("shares", ())
         ),
+        forwards=tuple((int(host), int(guest)) for host, guest in data.get("forwards", [])),
     )
     return Session(spec, directory)
 

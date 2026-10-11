@@ -1651,6 +1651,22 @@ def _vm_error(err: Exception) -> typer.Exit:
     return typer.Exit(1)
 
 
+def _forwards(value: list[str] | None) -> list[str] | None:
+    """``--forward``: ``HOST:GUEST``, both TCP ports 1-65535, each host port once."""
+    from shidashi import vm
+
+    seen: set[int] = set()
+    for text in value or ():
+        try:
+            host, _guest = vm.parse_forward(text)
+        except ValueError as err:
+            raise typer.BadParameter(f"expected HOST:GUEST: {err}") from err
+        if host in seen:
+            raise typer.BadParameter(f"{text!r}: host port {host} is forwarded twice")
+        seen.add(host)
+    return value
+
+
 @vm_app.command("start")
 def vm_start(
     iso: Path,
@@ -1679,6 +1695,16 @@ def vm_start(
             "`mount -t virtiofs TAG <dir>`; read-only unless :rw. Repeatable.",
         ),
     ] = None,
+    forward: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--forward",
+            metavar="HOST:GUEST",
+            callback=_forwards,
+            help="Make the guest's TCP port GUEST reachable on the host's 127.0.0.1:HOST "
+            "(e.g. 2222:22). Repeatable.",
+        ),
+    ] = None,
     work_dir: Annotated[Path | None, typer.Option("--work-dir")] = None,
 ) -> None:
     """Start ``iso`` in a VM reachable with `shidashi vm run`."""
@@ -1699,6 +1725,7 @@ def vm_start(
         display=display,
         disks=disks,
         shares=shares,
+        forwards=tuple(vm.parse_forward(f) for f in forward or ()),
     )
     session = vm.Session(spec, vm.session_dir(name))
     try:
