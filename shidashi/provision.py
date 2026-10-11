@@ -286,6 +286,10 @@ def _refuse(
             raise ProvisionError(
                 f"{name} is already paired with {held}; pass --replace to replace it"
             )
+        # an identity left with no pin (a crash, a hand copy): refused before the slow copy
+        leftover = workers_dir / name
+        if leftover.exists() or leftover.is_symlink():
+            raise ProvisionError(f"{leftover} already exists; pass --replace to replace it")
     return registry
 
 

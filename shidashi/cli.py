@@ -2289,14 +2289,22 @@ def worker_status(
     if not registry:
         typer.echo("no paired worker (pair one with: shidashi kyomei)")
         return
-    entries = [registry[name] for name in sorted(registry)]
+    every = [registry[name] for name in sorted(registry)]
+    # a provisioned worker never reached has no address to probe: say how to reach it
+    unreached = {e.name for e in every if e.provisioned and e.address is None}
+    entries = [e for e in every if e.name not in unreached]
     # every worker probed at once: the listing takes one timeout, not one per worker
-    with ThreadPoolExecutor(max_workers=min(8, len(entries))) as pool:
+    with ThreadPoolExecutor(max_workers=max(1, min(8, len(entries)))) as pool:
         outcomes = list(pool.map(lambda e: _probe_or_error(e, _LIST_TIMEOUT), entries))
+    lines = {
+        name: f"{name}  not reached yet: run shidashi worker status {name}" for name in unreached
+    }
     for entry, outcome in zip(entries, outcomes, strict=True):
         if isinstance(outcome, worker_mod.WorkerStatus):
             _refresh_flags(entry, outcome)
-        typer.echo(_status_line(entry, outcome))
+        lines[entry.name] = _status_line(entry, outcome)
+    for name in sorted(lines):
+        typer.echo(lines[name])
     if any(isinstance(o, Exception) for o in outcomes):
         raise typer.Exit(1)
 
