@@ -113,7 +113,7 @@ output. Shidashi never imports Portage on the host.
   |---|---|
   | building | Python ≥ 3.14, `systemd-nspawn` ≥ 242, GNU `tar` with `--xattrs`/`--acls`, `gpg`, `git`, `openssl`, `objdump` |
   | `shidashi vm` | `qemu-system-x86_64`, `xorriso`, read/write access to `/dev/kvm` and `/dev/vhost-vsock` |
-  | optional | `gcc` (names the CPU for the ISA check), `syft` (the SBOM); btrfs under the work directory makes copies instant |
+  | optional | `gcc` able to name this CPU with `-march=native` (the ISA check of built images; without it the check is skipped and the run's `isa-check` step says so), `syft` (the SBOM); btrfs under the work directory makes copies instant |
 
   `shidashi doctor` checks all of it without root, and `pretend`, `factory`, `assemble` and
   `build` refuse to start when a build requirement is missing. A distribution without
@@ -263,8 +263,10 @@ printf '%s\n' "$PSK" | shidashi worker provision bentoo-lab --iso <worker iso> -
 On a terminal the passphrase is asked twice, without echo; otherwise one line is read from
 stdin. The SSID is 1–32 bytes; the passphrase is 8–63 printable ASCII characters or 64 hex
 digits, and anything else is refused before anything is written. The passphrase is stored
-only in the medium's identity (a NetworkManager connection, root-only), never in the
-registry, the output or the audit trail — one more reason to keep the medium like a key. At
+in the medium's identity (a NetworkManager connection, root-only) and in the host's copy of
+that identity, `~/.local/share/shidashi/worker/<name>/identity/wifi/` (0600 in a 0700
+directory, beside the worker's private host key) — never in the registry, the output or the
+audit trail. Keep both like a key; `--replace` rewrites them. At
 boot the worker installs it as `/etc/NetworkManager/system-connections/shidashi-wifi.nmconnection`
 (root, 0600); a malformed one is skipped with a message and the wired identity still restores.
 
