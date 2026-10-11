@@ -30,6 +30,9 @@ _FIRMWARE_SUFFIXES = (".zst", ".xz")
 _MAX_HOPS = 40
 #: A kernel module file, plain or compressed.
 _MODULE_FILE = re.compile(r"\.ko(\.[a-z0-9]+)?$")
+#: An iwlwifi ucode name: directory, chip stem and integer API number. The driver
+#: asks for the newest API and falls back to older ones of the same stem.
+_IWLWIFI_UCODE = re.compile(r"^(?P<dir>(?:.*/)?)iwlwifi-(?P<stem>.+)-(?P<api>[0-9]+)\.ucode$")
 
 
 @dataclass(frozen=True)
@@ -120,15 +123,18 @@ def firmware_to_delete(
 
     A name matches with its ``.zst``/``.xz`` suffix stripped; a wanted name holding
     ``*``, ``?`` or ``[`` is a pattern, as ``modinfo`` prints for ath11k or brcmfmac.
-    A kept symlink keeps every link and file its chain reaches inside the image (a
-    directory: everything under it); a symlink nobody asks for goes, even when the
-    file it names stays.
+    A wanted ``iwlwifi-<stem>-<N>.ucode`` also keeps every ``iwlwifi-<stem>-<M>.ucode``
+    of the same directory with an integer ``M < N``: iwlwifi names only its newest API
+    and the driver falls back to older files. A kept symlink keeps every link and file
+    its chain reaches inside the image (a directory: everything under it); a symlink
+    nobody asks for goes, even when the file it names stays.
     """
     if firmware_root.parts[-3:] != ("usr", "lib", "firmware"):
         raise ValueError(f"{firmware_root} is not an image's usr/lib/firmware")
     image_root = firmware_root.parents[2]
     literals = {name for name in wanted if not _is_pattern(name)}
     patterns = [name for name in wanted if _is_pattern(name)]
+    newest_api = _iwlwifi_newest_api(literals)
     globs = tuple(keep_globs)
     entries = list(_entries(firmware_root))
     kept: set[Path] = set()
@@ -139,6 +145,7 @@ def firmware_to_delete(
             bare in literals
             or any(fnmatchcase(bare, p) for p in patterns)
             or any(fnmatchcase(rel, g) or fnmatchcase(bare, g) for g in globs)
+            or _is_iwlwifi_fallback(bare, newest_api)
         ):
             kept.add(path)
             if path.is_symlink():
@@ -154,6 +161,25 @@ def firmware_to_delete(
         for path in entries
         if path not in kept and not any(path.is_relative_to(d) for d in kept_dirs)
     ]
+
+
+def _iwlwifi_newest_api(names: Iterable[str]) -> dict[tuple[str, str], int]:
+    """The highest API each ``(directory, stem)`` of the iwlwifi ``names`` asks for. Pure."""
+    newest: dict[tuple[str, str], int] = {}
+    for name in names:
+        if match := _IWLWIFI_UCODE.match(name):
+            key = (match["dir"], match["stem"])
+            newest[key] = max(newest.get(key, 0), int(match["api"]))
+    return newest
+
+
+def _is_iwlwifi_fallback(bare: str, newest_api: dict[tuple[str, str], int]) -> bool:
+    """Whether ``bare`` is an older API of an iwlwifi ucode a module asks for. Pure."""
+    match = _IWLWIFI_UCODE.match(bare)
+    if match is None:
+        return False
+    asked = newest_api.get((match["dir"], match["stem"]))
+    return asked is not None and int(match["api"]) < asked
 
 
 def prune_paths(root: Path, globs: Iterable[str]) -> list[Path]:

@@ -17,3 +17,139 @@ services:
       - shidashi-worker-identity.service
       - shidashi-worker-restore.service
       - shidashi-kyomei.service
+
+# The lean worker (story 021): after the shared packages checkpoint, the `slim` step
+# makes `keep` the whole world and depcleans the rest (the profile's @system stays),
+# drops the kernel-module groups a build oven never loads, keeps only the firmware
+# the remaining modules ask for (plus `keep_firmware`), prunes `prune` and then proves
+# every `commands` path still executable. The squashfs must fit in `budget_mb` MiB.
+slim:
+  budget_mb: 600
+  keep:
+    # the build oven at runtime
+    - sys-apps/systemd             # systemd-run (jobs), systemd-nspawn (builds), resolved (mDNS)
+    - net-misc/openssh             # sshd, ssh-keygen
+    - dev-lang/python:3.14         # kyomei_worker.py; the job venv's pyvenv.cfg home
+    - app-containers/podman        # the @worker set's container engine
+    - dev-vcs/git                  # a job's required tools (shidashi doctor)
+    - app-crypt/gnupg
+    - app-arch/tar
+    - sys-devel/binutils           # objdump
+    - dev-libs/openssl
+    - sys-fs/btrfs-progs
+    - net-misc/rsync
+    - sys-apps/gptfdisk            # sgdisk (worker_disk.py)
+    - sys-apps/smartmontools
+    - net-misc/networkmanager
+    - net-wireless/wpa_supplicant
+    - app-admin/sudo-rs
+    - sys-kernel/gentoo-kernel-bin
+    - sys-kernel/linux-firmware
+    - sys-firmware/intel-microcode
+    - net-misc/r8168               # out-of-tree Realtek NIC driver
+    # what the assemble runs from the slimmed image after the slim step
+    - sys-kernel/dracut            # initramfs: dracut --add dmsquash-live
+    - sys-fs/lvm2                  # dmsetup, for dracut's dm module
+    - sys-apps/shadow              # live: useradd
+    # the console rescue kit
+    - app-editors/nano
+    - sys-apps/less
+    - sys-apps/iproute2
+    - sys-apps/pciutils
+    - sys-apps/usbutils
+    - sys-apps/nvme-cli
+    - sys-apps/lm-sensors
+    - sys-process/htop
+  # Merged-usr: every path under /usr/bin (bin, sbin and usr/sbin are links to it).
+  # Measured with `unsquashfs -lls` on bentoo-2026.10.11-worker-systemd-v3.
+  commands:
+    # kyomei_worker.py and the identity units
+    - /usr/bin/sshd
+    - /usr/bin/ssh-keygen
+    - /usr/bin/systemctl
+    - /usr/bin/hostnamectl
+    - /usr/bin/agetty
+    - /usr/bin/ip
+    - /usr/bin/python3
+    # worker_disk.py
+    - /usr/bin/wipefs
+    - /usr/bin/sgdisk
+    - /usr/bin/partx
+    - /usr/bin/udevadm
+    - /usr/bin/mkfs.btrfs
+    - /usr/bin/mount
+    - /usr/bin/blkid
+    - /usr/bin/umount
+    - /usr/bin/lsblk
+    # the console entry (usr/local/bin/shidashi)
+    - /usr/bin/bash
+    - /usr/bin/sudo
+    # the native job runner and a job's build
+    - /usr/bin/systemd-run
+    - /usr/bin/python3.14
+    - /usr/lib/python-exec/python3.14/python3   # the job venv's bin/python links here
+    - /usr/bin/systemd-nspawn
+    - /usr/bin/tar
+    - /usr/bin/gpg
+    - /usr/bin/git
+    - /usr/bin/openssl
+    - /usr/bin/objdump
+    - /usr/bin/btrfs
+    - /usr/bin/findmnt
+    - /usr/bin/df
+    - /usr/bin/rsync
+    - /usr/bin/smartctl
+    - /usr/bin/nproc
+    - /usr/bin/grep
+    - /usr/bin/podman
+    # network and kernel modules
+    - /usr/bin/nmcli
+    - /usr/bin/wpa_supplicant
+    - /usr/bin/depmod
+    - /usr/bin/modinfo
+    # what the assemble runs from the slimmed image (live, initramfs)
+    - /usr/bin/useradd
+    - /usr/bin/dracut
+    - /usr/bin/dmsetup
+    # the console rescue kit
+    - /usr/bin/nano
+    - /usr/bin/less
+    - /usr/bin/ss
+    - /usr/bin/lspci
+    - /usr/bin/lsusb
+    - /usr/bin/nvme
+    - /usr/bin/sensors
+    - /usr/bin/htop
+  # Subtrees under usr/lib/modules/<kver>/kernel/. drivers/staging stays: it holds
+  # rtl8723bs (Wi-Fi). An entry a kernel lacks is reported, not an error.
+  drop_modules:
+    - drivers/gpu
+    - drivers/media
+    - sound
+    - drivers/infiniband
+    - drivers/iio
+    - drivers/net/ethernet/mellanox
+    - drivers/bluetooth
+    - net/bluetooth
+    - drivers/isdn
+    - drivers/net/can
+    - drivers/net/wwan
+    - drivers/accel
+  # Kept whatever the modules ask. iwlwifi's older ucode APIs are kept by the slim
+  # step itself (the driver falls back to them), not by a glob here.
+  keep_firmware:
+    - "intel-ucode/*"
+    - "amd-ucode/*"
+    - "regulatory.db*"
+  # Deleted last. Locale data in usr/lib/locale stays; gcc's runtime libraries
+  # (usr/lib/gcc/**/*.so*) stay, its internal programs (usr/libexec/gcc) go.
+  prune:
+    - "usr/share/doc/**"
+    - "usr/share/man/**"
+    - "usr/share/info/**"
+    - "usr/share/gtk-doc/**"
+    - "usr/include/**"
+    - "usr/src/**"
+    - "usr/libexec/gcc/**"
+    - "usr/share/locale/**"
+    - "**/*.a"

@@ -493,6 +493,10 @@ def apply_rootfs(
     Unlike ``portage/`` these are whole files, not union directories, so a later
     layer simply wins. A layer without ``rootfs/`` contributes nothing. Modes are
     kept (``copy2``); ownership is the caller's (root) and so stays root's.
+
+    Python bytecode (a ``__pycache__`` directory, a ``*.pyc`` file) is never copied:
+    git ignores it, but this copies the working tree, where a local run of a layer's
+    scripts leaves it -- stale beside the sources the moment one changes.
     """
     chosen = recipe.portage_layers if layers is None else layers
     written: list[str] = []
@@ -504,11 +508,18 @@ def apply_rootfs(
             if not item.is_file():
                 continue
             rel = item.relative_to(tree)
+            if _is_bytecode(rel):
+                continue
             target = rootfs / rel
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(item, target)
             written.append("/" + rel.as_posix())
     return tuple(dict.fromkeys(written))
+
+
+def _is_bytecode(rel: Path) -> bool:
+    """Whether ``rel`` (relative to a layer's rootfs) is Python bytecode. Pure."""
+    return rel.suffix == ".pyc" or "__pycache__" in rel.parts[:-1]
 
 
 def _write_quirks(

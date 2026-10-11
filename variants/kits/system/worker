@@ -2,10 +2,10 @@
 #
 # LEAF set: a flat list of atoms. See kits/core/base for the layering contract.
 #
-# The worker is core + podman + KVM (2026-10-06): Shidashi, QEMU, OVMF, virtiofsd
-# and syft run INSIDE containers, never in this image. KVM needs no package (the
-# dist kernel carries kvm_amd/kvm_intel). smartmontools stays here because it reads
-# the machine's own disks with no network and no container.
+# The worker is core + podman + KVM: a job runs natively through `systemd-run` with
+# the venv the host ships, and only the builds run in `systemd-nspawn`; podman is
+# the container engine kept for container builds. KVM needs no package (the dist
+# kernel carries kvm_amd/kvm_intel). smartmontools reads the machine's own disks.
 
 app-containers/podman
 sys-apps/smartmontools
