@@ -22,6 +22,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from shidashi import isacheck
+
 __all__ = ["MIN_NSPAWN", "Check", "DoctorError", "checks", "missing", "require_build_host"]
 
 #: systemd-nspawn's oldest version with every option Shidashi passes:
@@ -66,6 +68,22 @@ def _run(argv: Sequence[str]) -> str | None:
 def _tool(name: str, scope: Scope, why: str, which: Which) -> Check:
     path = which(name)
     return Check(name, scope, path is not None, path or f"missing: {why}")
+
+
+def _gcc(which: Which, run: Run) -> Check:
+    # Present is not enough: the slim worker keeps the gcc driver but prunes cc1,
+    # and then `-march=native` names nothing and the ISA check is skipped.
+    if which("gcc") is None:
+        return Check("gcc", "optional", False, "missing: names this CPU for the ISA check")
+    arch = isacheck.march_from(run(["gcc", "-march=native", "-Q", "--help=target"]) or "")
+    if arch is None:
+        return Check(
+            "gcc",
+            "optional",
+            False,
+            "cannot name this CPU (cc1 missing?): the ISA check of built images is skipped",
+        )
+    return Check("gcc", "optional", True, f"names this CPU: {arch}")
 
 
 def _nspawn(which: Which, run: Run) -> Check:
@@ -161,7 +179,7 @@ def checks(
         _tool("xorriso", "vm", "reads the ISO's build.json", which),
         _device("/dev/kvm", "vm", "add the user to the kvm group", access),
         _device("/dev/vhost-vsock", "vm", "the test talks to the guest over vsock", access),
-        _tool("gcc", "optional", "names this CPU for the ISA check", which),
+        _gcc(which, run),
         _tool("syft", "optional", "the ISO's SBOM", which),
     ]
 

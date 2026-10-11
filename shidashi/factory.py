@@ -583,10 +583,19 @@ class Factory:
         # them, so test suites and ISO smoke tests have to happen elsewhere.
         # Failing here would discard hours of correct work over a fact about the
         # build machine.
+        # A host whose gcc cannot name its CPU (the slim worker prunes cc1) has
+        # nothing to compare against: record the skip so it never reads as a
+        # clean scan.
         with run.step("isa-check") as step:
-            unrunnable = tuple(
-                str(f.path.relative_to(rootfs)) for f in isacheck.check_rootfs(rootfs, recipe.arch)
-            )
+            host = isacheck.host_arch()
+            if host is None:
+                unrunnable: tuple[str, ...] = ()
+                step.add(skipped="host CPU unknown")
+            else:
+                unrunnable = tuple(
+                    str(f.path.relative_to(rootfs))
+                    for f in isacheck.check_rootfs(rootfs, recipe.arch, host=host)
+                )
             step.add(unrunnable=len(unrunnable))
         run.metric("packages.built", len(built_atoms))
         run.metric("packages.reused", len(reused_atoms))

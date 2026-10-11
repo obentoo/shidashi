@@ -30,6 +30,14 @@ _TOOLS = {
     "findmnt",
 }
 
+#: An excerpt of `gcc -march=native -Q --help=target` on a Zen 3 host.
+_GCC_TARGET_HELP = (
+    "The following options are target specific:\n"
+    "  -m64                        \t\t[enabled]\n"
+    "  -march=                     \t\tznver3\n"
+    "  -mtune=                     \t\tznver3\n"
+)
+
 
 class _Host:
     """A host with ``tools`` installed; nspawn and tar answer as configured."""
@@ -43,6 +51,7 @@ class _Host:
         tar_help: str = "  --acls\n  --xattrs\n",
         fstype: str = "btrfs",
         devices: bool = True,
+        gcc_answer: str | None = _GCC_TARGET_HELP,
     ) -> None:
         self.tools = tools
         self.answers = {
@@ -50,6 +59,7 @@ class _Host:
             "tar --version": tar_version,
             "tar --help": tar_help,
             "findmnt": f"{fstype}\n",
+            "gcc": gcc_answer,
         }
         self.devices = devices
 
@@ -133,6 +143,31 @@ def test_vm_and_optional_tools_never_block_a_build() -> None:
         "/dev/vhost-vsock",
     }
     assert {c.name for c in missing(found, "optional")} == {"gcc", "syft"}
+
+
+def test_gcc_that_names_this_cpu_is_ok() -> None:
+    gcc = _by_name(_checks(_Host()))["gcc"]
+    assert gcc.scope == "optional" and gcc.ok
+    assert gcc.detail == "names this CPU: znver3"
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [None, "The following options are target specific:\n  -m64 \t\t[enabled]\n"],
+    ids=["probe-fails", "no-march-line"],
+)
+def test_gcc_that_cannot_name_this_cpu_is_an_optional_failure(answer: str | None) -> None:
+    """The slim worker keeps the gcc driver but prunes cc1: `which` is not enough."""
+    found = _checks(_Host(gcc_answer=answer))
+    gcc = _by_name(found)["gcc"]
+    assert not gcc.ok and gcc.scope == "optional"
+    assert "cannot name this CPU" in gcc.detail and "ISA check" in gcc.detail
+    assert missing(found, "build") == []
+
+
+def test_a_missing_gcc_still_says_what_it_is_for() -> None:
+    gcc = _by_name(_checks(_Host(_TOOLS - {"gcc"})))["gcc"]
+    assert not gcc.ok and gcc.detail == "missing: names this CPU for the ISA check"
 
 
 def test_root_and_the_filesystem_are_information_only() -> None:

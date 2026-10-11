@@ -119,7 +119,12 @@ def host_arch() -> str | None:
     )
     if proc.returncode != 0:
         return None
-    for line in proc.stdout.splitlines():
+    return march_from(proc.stdout)
+
+
+def march_from(output: str) -> str | None:
+    """The arch on the ``-march=`` line of `gcc -Q --help=target`. None if absent."""
+    for line in output.splitlines():
         parts = line.split()
         if len(parts) >= 2 and parts[0] == "-march=":
             return parts[1]

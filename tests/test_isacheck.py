@@ -164,6 +164,25 @@ def test_host_arch_returns_a_march_name() -> None:
     assert arch is None or (isinstance(arch, str) and arch and " " not in arch)
 
 
+def test_march_from_reads_the_arch_gcc_picked() -> None:
+    from shidashi.isacheck import march_from
+
+    help_text = (
+        "The following options are target specific:\n"
+        "  -m64                        \t\t[enabled]\n"
+        "  -march=                     \t\tznver5\n"
+        "  -mtune=                     \t\tznver5\n"
+    )
+    assert march_from(help_text) == "znver5"
+
+
+def test_march_from_is_none_without_the_line() -> None:
+    from shidashi.isacheck import march_from
+
+    assert march_from("") is None
+    assert march_from("gcc: fatal error: cannot execute 'cc1': No such file\n") is None
+
+
 def test_iter_binaries_finds_elf_and_skips_the_rest(tmp_path: Path) -> None:
     from shidashi.isacheck import iter_binaries
 
