@@ -166,6 +166,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   points the checkout's commit can restore (the others are named in the report), and
   a sync that would leave less than 10 GiB free on its destination copies nothing and
   says so; a job's own record (log, rc, audit trail) always comes back.
+- **`worker provision` and `worker status` said too little (story 022).** A leftover
+  `~/.local/share/shidashi/worker/<name>/` made `provision` generate a key and write the
+  whole ISO copy before failing with "Directory not empty"; it is now refused up front,
+  writing nothing, naming the directory and `--replace`. `worker status` with no name
+  listed a provisioned worker it never reached as refused and exited 1; it now reads
+  `not reached yet: run shidashi worker status <name>`, probes nothing for it, and that
+  line alone does not fail the listing.
 - **`shidashi vm test` and `vm start` crashed when their scratch was root-owned** (a
   `/var/tmp/shidashi` left by a root build). They now stop before booting and name
   `--work-dir` and `SHIDASHI_SCRATCH`.
