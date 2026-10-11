@@ -23,11 +23,11 @@ Three steps, each audited by the caller:
 import subprocess
 from collections.abc import Callable, Mapping, Sequence
 from fnmatch import fnmatchcase
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Protocol
 
 import yaml
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, StrictInt, field_validator
 
 from shidashi.container import CommandResult
 from shidashi.recipe import ResolvedRecipe
@@ -135,6 +135,72 @@ class LiveConfig(BaseModel):
     build_time_secrets_allow: tuple[str, ...] = ()
 
 
+def _relative(entry: str) -> str:
+    """``entry`` when it stays under its root: not absolute, no ``..`` segment."""
+    if entry.startswith("/") or ".." in entry.split("/"):
+        raise ValueError(f"{entry!r} must be relative to its root, with no '..' segment")
+    # "" and "." name the root itself: a drop or prune entry would take everything
+    if PurePosixPath(entry) == PurePosixPath("."):
+        raise ValueError(f"{entry!r} names the root itself")
+    return entry
+
+
+class SlimConfig(BaseModel):
+    """What a slimmed image keeps (story 021): its keep list becomes the whole world,
+    the module subtrees and firmware it does not need go, ``prune`` paths are deleted
+    last, ``commands`` must survive, and its squashfs stays within ``budget_mb`` MiB."""
+
+    model_config = _STRICT
+    #: Atoms that become the image's whole world; each must be installed.
+    keep: tuple[str, ...] = ()
+    #: Absolute paths that must exist and be executable after the step.
+    commands: tuple[str, ...] = ()
+    #: Subtrees under ``usr/lib/modules/<kver>/kernel/`` to delete.
+    drop_modules: tuple[str, ...] = ()
+    #: Globs under ``usr/lib/firmware`` kept whatever the modules ask.
+    keep_firmware: tuple[str, ...] = ()
+    #: Globs relative to the rootfs, deleted last.
+    prune: tuple[str, ...] = ()
+    #: The largest squashfs accepted, in MiB; ``None`` is no budget.
+    budget_mb: StrictInt | None = None
+
+    @field_validator("keep")
+    @classmethod
+    def _atoms(cls, atoms: tuple[str, ...]) -> tuple[str, ...]:
+        for atom in atoms:
+            if not atom or any(c.isspace() for c in atom):
+                raise ValueError(f"{atom!r} is not a package atom")
+        return atoms
+
+    @field_validator("commands")
+    @classmethod
+    def _absolute(cls, commands: tuple[str, ...]) -> tuple[str, ...]:
+        for command in commands:
+            if not command.startswith("/") or ".." in command.split("/"):
+                raise ValueError(f"{command!r} is not an absolute path with no '..' segment")
+        return commands
+
+    @field_validator("drop_modules", "keep_firmware", "prune")
+    @classmethod
+    def _relative_entries(cls, entries: tuple[str, ...]) -> tuple[str, ...]:
+        return tuple(_relative(entry) for entry in entries)
+
+    @field_validator("prune")
+    @classmethod
+    def _not_everything(cls, globs: tuple[str, ...]) -> tuple[str, ...]:
+        for glob in globs:
+            if all(segment == "**" for segment in glob.split("/")):
+                raise ValueError(f"{glob!r} would prune the whole rootfs")
+        return globs
+
+    @field_validator("budget_mb")
+    @classmethod
+    def _positive(cls, budget: int | None) -> int | None:
+        if budget is not None and budget <= 0:
+            raise ValueError(f"{budget} is not a positive number of MiB")
+        return budget
+
+
 class SystemConfig(BaseModel):
     model_config = _STRICT
     hostname: str
@@ -148,6 +214,17 @@ class SystemConfig(BaseModel):
     #: /etc/os-release's static fields; the build adds its own (render_os_release).
     os_release: dict[str, str] = {}
     live: LiveConfig
+    #: What a slimmed image keeps; ``None`` (every image but the worker) takes no slim step.
+    slim: SlimConfig | None = None
+
+    @field_validator("slim")
+    @classmethod
+    def _keeps_something(cls, slim: SlimConfig | None) -> SlimConfig | None:
+        # checked on the merged section: a layer may add only a budget, but an empty
+        # keep list would become an empty world and depclean everything outside @system
+        if slim is not None and not slim.keep:
+            raise ValueError("slim: the keep list is empty")
+        return slim
 
 
 def _merge(base: dict[str, Any], over: Mapping[str, Any]) -> dict[str, Any]:
@@ -205,6 +282,12 @@ def load_system_config(recipe: ResolvedRecipe, *, variants_dir: Path) -> SystemC
                 raise ConfigurationError(
                     f"{path}: `live:` belongs in {LIVECD_FILE} (the session: `sessions:`)"
                 )
+            if "slim" in data:
+                # checked per layer as well, so a bad entry names the file that holds it
+                try:
+                    SlimConfig.model_validate(data["slim"])
+                except ValueError as err:
+                    raise ConfigurationError(f"{path}: {err}") from err
             merged = _merge(merged, data)
     try:
         return SystemConfig.model_validate(merged)

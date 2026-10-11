@@ -19,6 +19,7 @@ and is exercised by the host-gated tests.
 """
 
 import contextlib
+import dataclasses
 import datetime
 import json
 import os
@@ -33,8 +34,8 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
 
-from shidashi import audit, binpkgs, checkpoint, config, image, publish, toolbox, world
-from shidashi.container import Container
+from shidashi import audit, binpkgs, checkpoint, config, image, publish, slim, toolbox, world
+from shidashi.container import CommandResult, Container
 from shidashi.phases import (
     ISO_EMERGE_OPTIONS,
     ISO_SETTLE_OPTIONS,
@@ -50,15 +51,18 @@ from shidashi.recipe import TOOLBOX_STAGE, ResolvedRecipe, UseBreak
 from shidashi.resolve import apply_portage, apply_rootfs, bind_repos, install_sets, world_atoms
 from shidashi.seed import Stage3Pointer, extract_stage3, fetch_stage3, load_pointer
 from shidashi.system import (
+    SlimConfig,
     apply_live,
     apply_system,
     build_time_secrets,
     finalize,
     load_livecd,
-    load_system_config,
     remove_generated_secrets,
     verify,
 )
+
+# a module global the tests replace (and read back): exported explicitly
+from shidashi.system import load_system_config as load_system_config
 from shidashi.tree import load_pin_id, pinned_repos
 
 __all__ = ["Assembler", "AssemblerError"]
@@ -375,6 +379,198 @@ def _locate_kernel(rootfs: Path, kver: str) -> Path:
     if not globbed:
         raise AssemblerError(f"no vmlinuz found in {boot} (kernel not installed?)")
     return globbed[0]
+
+
+#: Paths per ``rm`` / ``modinfo`` command inside the container: thousands of firmware
+#: files and modules, well under the kernel's argument limit per invocation.
+_SLIM_BATCH = 256
+#: Output lines an error of a slim command carries.
+_TAIL_LINES = 20
+
+
+def _tail(result: CommandResult) -> str:
+    """The last :data:`_TAIL_LINES` lines a container command printed. Pure."""
+    lines = (result.stdout + result.stderr).strip().splitlines()
+    return "\n".join(lines[-_TAIL_LINES:])
+
+
+def _in_image(rootfs: Path, path: Path) -> str:
+    """``path`` (under ``rootfs``) as the container sees it: ``/usr/lib/...``. Pure."""
+    return "/" + path.relative_to(rootfs).as_posix()
+
+
+def _batches(items: Sequence[str], size: int = _SLIM_BATCH) -> list[Sequence[str]]:
+    """``items`` cut into runs of at most ``size``. Pure."""
+    return [items[i : i + size] for i in range(0, len(items), size)]
+
+
+def _remove_in_image(container: Container, rootfs: Path, paths: Sequence[Path]) -> None:
+    """``rm -rf`` the image's ``paths`` inside the container, in batches. PRIVILEGED.
+
+    Inside the container a path is resolved against the image's root: a symlink
+    the image holds never reaches the build host.
+    """
+    for batch in _batches([_in_image(rootfs, p) for p in paths]):
+        argv = ["rm", "-rf", "--", *batch]
+        removed = container.run(argv, check=False)
+        if removed.exit_code != 0:
+            raise AssemblerError(
+                f"slim: rm of {len(batch)} path(s) failed (exit {removed.exit_code}):\n"
+                + _tail(removed)
+            )
+
+
+def _missing_keep_atoms(container: Container, keep: Sequence[str]) -> list[str]:
+    """The ``keep`` atoms nothing installed matches (``portageq match /``). PRIVILEGED.
+
+    An empty answer is "not installed"; a failing ``portageq`` (a malformed atom, a
+    broken Portage) is an :class:`AssemblerError` with its output.
+    """
+    missing: list[str] = []
+    for atom in keep:
+        asked = container.run(["portageq", "match", "/", atom], check=False)
+        if asked.exit_code != 0:
+            raise AssemblerError(
+                f"slim: portageq match / {atom} failed (exit {asked.exit_code}):\n" + _tail(asked)
+            )
+        if not asked.stdout.strip():
+            missing.append(atom)
+    return missing
+
+
+def _slim_image(
+    container: Container,
+    rootfs: Path,
+    cfg: SlimConfig,
+    *,
+    step: audit.Step,
+    run: audit.Recorder,
+) -> slim.SlimReport:
+    """Reduce the image to ``cfg``'s keep list, inside its build container. PRIVILEGED.
+
+    In order: every keep atom installed (else nothing is touched) -> world :=
+    keep list, ``world_sets`` emptied (a selected set keeps everything it
+    reaches) -> depclean -> module subtrees dropped -> ``depmod -a <kver>`` (the
+    index still lists the dropped modules) -> ``modinfo -F firmware`` over the
+    remaining modules -> unwanted firmware deleted -> paths pruned -> every
+    command proved present. Records the :class:`~shidashi.slim.SlimReport` in
+    ``step`` and a summary event in ``run``, then fails on a missing command.
+    """
+    missing = _missing_keep_atoms(container, cfg.keep)
+    if missing:
+        raise AssemblerError(
+            f"slim: {', '.join(missing)} from the keep list "
+            f"{'is' if len(missing) == 1 else 'are'} not installed; nothing was removed"
+        )
+    bytes_before = _tree_bytes(rootfs)
+    before = slim.installed_packages(rootfs)
+
+    # the world is the keep list, and no set is selected any more
+    portage_state = rootfs / "var" / "lib" / "portage"
+    portage_state.mkdir(parents=True, exist_ok=True)
+    (portage_state / "world").write_text(slim.world_text(cfg.keep), encoding="utf-8")
+    (portage_state / "world_sets").write_text("", encoding="utf-8")
+    cleaned = container.run(slim.depclean_argv(), check=False)
+    if cleaned.exit_code != 0:
+        raise AssemblerError(
+            f"slim: emerge --depclean failed (exit {cleaned.exit_code}):\n" + _tail(cleaned)
+        )
+    removed_packages = tuple(sorted(before - slim.installed_packages(rootfs)))
+
+    kver = _kernel_version(rootfs)
+    kver_root = slim.resolve_in(rootfs, f"/lib/modules/{kver}")
+    if kver_root is None or not kver_root.is_dir():
+        raise AssemblerError(f"slim: the modules of kernel {kver} are not in {rootfs}")
+    module_dirs = slim.module_dirs_to_drop(kver_root, cfg.drop_modules)
+    _remove_in_image(container, rootfs, module_dirs)
+    indexed = container.run(["depmod", "-a", kver], check=False)
+    if indexed.exit_code != 0:
+        raise AssemblerError(
+            f"slim: depmod -a {kver} failed for kernel {kver} (exit {indexed.exit_code}):\n"
+            + _tail(indexed)
+        )
+
+    modinfo_lines: list[str] = []
+    modules = [_in_image(rootfs, m) for m in slim.kernel_modules(kver_root)]
+    for batch in _batches(modules):
+        asked = container.run(["modinfo", "-F", "firmware", *batch], check=False)
+        if asked.exit_code != 0:
+            raise AssemblerError(
+                f"slim: modinfo -F firmware failed for kernel {kver} "
+                f"(exit {asked.exit_code}):\n" + _tail(asked)
+            )
+        modinfo_lines += asked.stdout.splitlines()
+    # built-in drivers have no .ko for modinfo: their firmware is in the builtin index
+    modinfo_lines += slim.builtin_firmware(kver_root)
+    # checked, not assumed: a walk of a missing root finds nothing and deletes nothing
+    firmware_root = rootfs / "usr" / "lib" / "firmware"
+    if (
+        slim.resolve_in(rootfs, "/lib/firmware") != firmware_root
+        or firmware_root.is_symlink()
+        or not firmware_root.is_dir()
+    ):
+        raise AssemblerError(
+            f"slim: the image's firmware is not a directory at /usr/lib/firmware "
+            f"(reached as /lib/firmware) in {rootfs}"
+        )
+    firmware = slim.firmware_to_delete(
+        firmware_root, slim.firmware_wanted(modinfo_lines), cfg.keep_firmware
+    )
+    _remove_in_image(container, rootfs, firmware)
+
+    # the kernel image may live in usr/src (gentoo-kernel-bin's vmlinuz is a link to
+    # its bzImage): what the ISO boots is never pruned
+    booted = slim.reached(rootfs, f"/usr/lib/modules/{kver}/vmlinuz")
+    pruned = [p for p in slim.prune_paths(rootfs, cfg.prune) if p not in booted]
+    _remove_in_image(container, rootfs, pruned)
+    _locate_kernel(rootfs, kver)  # fails here, not after the initramfs, if it went
+
+    def relative(paths: Sequence[Path]) -> tuple[str, ...]:
+        return tuple(p.relative_to(rootfs).as_posix() for p in paths)
+
+    report = slim.SlimReport(
+        removed_packages=removed_packages,
+        dropped_module_dirs=relative(module_dirs),
+        deleted_firmware_files=relative(firmware),
+        pruned_files=relative(pruned),
+        bytes_before=bytes_before,
+        bytes_after=_tree_bytes(rootfs),
+    )
+    step.add(
+        kernel=kver,
+        unmatched_module_groups=slim.unmatched_module_groups(kver_root, cfg.drop_modules),
+        **dataclasses.asdict(report),
+    )
+    run.event(
+        "slim.summary",
+        removed_packages=list(report.removed_packages),
+        dropped_module_dirs=list(report.dropped_module_dirs),
+        deleted_firmware_files=list(report.deleted_firmware_files),
+        pruned_files=len(report.pruned_files),
+        bytes_before=report.bytes_before,
+        bytes_after=report.bytes_after,
+    )
+    absent = slim.missing_commands(rootfs, cfg.commands)
+    if absent:
+        raise AssemblerError(
+            f"slim: {len(absent)} required command(s) missing after the slim: {', '.join(absent)}"
+        )
+    return report
+
+
+def _over_budget(image_name: str, squashfs_bytes: int, budget_mb: int | None) -> str | None:
+    """Why a squashfs of ``squashfs_bytes`` breaks ``budget_mb`` MiB, or None. Pure.
+
+    The size is rounded UP to hundredths of a MiB: one byte over a 1 MiB budget
+    reads 1.01 MiB, never "1.00 MiB, over its budget of 1 MiB".
+    """
+    if budget_mb is None or squashfs_bytes <= budget_mb * 2**20:
+        return None
+    hundredths = -(-squashfs_bytes * 100 // 2**20)
+    return (
+        f"{image_name} squashfs is {hundredths // 100}.{hundredths % 100:02d} MiB, "
+        f"over its budget of {budget_mb} MiB"
+    )
 
 
 def _build_binds(
@@ -1149,6 +1345,11 @@ class Assembler:
                         "VARIANT_ID": recipe.flavor,
                     }
                     step.add(**apply_system(container, system_cfg, init=recipe.init, build=build))
+                if system_cfg.slim is not None:
+                    # after the shared checkpoints, before live and the initramfs:
+                    # no checkpoint holds the slimmed tree, dracut packs it
+                    with run.step("slim") as step:
+                        _slim_image(container, rootfs, system_cfg.slim, step=step, run=run)
                 if stage4:
                     # the configured system, BEFORE the live user and autologin
                     with run.step("stage4") as step:
@@ -1230,6 +1431,8 @@ class Assembler:
             packages_file = publish.write_packages(output_dir / f"{name}.iso.packages", packages)
             artifacts.append(packages_file)
             rootfs_bytes = _tree_bytes(rootfs)
+            # only a slimmed image has one: every other image takes any size
+            budget_mb = system_cfg.slim.budget_mb if system_cfg.slim is not None else None
             sums: dict[str, str] = {}
             for profile in compressions:
                 suffix = "" if profile == "zstd" else f"-{profile}"
@@ -1248,6 +1451,11 @@ class Assembler:
                     step.add(rootfs_bytes=rootfs_bytes, squashfs_bytes=squashed)
                     if squashed:
                         run.metric(f"squashfs.{profile}.ratio", round(rootfs_bytes / squashed, 3))
+                    # before this compression's ISO: an image over its budget is never published
+                    over = _over_budget(f"{name}{suffix}", squashed, budget_mb)
+                    if over is not None:
+                        step.add(budget_mb=budget_mb)
+                        raise AssemblerError(over)
                 iso = output_dir / f"{name}{suffix}.iso"
                 info = build_info(
                     recipe,
