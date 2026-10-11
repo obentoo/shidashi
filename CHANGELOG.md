@@ -58,6 +58,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   allows it for root and starts sshd. **The pairing is plain HTTP for now:** it
   authenticates neither side, so both ends print the key's fingerprint for a person
   to compare; story 009 replaces it with an authenticated protocol.
+- **A worker that boots already paired (story 020).** `shidashi worker provision N
+  --iso <worker iso>` gives worker N its SSH host key before it ever boots: it pins
+  the key, records N, and writes a personalized copy of the generic worker ISO with
+  the identity in `/shidashi/identity/`, outside the squashfs, root-only on the
+  medium — the generic ISO stays generic. Write the copy to a stick (`dd`, printed
+  by the command) and the worker installs the identity at boot, starts sshd and
+  announces its name over mDNS, with nobody at its console; the work disk's pairing
+  and the pairing window are skipped. The `worker` commands then find N by name
+  (5 s), verify the pinned key and record the address after the first command that
+  succeeds; `status`, `sync`, `job` and `poweroff` look N up again and retry once
+  when its recorded address stops answering (`run` and `logs` do not: a retry could
+  run the command twice). `--address HOST[:PORT]` skips the lookup. The first
+  `worker status` or `worker job` fills a provisioned worker's CPU flags and image,
+  the job before its CPU check. A refused or failed provision changes nothing; a
+  lost medium is revoked with `--replace`, which re-keys N. **The written medium is
+  a credential**: it holds the worker's private host key. Checked on a VM (default,
+  reboot and copy-to-RAM boots) and on a real worker reached by name, twice.
 
 ### Changed
 
@@ -132,6 +149,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   when `livecd.yaml` loads.
 - **A toolbox, checkpoint or OS error ended in a traceback** in `assemble`, `build`,
   `factory` and `pretend`. It is now an `error:` line and exit 1, naming the path.
+- **The factory merged binpkgs linked against a library the pinned tree no longer
+  ships (story 019).** A binhost kept `x11-libs/vte` and `net-libs/nodejs` built
+  against `libsimdutf.so.34` while the pinned simdutf installs `.so.36` under an
+  unchanged subslot, so `gnome-terminal` failed to link. Before each stage's emerge,
+  the factory now judges the plan against the binhost index: a binpkg whose built
+  slot-operator subslot, or whose required soname, no longer matches what the plan's
+  providers offer is compiled again from its ebuild (providers first when needed),
+  the stale instance moves to the cache's quarantine and the index is regenerated;
+  the stage's report names each one with the two subslots or sonames. A binhost with
+  nothing stale runs the emerge exactly as before. `assemble` and the factory's
+  `check-binpkgs` refuse a stale plan instead of installing it, and a flavor growing
+  from a trunk with no checkpoint has both plans judged before the trunk installs.
+- **`worker sync pull` filled the host's disk.** It copied every fork point of the
+  worker, orphans of other pins included. Both directions now carry only the fork
+  points the checkout's commit can restore (the others are named in the report), and
+  a sync that would leave less than 10 GiB free on its destination copies nothing and
+  says so; a job's own record (log, rc, audit trail) always comes back.
+- **`shidashi vm test` and `vm start` crashed when their scratch was root-owned** (a
+  `/var/tmp/shidashi` left by a root build). They now stop before booting and name
+  `--work-dir` and `SHIDASHI_SCRATCH`.
 
 ## [0.1.1] - 2026-10-03
 
