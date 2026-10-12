@@ -74,6 +74,17 @@ def _locks_in_tmp(
 
 
 @pytest.fixture(autouse=True)
+def _cid_locks_in_tmp(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every test's vsock CID locks go to a temporary directory, never the host's real
+    /tmp/shidashi-vm-cids (story 006, task 8.3); a test may point it elsewhere itself."""
+    monkeypatch.setenv(
+        "SHIDASHI_CID_LOCKS", str(tmp_path_factory.mktemp("cids") / "shidashi-vm-cids")
+    )
+
+
+@pytest.fixture(autouse=True)
 def _no_mdns_answer(monkeypatch: pytest.MonkeyPatch) -> None:
     """No worker answers the mDNS lookup of a worker command (story 020) unless a test
     says otherwise: no test sends a multicast packet or waits the real 5 s. Patched as

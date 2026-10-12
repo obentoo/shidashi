@@ -384,18 +384,27 @@ class Store:
                 )
                 self._write(mark)
             else:
-                mark = self.claim(mark, image)
+                claimed = self.claim(mark, image)
+                if claimed is None:  # found under this very lock: never expected
+                    raise CheckpointError(f"checkpoint {mark.path.name} vanished under its claim")
+                mark = claimed
             self.release_step(step, image, keep=fp)
             return mark
 
-    def claim(self, mark: Mark, image: str) -> Mark:
-        """Record that ``image`` now uses ``mark``. I/O.
+    def claim(self, mark: Mark, image: str) -> Mark | None:
+        """Record that ``image`` now uses ``mark``; None when it is gone. I/O.
 
         The image list is the manifest's as read under the lock, not the one
-        ``mark`` carried: an image another process added since is kept.
+        ``mark`` carried: an image another process added since is kept. A manifest
+        that is gone (or unreadable) -- another process dropped the checkpoint after
+        ``mark`` was read -- is not claimed and nothing is written: writing ``mark``
+        back would leave a manifest whose snapshot is gone, which :meth:`prune`
+        cannot tell from a live one. The caller treats None as "not claimed".
         """
         with self.locked():
-            current = self._read(self._manifest(mark)) or mark
+            current = self._read(self._manifest(mark))
+            if current is None:
+                return None
             if image in current.images:
                 return current
             claimed = Mark(**{**current.__dict__, "images": (*current.images, image)})

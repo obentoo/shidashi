@@ -25,7 +25,7 @@ from collections.abc import Callable, Generator, Sequence
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, TextIO
 
 import typer
 import yaml
@@ -1415,23 +1415,68 @@ def _run_image_children(
             results = parallel.run_children(argvs, logs=logs)
     except parallel.Interrupted as err:
         _echo_ended(err.results)
-        _record_children(trail, err.results)
+        try:
+            _record_children(trail, err.results)
+        except OSError as record_err:
+            # the interrupt is what the build reports (128 + signum); a trail it could not
+            # finish (a full disk) is said, never raised in its place
+            with _terminal_may_be_gone(sys.stderr):
+                _err_console.print(
+                    "[bold red]error:[/bold red] recording the stopped images: "
+                    f"{escape(str(record_err))}",
+                    soft_wrap=True,
+                )
         raise
     _echo_ended(results)
     _record_children(trail, results)
     return results
 
 
+def _to_devnull(stream: TextIO) -> None:
+    """Point ``stream``'s descriptor at ``/dev/null`` so nothing more can fail on it.
+
+    A stream without a descriptor (a test runner's buffer) or already closed is left alone.
+    """
+    with contextlib.suppress(OSError, ValueError):
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        try:
+            os.dup2(devnull, stream.fileno())
+        finally:
+            os.close(devnull)
+
+
+@contextlib.contextmanager
+def _terminal_may_be_gone(stream: TextIO) -> Generator[None]:
+    """Run writes to ``stream`` that a dead terminal must not turn into a crash.
+
+    After SIGHUP the terminal is gone: a write raises ``EIO`` (a hung-up tty) or ``EPIPE``
+    (a closed pipe). The rest of the block's lines are dropped and the stream is pointed at
+    ``/dev/null``, so the interpreter's flush at exit cannot fail too and exit 120 in place
+    of the build's own code. rich answers ``EPIPE`` by going quiet and raising
+    ``SystemExit(1)`` (``Console.on_broken_pipe``); that exit is dropped the same way.
+    """
+    try:
+        yield
+    except OSError:
+        _to_devnull(stream)
+    except SystemExit:
+        if not _err_console.quiet:  # not rich's broken-pipe exit
+            raise
+        _to_devnull(stream)
+
+
 def _echo_ended(results: Sequence[parallel.ChildResult]) -> None:
     """Each ended image's ``done``/``failed`` line on stderr, where its step was shown."""
-    for result in results:
-        _err_console.print(parallel.ended_line(result), markup=False, highlight=False)
+    with _terminal_may_be_gone(sys.stderr):
+        for result in results:
+            _err_console.print(parallel.ended_line(result), markup=False, highlight=False)
 
 
 def _echo_summary(lines: Sequence[str]) -> None:
     """A concurrent build's summary: one line per image (its ISOs, or why it failed)."""
-    for line in lines:
-        typer.echo(line)
+    with _terminal_may_be_gone(sys.stdout):
+        for line in lines:
+            typer.echo(line)
 
 
 @app.command("build")
@@ -1591,8 +1636,12 @@ def build(
                     from shidashi import vm
 
                     for target, result in zip(iso_targets, results, strict=True):
-                        with run.step(f"boot-test:{target}") as step:
-                            report = vm.boot_test(result.isos[0])
+                        with (
+                            vm.allocate_cid(vm.DEFAULT_CID) as cid,
+                            run.step(f"boot-test:{target}") as step,
+                        ):
+                            step.add(cid=cid)
+                            report = vm.boot_test(result.isos[0], cid=cid)
                             step.add(passed=report["passed"])
                             if not report["passed"]:
                                 raise AssemblerError(
@@ -1604,6 +1653,9 @@ def build(
                 # through the environment _apply_work_dir exported (R1.11)
                 logs = config.scratch_dir() / "logs" / f"build-{trail.run_id or audit.new_run_id()}"
                 share = parallel.job_share(jobs or os.cpu_count() or 1, len(iso_targets))
+                # the children inherit this environment: each sees its share, never the
+                # full --jobs nor a SHIDASHI_JOBS the build itself inherited (R1.4)
+                os.environ["SHIDASHI_JOBS"] = str(share)
                 status_files = {image: logs / f"{image}.status" for image in iso_targets}
                 argvs = {
                     image: parallel.assemble_argv(
@@ -1635,11 +1687,13 @@ def build(
         # run_children stopped every child's process group; nothing was cleaned (R2.6)
         _echo_summary(parallel.summarize(err.results)[1])
         stopped = [r.image for r in err.results if r.error == "interrupted"]
-        _err_console.print(
-            f"[bold red]interrupted:[/bold red] stopped {escape(', '.join(stopped) or 'nothing')}"
-            " -- their checkpoints and scratch rootfs are kept",
-            soft_wrap=True,
-        )
+        with _terminal_may_be_gone(sys.stderr):
+            _err_console.print(
+                "[bold red]interrupted:[/bold red] stopped "
+                f"{escape(', '.join(stopped) or 'nothing')}"
+                " -- their checkpoints and scratch rootfs are kept",
+                soft_wrap=True,
+            )
         # 128 + the signal: 130 for Ctrl+C (SIGINT), 143 for SIGTERM, 129 for SIGHUP
         raise typer.Exit(128 + err.signum) from None
     except _ImagesFailed as err:
@@ -2017,9 +2071,11 @@ def vm_start(
     )
     session = vm.Session(spec, vm.session_dir(name))
     try:
-        session.start()
-        if wait:
-            typer.echo(f"ssh up after {session.wait_ssh()} s (vsock/{cid})")
+        # QEMU inherits the CID lock: it stays taken for as long as the VM runs.
+        with vm.hold_cid(cid) as cid_lock:
+            session.start(cid_lock=cid_lock)
+            if wait:
+                typer.echo(f"ssh up after {session.wait_ssh()} s (vsock/{cid})")
     except vm.VmError as err:
         raise _vm_error(err) from err
 
@@ -2099,12 +2155,13 @@ def vm_test(
         raise _vm_error(ValueError("--firmware is bios, uefi or both"))
     firmwares = ("bios", "uefi") if firmware == "both" else (firmware,)
     try:
-        info = vm.read_build_info(iso.resolve())
-        recipe = _resolve(info["arch"], info["flavor"], info["init"])
-        with _audited("vm-test", recipe, iso=str(iso.resolve()), firmwares=list(firmwares)):
-            report = vm.boot_test(
-                iso.resolve(), firmwares=firmwares, cid=cid, screenshots=screenshots
-            )
+        with vm.hold_cid(cid):
+            info = vm.read_build_info(iso.resolve())
+            recipe = _resolve(info["arch"], info["flavor"], info["init"])
+            with _audited("vm-test", recipe, iso=str(iso.resolve()), firmwares=list(firmwares)):
+                report = vm.boot_test(
+                    iso.resolve(), firmwares=firmwares, cid=cid, screenshots=screenshots
+                )
     except (vm.VmError, config.UnknownAxisError, RecipeChainError) as err:
         raise _vm_error(err) from err
 

@@ -149,11 +149,18 @@ always uses its own `variants/` and `seeds/`, even with the package installed;
 | `/var/cache/shidashi` | binhost, fork points, pinned trees, distfiles, ccache | `SHIDASHI_CACHE` |
 | `/var/log/shidashi/runs` | one audit trail per run | `SHIDASHI_RUNS` |
 | `/var/tmp/shidashi` | scratch: build rootfs, logs, VM sessions | `SHIDASHI_SCRATCH` |
+| `/tmp/shidashi-vm-cids` | vsock CID locks shared by every VM boot on the host | `SHIDASHI_CID_LOCKS` |
 
 `--work-dir DIR` puts all three under one directory instead. `shidashi vm test` keeps its
 session (SSH key, QMP socket) in the scratch too: when that directory cannot be written — a
 `/var/tmp/shidashi` left by a root build, say — it stops before booting and names
 `--work-dir` and `SHIDASHI_SCRATCH` as the way out.
+
+The CID lock directory is the same for root and every user, whatever `--work-dir` says;
+install [`contrib/tmpfiles.d/shidashi.conf`](contrib/tmpfiles.d/shidashi.conf) in
+`/etc/tmpfiles.d/` so root creates it at boot — a copy a user created first (by running
+`vm test`) is refused by root's boot tests, and `rm -r /tmp/shidashi-vm-cids` clears it.
+`SHIDASHI_CID_LOCKS` must point under a trusted parent: only its last component is checked.
 
 ### The builder VM
 

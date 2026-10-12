@@ -17,6 +17,13 @@ that built the image (the ISO's own ``bentoo/build.json`` names the recipe), so
 the test checks what was declared, not a second copy of it. Every command and
 check is recorded in the run's audit trail.
 
+vsock CIDs are host-global, so every boot on the host -- ``vm test``, ``vm start``, an
+assemble's or a build's boot test, root's or a user's -- locks its CID in one directory,
+:func:`cid_lock_dir`: ``/tmp/shidashi-vm-cids`` (1777; ``contrib/tmpfiles.d/shidashi.conf``
+has root create it at boot), or ``$SHIDASHI_CID_LOCKS``. That variable must point under a
+trusted parent: only its last component is checked (no symlink, a directory, owned by root
+or this user, sticky when world-writable).
+
 No root needed: the ``kvm`` group opens /dev/kvm and /dev/vhost-vsock. Commands
 run in the GUEST's shell over ssh; on the host, every process is started from an
 argument list, never through a shell.
@@ -31,7 +38,9 @@ import re
 import shutil
 import signal
 import socket
+import stat
 import subprocess
+import sys
 import tempfile
 import time
 from collections.abc import Callable, Generator, Sequence
@@ -66,6 +75,16 @@ DEFAULT_CID = 42
 
 #: The highest guest CID: 0xFFFFFFFF is VMADDR_CID_ANY.
 _CID_MAX = 0xFFFFFFFE
+
+#: Where every boot on the host takes its ``cid-<n>.lock`` (``$SHIDASHI_CID_LOCKS`` wins).
+#: Not ``/run/lock``: it is root:root 0755, and ``vm test``/``vm start`` run unprivileged.
+_CID_LOCKS = Path("/tmp/shidashi-vm-cids")
+
+#: The shared directory's mode, sticky: anyone creates a lock, nobody removes another's.
+_CID_DIR_MODE = 0o1777
+
+#: A CID lock file's mode: root's boot tests and the user's share every lock.
+_CID_FILE_MODE = 0o666
 
 
 #: The host's virtiofs daemon (sys-fs/virtiofsd, or a distribution's path).
@@ -375,7 +394,21 @@ class Session:
 
     # --- lifecycle -------------------------------------------------------------------
 
-    def start(self) -> None:
+    def qemu_pid(self) -> int | None:
+        """QEMU's pid from its pidfile; None when missing or not a pid."""
+        try:
+            pid = int(self.pidfile.read_text().strip())
+        except OSError, ValueError:
+            return None
+        return pid if pid > 0 else None
+
+    def start(self, *, cid_lock: Path | None = None) -> None:
+        """Start QEMU daemonized.
+
+        ``cid_lock``: the held lock of this VM's CID (:func:`hold_cid`). QEMU inherits its
+        open description (``pass_fds``), so the CID stays taken for as long as the VM runs,
+        and the lock's record names QEMU's pid from its pidfile.
+        """
         if shutil.which("qemu-system-x86_64") is None:
             raise VmError("qemu-system-x86_64 is missing on the host")
         if not Path(_SSH_PROXY).exists():
@@ -429,11 +462,23 @@ class Session:
             uefi_code=uefi_code,
             share_sockets=sockets,
         )
-        done = self.runner(argv, capture_output=True, text=True)
+        handover: dict[str, Any] = {}
+        if cid_lock is not None:
+            try:
+                handover["pass_fds"] = (locks.held_fd(cid_lock),)
+            except locks.LockError as err:
+                self._stop_shares()
+                raise VmError(f"vsock CID {self.spec.cid} is not locked: {err}") from err
+        done = self.runner(argv, capture_output=True, text=True, **handover)
         if done.returncode != 0:
             self._stop_shares()
             raise VmError(f"qemu failed to start: {done.stderr.strip()}")
         self.started = time.monotonic()
+        if cid_lock is not None and (pid := self.qemu_pid()) is not None:
+            # Best effort: without it a waiter names "pid unknown" -- /proc/locks keeps the
+            # pid that took the flock (this one), never QEMU, which only inherited it.
+            with contextlib.suppress(OSError):
+                locks.write_holder(cid_lock, pid)
         forwards = [[host, guest] for host, guest in self.spec.forwards]
         (self.directory / "session.json").write_text(
             json.dumps(
@@ -583,9 +628,10 @@ class Session:
         try:
             self.qmp("quit")
         except OSError, VmError, json.JSONDecodeError:
-            if self.pidfile.is_file():
-                with contextlib.suppress(ProcessLookupError, ValueError):
-                    os.kill(int(self.pidfile.read_text().strip()), signal.SIGTERM)
+            pid = self.qemu_pid()
+            if pid is not None:
+                with contextlib.suppress(ProcessLookupError):
+                    os.kill(pid, signal.SIGTERM)
         self._stop_shares()
         audit.current().event("vm.stop", uptime_s=round(time.monotonic() - self.started, 1))
 
@@ -601,26 +647,150 @@ def boot_session_name(firmware: str, cid: int) -> str:
     return f"test-{firmware}" if cid == DEFAULT_CID else f"test-{cid}-{firmware}"
 
 
+def _check_cid_dir(directory: Path, st: os.stat_result) -> None:
+    """Refuse a CID lock directory another user could have planted or can tamper with."""
+    if stat.S_ISLNK(st.st_mode):
+        raise VmError(f"the vsock CID lock directory {directory} is a symlink; refusing it")
+    if not stat.S_ISDIR(st.st_mode):
+        raise VmError(f"the vsock CID lock directory {directory} is not a directory")
+    me = os.geteuid()
+    if st.st_uid not in (0, me):
+        raise VmError(
+            f"the vsock CID lock directory {directory} is owned by uid {st.st_uid}, neither "
+            f"root nor this user (uid {me}); remove it (`rm -r {directory}`) or set "
+            "SHIDASHI_CID_LOCKS to a directory under a trusted parent (only its last "
+            "component is checked)"
+        )
+    if st.st_mode & stat.S_IWOTH and not st.st_mode & stat.S_ISVTX:
+        raise VmError(
+            f"the vsock CID lock directory {directory} is world-writable without the "
+            "sticky bit; refusing it"
+        )
+
+
+def _create_cid_dir(directory: Path) -> None:
+    """Create the CID lock directory 1777 (the umask strips the bits ``mkdir`` asks for).
+
+    Losing the race to another creator is fine: the caller checks what is there.
+    """
+    try:
+        directory.parent.mkdir(parents=True, exist_ok=True)
+        os.mkdir(directory, _CID_DIR_MODE)
+    except FileExistsError:
+        return
+    except OSError as err:
+        raise VmError(
+            f"cannot create the vsock CID lock directory {directory}: {err.strerror}"
+        ) from err
+    try:
+        fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        try:
+            os.fchmod(fd, _CID_DIR_MODE)
+        finally:
+            os.close(fd)
+    except OSError as err:
+        raise VmError(
+            f"cannot make the vsock CID lock directory {directory} shared (1777): {err.strerror}"
+        ) from err
+
+
+def cid_lock_dir() -> Path:
+    """The host's one vsock CID lock directory: ``$SHIDASHI_CID_LOCKS`` or
+    ``/tmp/shidashi-vm-cids`` -- never scratch nor ``--work-dir``, CIDs are host-global.
+
+    Created 1777 when absent. :class:`VmError` naming it when it is a symlink, not a
+    directory, world-writable without the sticky bit, or owned by neither root nor this
+    user: in a world-writable ``/tmp`` another user could have pre-planted it.
+    """
+    configured = os.environ.get("SHIDASHI_CID_LOCKS")
+    directory = Path(os.path.abspath(configured or _CID_LOCKS))
+    try:
+        try:
+            st = os.lstat(directory)
+        except FileNotFoundError:
+            _create_cid_dir(directory)
+            st = os.lstat(directory)
+    except OSError as err:
+        raise VmError(
+            f"cannot inspect the vsock CID lock directory {directory}: {err.strerror}"
+        ) from err
+    _check_cid_dir(directory, st)
+    return directory
+
+
+class UnusableCidLock(VmError):
+    """A CID lock file that is not safe to use (FIFO, directory, hardlink, unreadable):
+    :func:`allocate_cid` skips it, :func:`hold_cid` fails on it."""
+
+
+def _take_cid(stack: contextlib.ExitStack, directory: Path, cid: int) -> Path:
+    """Hold ``cid-<cid>.lock`` in ``directory`` on ``stack``, without waiting.
+
+    :class:`locks.LockBusy` when another process holds it; :class:`UnusableCidLock` when
+    the file is not safe to use; :class:`VmError` naming the file when it cannot be taken
+    otherwise (a planted symlink, the directory not writable).
+    """
+    path = directory / f"cid-{cid}.lock"
+    try:
+        stack.enter_context(
+            locks.hold(
+                path, what=f"vsock CID {cid}", wait=False, mode=_CID_FILE_MODE, nofollow=True
+            )
+        )
+    except locks.UnusableLockFile as err:
+        raise UnusableCidLock(f"cannot take the vsock CID lock {path}: {err}") from err
+    except (locks.LockError, OSError) as err:
+        raise VmError(f"cannot take the vsock CID lock {path}: {err}") from err
+    return path
+
+
+def _check_cid(cid: int) -> None:
+    if not 3 <= cid <= _CID_MAX:  # 0, 1 and 2 are the hypervisor, local and host
+        raise VmError(f"vsock CID {cid} is out of range (3-{_CID_MAX})")
+
+
+@contextlib.contextmanager
+def hold_cid(cid: int) -> Generator[Path]:
+    """Hold vsock CID ``cid`` for the block, or :class:`VmError` ``vsock CID N is held by
+    pid P`` when another boot holds it. Yields the lock file (for :meth:`Session.start`)."""
+    _check_cid(cid)
+    directory = cid_lock_dir()
+    with contextlib.ExitStack() as held:
+        try:
+            path = _take_cid(held, directory, cid)
+        except locks.LockBusy as busy:
+            raise VmError(str(busy)) from busy
+        yield path
+
+
 @contextlib.contextmanager
 def allocate_cid(base: int) -> Generator[int]:
     """Hold the first free vsock CID from ``base`` upward for the block (R4.1).
 
-    CID ``n`` is ``<scratch>/vm-cids/cid-<n>.lock``, taken without waiting: a CID another
-    process holds -- a build's sibling or a hand-run boot test -- is skipped for the next.
-    The kernel drops the lock when its holder dies, so no CID stays taken after a crash.
-    One allocation per process: ``locks.hold`` is re-entrant, so a nested allocation in
-    the same process would be handed the CID it already holds.
+    CID ``n`` is ``cid-<n>.lock`` in :func:`cid_lock_dir`, taken without waiting: a CID
+    another boot on the host holds -- a build's sibling, a hand-run boot test, ``vm test``
+    or a VM ``vm start`` left running -- is skipped for the next. The kernel drops the lock
+    when its holder dies, so no CID stays taken after a crash. One allocation per process:
+    ``locks.hold`` is re-entrant, so a nested allocation in the same process would be
+    handed the CID it already holds.
+
+    An unusable lock file (a FIFO, directory, hardlink or unreadable file someone planted)
+    is skipped like a busy one, with one ``warning:`` line on stderr naming it -- written
+    here, as the lock's wait line is, so that no caller can lose it. A planted symlink
+    still raises :class:`VmError`.
     """
-    if not 3 <= base <= _CID_MAX:  # 0, 1 and 2 are the hypervisor, local and host
-        raise VmError(f"vsock CID {base} is out of range (3-{_CID_MAX})")
-    directory = config.scratch_dir() / "vm-cids"
+    _check_cid(base)
+    directory = cid_lock_dir()
     with contextlib.ExitStack() as held:
         for n in range(base, _CID_MAX + 1):
             try:
-                held.enter_context(
-                    locks.hold(directory / f"cid-{n}.lock", what=f"vsock CID {n}", wait=False)
-                )
+                _take_cid(held, directory, n)
             except locks.LockBusy:
+                continue
+            except UnusableCidLock as err:
+                # One write for the whole line, as locks' wait line.
+                sys.stderr.write(f"warning: {err}; skipping vsock CID {n}\n")
+                sys.stderr.flush()
                 continue
             yield n
             return

@@ -176,12 +176,10 @@ def using(tarball: Path, rootfs: Path) -> Generator[bool]:
     (``flock`` releases it first, so the conversion is not atomic): the shared
     hold is released, the exclusive one taken and the stamp re-checked, and
     the shared hold is taken anew -- the stamp checked again, as another
-    process may have replaced the tree in between.
-
-    A stale tree is seen first without the lock: a shared hold writes this
-    process's pid into the lock file, and the exclusive wait that follows
-    would then name this process instead of the user it waits for (R3.9).
-    The peek only picks the first hold; every decision is taken under one.
+    process may have replaced the tree in between. The exclusive wait names a
+    user of the old tree, never this process (R3.9): a shared hold does not
+    overwrite a live holder's pid, and a waiter reading its own pid asks
+    ``/proc/locks`` (:mod:`shidashi.locks`).
 
     A failed extraction raises :class:`ToolboxError` naming the tarball, with
     no stamp left and the lock released. PRIVILEGED when it extracts.
@@ -189,13 +187,12 @@ def using(tarball: Path, rootfs: Path) -> Generator[bool]:
     _require_tarball(tarball)
     extracted = False
     while True:
-        if not _is_current(tarball, rootfs):
-            # no lock held here: the exclusive hold is never a conversion
-            extracted = _extract(tarball, rootfs) or extracted
         with locks.hold(_lock_path(rootfs), what=_what(rootfs), shared=True):
             if _is_current(tarball, rootfs):
                 yield extracted
                 return
+        # the shared hold is released: the exclusive one is never a conversion
+        extracted = _extract(tarball, rootfs) or extracted
 
 
 class Toolbox:

@@ -5,8 +5,8 @@ Contract (design.md): ``assemble --result-file PATH`` (hidden) writes
 so the parent never parses a log; ``assemble --boot-test --cid N`` boot-tests its
 own ISO (R4.1), a failed check failing the child (R4.2). ``--boot-test`` and ``--cid``
 are user-facing; only ``--result-file`` is hidden. The CID is ALLOCATED: the child holds
-``<scratch>/vm-cids/cid-<n>.lock`` (``vm.allocate_cid(base)``, wait=False) from ``N``
-upward, so no two boot tests on the machine -- a build's children or a hand-run
+``cid-<n>.lock`` in the host's ``vm.cid_lock_dir()`` (``vm.allocate_cid(base)``, wait=False;
+task 8.3) from ``N`` upward, so no two boot tests on the machine -- a build's children or a hand-run
 ``assemble --boot-test`` -- share a CID. The session directory follows the CID:
 ``test-<firmware>`` at the default CID 42 (as today), ``test-<cid>-<firmware>`` otherwise.
 """
@@ -252,8 +252,7 @@ def test_a_busy_cid_is_skipped_for_the_next_free_one(
         return _report(True)
 
     monkeypatch.setattr(vm, "boot_test", boot_test)
-    lock = lab / "scratch" / "vm-cids" / "cid-44.lock"
-    lock.parent.mkdir(parents=True)
+    lock = vm.cid_lock_dir() / "cid-44.lock"  # the host CID lock directory (task 8.3)
     ready = lab / "held"
     holder = subprocess.Popen([sys.executable, "-c", _HOLD_CID, str(lock), str(ready)])
     try:

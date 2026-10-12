@@ -816,7 +816,9 @@ class Assembler:
                     store.restore(mark, rootfs)
                     reason = branch.assembler._still_valid(mark, rootfs, repos=repos)
                     if reason is None:
-                        mark = store.claim(store.claim(mark, branch.key), image)
+                        # None: dropped between the find and the claim -- install it
+                        claimed = store.claim(mark, branch.key)
+                        mark = None if claimed is None else store.claim(claimed, image)
                     else:
                         stale.append(f"trunk {name}: {reason}")
                         store.drop(mark)
@@ -1102,6 +1104,7 @@ class Assembler:
                             stale.append(f"{resumed.step}: {reason}")
                             store.drop(resumed)
                         if resumed is not None:
+                            # None: dropped under the claim -- no resume
                             resumed = store.claim(resumed, key)
                 branch: _Trunk | None = None
                 if resumed is None and trunk_of is not None:
@@ -1260,7 +1263,14 @@ class Assembler:
                                         # lock goes, so a waiter never drops it under the claim,
                                         # and in the save's own section, so no other save of this
                                         # trunk can drop the checkpoint between the two
-                                        branch.mark = branch.store.claim(branch.mark, key)
+                                        claimed = branch.store.claim(branch.mark, key)
+                                        if claimed is None:
+                                            raise AssemblerError(
+                                                f"trunk {branch.key}: its checkpoint "
+                                                f"{branch.mark.path.name} vanished right after "
+                                                "its save"
+                                            )
+                                        branch.mark = claimed
                                     # saved: a waiter now restores it instead of installing it
                                     branch.lock.close()
                                     step.add(built=branch.key, checkpoint=checkpoint.INSTALL)
@@ -1416,6 +1426,8 @@ class Assembler:
                                             **self._plan_data(plan),
                                         },
                                     )
+                                    # a None re-claim is skipped: the save dropped a
+                                    # trunk this image alone still held
                                     for claimed in trunk_claims:
                                         store.claim(claimed, key)
                                 step.add(checkpoint=checkpoint.INSTALL)
