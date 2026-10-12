@@ -31,6 +31,7 @@ argument list, never through a shell.
 
 import base64
 import contextlib
+import errno
 import hashlib
 import json
 import os
@@ -719,16 +720,28 @@ def cid_lock_dir() -> Path:
 
 
 class UnusableCidLock(VmError):
-    """A CID lock file that is not safe to use (FIFO, directory, hardlink, unreadable):
-    :func:`allocate_cid` skips it, :func:`hold_cid` fails on it."""
+    """A CID lock file that is not safe to use (symlink, FIFO, directory, hardlink,
+    unreadable): :func:`allocate_cid` skips it, :func:`hold_cid` fails on it."""
+
+
+def _is_symlink_refusal(err: BaseException) -> bool:
+    """Whether ``err`` is the ``O_NOFOLLOW`` refusal of a symlink lock file (ELOOP), raised
+    directly or as the cause ``locks`` chained to its own :class:`locks.LockError`."""
+    seen: BaseException | None = err
+    while seen is not None:
+        if isinstance(seen, OSError) and seen.errno == errno.ELOOP:
+            return True
+        seen = seen.__cause__
+    return False
 
 
 def _take_cid(stack: contextlib.ExitStack, directory: Path, cid: int) -> Path:
     """Hold ``cid-<cid>.lock`` in ``directory`` on ``stack``, without waiting.
 
     :class:`locks.LockBusy` when another process holds it; :class:`UnusableCidLock` when
-    the file is not safe to use; :class:`VmError` naming the file when it cannot be taken
-    otherwise (a planted symlink, the directory not writable).
+    the file is not safe to use -- a planted symlink included, never followed, so its
+    target is neither created nor written; :class:`VmError` naming the file when it cannot
+    be taken otherwise (the directory not writable).
     """
     path = directory / f"cid-{cid}.lock"
     try:
@@ -737,10 +750,10 @@ def _take_cid(stack: contextlib.ExitStack, directory: Path, cid: int) -> Path:
                 path, what=f"vsock CID {cid}", wait=False, mode=_CID_FILE_MODE, nofollow=True
             )
         )
-    except locks.UnusableLockFile as err:
-        raise UnusableCidLock(f"cannot take the vsock CID lock {path}: {err}") from err
     except (locks.LockError, OSError) as err:
-        raise VmError(f"cannot take the vsock CID lock {path}: {err}") from err
+        unusable = isinstance(err, locks.UnusableLockFile) or _is_symlink_refusal(err)
+        error = UnusableCidLock if unusable else VmError
+        raise error(f"cannot take the vsock CID lock {path}: {err}") from err
     return path
 
 
@@ -774,10 +787,10 @@ def allocate_cid(base: int) -> Generator[int]:
     ``locks.hold`` is re-entrant, so a nested allocation in the same process would be
     handed the CID it already holds.
 
-    An unusable lock file (a FIFO, directory, hardlink or unreadable file someone planted)
-    is skipped like a busy one, with one ``warning:`` line on stderr naming it -- written
-    here, as the lock's wait line is, so that no caller can lose it. A planted symlink
-    still raises :class:`VmError`.
+    An unusable lock file (a symlink, FIFO, directory, hardlink or unreadable file someone
+    planted) is skipped like a busy one, with one ``warning:`` line on stderr naming it --
+    written here, as the lock's wait line is, so that no caller can lose it. A symlink is
+    never followed: its target is neither created nor written (task 9.2).
     """
     _check_cid(base)
     directory = cid_lock_dir()

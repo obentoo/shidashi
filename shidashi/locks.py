@@ -205,8 +205,11 @@ def _flock_holder(fd: int, *, besides: set[int]) -> int | None:
     """A process holding an ``flock`` on the file of ``fd``, from ``/proc/locks``.
 
     Only granted FLOCK entries on the file's ``dev:inode`` count (a POSIX lock never conflicts
-    with ``flock``; a blocked request -- ``->`` -- holds nothing); pids in ``besides`` and pids
-    not visible here (0 or below) are skipped. None when there is none or it cannot be read.
+    with ``flock``; a blocked request -- ``->`` -- holds nothing); pids in ``besides``, pids
+    not visible here (0 or below) and dead pids are skipped, and the scan goes on. A dead pid
+    is not a holder: the kernel keeps the creator's pid on a lock whose fd outlived it (e.g.
+    ``vm start`` handing its fd to QEMU). None when no live holder is left or it cannot be
+    read.
     """
     try:
         stat = os.fstat(fd)
@@ -229,7 +232,7 @@ def _flock_holder(fd: int, *, besides: set[int]) -> int | None:
             same_file = int(inode) == stat.st_ino and device in devices
         except ValueError:
             continue
-        if same_file and pid > 0 and pid not in besides:
+        if same_file and pid > 0 and pid not in besides and _alive(pid):
             return pid
     return None
 

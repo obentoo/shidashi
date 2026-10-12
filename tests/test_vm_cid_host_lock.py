@@ -15,9 +15,10 @@ Contract (design.md v4, "Boot tests", "Host-wide CID locks", "Symlink-safe lock 
 - Before any lock the directory is ``lstat``ed: a symlink, a non-directory, a world-writable
   directory without the sticky bit, or one owned by neither root nor the current user is a
   ``VmError`` naming it. Lock files are opened ``O_NOFOLLOW | O_CLOEXEC``
-  (``locks.hold(..., mode=0o666, nofollow=True)``): a planted ``cid-N.lock`` symlink raises
-  naming the path and its target is neither created nor written; with ``nofollow`` the lock
-  is keyed by the resolved directory plus the literal name.
+  (``locks.hold(..., mode=0o666, nofollow=True)``): a planted ``cid-N.lock`` symlink is
+  skipped by ``allocate_cid`` (one ``warning:`` line naming the path, task 9.2) and refused
+  by ``hold_cid`` (``VmError`` naming it); its target is neither created nor written; with
+  ``nofollow`` the lock is keyed by the resolved directory plus the literal name.
 
 Every test redirects ``$SHIDASHI_CID_LOCKS`` into ``tmp_path``: the real
 ``/tmp/shidashi-vm-cids`` is never touched. Another user's ownership is simulated through
@@ -460,18 +461,25 @@ def test_a_root_owned_shared_directory_is_accepted(
 
 
 @pytest.mark.parametrize("target_exists", [False, True])
-def test_a_planted_lock_file_symlink_raises_and_its_target_is_untouched(
-    tmp_path: Path, cids: Path, target_exists: bool
+def test_a_planted_lock_file_symlink_is_skipped_and_its_target_is_untouched(
+    tmp_path: Path, cids: Path, capfd: pytest.CaptureFixture[str], target_exists: bool
 ) -> None:
+    """Changed by author decision (2026-10-12, task 9.2): allocation skips the planted
+    symlink naming it; a fixed CID (``hold_cid``) still refuses it."""
     _shared_dir(cids)
     target = tmp_path / "victim"
     if target_exists:
         target.write_text("precious\n")
     planted = cids / "cid-42.lock"
     planted.symlink_to(target)
-    with pytest.raises((vm.VmError, locks.LockError)) as err, vm.allocate_cid(42):
-        pytest.fail("a CID was allocated through a planted lock-file symlink")
-    assert str(planted) in str(err.value), str(err.value)
+    capfd.readouterr()
+    with vm.allocate_cid(42) as cid:
+        assert cid == 43, f"allocation did not skip the planted lock-file symlink: got {cid}"
+    err = capfd.readouterr().err
+    assert str(planted) in err, err
+    with pytest.raises(vm.VmError) as held, vm.hold_cid(42):
+        pytest.fail("a fixed CID was held through a planted lock-file symlink")
+    assert str(planted) in str(held.value), str(held.value)
     if target_exists:
         assert target.read_text() == "precious\n", "the symlink's target was written"
     else:

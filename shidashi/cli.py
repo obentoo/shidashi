@@ -457,7 +457,10 @@ def _audited(
     else:
         cm.__exit__(None, None, None)
     finally:
-        _err_console.print(f"audit: {recorder.path}")
+        # a dead terminal here (EIO, EPIPE, rich's broken-pipe exit) drops the line and
+        # never replaces the command's own exit (128 + signum included)
+        with _terminal_may_be_gone(sys.stderr):
+            _err_console.print(f"audit: {recorder.path}")
 
 
 def _generation_pkgdir(arch: str, init: str) -> Path:
