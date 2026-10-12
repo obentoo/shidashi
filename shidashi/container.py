@@ -39,6 +39,13 @@ class CommandResult:
 #: zone is system.yaml's, set by shidashi.system.
 _HOST_OPTIONS = ("--register=no", "--resolv-conf=copy-host", "--timezone=off")
 
+#: A read-only container (the toolbox, story 006 R3.5). Without --read-only nspawn
+#: takes an EXCLUSIVE lock on --directory, so a second container on the same tree
+#: fails with "Directory tree ... is currently busy"; with it the lock is shared.
+#: The tmpfs gives the tools a writable /tmp; everything else they write goes to
+#: the RW binds.
+_READ_ONLY_OPTIONS = ("--read-only", "--tmpfs=/tmp:mode=1777")
+
 #: Files an OCI runtime leaves in a container: podman's and docker's.
 _CONTAINER_MARKS = (Path("/run/.containerenv"), Path("/.dockerenv"))
 
@@ -97,6 +104,7 @@ def _nspawn_argv(
     binds_rw: Sequence[tuple[Path, Path]] = (),
     ephemeral: bool,
     keep_unit: bool = False,
+    read_only: bool = False,
 ) -> list[str]:
     """Build the ``systemd-nspawn`` command line (R4.4/R7.1/R7.2). **Pure**, no side effects.
 
@@ -104,7 +112,8 @@ def _nspawn_argv(
     ("--bind-ro=src:dst" per RO bind, in order), ("--bind=src:dst" per RW bind,
     in order, *after* every RO one), "--", *argv]``. The binds come before the
     ``--`` separator; the command's ``argv`` comes after. Without ``binds_rw`` the argv
-    is identical to story 002's (R7.3 back-compat).
+    is identical to story 002's (R7.3 back-compat). ``read_only`` adds
+    :data:`_READ_ONLY_OPTIONS` just before the binds; when False the line is unchanged.
     """
     cmd: list[str] = [
         "systemd-nspawn",
@@ -117,6 +126,8 @@ def _nspawn_argv(
     ]
     if ephemeral:
         cmd.append("--ephemeral")
+    if read_only:
+        cmd.extend(_READ_ONLY_OPTIONS)
     cmd.extend(_emit_binds(binds, binds_rw))
     cmd.append("--")
     cmd.extend(argv)
@@ -129,6 +140,7 @@ def _nspawn_shell_argv(
     binds: Sequence[tuple[Path, Path]] = (),
     binds_rw: Sequence[tuple[Path, Path]] = (),
     keep_unit: bool = False,
+    read_only: bool = False,
 ) -> list[str]:
     """Build the line for an interactive ``systemd-nspawn`` shell (R7.1/R7.2). **Pure**.
 
@@ -137,10 +149,13 @@ def _nspawn_shell_argv(
     :func:`_nspawn_argv` (via :func:`_emit_binds`), but **WITHOUT** a trailing command
     (no ``--`` separator and no argv), so that nspawn drops into the container's
     login shell. Does not change the argv of :func:`_nspawn_argv` (R8.4).
+    ``read_only`` adds :data:`_READ_ONLY_OPTIONS` before the binds, as there.
     """
     cmd: list[str] = ["systemd-nspawn", "--directory", str(rootfs), *_HOST_OPTIONS]
     if keep_unit:
         cmd.append("--keep-unit")
+    if read_only:
+        cmd.extend(_READ_ONLY_OPTIONS)
     cmd.extend(_emit_binds(binds, binds_rw))
     return cmd
 
@@ -152,7 +167,8 @@ class Container:
     present) and ``__exit__`` tears down the ephemeral scratch. When
     ``ephemeral=True``, nspawn's ``--ephemeral`` already keeps the seeded rootfs
     immutable (disposable overlay); the teardown removes the scratch directory
-    only when it is *not* a non-preserved ephemeral one.
+    only when it is *not* a non-preserved ephemeral one. ``read_only=True`` runs the
+    rootfs read-only with a tmpfs ``/tmp`` (see :data:`_READ_ONLY_OPTIONS`).
     """
 
     def __init__(
@@ -163,9 +179,11 @@ class Container:
         binds: Sequence[tuple[Path, Path]] = (),
         binds_rw: Sequence[tuple[Path, Path]] = (),
         log: Path | None = None,
+        read_only: bool = False,
     ) -> None:
         self.rootfs = rootfs
         self.ephemeral = ephemeral
+        self.read_only = read_only
         self.binds: tuple[tuple[Path, Path], ...] = tuple(binds)
         self.binds_rw: tuple[tuple[Path, Path], ...] = tuple(binds_rw)
         #: When set, every command's output is appended here AS IT RUNS. A base
@@ -194,6 +212,7 @@ class Container:
             binds_rw=self.binds_rw,
             ephemeral=self.ephemeral,
             keep_unit=inside_container(),
+            read_only=self.read_only,
         )
         if self.log is not None:
             return self._run_logged(cmd, argv, env=env, check=check)
@@ -300,6 +319,7 @@ class Container:
                     binds=self.binds,
                     binds_rw=self.binds_rw,
                     keep_unit=inside_container(),
+                    read_only=self.read_only,
                 )
             )
 

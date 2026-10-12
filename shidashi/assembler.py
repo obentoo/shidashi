@@ -1163,6 +1163,10 @@ class Assembler:
             squashfs_files: list[Path] = []
 
             keep_rootfs = keep
+            # the toolbox, held shared from the toolbox step through the last tool use
+            # (publish.write_contents) and released on any failure before (R3.12); taken
+            # with no store lock held (C2: store, then toolbox -- never both)
+            tool_use = contextlib.ExitStack()
             try:
                 with Container(
                     rootfs,
@@ -1509,7 +1513,12 @@ class Assembler:
 
                 with run.step("toolbox") as step:
                     toolbox_root = config.scratch_dir() / "toolbox" / f"{recipe.arch}-{recipe.init}"
-                    extracted = toolbox.ensure_rootfs(toolbox_tar, toolbox_root)
+                    try:
+                        extracted = tool_use.enter_context(toolbox.using(toolbox_tar, toolbox_root))
+                    except (OSError, toolbox.ToolboxError) as err:
+                        raise AssemblerError(
+                            f"cannot use the toolbox {toolbox_root} ({toolbox_tar.name}): {err}"
+                        ) from err
                     # the image read-only; the scratch (squashfs, exclude list, SBOM)
                     # and the output directory (the ISO and its staging) writable
                     tools = toolbox.Toolbox(
@@ -1617,6 +1626,8 @@ class Assembler:
                         artifacts += [digests, contents]
                         isos.append(iso)
                     run.artifact(iso, role=f"iso:{profile}")
+                # the last tool use is behind: other assembles may re-extract the toolbox
+                tool_use.close()
                 for extra_file in (packages_file, *artifacts):
                     if extra_file.is_file() and extra_file.name not in sums:
                         sums[extra_file.name] = publish.sha256_of(extra_file)
@@ -1625,6 +1636,8 @@ class Assembler:
             except BaseException:
                 keep_rootfs = True  # keep the rootfs for debugging on failure
                 raise
+            finally:
+                tool_use.close()  # a no-op once closed after the last tool use
 
             if not keep_rootfs:
                 with run.step("cleanup"):

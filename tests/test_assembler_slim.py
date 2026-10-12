@@ -19,6 +19,7 @@ point instead of trusting a recorded argv.
 Requirements exercised: R1.1, R1.2, R1.4, R1.6, R1.7, R2.2, R2.3, R3.2, R3.3, R3.4.
 """
 
+import contextlib
 import datetime
 import json
 import os
@@ -268,6 +269,8 @@ class _Slimmed:
         _file(tar, b"T")
         monkeypatch.setattr(toolbox, "tarball_path", lambda recipe, **_k: tar)
         monkeypatch.setattr(toolbox, "ensure_rootfs", lambda tarball, rootfs: False)
+        # the assembler holds the toolbox through toolbox.using (story 006 task 4.3)
+        monkeypatch.setattr(toolbox, "using", lambda tarball, rootfs: contextlib.nullcontext(False))
 
         class _Tools:
             def __init__(self, rootfs: Path, **_k: object) -> None:

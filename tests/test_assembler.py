@@ -108,6 +108,9 @@ def _toolbox_stubbed(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     tar.write_bytes(b"T")
     monkeypatch.setattr(toolbox, "tarball_path", lambda recipe, **_k: tar)
     monkeypatch.setattr(toolbox, "ensure_rootfs", lambda tarball, rootfs: False)
+    # the assembler holds the toolbox through the real toolbox.using (story 006 task 4.3,
+    # whose tests reuse this fixture): its extraction is the root-only part, a no-op here
+    monkeypatch.setattr(toolbox, "restore_fork_point", lambda tarball, rootfs: None)
     monkeypatch.setattr(toolbox, "Toolbox", _FakeTools)
     return tar
 

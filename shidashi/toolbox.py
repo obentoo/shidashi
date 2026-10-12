@@ -15,17 +15,28 @@ tests and ``scripts/smoke-iso.sh`` (which boots the host's kernel anyway) use
 it: the assembler always goes through a :class:`Toolbox`.
 """
 
+import contextlib
 import shutil
 import subprocess
-from collections.abc import Mapping, Sequence
+from collections.abc import Generator, Mapping, Sequence
 from pathlib import Path
 from typing import Protocol
 
+from shidashi import locks
 from shidashi.container import Container
-from shidashi.phases import restore_fork_point, stage_fork_point_path
+from shidashi.phases import FactoryError, restore_fork_point, stage_fork_point_path
 from shidashi.recipe import TOOLBOX_STAGE, ResolvedRecipe
 
-__all__ = ["WORK", "HostTools", "Toolbox", "ToolboxError", "Tools", "tarball_path"]
+__all__ = [
+    "WORK",
+    "HostTools",
+    "Toolbox",
+    "ToolboxError",
+    "Tools",
+    "ensure_rootfs",
+    "tarball_path",
+    "using",
+]
 
 #: Where the host's directories are mounted in the toolbox: ``/work/<name>``.
 WORK = Path("/work")
@@ -83,24 +94,108 @@ def _stamp(tarball: Path) -> str:
     return f"{tarball.name} {stat.st_size} {stat.st_mtime_ns}\n"
 
 
+def _stamp_path(rootfs: Path) -> Path:
+    return rootfs.with_name(f"{rootfs.name}.stamp")
+
+
+def _lock_path(rootfs: Path) -> Path:
+    return rootfs.with_name(f"{rootfs.name}.lock")
+
+
+def _what(rootfs: Path) -> str:
+    """The lock's name in the wait line: ``toolbox <arch>-<init>``."""
+    return f"toolbox {rootfs.name}"
+
+
+def _is_current(tarball: Path, rootfs: Path) -> bool:
+    """Whether ``rootfs`` holds the tree of ``tarball``, as its stamp says.
+
+    Safe without the lock too: a stamp removed meanwhile reads as stale.
+    """
+    try:
+        recorded = _stamp_path(rootfs).read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return False
+    return rootfs.is_dir() and recorded == _stamp(tarball)
+
+
+def _require_tarball(tarball: Path) -> None:
+    if not tarball.is_file():
+        raise ToolboxError(f"no toolbox at {tarball}")
+
+
+def _extract(tarball: Path, rootfs: Path) -> bool:
+    """Under ``<rootfs>.lock`` EXCLUSIVE: extract ``tarball`` unless it is already there.
+
+    The stamp is checked only once the lock is held: another process may have
+    extracted while this one waited. A failed extraction leaves no stamp and
+    the lock is released on the way out.
+    """
+    stamp = _stamp_path(rootfs)
+    with locks.hold(_lock_path(rootfs), what=_what(rootfs)):
+        if _is_current(tarball, rootfs):
+            return False
+        stamp.unlink(missing_ok=True)
+        shutil.rmtree(rootfs, ignore_errors=True)
+        rootfs.mkdir(parents=True)
+        try:
+            restore_fork_point(tarball, rootfs)
+        except (OSError, FactoryError) as err:
+            stamp.unlink(missing_ok=True)
+            raise ToolboxError(f"cannot extract the toolbox {tarball}: {err}") from err
+        stamp.write_text(_stamp(tarball), encoding="utf-8")
+        return True
+
+
 def ensure_rootfs(tarball: Path, rootfs: Path) -> bool:
     """Extract ``tarball`` into ``rootfs`` unless that tarball is already there.
 
     Returns whether it extracted. A stamp beside the rootfs (name, size, mtime)
     says which tarball the tree came from; a rebuilt toolbox replaces it.
     PRIVILEGED (ownership and xattrs).
+
+    The check, the removal and the extraction run under ``<rootfs>.lock`` held
+    EXCLUSIVE (R3.4): a second caller waits -- saying so on stderr (R3.9) -- and
+    then finds the first one's stamp. Users of the tree hold the same lock shared
+    (:func:`using`), so an extraction also waits for every user. A failed
+    extraction leaves no stamp.
     """
-    if not tarball.is_file():
-        raise ToolboxError(f"no toolbox at {tarball}")
-    stamp = rootfs.with_name(f"{rootfs.name}.stamp")
-    if rootfs.is_dir() and stamp.is_file() and stamp.read_text(encoding="utf-8") == _stamp(tarball):
-        return False
-    stamp.unlink(missing_ok=True)
-    shutil.rmtree(rootfs, ignore_errors=True)
-    rootfs.mkdir(parents=True)
-    restore_fork_point(tarball, rootfs)
-    stamp.write_text(_stamp(tarball), encoding="utf-8")
-    return True
+    _require_tarball(tarball)
+    return _extract(tarball, rootfs)
+
+
+@contextlib.contextmanager
+def using(tarball: Path, rootfs: Path) -> Generator[bool]:
+    """Use the tree of ``tarball`` in ``rootfs`` for the block; yields whether it extracted.
+
+    ``<rootfs>.lock`` is held SHARED for the whole block (R3.5, R3.12): any
+    number of users run their tools in one tree at once, and no extraction
+    removes it under them. A tree of another tarball (or none) is replaced
+    under the lock held EXCLUSIVE (R3.4), which waits for every user of the
+    old tree -- saying so on stderr (R3.9). A held lock is never converted
+    (``flock`` releases it first, so the conversion is not atomic): the shared
+    hold is released, the exclusive one taken and the stamp re-checked, and
+    the shared hold is taken anew -- the stamp checked again, as another
+    process may have replaced the tree in between.
+
+    A stale tree is seen first without the lock: a shared hold writes this
+    process's pid into the lock file, and the exclusive wait that follows
+    would then name this process instead of the user it waits for (R3.9).
+    The peek only picks the first hold; every decision is taken under one.
+
+    A failed extraction raises :class:`ToolboxError` naming the tarball, with
+    no stamp left and the lock released. PRIVILEGED when it extracts.
+    """
+    _require_tarball(tarball)
+    extracted = False
+    while True:
+        if not _is_current(tarball, rootfs):
+            # no lock held here: the exclusive hold is never a conversion
+            extracted = _extract(tarball, rootfs) or extracted
+        with locks.hold(_lock_path(rootfs), what=_what(rootfs), shared=True):
+            if _is_current(tarball, rootfs):
+                yield extracted
+                return
 
 
 class Toolbox:
@@ -110,6 +205,10 @@ class Toolbox:
     A host path resolves through the deepest mount that contains it, so the
     image's rootfs can be mounted read-only inside a scratch directory that is
     mounted read-write.
+
+    The container runs read-only (R3.5): nspawn then locks the toolbox tree
+    SHARED, so concurrent assembles run their tools in it at once. The tools
+    write only to the read-write mounts and a tmpfs ``/tmp``.
     """
 
     def __init__(
@@ -130,6 +229,7 @@ class Toolbox:
             binds=[(host.resolve(), WORK / name) for name, host in ro.items()],
             binds_rw=[(host.resolve(), WORK / name) for name, host in rw.items()],
             log=log,
+            read_only=True,
         )
 
     def path(self, host: Path) -> Path:

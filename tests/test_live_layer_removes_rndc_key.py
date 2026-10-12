@@ -8,6 +8,7 @@ list matches": any other build-time secret still reaches verify-config and fails
 the build, so the next leak is caught instead of hidden.
 """
 
+import contextlib
 import os
 from pathlib import Path
 
@@ -101,6 +102,8 @@ def wired(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(asm, "pinned_repos", lambda **_k: {"gentoo": tree})
     monkeypatch.setattr(toolbox, "tarball_path", lambda recipe, **_k: tar)
     monkeypatch.setattr(toolbox, "ensure_rootfs", lambda tarball, rootfs: False)
+    # the assembler holds the toolbox through toolbox.using (story 006 task 4.3)
+    monkeypatch.setattr(toolbox, "using", lambda tarball, rootfs: contextlib.nullcontext(False))
     monkeypatch.setattr(toolbox, "Toolbox", _FakeTools)
     monkeypatch.setattr(world, "current_atoms", lambda recipe, variants_dir: ("app-misc/a",))
     monkeypatch.setattr(asm, "apply_system", lambda _c, _cfg, *, init, build=None: {})

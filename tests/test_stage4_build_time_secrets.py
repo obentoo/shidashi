@@ -8,6 +8,7 @@ carries a path of the deny list -- naming each one, removing none of them, so
 the next leak fails the build instead of shipping in a tarball.
 """
 
+import contextlib
 import os
 from pathlib import Path
 from typing import Any
@@ -89,6 +90,8 @@ def wired(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> _Wired:
     monkeypatch.setattr(asm, "pinned_repos", lambda **_k: {"gentoo": tree})
     monkeypatch.setattr(toolbox, "tarball_path", lambda recipe, **_k: tar)
     monkeypatch.setattr(toolbox, "ensure_rootfs", lambda tarball, rootfs: False)
+    # the assembler holds the toolbox through toolbox.using (story 006 task 4.3)
+    monkeypatch.setattr(toolbox, "using", lambda tarball, rootfs: contextlib.nullcontext(False))
     monkeypatch.setattr(toolbox, "Toolbox", _FakeTools)
     monkeypatch.setattr(world, "current_atoms", lambda recipe, variants_dir: ("app-misc/a",))
     monkeypatch.setattr(asm, "apply_system", apply_system)
