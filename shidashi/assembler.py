@@ -1012,19 +1012,26 @@ class Assembler:
             # holds nor the trunk; the image installs whole from the stage3
             if store is not None and fps is not None and not fresh:
                 step.add(pruned=store.prune())
-                # deepest first; a stale one goes (it is stale for every image
-                # sharing it: the same inputs, the same binhost) and the next is tried
-                while (resumed := checkpoint.resume_point(store, fps)) is not None:
-                    store.restore(resumed, rootfs)
-                    reason = (
-                        None
-                        if resumed.step == checkpoint.PARTIAL
-                        else self._still_valid(resumed, rootfs, repos=repos)
-                    )
-                    if reason is None:
-                        break
-                    stale.append(f"{resumed.step}: {reason}")
-                    store.drop(resumed)
+                # find -> restore -> validate -> claim as one critical section: a
+                # concurrent assemble neither drops the checkpoint being validated
+                # nor loses its claim to ours (R3.1). Let go before _find_trunk,
+                # which takes the trunk lock first (lock order C2, R3.10)
+                with store.locked():
+                    # deepest first; a stale one goes (it is stale for every image
+                    # sharing it: the same inputs, the same binhost) and the next is tried
+                    while (resumed := checkpoint.resume_point(store, fps)) is not None:
+                        store.restore(resumed, rootfs)
+                        reason = (
+                            None
+                            if resumed.step == checkpoint.PARTIAL
+                            else self._still_valid(resumed, rootfs, repos=repos)
+                        )
+                        if reason is None:
+                            break
+                        stale.append(f"{resumed.step}: {reason}")
+                        store.drop(resumed)
+                    if resumed is not None:
+                        resumed = store.claim(resumed, key)
             branch: _Trunk | None = None
             if resumed is None and trunk and not fresh and store is not None:
                 branch = self._find_trunk(
@@ -1032,8 +1039,7 @@ class Assembler:
                 )
             if stale:
                 step.add(stale=stale)
-            if store is not None and resumed is not None:
-                resumed = store.claim(resumed, key)
+            if resumed is not None:
                 step.add(
                     restored=resumed.step,
                     restored_from=resumed.run_id,

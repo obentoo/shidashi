@@ -192,7 +192,8 @@ def test_release_drops_an_image_everywhere(tmp_path: Path) -> None:
     assert shared is not None and shared.images == ("gnome",)
     store.release("gnome")
     assert store.marks() == []
-    assert sorted(p.name for p in (tmp_path / "ckpt").iterdir()) == []
+    # no snapshot and no manifest left; the store lock file stays by design (story 006)
+    assert sorted(p.name for p in (tmp_path / "ckpt").iterdir() if p.name != ".lock") == []
 
 
 @pytest.mark.parametrize(

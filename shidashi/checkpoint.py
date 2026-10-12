@@ -31,6 +31,7 @@ directory-copy fake, without root and without btrfs.
 
 from __future__ import annotations
 
+import contextlib
 import datetime
 import hashlib
 import json
@@ -42,6 +43,8 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
+
+from shidashi import locks
 
 #: Bumped when the meaning of a checkpoint changes: an older one is never reused.
 FORMAT = 3
@@ -250,10 +253,19 @@ class Mark:
 
 
 def _write_json(path: Path, payload: Mapping[str, Any]) -> None:
-    """Write ``payload`` atomically (a crash leaves the old file or the new one). I/O."""
-    tmp = path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(payload, indent=1) + "\n", encoding="utf-8")
-    tmp.replace(path)
+    """Write ``payload`` atomically (a crash leaves the old file or the new one). I/O.
+
+    The temp file is named after this process (``<name>.<pid>.tmp``): two processes
+    writing one manifest never write into the same temp file.
+    """
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    try:
+        tmp.write_text(json.dumps(payload, indent=1) + "\n", encoding="utf-8")
+        tmp.replace(path)
+    except OSError as err:
+        with contextlib.suppress(OSError):
+            tmp.unlink(missing_ok=True)
+        raise OSError(err.errno, f"cannot write the manifest {path}: {err}") from err
 
 
 @dataclass
@@ -267,10 +279,24 @@ class Store:
     manifest, written after the snapshot succeeds -- a snapshot without a
     manifest is never trusted. The manifest lists the images using it: an image
     replaces its own older checkpoints, and one goes when no image uses it.
+
+    Every change to the store runs under the store lock ``root/.lock`` (see
+    :meth:`locked`), so that concurrent assembles of one ``<arch>-<init>`` apply
+    them one at a time.
     """
 
     root: Path
     backend: Backend
+
+    def locked(self) -> contextlib.AbstractContextManager[None]:
+        """Hold the store lock ``root/.lock`` for a ``with`` block. I/O.
+
+        For a caller that must make several calls atomically (find -> restore ->
+        claim); every mutating method takes it too. Re-entrant within one process,
+        through any ``Store`` object for this root: the lock registry is keyed by
+        the resolved path. A wait for another process is reported on stderr.
+        """
+        return locks.hold(self.root / ".lock", what=f"checkpoint store {self.root.name}")
 
     def _name(self, step: str, fp: str) -> str:
         return f"{step}-{fp[:24]}"
@@ -339,44 +365,60 @@ class Store:
         same inputs) it is claimed instead of frozen twice. Either way the
         image's older checkpoints of ``step`` are released.
         """
-        mark = self.find(step, fp)
-        if mark is None:
-            path = self.root / self._name(step, fp)
-            remove_tree(path, self.backend)  # a snapshot left without a manifest
-            self.backend.snapshot(rootfs, path, readonly=True)
-            mark = Mark(
-                step=step,
-                fingerprint=fp,
-                path=path,
-                run_id=run_id,
-                created=datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds"),
-                images=(image,),
-                data=dict(data or {}),
-            )
-            self._write(mark)
-        else:
-            mark = self.claim(mark, image)
-        self.release_step(step, image, keep=fp)
-        return mark
+        # one critical section from the lookup to the manifest: a prune between the
+        # snapshot and its manifest would delete the snapshot as interrupted
+        with self.locked():
+            mark = self.find(step, fp)
+            if mark is None:
+                path = self.root / self._name(step, fp)
+                remove_tree(path, self.backend)  # a snapshot left without a manifest
+                self.backend.snapshot(rootfs, path, readonly=True)
+                mark = Mark(
+                    step=step,
+                    fingerprint=fp,
+                    path=path,
+                    run_id=run_id,
+                    created=datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds"),
+                    images=(image,),
+                    data=dict(data or {}),
+                )
+                self._write(mark)
+            else:
+                mark = self.claim(mark, image)
+            self.release_step(step, image, keep=fp)
+            return mark
 
     def claim(self, mark: Mark, image: str) -> Mark:
-        """Record that ``image`` now uses ``mark``. I/O."""
-        if image in mark.images:
-            return mark
-        claimed = Mark(**{**mark.__dict__, "images": (*mark.images, image)})
-        self._write(claimed)
-        return claimed
+        """Record that ``image`` now uses ``mark``. I/O.
+
+        The image list is the manifest's as read under the lock, not the one
+        ``mark`` carried: an image another process added since is kept.
+        """
+        with self.locked():
+            current = self._read(self._manifest(mark)) or mark
+            if image in current.images:
+                return current
+            claimed = Mark(**{**current.__dict__, "images": (*current.images, image)})
+            self._write(claimed)
+            return claimed
+
+    def _unclaim(self, mark: Mark, image: str) -> None:
+        """Drop ``image`` from ``mark``; delete ``mark`` when no image is left. I/O.
+
+        Called with the store lock held, on a ``mark`` read under it.
+        """
+        left = tuple(i for i in mark.images if i != image)
+        if left:
+            self._write(Mark(**{**mark.__dict__, "images": left}))
+        else:
+            self.drop(mark)
 
     def release_step(self, step: str, image: str, *, keep: str | None = None) -> None:
         """Drop ``image`` from its checkpoints of ``step`` (but ``keep``); delete unused. I/O."""
-        for mark in self.marks(step):
-            if mark.fingerprint == keep or image not in mark.images:
-                continue
-            left = tuple(i for i in mark.images if i != image)
-            if left:
-                self._write(Mark(**{**mark.__dict__, "images": left}))
-            else:
-                self.drop(mark)
+        with self.locked():
+            for mark in self.marks(step):
+                if mark.fingerprint != keep and image in mark.images:
+                    self._unclaim(mark, image)
 
     def retain(self, image: str, fingerprints: Iterable[str]) -> None:
         """Drop ``image`` from its checkpoints whose fingerprint is not current. I/O.
@@ -386,38 +428,38 @@ class Store:
         (an image that resumes from another's checkpoint saves nothing).
         """
         current = set(fingerprints)
-        for mark in self.marks():
-            if image in mark.images and mark.fingerprint not in current:
-                left = tuple(i for i in mark.images if i != image)
-                if left:
-                    self._write(Mark(**{**mark.__dict__, "images": left}))
-                else:
-                    self.drop(mark)
+        with self.locked():
+            for mark in self.marks():
+                if image in mark.images and mark.fingerprint not in current:
+                    self._unclaim(mark, image)
 
     def release(self, image: str) -> None:
         """Drop ``image`` from every checkpoint; delete those no image uses. I/O."""
-        for step in (PARTIAL, PACKAGES, INSTALL):
-            self.release_step(step, image)
+        with self.locked():
+            for step in (PARTIAL, PACKAGES, INSTALL):
+                self.release_step(step, image)
 
     def prune(self) -> list[str]:
         """Remove what no run can use: other formats, snapshots without a manifest. I/O.
 
         A manifest of another :data:`FORMAT` is invisible to :meth:`marks`, so
         nothing would ever release it; a snapshot whose manifest is gone was
-        interrupted mid-save. Returns the names removed.
+        interrupted mid-save. Returns the names removed. Plain files that are not
+        manifests -- the store and trunk locks -- are left alone.
         """
         if not self.root.is_dir():
-            return []
+            return []  # checked before the lock: taking it would create the root
         removed: list[str] = []
-        for manifest in sorted(self.root.glob("*.json")):
-            if self._read(manifest) is None:
-                manifest.unlink(missing_ok=True)
-                remove_tree(manifest.with_suffix(""), self.backend)
-                removed.append(manifest.stem)
-        for snapshot in sorted(self.root.iterdir()):
-            if snapshot.is_dir() and not snapshot.with_name(snapshot.name + ".json").exists():
-                remove_tree(snapshot, self.backend)
-                removed.append(snapshot.name)
+        with self.locked():
+            for manifest in sorted(self.root.glob("*.json")):
+                if self._read(manifest) is None:
+                    manifest.unlink(missing_ok=True)
+                    remove_tree(manifest.with_suffix(""), self.backend)
+                    removed.append(manifest.stem)
+            for snapshot in sorted(self.root.iterdir()):
+                if snapshot.is_dir() and not snapshot.with_name(snapshot.name + ".json").exists():
+                    remove_tree(snapshot, self.backend)
+                    removed.append(snapshot.name)
         return removed
 
     def restore(self, mark: Mark, rootfs: Path) -> None:
@@ -427,8 +469,9 @@ class Store:
 
     def drop(self, mark: Mark) -> None:
         """Remove ``mark`` (manifest first: never a manifest without data). I/O."""
-        self._manifest(mark).unlink(missing_ok=True)
-        remove_tree(mark.path, self.backend)
+        with self.locked():
+            self._manifest(mark).unlink(missing_ok=True)
+            remove_tree(mark.path, self.backend)
 
 
 def open_store(root: Path, *, backend: Backend | None = None) -> Store | None:
