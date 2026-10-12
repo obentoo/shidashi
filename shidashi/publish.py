@@ -18,12 +18,14 @@ maintainer's key and is left to the maintainer.
 import datetime
 import gzip
 import hashlib
+import os
 import shutil
 import subprocess
 from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from shidashi import locks
 from shidashi.recipe import ResolvedRecipe
 
 if TYPE_CHECKING:
@@ -70,16 +72,25 @@ def write_digests(iso: Path) -> tuple[Path, str]:
 
 def update_sha256sums(directory: Path, sums: Mapping[str, str]) -> Path:
     """Set the lines of ``sums`` (file name -> SHA256) in ``directory/SHA256SUMS``,
-    keeping the other files' lines. I/O."""
+    keeping the other files' lines. Under ``directory/.SHA256SUMS.lock``: two
+    publishers into one directory would each read the old file and write theirs,
+    losing the other's line (story 006 R3.7). I/O."""
     path = directory / "SHA256SUMS"
-    lines: dict[str, str] = {}
-    if path.is_file():
-        for line in path.read_text(encoding="utf-8").splitlines():
-            digest, _, name = line.partition("  ")
-            if name:
-                lines[name] = digest
-    lines.update(sums)
-    path.write_text("".join(f"{d}  {n}\n" for n, d in sorted(lines.items())), encoding="utf-8")
+    with locks.hold(directory / ".SHA256SUMS.lock", what=f"SHA256SUMS of {directory}"):
+        lines: dict[str, str] = {}
+        if path.is_file():
+            for line in path.read_text(encoding="utf-8").splitlines():
+                digest, _, name = line.partition("  ")
+                if name:
+                    lines[name] = digest
+        lines.update(sums)
+        tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+        try:
+            tmp.write_text("".join(f"{d}  {n}\n" for n, d in sorted(lines.items())), "utf-8")
+            tmp.replace(path)
+        except OSError:
+            tmp.unlink(missing_ok=True)
+            raise
     return path
 
 

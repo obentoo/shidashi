@@ -986,6 +986,10 @@ class Assembler:
         grows from its trunk's (:func:`trunk_stage`, ``desktop``): the trunk is
         installed from the stage3 once, frozen, and every flavor adds its packages
         on top of it (``trunk`` step, :data:`ISO_BRANCH_OPTIONS`).
+
+        One assemble per image: the run holds ``scratch/assemble/<key>.lock`` from before
+        its first scratch write to its end; a second assemble of the same image raises
+        :class:`AssemblerError` naming the holder's pid, having written nothing.
         """
         _require_root()
         run = audit.current()
@@ -1001,6 +1005,18 @@ class Assembler:
         # the run: an in-process --serial build goes on to the next image (R3.8)
         held = contextlib.ExitStack()
         try:
+            # one assemble per image, the first lock of the order (C2): it guards everything
+            # keyed by the image under scratch/assemble/ -- <key>/, <key>.judge,
+            # <key>.squashfs-exclude, <key>.*.squashfs -- so it is taken before the exclude
+            # list is written; a refused run touches none of them (R3.6), and releasing it on
+            # a failure removes nothing (R2.3)
+            try:
+                held.enter_context(
+                    locks.hold(rootfs.with_name(f"{key}.lock"), what=f"assemble {key}", wait=False)
+                )
+            except locks.LockBusy as err:
+                holder = "pid unknown" if err.pid is None else f"pid {err.pid}"
+                raise AssemblerError(f"{key} is being assembled by {holder}") from err
             # the squashfs and the stage4 leave out livecd.yaml's squashfs_exclude
             exclude_file = write_squashfs_exclude(
                 load_livecd(config.variants_dir()).squashfs_exclude,
