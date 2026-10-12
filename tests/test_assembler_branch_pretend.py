@@ -50,7 +50,12 @@ def _branch_index(runs: list[list[str]]) -> int:
 
 
 def _kde_plan(wired: _Wired) -> list[str]:
-    (mark,) = [m for m in wired.store.marks(checkpoint.INSTALL) if KDE in m.images]
+    # the flavor's own checkpoint: the trunk's lists the flavor too (story 006, R3.11)
+    (mark,) = [
+        m
+        for m in wired.store.marks(checkpoint.INSTALL)
+        if KDE in m.images and "znver5-desktop-systemd" not in m.images
+    ]
     return list(mark.data["plan"])
 
 

@@ -1305,7 +1305,9 @@ def test_the_first_flavor_installs_the_trunk_then_branches(
     assert _branch_ran(wired)  # then the flavor on top of it
     assert wired.step("trunk")["built"] == "znver5-desktop-systemd"
     owners = {m.images for m in wired.store.marks(checkpoint.INSTALL)}
-    assert ("znver5-desktop-systemd",) in owners and ("znver5-kde-systemd",) in owners
+    # the trunk lists the flavor grown from it (story 006, R3.11)
+    assert ("znver5-desktop-systemd", "znver5-kde-systemd") in owners
+    assert ("znver5-kde-systemd",) in owners
 
 
 def test_the_next_flavor_starts_from_the_same_trunk(

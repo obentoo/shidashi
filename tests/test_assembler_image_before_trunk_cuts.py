@@ -116,7 +116,12 @@ def test_the_saved_plan_is_the_cut_free_one_so_the_next_run_restores_the_image(
 ) -> None:
     wired, _seen = _wire(tmp_path, monkeypatch)
     wired.assemble(recipe=_cut_chain("kde"))
-    (mark,) = [m for m in wired.store.marks(checkpoint.INSTALL) if KDE in m.images]
+    # the flavor's own checkpoint: the trunk's lists the flavor too (story 006, R3.11)
+    (mark,) = [
+        m
+        for m in wired.store.marks(checkpoint.INSTALL)
+        if KDE in m.images and "znver5-desktop-systemd" not in m.images
+    ]
     assert list(mark.data["plan"]) == ["x/a-1-1::gentoo", "x/c-3-7::gentoo"]  # what ships
 
     wired.assemble(recipe=_cut_chain("kde"))

@@ -200,7 +200,12 @@ def test_a_clean_plan_resolves_the_image_once_before_the_trunk_and_saves_it(
     assert image[0].index < first_install, (image, wired.runs)  # before the trunk installs
     # the install step resolves nothing again: no pretend after the trunk's install
     assert [p for p in seen if p.index > first_install] == [], (seen, wired.runs)
-    (mark,) = [m for m in wired.store.marks(checkpoint.INSTALL) if KDE in m.images]
+    # the flavor's own checkpoint: the trunk's lists the flavor too (story 006, R3.11)
+    (mark,) = [
+        m
+        for m in wired.store.marks(checkpoint.INSTALL)
+        if KDE in m.images and "znver5-desktop-systemd" not in m.images
+    ]
     assert list(mark.data["plan"]) == CLEAN_IMAGE_TOKENS  # the copy's pretend, saved
     assert "judged before the trunk" in wired.step("trunk").values(), wired.step("trunk")
 
