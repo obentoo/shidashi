@@ -92,7 +92,7 @@ def test_a_host_build_for_a_worker_owned_arch_skips_its_factory_and_still_assemb
     lab: list[str],
 ) -> None:
     _hold("v3")  # a worker (bentoo-lab) owns v3
-    result = runner.invoke(app, ["build", "v3", "systemd", "--images", "minimal"])
+    result = runner.invoke(app, ["build", "v3", "systemd", "--images", "minimal", "--serial"])
     assert not any(b.startswith("factory:") for b in lab)  # the factory is skipped
     assert "assembler:v3" in lab  # the assembles still run (R5.8, story 014 R3.3)
     skipped = [line for line in result.output.splitlines() if "bentoo-lab" in line]
@@ -149,7 +149,9 @@ def test_a_build_that_skips_the_factory_neither_takes_nor_is_refused_by_the_lock
     lab: list[str],
 ) -> None:
     _hold("v3")
-    result = runner.invoke(app, ["build", "v3", "systemd", "--images", "minimal", "--skip-factory"])
+    result = runner.invoke(
+        app, ["build", "v3", "systemd", "--images", "minimal", "--skip-factory", "--serial"]
+    )
     assert "shidashi worker unlock v3" not in result.output
     assert not any(b.startswith("factory:") for b in lab)
     owner = ownership.current("v3")

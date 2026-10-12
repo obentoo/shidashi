@@ -34,12 +34,12 @@ import socket
 import subprocess
 import tempfile
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Generator, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from shidashi import audit, config
+from shidashi import audit, config, locks
 from shidashi.system import SystemConfig, display_manager, load_system_config
 
 _SSH_PROXY = "/usr/lib/systemd/systemd-ssh-proxy"
@@ -59,6 +59,13 @@ _KEYGEN_DROPIN = '[Service]\nExecStartPre=+/bin/sh -c "/usr/bin/ssh-keygen -A >/
 
 class VmError(Exception):
     """The VM could not be started, reached or stopped."""
+
+
+#: The vsock CID a hand-run boot test uses; its sessions keep their historical names.
+DEFAULT_CID = 42
+
+#: The highest guest CID: 0xFFFFFFFF is VMADDR_CID_ANY.
+_CID_MAX = 0xFFFFFFFE
 
 
 #: The host's virtiofs daemon (sys-fs/virtiofsd, or a distribution's path).
@@ -86,7 +93,7 @@ class VmSpec:
 
     iso: Path
     uefi: bool = False
-    cid: int = 42
+    cid: int = DEFAULT_CID
     memory: str = "8G"
     cpus: int = 8
     display: str = "none"
@@ -587,6 +594,39 @@ def session_dir(name: str) -> Path:
     return config.scratch_dir() / "vm" / name
 
 
+def boot_session_name(firmware: str, cid: int) -> str:
+    """The boot test's session name: ``test-<firmware>`` at :data:`DEFAULT_CID` (as it
+    always was), ``test-<cid>-<firmware>`` otherwise -- a unique CID is a unique directory
+    (qmp socket, pidfile, serial log). Pure."""
+    return f"test-{firmware}" if cid == DEFAULT_CID else f"test-{cid}-{firmware}"
+
+
+@contextlib.contextmanager
+def allocate_cid(base: int) -> Generator[int]:
+    """Hold the first free vsock CID from ``base`` upward for the block (R4.1).
+
+    CID ``n`` is ``<scratch>/vm-cids/cid-<n>.lock``, taken without waiting: a CID another
+    process holds -- a build's sibling or a hand-run boot test -- is skipped for the next.
+    The kernel drops the lock when its holder dies, so no CID stays taken after a crash.
+    One allocation per process: ``locks.hold`` is re-entrant, so a nested allocation in
+    the same process would be handed the CID it already holds.
+    """
+    if not 3 <= base <= _CID_MAX:  # 0, 1 and 2 are the hypervisor, local and host
+        raise VmError(f"vsock CID {base} is out of range (3-{_CID_MAX})")
+    directory = config.scratch_dir() / "vm-cids"
+    with contextlib.ExitStack() as held:
+        for n in range(base, _CID_MAX + 1):
+            try:
+                held.enter_context(
+                    locks.hold(directory / f"cid-{n}.lock", what=f"vsock CID {n}", wait=False)
+                )
+            except locks.LockBusy:
+                continue
+            yield n
+            return
+    raise VmError(f"no free vsock CID from {base} upward")
+
+
 def load_session(name: str) -> Session:
     """The session ``vm start`` left (for ``vm run``/``stop``/``screenshot``)."""
     directory = session_dir(name)
@@ -734,7 +774,7 @@ def boot_test(
     iso: Path,
     *,
     firmwares: Sequence[str] = ("bios", "uefi"),
-    cid: int = 42,
+    cid: int = DEFAULT_CID,
     screenshots: Path | None = None,
     session_factory: Callable[[VmSpec, Path], Session] = Session,
 ) -> dict[str, Any]:
@@ -751,7 +791,7 @@ def boot_test(
     report: dict[str, Any] = {"iso": str(iso), "build": info, "firmwares": {}}
     for firmware in firmwares:
         spec = VmSpec(iso=iso, uefi=firmware == "uefi", cid=cid)
-        session = session_factory(spec, session_dir(f"test-{firmware}"))
+        session = session_factory(spec, session_dir(boot_session_name(firmware, cid)))
         results: list[dict[str, Any]] = []
         metrics: dict[str, str] = {}
         ssh_after: float | None = None

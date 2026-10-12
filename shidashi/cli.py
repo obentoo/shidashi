@@ -15,14 +15,17 @@ user.
 import contextlib
 import json
 import os
+import signal
 import socket
 import subprocess
 import sys
-from collections.abc import Callable, Generator
+import threading
+import time
+from collections.abc import Callable, Generator, Sequence
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 import typer
 import yaml
@@ -31,7 +34,7 @@ from rich.markup import escape
 from rich.prompt import Prompt
 from rich.table import Table
 
-from shidashi import audit, config, doctor, ownership, progress, publish
+from shidashi import audit, config, doctor, ownership, parallel, progress, publish
 from shidashi import remote as remote_mod
 from shidashi import worker as worker_mod
 from shidashi import workers as workers_mod
@@ -412,7 +415,12 @@ def _pin_inputs(init: str) -> dict[str, object]:
 
 @contextlib.contextmanager
 def _audited(
-    command: str, resolved: ResolvedRecipe, *, verbose: bool = False, **inputs: object
+    command: str,
+    resolved: ResolvedRecipe,
+    *,
+    verbose: bool = False,
+    status_file: Path | None = None,
+    **inputs: object,
 ) -> Generator[audit.Recorder]:
     """Run the block as an audited run (:mod:`shidashi.audit`) and say where it went.
 
@@ -421,7 +429,8 @@ def _audited(
     the run goes on unaudited with a visible warning instead of failing before
     the real checks (such as the root guard) could explain why. Either way the
     block's progress is shown on stderr (:mod:`shidashi.progress`; ``verbose``
-    adds the raw output).
+    adds the raw output) and, with ``status_file``, its current top-level step
+    is kept there for a parent build (:class:`shidashi.progress.StatusFile`).
     """
     all_inputs = {"recipe": resolved.model_dump(mode="json"), **_pin_inputs(resolved.init)}
     all_inputs.update(inputs)
@@ -436,11 +445,11 @@ def _audited(
         recorder = cm.__enter__()
     except OSError as err:
         _err_console.print(f"[yellow]warning:[/yellow] audit trail disabled: {escape(str(err))}")
-        with progress.reporting(_err_console, verbose=verbose):
+        with progress.reporting(_err_console, verbose=verbose, status_file=status_file):
             yield audit.current()
         return
     try:
-        with progress.reporting(_err_console, verbose=verbose):
+        with progress.reporting(_err_console, verbose=verbose, status_file=status_file):
             yield recorder
     except BaseException:
         if not cm.__exit__(*sys.exc_info()):
@@ -1001,6 +1010,106 @@ def _render_assemble_pretty(result: AssembleResult, arch: str, flavor: str, init
     console.print(table)
 
 
+def _write_result_file(path: Path, record: dict[str, Any]) -> None:
+    """Write a child's result (:data:`shidashi.parallel.RESULT_FIELDS`) whole or not at all.
+
+    A temp file named after this process, then ``replace()``: the parent never reads a
+    half-written result, and two writers never share a temp file.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    try:
+        temp.write_text(json.dumps({name: record[name] for name in parallel.RESULT_FIELDS}) + "\n")
+        temp.replace(path)
+    except OSError:
+        temp.unlink(missing_ok=True)
+        raise
+
+
+def _terminated(signum: int, frame: object) -> None:
+    """SIGTERM as an exit that unwinds: every ``finally`` of the run still executes.
+
+    Fires once: a second SIGTERM (systemd stopping the unit, then ``build`` stopping the
+    child's group) must not cut the cleanup the first one started; ``build``'s SIGKILL
+    after its grace still bounds it."""
+    del frame
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    raise SystemExit(128 + signum)
+
+
+@contextlib.contextmanager
+def _child_result(
+    path: Path | None, image: str, *, status_file: Path | None = None
+) -> Generator[dict[str, Any]]:
+    """The block's outcome, written to ``path`` (``assemble --result-file``) however it ends.
+
+    The block fills ``run_id`` and ``isos`` as it learns them; ``exit_code`` is the
+    command's own (0 on return, the ``typer.Exit`` code, 1 on any other exception) and
+    ``duration_s`` its wall clock. A failure to write is printed on stderr and never
+    changes the exit code: the parent then reports "no result file" (C1).
+
+    SIGTERM (what ``build`` sends a child's process group on an interrupt) unwinds the
+    block as an exit 143 instead of killing it outright, so a boot test's ``finally``
+    stops its QEMU -- daemonized, it has left the group -- and frees the vsock CID (R2.6).
+    """
+    started = time.monotonic()
+    record: dict[str, Any] = {"image": image, "exit_code": 1, "run_id": None, "isos": []}
+    previous = None
+    if threading.current_thread() is threading.main_thread():
+        previous = signal.signal(signal.SIGTERM, _terminated)
+    try:
+        yield record
+        record["exit_code"] = 0
+    except typer.Exit as err:
+        record["exit_code"] = err.exit_code
+        raise
+    except KeyboardInterrupt:
+        record["exit_code"] = 130  # what typer exits with on an interrupt
+        raise
+    except SystemExit as err:
+        record["exit_code"] = err.code if isinstance(err.code, int) else int(err.code is not None)
+        raise
+    finally:
+        if previous is not None:
+            signal.signal(signal.SIGTERM, previous)
+        if status_file is not None:  # the parent's row ends here, not at the last step (R1.9)
+            with contextlib.suppress(OSError):
+                progress.write_status(status_file, "done" if record["exit_code"] == 0 else "failed")
+        if path is not None:
+            record["duration_s"] = round(time.monotonic() - started, 3)
+            try:
+                _write_result_file(path, record)
+            except Exception as err:  # never mask the command's own outcome
+                _err_console.print(
+                    f"[bold red]error:[/bold red] cannot write the result file {escape(str(path))}:"
+                    f" {escape(f'{type(err).__name__}: {err}')}"
+                )
+
+
+def _failed_checks(report: dict[str, Any]) -> str:
+    """``<firmware>: <check>`` for every failed check of a boot-test report, ``; ``-joined."""
+    return "; ".join(
+        f"{fw}: {c['check']}"
+        for fw, r in report["firmwares"].items()
+        for c in r["checks"]
+        if not c["passed"]
+    )
+
+
+def _boot_test_child(iso: Path, *, base_cid: int) -> None:
+    """Boot-test ``iso`` on the first free vsock CID from ``base_cid`` (R4.1), as a
+    ``boot-test`` step of the run in force recording ``cid`` and ``passed``; a failed
+    check raises :class:`AssemblerError` naming it (R4.2)."""
+    from shidashi import vm
+
+    with vm.allocate_cid(base_cid) as cid, audit.current().step("boot-test") as step:
+        step.add(cid=cid)
+        report = vm.boot_test(iso, cid=cid)
+        step.add(passed=report["passed"])
+        if not report["passed"]:
+            raise AssemblerError(f"{iso.name} failed its boot test: {_failed_checks(report)}")
+
+
 @app.command("assemble")
 def assemble(
     arch: str,
@@ -1081,6 +1190,33 @@ def assemble(
             "time, the others on every CPU.",
         ),
     ] = None,
+    boot_test: Annotated[
+        bool,
+        typer.Option(
+            "--boot-test",
+            help="Then boot the ISO on BIOS and UEFI and check it (shidashi vm test); "
+            "a failed check fails the assemble.",
+        ),
+    ] = False,
+    cid: Annotated[
+        int,
+        typer.Option(
+            "--cid",
+            min=3,
+            help="vsock CID of the --boot-test VM: the first one from N upward that no "
+            "other boot test on this machine holds.",
+        ),
+    ] = 42,
+    result_file: Annotated[
+        Path | None,
+        # for the parent build only (story 006): the run's outcome as JSON
+        typer.Option("--result-file", hidden=True),
+    ] = None,
+    status_file: Annotated[
+        Path | None,
+        # for the parent build only (story 006): the current top-level step as JSON
+        typer.Option("--status-file", hidden=True),
+    ] = None,
     verbose: Verbose = False,
 ) -> None:
     """Assemble the recipe's live ISO from the binhost (OVERVIEW §7).
@@ -1092,95 +1228,108 @@ def assemble(
     axis/recipe conflict, seed/resolve, emerge/dracut failure, squashfs/ISO
     failure) become a friendly message + exit 1, no traceback.
     """
-    _apply_work_dir(work_dir)
-    _require_build_host()
-    try:
-        resolved = _resolve(arch, flavor, init)
-    except (config.UnknownAxisError, RecipeChainError) as err:
-        _err_console.print(f"[bold red]error:[/bold red] {escape(str(err))}")
-        raise typer.Exit(1) from err
+    from shidashi import vm
 
-    try:
-        binhost = binhost_opt if binhost_opt is not None else _generation_pkgdir(arch, init)
-    except SeedError as err:
-        _err_console.print(f"[bold red]error:[/bold red] {escape(str(err))}")
-        raise typer.Exit(1) from err
-    if compression not in ("zstd", "xz", "both"):
-        _err_console.print("[bold red]error:[/bold red] --compression is zstd, xz or both")
-        raise typer.Exit(1)
-    compressions = ("zstd", "xz") if compression == "both" else (compression,)
+    with _child_result(result_file, flavor, status_file=status_file) as child:
+        _apply_work_dir(work_dir)
+        _require_build_host()
+        try:
+            resolved = _resolve(arch, flavor, init)
+        except (config.UnknownAxisError, RecipeChainError) as err:
+            _err_console.print(f"[bold red]error:[/bold red] {escape(str(err))}")
+            raise typer.Exit(1) from err
 
-    try:
-        with _audited(
-            "assemble",
-            resolved,
-            verbose=verbose,
-            binhost=str(binhost),
-            output_dir=str(output_dir),
-            jobs=jobs,
-            keep=keep,
-            compressions=list(compressions),
-            stage4=stage4,
-            sbom=not no_sbom,
-            fresh=fresh,
-            trunk=not no_trunk,
-        ) as trail:
-            produced = Assembler(resolved, binhost, jobs=jobs).assemble(
-                output_dir,
-                download=not no_download,
+        try:
+            binhost = binhost_opt if binhost_opt is not None else _generation_pkgdir(arch, init)
+        except SeedError as err:
+            _err_console.print(f"[bold red]error:[/bold red] {escape(str(err))}")
+            raise typer.Exit(1) from err
+        if compression not in ("zstd", "xz", "both"):
+            _err_console.print("[bold red]error:[/bold red] --compression is zstd, xz or both")
+            raise typer.Exit(1)
+        compressions = ("zstd", "xz") if compression == "both" else (compression,)
+
+        try:
+            with _audited(
+                "assemble",
+                resolved,
+                verbose=verbose,
+                status_file=status_file,
+                binhost=str(binhost),
+                output_dir=str(output_dir),
+                jobs=jobs,
                 keep=keep,
-                compressions=compressions,
+                compressions=list(compressions),
                 stage4=stage4,
                 sbom=not no_sbom,
                 fresh=fresh,
                 trunk=not no_trunk,
+            ) as trail:
+                child["run_id"] = trail.run_id or None  # "" when the audit is disabled
+                produced = Assembler(resolved, binhost, jobs=jobs).assemble(
+                    output_dir,
+                    download=not no_download,
+                    keep=keep,
+                    compressions=compressions,
+                    stage4=stage4,
+                    sbom=not no_sbom,
+                    fresh=fresh,
+                    trunk=not no_trunk,
+                )
+                child["isos"] = [str(iso) for iso in produced.isos]
+                if boot_test:
+                    if not produced.isos:
+                        raise AssemblerError(f"{produced.name}: no ISO to boot-test")
+                    _boot_test_child(produced.isos[0], base_cid=cid)
+            # the trail is complete only once the run closed: publish it beside the ISO
+            if trail.root is not None:
+                bundle = publish.bundle_run(
+                    trail.root, output_dir / f"{produced.name}.build.tar.zst"
+                )
+                publish.update_sha256sums(output_dir, {bundle.name: publish.sha256_of(bundle)})
+                produced = produced.model_copy(update={"artifacts": (*produced.artifacts, bundle)})
+        except (
+            AssemblerError,
+            ImageError,
+            SeedError,
+            ResolveError,
+            ConfigurationError,
+            StaleWorldError,
+            ToolboxError,
+            CheckpointError,
+            vm.VmError,
+            # a full disk, a read-only scratch: the message names the path
+            OSError,
+        ) as err:
+            if isinstance(err, ResolveError) and err.raw_output:
+                _err_console.print(err.raw_output, markup=False, highlight=False)
+            _err_console.print(f"[bold red]error:[/bold red] {escape(str(err))}")
+            raise typer.Exit(1) from err
+        except subprocess.CalledProcessError as err:
+            _err_console.print(
+                f"[bold red]emerge/dracut failure in the ISO[/bold red] (exit {err.returncode})"
             )
-        # the trail is complete only once the run closed: publish it beside the ISO
-        if trail.root is not None:
-            bundle = publish.bundle_run(trail.root, output_dir / f"{produced.name}.build.tar.zst")
-            publish.update_sha256sums(output_dir, {bundle.name: publish.sha256_of(bundle)})
-            produced = produced.model_copy(update={"artifacts": (*produced.artifacts, bundle)})
-    except (
-        AssemblerError,
-        ImageError,
-        SeedError,
-        ResolveError,
-        ConfigurationError,
-        StaleWorldError,
-        ToolboxError,
-        CheckpointError,
-        # a full disk, a read-only scratch: the message names the path
-        OSError,
-    ) as err:
-        if isinstance(err, ResolveError) and err.raw_output:
-            _err_console.print(err.raw_output, markup=False, highlight=False)
-        _err_console.print(f"[bold red]error:[/bold red] {escape(str(err))}")
-        raise typer.Exit(1) from err
-    except subprocess.CalledProcessError as err:
-        _err_console.print(
-            f"[bold red]emerge/dracut failure in the ISO[/bold red] (exit {err.returncode})"
-        )
-        # a logged container merges stderr into the output
-        _print_output(err.output or err.stderr)
-        raise typer.Exit(1) from err
+            # a logged container merges stderr into the output
+            _print_output(err.output or err.stderr)
+            raise typer.Exit(1) from err
 
-    if output_format is OutputFormat.json:
-        typer.echo(
-            json.dumps(
-                {
-                    "name": produced.name,
-                    "isos": [str(p) for p in produced.isos],
-                    "artifacts": [str(p) for p in produced.artifacts],
-                    "arch": arch,
-                    "flavor": flavor,
-                    "init": init,
-                    "binhost": str(binhost),
-                },
-                indent=2,
+        if output_format is OutputFormat.json:
+            typer.echo(
+                json.dumps(
+                    {
+                        "name": produced.name,
+                        "isos": [str(p) for p in produced.isos],
+                        "artifacts": [str(p) for p in produced.artifacts],
+                        "arch": arch,
+                        "flavor": flavor,
+                        "init": init,
+                        "binhost": str(binhost),
+                    },
+                    indent=2,
+                )
             )
-        )
-    else:
-        _render_assemble_pretty(produced, arch, flavor, init)
+        else:
+            _render_assemble_pretty(produced, arch, flavor, init)
 
 
 def plan_tree(images: list[str]) -> tuple[list[str], list[str]]:
@@ -1206,6 +1355,83 @@ def plan_tree(images: list[str]) -> tuple[list[str], list[str]]:
     isos = [i for i in order if i in images]
     flavors = [i for i in isos if i != "minimal"]
     return [TOOLBOX_STAGE, *(flavors or ["minimal"])], isos
+
+
+#: A concurrent build's child ``index`` boot-tests from vsock CID ``100 + index``: away
+#: from the hand-run default 42; each child allocates upward from its base (R4.1).
+_CHILD_BASE_CID = 100
+
+
+class _ImagesFailed(Exception):
+    """A concurrent build in which at least one image failed (R2.2).
+
+    Raised inside the build's audited run so the run closes as an error; carries the
+    summary the command prints before it exits with ``code``.
+    """
+
+    def __init__(self, code: int, lines: list[str], failed: list[str]) -> None:
+        super().__init__(f"image(s) failed: {', '.join(failed)}")
+        self.code = code
+        self.lines = lines
+
+
+def _record_children(trail: audit.Recorder, results: Sequence[parallel.ChildResult]) -> None:
+    """One ``assemble:<image>`` step per child in the build's trail (R1.6).
+
+    The step carries the child's run id, exit code, log and error; its ``duration_s`` and
+    ``status`` are amended to the child's own -- the step itself only records them.
+    """
+    for result in results:
+        with trail.step(f"assemble:{result.image}") as step:
+            step.add(
+                run_id=result.run_id,
+                exit_code=result.exit_code,
+                log=str(result.log),
+                error=result.error,
+            )
+        trail.amend(
+            step.path,
+            duration_s=result.duration_s,
+            status="error" if result.failed else "ok",
+        )
+
+
+def _run_image_children(
+    trail: audit.Recorder, argvs: dict[str, list[str]], *, logs: Path, status_files: dict[str, Path]
+) -> list[parallel.ChildResult]:
+    """Run one child per image under the per-image watch and record each in ``trail``.
+
+    The build's own progress footer is paused while the watch shows the images (one live
+    display at a time); each image then ends on a ``done``/``failed`` line from its
+    result. An interrupt records every image too, then propagates as
+    :class:`parallel.Interrupted`.
+    """
+    started = dict.fromkeys(argvs, time.time())
+    try:
+        with (
+            progress.current().paused(),
+            parallel.watch(status_files, console=_err_console, started=started),
+        ):
+            results = parallel.run_children(argvs, logs=logs)
+    except parallel.Interrupted as err:
+        _echo_ended(err.results)
+        _record_children(trail, err.results)
+        raise
+    _echo_ended(results)
+    _record_children(trail, results)
+    return results
+
+
+def _echo_ended(results: Sequence[parallel.ChildResult]) -> None:
+    """Each ended image's ``done``/``failed`` line on stderr, where its step was shown."""
+    for result in results:
+        _err_console.print(parallel.ended_line(result), markup=False, highlight=False)
+
+
+def _echo_summary(lines: Sequence[str]) -> None:
+    """A concurrent build's summary: one line per image (its ISOs, or why it failed)."""
+    for line in lines:
+        typer.echo(line)
 
 
 @app.command("build")
@@ -1268,6 +1494,14 @@ def build(
         Path | None,
         typer.Option("--work-dir", help="Root of cache, scratch and runs."),
     ] = None,
+    serial: Annotated[
+        bool,
+        typer.Option(
+            "--serial",
+            help="Assemble the images one after another in this process, each with every "
+            "job, instead of one concurrent `assemble` process per image.",
+        ),
+    ] = False,
     verbose: Verbose = False,
 ) -> None:
     """Build a tree of images in one audited run: the factory, then every ISO.
@@ -1275,6 +1509,12 @@ def build(
     ``shidashi build v3 systemd --images minimal,kde,gnome`` builds the trunk once,
     each flavor from the desktop fork point, then assembles the three ISOs --
     with one audit trail covering all of it (steps factory:<image>, assemble:<image>).
+
+    The ISOs are assembled at once, one ``assemble`` process per image -- one image
+    too -- each with its share of ``--jobs`` (or of the CPUs) and its own log under
+    ``<scratch>/logs/build-<run>/``; ``--serial`` assembles them one after another in
+    this process instead. A failed image never stops the others: the build lists every
+    image's ISOs or its log and exits 1 if any failed.
     """
     _apply_work_dir(work_dir)
     _require_build_host()
@@ -1309,6 +1549,7 @@ def build(
             skip_factory = True
 
     results: list[AssembleResult] = []
+    summary: list[str] = []
     try:
         with _audited(
             "build",
@@ -1330,37 +1571,81 @@ def build(
                             Factory(recipes[target], pkgdir).build(
                                 emptytree=True, download=not no_download, keep=keep
                             )
-            for target in iso_targets:
-                with run.step(f"assemble:{target}"):
-                    results.append(
-                        Assembler(recipes[target], pkgdir, jobs=jobs).assemble(
-                            output_dir,
-                            download=not no_download,
-                            keep=keep,
-                            compressions=compressions,
-                            stage4=stage4,
-                            sbom=not no_sbom,
-                            fresh=fresh,
-                            trunk=not no_trunk,
-                        )
-                    )
-            if boot_test:
-                from shidashi import vm
-
-                for target, result in zip(iso_targets, results, strict=True):
-                    with run.step(f"boot-test:{target}") as step:
-                        report = vm.boot_test(result.isos[0])
-                        step.add(passed=report["passed"])
-                        if not report["passed"]:
-                            failed = [
-                                f"{fw}: {c['check']}"
-                                for fw, r in report["firmwares"].items()
-                                for c in r["checks"]
-                                if not c["passed"]
-                            ]
-                            raise AssemblerError(
-                                f"{result.isos[0].name} failed its boot test: " + "; ".join(failed)
+            # the owner lock is released here: the children only read the binhost
+            if serial:
+                for target in iso_targets:
+                    with run.step(f"assemble:{target}"):
+                        results.append(
+                            Assembler(recipes[target], pkgdir, jobs=jobs).assemble(
+                                output_dir,
+                                download=not no_download,
+                                keep=keep,
+                                compressions=compressions,
+                                stage4=stage4,
+                                sbom=not no_sbom,
+                                fresh=fresh,
+                                trunk=not no_trunk,
                             )
+                        )
+                if boot_test:
+                    from shidashi import vm
+
+                    for target, result in zip(iso_targets, results, strict=True):
+                        with run.step(f"boot-test:{target}") as step:
+                            report = vm.boot_test(result.isos[0])
+                            step.add(passed=report["passed"])
+                            if not report["passed"]:
+                                raise AssemblerError(
+                                    f"{result.isos[0].name} failed its boot test: "
+                                    f"{_failed_checks(report)}"
+                                )
+            else:
+                # one child per image, one image too (R1.8); --work-dir reaches them
+                # through the environment _apply_work_dir exported (R1.11)
+                logs = config.scratch_dir() / "logs" / f"build-{trail.run_id or audit.new_run_id()}"
+                share = parallel.job_share(jobs or os.cpu_count() or 1, len(iso_targets))
+                status_files = {image: logs / f"{image}.status" for image in iso_targets}
+                argvs = {
+                    image: parallel.assemble_argv(
+                        image,
+                        arch=arch,
+                        init=init,
+                        jobs=share,
+                        output_dir=output_dir,
+                        result_file=logs / f"{image}.json",
+                        compressions=compressions,
+                        stage4=stage4,
+                        sbom=not no_sbom,
+                        fresh=fresh,
+                        trunk=not no_trunk,
+                        download=not no_download,
+                        keep=keep,
+                        boot_test=boot_test,
+                        cid=_CHILD_BASE_CID + index if boot_test else None,
+                        verbose=verbose,
+                        status_file=status_files[image],
+                    )
+                    for index, image in enumerate(iso_targets)
+                }
+                children = _run_image_children(trail, argvs, logs=logs, status_files=status_files)
+                code, summary = parallel.summarize(children)
+                if code != 0:
+                    raise _ImagesFailed(code, summary, [c.image for c in children if c.failed])
+    except parallel.Interrupted as err:
+        # run_children stopped every child's process group; nothing was cleaned (R2.6)
+        _echo_summary(parallel.summarize(err.results)[1])
+        stopped = [r.image for r in err.results if r.error == "interrupted"]
+        _err_console.print(
+            f"[bold red]interrupted:[/bold red] stopped {escape(', '.join(stopped) or 'nothing')}"
+            " -- their checkpoints and scratch rootfs are kept",
+            soft_wrap=True,
+        )
+        # 128 + the signal: 130 for Ctrl+C (SIGINT), 143 for SIGTERM, 129 for SIGHUP
+        raise typer.Exit(128 + err.signum) from None
+    except _ImagesFailed as err:
+        _echo_summary(err.lines)
+        _err_console.print(f"[bold red]error:[/bold red] {escape(str(err))}", soft_wrap=True)
+        raise typer.Exit(err.code) from err
     except FactoryError as err:
         where = f" {escape(str(err.phase))}" if err.phase else ""
         _err_console.print(f"[bold red]phase failed[/bold red]{where}: {escape(str(err))}")
@@ -1388,8 +1673,11 @@ def build(
     if trail.root is not None:
         bundle = publish.bundle_run(trail.root, output_dir / f"{trail.run_id}.build.tar.zst")
         publish.update_sha256sums(output_dir, {bundle.name: publish.sha256_of(bundle)})
-    for target, result in zip(iso_targets, results, strict=True):
-        _render_assemble_pretty(result, arch, target, init)
+    if serial:
+        for target, result in zip(iso_targets, results, strict=True):
+            _render_assemble_pretty(result, arch, target, init)
+    else:
+        _echo_summary(summary)
 
 
 def _world_recipes() -> list[ResolvedRecipe]:

@@ -25,6 +25,8 @@ library use and tests unchanged. The raw output still goes to the log file;
 import contextlib
 import contextvars
 import dataclasses
+import json
+import os
 import re
 import threading
 import time
@@ -46,6 +48,7 @@ __all__ = [
     "MergeEvent",
     "Observed",
     "Reporter",
+    "StatusFile",
     "View",
     "command_label",
     "copy",
@@ -510,6 +513,72 @@ class View(Reporter):
         return grid
 
 
+def write_status(path: Path, step: str) -> None:
+    """Rewrite a child's status file as ``{"step": step, "since": <epoch>}``, whole or not
+    at all (temp file named after this process, then ``replace()``). I/O."""
+    temp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    try:
+        temp.write_text(json.dumps({"step": step, "since": time.time()}) + "\n", encoding="utf-8")
+        temp.replace(path)
+    except OSError:
+        temp.unlink(missing_ok=True)
+        raise
+
+
+class StatusFile(Reporter):
+    """The run's current TOP-LEVEL step, kept in ``path`` for a parent process to read.
+
+    Each top-level ``step_started`` rewrites ``path`` as one JSON line ``{"step": <name>,
+    "since": <epoch>}`` -- through a temp file named after this process, then
+    ``replace()``, so a reader never sees half a file; a nested step leaves it alone. The
+    parent of a concurrent build reads it (:func:`shidashi.parallel.watch`). A failure to
+    write is said once on ``console`` and otherwise ignored: the status never fails a run.
+    """
+
+    def __init__(
+        self, path: Path, *, console: Console, clock: Callable[[], float] = time.time
+    ) -> None:
+        self.path = path
+        self.console = console
+        self._clock = clock
+        self._lock = threading.Lock()
+        self._depth = 0
+        self._warned = False
+
+    def step_started(self, name: str) -> None:
+        with self._lock:
+            top = self._depth == 0
+            self._depth += 1
+            since = self._clock()
+        if top:
+            self._write({"step": name, "since": since})
+
+    def step_ended(self, name: str, *, ok: bool) -> None:
+        del name, ok
+        with self._lock:
+            self._depth = max(0, self._depth - 1)
+
+    def _write(self, status: dict[str, Any]) -> None:
+        temp = self.path.with_name(f"{self.path.name}.{os.getpid()}.tmp")
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            temp.write_text(json.dumps(status) + "\n", encoding="utf-8")
+            temp.replace(self.path)
+        except OSError as err:
+            with contextlib.suppress(OSError):
+                temp.unlink(missing_ok=True)
+            if not self._warned:
+                self._warned = True
+                self.console.print(
+                    Text.assemble(
+                        ("warning:", "yellow"),
+                        f" status file {self.path} not written: {err}",
+                    ),
+                    soft_wrap=True,
+                    highlight=False,
+                )
+
+
 # --- the audit steps, seen ---------------------------------------------------------
 
 
@@ -570,18 +639,24 @@ def current() -> Reporter:
 
 
 @contextlib.contextmanager
-def reporting(console: Console, *, verbose: bool = False) -> Generator[Reporter]:
+def reporting(
+    console: Console, *, verbose: bool = False, status_file: Path | None = None
+) -> Generator[Reporter]:
     """Show the progress of the block on ``console``.
 
     Live on a terminal, plain lines anywhere else (a pipe, a file, a dumb
     terminal). The view becomes :func:`current`, and the audit run in force is
     wrapped (:class:`Observed`) so that its steps are shown too -- open the
-    audit run first.
+    audit run first. With ``status_file``, the steps also reach a
+    :class:`StatusFile` there, beside the view.
     """
     view = View(console, live=console.is_terminal and not console.is_dumb_terminal, verbose=verbose)
+    observed = Observed(audit.current(), view)
+    if status_file is not None:
+        observed = Observed(observed, StatusFile(status_file, console=console))
     token = _CURRENT.set(view)
     try:
-        with view, audit.recording(Observed(audit.current(), view)):
+        with view, audit.recording(observed):
             yield view
     finally:
         _CURRENT.reset(token)

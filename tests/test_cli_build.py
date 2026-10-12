@@ -65,7 +65,8 @@ def test_build_runs_the_factory_then_every_iso_in_one_audited_run(
     lab: list[str], tmp_path: Path
 ) -> None:
     result = runner.invoke(
-        app, ["build", "v3", "systemd", "--images", "kde,minimal", "--compression", "both"]
+        app,
+        ["build", "v3", "systemd", "--images", "kde,minimal", "--compression", "both", "--serial"],
     )
     assert result.exit_code == 0, result.output
     assert lab == [
@@ -89,7 +90,9 @@ def test_build_runs_the_factory_then_every_iso_in_one_audited_run(
 
 
 def test_skip_factory_assembles_from_what_is_built(lab: list[str]) -> None:
-    result = runner.invoke(app, ["build", "v3", "systemd", "--images", "minimal", "--skip-factory"])
+    result = runner.invoke(
+        app, ["build", "v3", "systemd", "--images", "minimal", "--skip-factory", "--serial"]
+    )
     assert result.exit_code == 0, result.output
     assert lab == ["assemble:minimal:('zstd',)"]
 
@@ -117,7 +120,7 @@ def test_boot_test_gates_the_build(
 
     monkeypatch.setattr(vm, "boot_test", boot_test)
     result = runner.invoke(
-        app, ["build", "v3", "systemd", "--images", "minimal,kde", "--boot-test"]
+        app, ["build", "v3", "systemd", "--images", "minimal,kde", "--boot-test", "--serial"]
     )
     assert booted == ["bentoo-x-minimal.iso", "bentoo-x-kde.iso"]
     assert result.exit_code == 1 and "failed its boot test: uefi: os-release" in result.output
