@@ -31,13 +31,13 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from shidashi.parallel import ChildResult
 from typer.testing import CliRunner
 
 from shidashi import cli, doctor, ownership, parallel, vm
 from shidashi.assembler import AssembleResult
 from shidashi.cli import app
 from shidashi.factory import FactoryError
+from shidashi.parallel import ChildResult
 
 runner = CliRunner()
 
@@ -87,9 +87,7 @@ def lab(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> _Lab:
     def run_children(argvs: Mapping[str, list[str]], *, logs: Path) -> list[ChildResult]:
         state.calls.append("children:" + ",".join(argvs))
         state.started_under_owner_lock = state.started_under_owner_lock or state.owner_held
-        state.child_env = {
-            n: os.environ.get(f"SHIDASHI_{n}") for n in ("CACHE", "SCRATCH", "RUNS")
-        }
+        state.child_env = {n: os.environ.get(f"SHIDASHI_{n}") for n in ("CACHE", "SCRATCH", "RUNS")}
         state.argvs = {k: list(v) for k, v in argvs.items()}
         state.logs = logs
         results = [
@@ -123,7 +121,9 @@ def lab(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> _Lab:
     monkeypatch.setattr(ownership, "current", lambda _arch: None)
     monkeypatch.setattr(cli, "_owner_lock", owner_lock)
     # the per-image status lines (task 6.5) are not under test here
-    monkeypatch.setattr(parallel, "watch", lambda *_a, **_k: contextlib.nullcontext(), raising=False)
+    monkeypatch.setattr(
+        parallel, "watch", lambda *_a, **_k: contextlib.nullcontext(), raising=False
+    )
     monkeypatch.setattr(cli, "Factory", FakeFactory)
     monkeypatch.setattr(cli, "Assembler", FakeAssembler)
     monkeypatch.setattr(parallel, "run_children", run_children)
@@ -147,7 +147,7 @@ def test_build_assembles_the_images_as_children_after_the_factory(lab: _Lab) -> 
     assert lab.calls[-1] == "children:gnome,kde,wm"  # chain order, all at once
     assert lab.calls[:-1] == ["factory:toolbox", "factory:gnome", "factory:kde", "factory:wm"]
     for image, argv in lab.argvs.items():
-        assert argv[3:7] == ["assemble", "v3", image, "systemd"]
+        assert argv[4:8] == ["assemble", "v3", image, "systemd"]
 
 
 @pytest.mark.parametrize(("jobs", "share"), [("24", "8"), ("2", "1")])
@@ -356,7 +356,16 @@ def test_a_work_dir_builds_children_see_the_same_roots(lab: _Lab) -> None:
     work = lab.tmp_path / "work"
     done = runner.invoke(
         app,
-        ["build", "v3", "systemd", "--images", "kde,gnome", "--skip-factory", "--work-dir", str(work)],
+        [
+            "build",
+            "v3",
+            "systemd",
+            "--images",
+            "kde,gnome",
+            "--skip-factory",
+            "--work-dir",
+            str(work),
+        ],
     )
     assert done.exit_code == 0, done.output
     assert lab.calls == ["children:gnome,kde"], lab.calls

@@ -92,7 +92,16 @@ def test_a_child_rewrites_its_status_file_at_each_top_level_step_only(
     status.parent.mkdir(parents=True)
     done = runner.invoke(
         app,
-        ["assemble", "v3", "minimal", "systemd", "-o", str(lab / "out"), "--status-file", str(status)],
+        [
+            "assemble",
+            "v3",
+            "minimal",
+            "systemd",
+            "-o",
+            str(lab / "out"),
+            "--status-file",
+            str(status),
+        ],
     )
     assert done.exit_code == 0, done.output
     assert [(where, data["step"]) for where, data, _b, _a in seen] == [

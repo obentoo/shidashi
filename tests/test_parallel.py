@@ -16,6 +16,7 @@ import sys
 from pathlib import Path
 
 import pytest
+
 from shidashi.parallel import ChildResult, assemble_argv, job_share, summarize
 
 # --- job_share (R1.3) ---------------------------------------------------------------
@@ -75,8 +76,9 @@ def _value(argv: list[str], option: str) -> str | None:
 
 def test_argv_runs_the_assemble_command_through_the_package() -> None:
     argv = _argv()
-    assert argv[:7] == [
+    assert argv[:8] == [
         sys.executable,
+        "-P",
         "-c",
         "from shidashi.cli import app; app()",
         "assemble",
@@ -96,8 +98,8 @@ def test_argv_carries_the_result_file_the_parent_will_read() -> None:
 
 def test_argv_of_two_images_differ_by_the_image() -> None:
     kde, gnome = _argv(target="kde"), _argv(target="gnome")
-    assert kde[5] == "kde" and gnome[5] == "gnome"
-    assert [a for i, a in enumerate(kde) if i != 5] == [a for i, a in enumerate(gnome) if i != 5]
+    assert kde[6] == "kde" and gnome[6] == "gnome"
+    assert [a for i, a in enumerate(kde) if i != 6] == [a for i, a in enumerate(gnome) if i != 6]
 
 
 def test_argv_without_options_passes_no_flag() -> None:
@@ -223,7 +225,7 @@ def test_argv_needs_only_what_story_014_passes() -> None:
         output_dir=Path("/mnt/out/par"),
         result_file=Path("/scratch/logs/build-R/gnome.json"),
     )
-    assert argv[3:7] == ["assemble", "v3", "gnome", "systemd"]
+    assert argv[4:8] == ["assemble", "v3", "gnome", "systemd"]
     for flag in ("--boot-test", "--cid", "--stage4", "--no-sbom", "--fresh", "--no-trunk"):
         assert flag not in argv, flag
     with_boot = assemble_argv(

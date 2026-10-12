@@ -26,9 +26,9 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from shidashi.parallel import ChildResult, run_children, summarize
 
 from shidashi import audit
+from shidashi.parallel import ChildResult, run_children, summarize
 
 _CHILD = r"""
 import json, sys, time

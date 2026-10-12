@@ -46,7 +46,9 @@ from rich.text import Text
 from shidashi import progress
 
 #: The command a child runs before its ``assemble`` arguments (no ``__main__`` in the package).
-CHILD_COMMAND = ("-c", "from shidashi.cli import app; app()")
+#: ``-P``: ``-c`` would put the working directory first on ``sys.path``, so a build started
+#: from a directory holding a ``shidashi/`` or ``typer.py`` would run that code, as root.
+CHILD_COMMAND = ("-P", "-c", "from shidashi.cli import app; app()")
 
 #: What a child writes into its result file, field by field (C1).
 RESULT_FIELDS = ("image", "exit_code", "run_id", "isos", "duration_s")
