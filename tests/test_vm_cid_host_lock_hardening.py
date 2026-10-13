@@ -238,6 +238,12 @@ def test_systemd_tmpfiles_accepts_the_snippet(tmp_path: Path) -> None:
     tool = shutil.which("systemd-tmpfiles")
     if tool is None:
         pytest.skip("systemd-tmpfiles is not on this host")
+    # --dry-run arrived in systemd 256; ubuntu-24.04 (the CI runner) ships 255
+    usage = subprocess.run(
+        [tool, "--help"], capture_output=True, text=True, check=False, timeout=30
+    )
+    if "--dry-run" not in usage.stdout:
+        pytest.skip("this systemd-tmpfiles has no --dry-run (systemd < 256)")
     done = subprocess.run(
         [tool, "--dry-run", "--create", f"--root={tmp_path / 'root'}", str(_TMPFILES)],
         capture_output=True,

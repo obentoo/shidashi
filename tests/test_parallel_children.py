@@ -291,6 +291,17 @@ def test_run_children_an_interrupt_stops_the_children_and_reports_them(
     assert all(r.error == "interrupted" and r.exit_code != 0 for r in results.values())
 
 
+def _gone(pid: int) -> bool:
+    """No such process, or a zombie (or one being torn down): dead, only not yet reaped
+    (a container whose PID 1 never reaps orphans keeps them so, and ``kill(pid, 0)``
+    still succeeds on one)."""
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text()
+    except FileNotFoundError:
+        return True
+    return stat.rsplit(")", 1)[1].split()[0] in ("Z", "X")
+
+
 def test_an_interrupt_kills_each_childs_whole_process_group(tmp_path: Path, child: Path) -> None:
     """R2.6: SIGTERM to the child alone would leave its grandchild (nspawn, emerge)
     writing into the rootfs after Interrupted; the parent kills the group."""
@@ -328,9 +339,7 @@ def test_an_interrupt_kills_each_childs_whole_process_group(tmp_path: Path, chil
     assert child_pgid != os.getpgid(0), "the child shares the parent's process group"
     grandchild = int((meet / "grandchild-kde").read_text())
     for _ in range(250):
-        try:
-            os.kill(grandchild, 0)
-        except ProcessLookupError:
+        if _gone(grandchild):
             break
         threading.Event().wait(0.02)
     else:
