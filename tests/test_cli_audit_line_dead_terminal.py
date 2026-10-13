@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Any, TextIO
 
 import pytest
-from typer.testing import CliRunner
+from typer.testing import CliRunner, Result
 
 from shidashi import audit, cli, doctor, ownership, parallel, vm
 from shidashi.cli import app
@@ -121,7 +121,7 @@ def _rich_broken_pipe() -> None:
     raise SystemExit(1)
 
 
-def _out(done: Any, capfd: pytest.CaptureFixture[str]) -> str:
+def _out(done: Result, capfd: pytest.CaptureFixture[str]) -> str:
     captured = capfd.readouterr()
     return done.output + captured.out + captured.err
 

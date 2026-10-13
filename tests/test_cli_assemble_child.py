@@ -182,7 +182,7 @@ def test_without_boot_test_nothing_is_booted(lab: Path, monkeypatch: pytest.Monk
 class _Session(vm.Session):
     directories: list[Path] = []
 
-    def start(self) -> None:
+    def start(self, *, cid_lock: Path | None = None) -> None:
         _Session.directories.append(self.directory)
 
     def run_command(self, command: str, *, timeout: int = 600) -> vm.GuestResult:

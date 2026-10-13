@@ -68,7 +68,7 @@ def _probe_store(
 
         monkeypatch.setattr(store, name, probed)
 
-    wired_container = asm.Container
+    wired_container = vars(asm)["Container"]
 
     class _Probing(wired_container):  # type: ignore[misc,valid-type]
         def run(self, argv: list[str], **kw: object) -> object:
@@ -156,7 +156,7 @@ def test_two_assembles_resuming_from_one_checkpoint_both_end_in_its_image_list(
     other_rootfs.mkdir()
     env = dict(os.environ, PYTHONPATH=str(_ROOT))
     claimer: list[subprocess.Popen[str]] = []
-    wired_container = asm.Container
+    wired_container = vars(asm)["Container"]
 
     class _ConcurrentClaim(wired_container):  # type: ignore[misc,valid-type]
         def run(self, argv: list[str], **kw: object) -> object:

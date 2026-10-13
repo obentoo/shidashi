@@ -29,6 +29,7 @@ are recorders; every other holder is a real second process, stopped by its fixtu
 import contextlib
 import fcntl
 import os
+import shutil
 import stat
 import subprocess
 import sys
@@ -222,7 +223,12 @@ def test_a_held_cid_is_refused_naming_its_holder(
 ) -> None:
     _shared_dir(cids)
     booted: list[str] = []
-    monkeypatch.setattr(vm, "boot_test", lambda *_a, **_k: booted.append("boot") or _report())
+
+    def boot_test(*_a: Any, **_k: Any) -> dict[str, Any]:
+        booted.append("boot")
+        return _report()
+
+    monkeypatch.setattr(vm, "boot_test", boot_test)
 
     class _Session:
         def __init__(self, *_a: object, **_k: object) -> None:
@@ -292,9 +298,9 @@ def test_vm_start_passes_the_lock_fd_to_qemu_and_records_its_pid(
     proxy = tmp_path / "systemd-ssh-proxy"
     proxy.write_text("")
     monkeypatch.setattr(vm, "_SSH_PROXY", str(proxy))
-    real_which = vm.shutil.which
+    real_which = shutil.which
     monkeypatch.setattr(
-        vm.shutil, "which", lambda t: "/usr/bin/" + t if "qemu" in t else real_which(t)
+        shutil, "which", lambda t: "/usr/bin/" + t if "qemu" in t else real_which(t)
     )
     real_session = vm.Session
     monkeypatch.setattr(
@@ -331,7 +337,12 @@ def test_an_assemble_boot_test_skips_a_cid_vm_test_holds(
 
     monkeypatch.setattr(cli, "Assembler", FakeAssembler)
     booted: list[object] = []
-    monkeypatch.setattr(vm, "boot_test", lambda _i, **kw: booted.append(kw.get("cid")) or _report())
+
+    def boot_test(_iso: Path, **kw: Any) -> dict[str, Any]:
+        booted.append(kw.get("cid"))
+        return _report()
+
+    monkeypatch.setattr(vm, "boot_test", boot_test)
     argv = ["assemble", "v3", "minimal", "systemd", "-o", str(tmp_path / "out")]
     with _elsewhere(_HOLD, str(cids / "cid-44.lock")):
         done = runner.invoke(app, [*argv, "--boot-test", "--cid", "44"])

@@ -27,6 +27,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+import typer
 from typer.testing import CliRunner
 
 from shidashi import audit, cli, doctor, ownership, parallel
@@ -202,7 +203,7 @@ def test_a_dead_terminal_after_sighup_still_exits_129_without_a_traceback(
         raise OSError(code, os.strerror(code))
 
     monkeypatch.setattr(cli._err_console, "print", print_)
-    monkeypatch.setattr(cli.typer, "echo", echo)
+    monkeypatch.setattr(typer, "echo", echo)
     done = runner.invoke(app, ["build", "v3", "systemd", *_IMAGES, "--skip-factory"])
     captured = capfd.readouterr()
     out = done.output + captured.out + captured.err

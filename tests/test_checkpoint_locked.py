@@ -154,7 +154,9 @@ def test_locked_is_reentrant_within_one_process(tmp_path: Path) -> None:
             store.save(rootfs, INSTALL, "fp", image="minimal", run_id=None)
             mark = store.find(INSTALL, "fp")
             assert mark is not None
-            return store.claim(mark, "worker")
+            claimed = store.claim(mark, "worker")
+            assert claimed is not None
+            return claimed
 
     claimed = _Background(nested)
     claimed.start()

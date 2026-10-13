@@ -170,7 +170,7 @@ def _probe(wired: _Wired, monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, ob
     monkeypatch.setattr(store, "find", find)
     monkeypatch.setattr(store, "save", save)
     monkeypatch.setattr(store, "restore", restore)
-    wired_container = asm.Container
+    wired_container = vars(asm)["Container"]
 
     class _Probing(wired_container):  # type: ignore[misc,valid-type]
         def run(self, argv: list[str], **kw: object) -> object:

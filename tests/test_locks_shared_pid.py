@@ -150,7 +150,7 @@ def _procs() -> Iterator[Callable[..., _Proc]]:
 
 
 def _ctl(spawn: Callable[..., _Proc], path: Path) -> _Proc:
-    return spawn(_CTL, str(path), _WHAT)  # type: ignore[no-any-return]
+    return spawn(_CTL, str(path), _WHAT)
 
 
 def _dead_pid() -> int:

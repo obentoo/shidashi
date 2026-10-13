@@ -125,7 +125,7 @@ class _FakeSession(vm.Session):
     answers: dict[str, str] = {}
     stopped: list[str] = []
 
-    def start(self) -> None:
+    def start(self, *, cid_lock: Path | None = None) -> None:
         pass
 
     def run_command(self, command: str, *, timeout: int = 600) -> vm.GuestResult:

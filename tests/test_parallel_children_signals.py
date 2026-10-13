@@ -253,7 +253,7 @@ def test_a_signal_inside_popen_never_loses_the_child_it_forked(
             raise
         return proc
 
-    monkeypatch.setattr(parallel.subprocess, "Popen", popen_hit_by_ctrl_c)
+    monkeypatch.setattr(subprocess, "Popen", popen_hit_by_ctrl_c)
     argvs = {
         "kde": _argv(child, meet, "kde", "hang", tmp_path / "kde.json"),
         "gnome": _argv(child, meet, "gnome", "hang", tmp_path / "gnome.json"),
@@ -282,7 +282,7 @@ def test_a_signal_while_waiting_never_raises_inside_futures_wait(
 ) -> None:
     """A KeyboardInterrupt inside ``concurrent.futures.wait`` can leave a future's lock
     held and hang the parent; the signal must only be recorded, then acted on."""
-    real_wait = parallel.wait
+    real_wait = vars(parallel)["wait"]
     leaked: list[BaseException] = []
     calls: list[int] = []
 

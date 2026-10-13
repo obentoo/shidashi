@@ -161,7 +161,7 @@ def test_a_new_lock_file_is_linked_into_place_already_written(
             linked.append(Path(src).read_bytes())
         real_link(src, dst, **kw)  # type: ignore[arg-type]
 
-    monkeypatch.setattr(locks.os, "link", link)
+    monkeypatch.setattr(os, "link", link)
     with hold(path, what="trunk desktop"):
         pass
     assert len(linked) == 1 and len(linked[0]) == locks.RECORD_WIDTH
