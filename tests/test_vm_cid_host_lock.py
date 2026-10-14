@@ -190,6 +190,7 @@ def test_an_absent_directory_is_created_1777_under_umask_077_files_0666(cids: Pa
     assert stat.S_IMODE((cids / "cid-42.lock").lstat().st_mode) == 0o666
 
 
+@pytest.mark.usefixtures("qemu_host")
 def test_vm_test_work_dir_does_not_move_the_cid_locks(
     tmp_path: Path, cids: Path, iso: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -250,6 +251,7 @@ def test_a_held_cid_is_refused_naming_its_holder(
     assert booted == [], "a VM was started on a held CID"
 
 
+@pytest.mark.usefixtures("qemu_host")
 def test_a_held_cid_never_blocks_another(
     cids: Path, iso: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -320,6 +322,7 @@ def test_vm_start_passes_the_lock_fd_to_qemu_and_records_its_pid(
 # --- build and assemble allocate upward on the host CIDs ------------------------------------
 
 
+@pytest.mark.usefixtures("qemu_host")
 def test_an_assemble_boot_test_skips_a_cid_vm_test_holds(
     tmp_path: Path, cids: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -350,6 +353,7 @@ def test_an_assemble_boot_test_skips_a_cid_vm_test_holds(
     assert booted == [45], f"the assemble booted on a CID vm test holds: {booted}"
 
 
+@pytest.mark.usefixtures("qemu_host")
 def test_serial_boot_test_allocates_from_42_upward(
     tmp_path: Path, cids: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

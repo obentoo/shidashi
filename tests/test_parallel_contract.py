@@ -131,6 +131,7 @@ def test_contract_a_result_file_missing_a_required_field_fails_the_image(
     assert kde.exit_code == 0 and kde.error == f"result file lacks {missing}"
 
 
+@pytest.mark.usefixtures("qemu_host")
 def test_contract_the_parents_argv_is_accepted_by_the_child_cli(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

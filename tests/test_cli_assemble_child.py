@@ -108,6 +108,7 @@ def _report(passed: bool) -> dict[str, object]:
     }
 
 
+@pytest.mark.usefixtures("qemu_host")
 def test_boot_test_boots_the_childs_iso_on_its_cid(
     lab: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -141,6 +142,7 @@ def test_boot_test_boots_the_childs_iso_on_its_cid(
     assert json.loads(result_file.read_text())["exit_code"] == 0
 
 
+@pytest.mark.usefixtures("qemu_host")
 def test_a_failed_boot_test_fails_the_child_naming_the_check(
     lab: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -237,6 +239,7 @@ with locks.hold(Path(sys.argv[1]), what="cid 44"):
 """
 
 
+@pytest.mark.usefixtures("qemu_host")
 def test_a_busy_cid_is_skipped_for_the_next_free_one(
     lab: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -282,6 +285,7 @@ def test_a_busy_cid_is_skipped_for_the_next_free_one(
     assert booted == [45]
 
 
+@pytest.mark.usefixtures("qemu_host")
 def test_the_boot_test_is_a_step_of_the_childs_run_carrying_its_cid(
     lab: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

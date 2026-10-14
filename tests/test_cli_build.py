@@ -103,6 +103,7 @@ def test_build_refuses_desktop_with_a_reason(lab: list[str]) -> None:
     assert lab == []
 
 
+@pytest.mark.usefixtures("qemu_host")
 def test_boot_test_gates_the_build(
     lab: list[str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

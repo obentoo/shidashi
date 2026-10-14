@@ -156,6 +156,14 @@ session (SSH key, QMP socket) in the scratch too: when that directory cannot be 
 `/var/tmp/shidashi` left by a root build, say — it stops before booting and names
 `--work-dir` and `SHIDASHI_SCRATCH` as the way out.
 
+On a node without QEMU — the slim worker image ships none — `vm test`, `assemble --boot-test`
+and `build --boot-test` run the whole boot test in a podman container made from the
+v3-systemd toolbox, imported as `localhost/shidashi-vm-runner` on first use and reused until
+the toolbox changes. It needs root, podman, `/dev/kvm`, `/dev/vhost-vsock` and the toolbox
+tarball (`shidashi factory v3 toolbox systemd`, or from the host
+`shidashi worker sync push <worker> --arch v3`); `--boot-test` checks all of them before any
+build work and names each missing piece with the command that provides it.
+
 The CID lock directory is the same for root and every user, whatever `--work-dir` says;
 install [`contrib/tmpfiles.d/shidashi.conf`](contrib/tmpfiles.d/shidashi.conf) in
 `/etc/tmpfiles.d/` so root creates it at boot — a copy a user created first (by running

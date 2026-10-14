@@ -1,9 +1,10 @@
-"""INTEGRATION: concurrent boot tests on the host (story 006, task 7.3).
+"""INTEGRATION: concurrent boot tests on a KVM node (story 006, task 7.3).
 
-The builder VM has no QEMU, and the worker runs jobs natively without it (story 010),
-so R4 is proved on the HOST, as root, with ``/dev/kvm``: a build of two images with
-``--boot-test`` runs the two boot tests at the same time, each on its own CID and
-session directory, and both pass. Opt-in with ``SHIDASHI_KVM_NODE=1`` on the host as
+A build of two images with ``--boot-test`` runs the two boot tests at the same time,
+each on its own CID and session directory, and both pass. On a node with QEMU (the
+host) they boot natively; on the worker, which has no QEMU (story 021), each runs in
+the v3-systemd toolbox container (story 024, ``shidashi.vmrunner``), the CID lock
+held by its ``assemble`` around the container. Opt-in with ``SHIDASHI_KVM_NODE=1`` as
 root with ``/dev/kvm``; otherwise SKIPPED -- never green by default. Covers R4.1, R4.2.
 """
 

@@ -34,7 +34,7 @@ def _runner(argv: list[str], **_k: Any) -> subprocess.CompletedProcess[str]:
 
 
 @pytest.fixture
-def host_tools(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def host_tools(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, qemu_host: None) -> None:
     proxy = tmp_path / "systemd-ssh-proxy"
     proxy.write_text("")
     real_which = shutil.which

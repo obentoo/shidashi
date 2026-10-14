@@ -256,6 +256,7 @@ def test_every_success_exits_0_listing_each_iso(lab: _Lab) -> None:
         assert str(lab.tmp_path / f"bentoo-{image}.iso") in text
 
 
+@pytest.mark.usefixtures("qemu_host")
 def test_boot_test_gives_each_child_its_own_cid(lab: _Lab, monkeypatch: pytest.MonkeyPatch) -> None:
     def boot_test(iso: Path, **_k: object) -> dict[str, object]:
         raise AssertionError("the parent booted an ISO: the children boot-test their own")

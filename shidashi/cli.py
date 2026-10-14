@@ -133,6 +133,23 @@ def _require_build_host() -> None:
         raise typer.Exit(1) from err
 
 
+def _require_boot_test_runner() -> None:
+    """``--boot-test``: refuse before any build work when this node cannot boot-test (R3.1).
+
+    Nothing on a node with QEMU; without it, every missing piece of the runner
+    container (root, podman, ``/dev/kvm``, ``/dev/vhost-vsock``, the toolbox tarball)
+    is named with the command that provides it, and the exit is 1 -- seconds in, not
+    after an hour of factory and assemble.
+    """
+    from shidashi import vmrunner
+
+    try:
+        vmrunner.preflight()
+    except vmrunner.VmRunnerError as err:
+        _err_console.print(f"[bold red]error:[/bold red] {escape(str(err))}", soft_wrap=True)
+        raise typer.Exit(1) from err
+
+
 def _checkout_head() -> str:
     """The commit of this Shidashi checkout, or ``unknown`` outside one."""
     repo = Path(__file__).resolve().parent.parent
@@ -1102,12 +1119,13 @@ def _failed_checks(report: dict[str, Any]) -> str:
 def _boot_test_child(iso: Path, *, base_cid: int) -> None:
     """Boot-test ``iso`` on the first free vsock CID from ``base_cid`` (R4.1), as a
     ``boot-test`` step of the run in force recording ``cid`` and ``passed``; a failed
-    check raises :class:`AssemblerError` naming it (R4.2)."""
-    from shidashi import vm
+    check raises :class:`AssemblerError` naming it (R4.2). The boot test runs natively
+    or in the runner container (:mod:`shidashi.vmrunner`); the CID lock spans either."""
+    from shidashi import vm, vmrunner
 
     with vm.allocate_cid(base_cid) as cid, audit.current().step("boot-test") as step:
         step.add(cid=cid)
-        report = vm.boot_test(iso, cid=cid)
+        report = vmrunner.boot_test_any(iso, cid=cid)
         step.add(passed=report["passed"])
         if not report["passed"]:
             raise AssemblerError(f"{iso.name} failed its boot test: {_failed_checks(report)}")
@@ -1235,6 +1253,8 @@ def assemble(
 
     with _child_result(result_file, flavor, status_file=status_file) as child:
         _apply_work_dir(work_dir)
+        if boot_test:  # before the host check, the seed and the assemble (R3.1)
+            _require_boot_test_runner()
         _require_build_host()
         try:
             resolved = _resolve(arch, flavor, init)
@@ -1564,7 +1584,11 @@ def build(
     this process instead. A failed image never stops the others: the build lists every
     image's ISOs or its log and exits 1 if any failed.
     """
+    from shidashi import vm, vmrunner
+
     _apply_work_dir(work_dir)
+    if boot_test:  # before the host check, the seed and the factory (R3.1)
+        _require_boot_test_runner()
     _require_build_host()
     if jobs is not None:
         os.environ["SHIDASHI_JOBS"] = str(jobs)
@@ -1636,15 +1660,13 @@ def build(
                             )
                         )
                 if boot_test:
-                    from shidashi import vm
-
                     for target, result in zip(iso_targets, results, strict=True):
                         with (
                             vm.allocate_cid(vm.DEFAULT_CID) as cid,
                             run.step(f"boot-test:{target}") as step,
                         ):
                             step.add(cid=cid)
-                            report = vm.boot_test(result.isos[0], cid=cid)
+                            report = vmrunner.boot_test_any(result.isos[0], cid=cid)
                             step.add(passed=report["passed"])
                             if not report["passed"]:
                                 raise AssemblerError(
@@ -1717,6 +1739,8 @@ def build(
         StaleWorldError,
         ToolboxError,
         CheckpointError,
+        # a serial boot test that could not run (VmRunnerError is one): no verdict
+        vm.VmError,
         # a full disk, a read-only scratch: the message names the path
         OSError,
     ) as err:
@@ -2148,10 +2172,15 @@ def vm_test(
 ) -> None:
     """The automated boot test: boot ``iso`` and check what its system.yaml declared.
 
-    Audited like a build (steps boot:<firmware> and check:<name>, the report
-    attached as boot-test.json). Exit 1 when any check fails.
+    Audited like a build, the report attached as boot-test.json. Exit 1 when any
+    check fails. Natively the run also records the steps boot:<firmware> and
+    check:<name>; on a node without QEMU the boot test runs in the v3-systemd
+    toolbox container (:mod:`shidashi.vmrunner`), whose inner steps are not
+    recorded -- the boot-test attachment carries every check's result, the metrics
+    and the ssh time per firmware all the same. The CID lock is held here, around
+    either.
     """
-    from shidashi import vm
+    from shidashi import vm, vmrunner
 
     _apply_work_dir(work_dir)
     if firmware not in ("bios", "uefi", "both"):
@@ -2159,10 +2188,10 @@ def vm_test(
     firmwares = ("bios", "uefi") if firmware == "both" else (firmware,)
     try:
         with vm.hold_cid(cid):
-            info = vm.read_build_info(iso.resolve())
+            info = vmrunner.build_info_any(iso.resolve())
             recipe = _resolve(info["arch"], info["flavor"], info["init"])
             with _audited("vm-test", recipe, iso=str(iso.resolve()), firmwares=list(firmwares)):
-                report = vm.boot_test(
+                report = vmrunner.boot_test_any(
                     iso.resolve(), firmwares=firmwares, cid=cid, screenshots=screenshots
                 )
     except (vm.VmError, config.UnknownAxisError, RecipeChainError) as err:
@@ -2187,6 +2216,69 @@ def vm_test(
         console.print(table)
     if not report["passed"]:
         raise typer.Exit(1)
+
+
+def _write_json_atomically(path: Path, data: dict[str, Any]) -> None:
+    """Write ``data`` as JSON to a sibling ``<name>.tmp`` and rename it onto ``path``.
+
+    A process killed mid-write leaves at most the temporary file, never half a JSON
+    at ``path`` that a reader could take for a whole one.
+    """
+    tmp = path.with_name(f"{path.name}.tmp")
+    try:
+        tmp.write_text(json.dumps(data))
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
+@vm_app.command("inner-boot", hidden=True)
+def vm_inner_boot(
+    iso: Path,
+    cid: Annotated[int, typer.Option("--cid", min=3)],
+    report: Annotated[Path, typer.Option("--report", help="Where the JSON report lands.")],
+    firmware: Annotated[str, typer.Option("--firmware", help="bios, uefi or both.")] = "both",
+    screenshots: Annotated[Path | None, typer.Option("--screenshots")] = None,
+) -> None:
+    """The runner container's side of a boot test: ``vm.boot_test`` into ``--report``.
+
+    No CID lock (the outer caller holds it host-wide; this container's ``/tmp`` is not
+    the host's) and no audit run (the outer run records the report). Exit 0 with the
+    report written, whatever its ``passed``; on any exception ``{"error": <text>}`` is
+    written instead and the exit is 2 -- an error is never a verdict.
+    """
+    from shidashi import vm
+
+    try:
+        if firmware not in ("bios", "uefi", "both"):
+            raise ValueError("--firmware is bios, uefi or both")
+        firmwares = ("bios", "uefi") if firmware == "both" else (firmware,)
+        result = vm.boot_test(iso, firmwares=firmwares, cid=cid, screenshots=screenshots)
+        _write_json_atomically(report, result)
+    except Exception as err:
+        text = str(err) or type(err).__name__
+        _err_console.print(f"[bold red]error:[/bold red] {escape(text)}")
+        try:
+            _write_json_atomically(report, {"error": text})
+        except OSError as write_err:
+            _err_console.print(
+                f"[bold red]error:[/bold red] cannot write {escape(str(report))}: "
+                f"{escape(str(write_err))}"
+            )
+        raise typer.Exit(2) from err
+
+
+@vm_app.command("inner-build-info", hidden=True)
+def vm_inner_build_info(iso: Path) -> None:
+    """The runner container's side of ``vm.read_build_info``: the ISO's build.json as JSON."""
+    from shidashi import vm
+
+    try:
+        info = vm.read_build_info(iso)
+    except vm.VmError as err:
+        raise _vm_error(err) from err
+    typer.echo(json.dumps(info))
 
 
 def _worker_name(value: str | None) -> str | None:

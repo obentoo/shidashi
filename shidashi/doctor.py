@@ -22,7 +22,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from shidashi import isacheck
+from shidashi import isacheck, vmrunner
+from shidashi.recipe import TOOLBOX_STAGE
 
 __all__ = ["MIN_NSPAWN", "Check", "DoctorError", "checks", "missing", "require_build_host"]
 
@@ -38,6 +39,23 @@ Scope = Literal["build", "vm", "optional", "info"]
 Which = Callable[[str], str | None]
 Run = Callable[[Sequence[str]], str | None]
 Access = Callable[[str, int], bool]
+
+
+#: The binary whose absence sends a boot test to the runner container.
+_QEMU = "qemu-system-x86_64"
+
+#: The vm tools the runner container stands in for, and what each is for.
+_VM_TOOLS = ((_QEMU, "boots the ISO"), ("xorriso", "reads the ISO's build.json"))
+
+#: The runner container, as the ok detail names it.
+_RUNNER = f"{vmrunner.RUNNER_ARCH}-{vmrunner.RUNNER_INIT} toolbox container"
+
+#: What builds the runner tarball on a node, or brings it from the host.
+_TARBALL_FIX = (
+    f"shidashi factory {vmrunner.RUNNER_ARCH} {TOOLBOX_STAGE} {vmrunner.RUNNER_INIT}"
+    f" on this node, or shidashi worker sync push <worker> --arch {vmrunner.RUNNER_ARCH}"
+    " from the host"
+)
 
 
 class DoctorError(Exception):
@@ -68,6 +86,49 @@ def _run(argv: Sequence[str]) -> str | None:
 def _tool(name: str, scope: Scope, why: str, which: Which) -> Check:
     path = which(name)
     return Check(name, scope, path is not None, path or f"missing: {why}")
+
+
+def _runner_lacks(which: Which, access: Access) -> list[str]:
+    """What the boot-test runner lacks on this node, each with its fix; empty when
+    podman and the runner tarball are both here. Never raises: a toolbox that cannot
+    be resolved is a missing tarball, its reason named."""
+    lacking: list[str] = []
+    if which("podman") is None:
+        lacking.append("podman (emerge app-containers/podman)")
+    try:
+        tarball = vmrunner.runner_tarball()
+    except vmrunner.VmRunnerError as err:
+        lacking.append(f"the runner tarball ({err}; then {_TARBALL_FIX})")
+    else:
+        if not access(str(tarball), os.R_OK):
+            lacking.append(f"the runner tarball {tarball} ({_TARBALL_FIX})")
+    return lacking
+
+
+def _vm_tools(which: Which, access: Access) -> list[Check]:
+    """``qemu-system-x86_64`` and ``xorriso``: on PATH with QEMU here; otherwise
+    served by the runner container when it can run, failed naming its fix when not."""
+    if which(_QEMU) is not None:
+        return [_tool(name, "vm", why, which) for name, why in _VM_TOOLS]
+    lacking = _runner_lacks(which, access)
+    if not lacking:
+        return [
+            Check(name, "vm", True, f"missing here: boot tests run in the {_RUNNER}")
+            for name, _why in _VM_TOOLS
+        ]
+    runner = f"the boot-test runner lacks {'; '.join(lacking)}"
+    # A tool on PATH is unused here: without QEMU the whole boot test is the runner's.
+    return [
+        Check(
+            name,
+            "vm",
+            False,
+            f"missing: {why}; {runner}"
+            if (path := which(name)) is None
+            else f"{path} unused without {_QEMU}; {runner}",
+        )
+        for name, why in _VM_TOOLS
+    ]
 
 
 def _gcc(which: Which, run: Run) -> Check:
@@ -175,8 +236,7 @@ def checks(
             "running as root" if euid == 0 else "not root: factory, assemble and build need it",
         ),
         _filesystem(work_dir, run),
-        _tool("qemu-system-x86_64", "vm", "boots the ISO", which),
-        _tool("xorriso", "vm", "reads the ISO's build.json", which),
+        *_vm_tools(which, access),
         _device("/dev/kvm", "vm", "add the user to the kvm group", access),
         _device("/dev/vhost-vsock", "vm", "the test talks to the guest over vsock", access),
         _gcc(which, run),

@@ -189,6 +189,7 @@ def test_a_dead_terminal_at_the_audit_line_keeps_a_failing_builds_own_failure(
     assert "kde" in out and "gnome" in out, f"the failed images are not named: {out}"
 
 
+@pytest.mark.usefixtures("qemu_host")
 def test_a_dead_terminal_at_the_audit_line_keeps_vm_test_at_0(
     lab: _Lab,
     tmp_path: Path,
