@@ -255,9 +255,10 @@ class Toolbox:
                 raise ToolboxError(f"cannot run the toolbox at {self.container.rootfs}") from err
             output = (done.stdout + done.stderr).strip()
             if done.exit_code != 0 or not output:
+                said = f": {output[-500:]}" if output else ""
                 raise ToolboxError(
                     f"the toolbox lacks {argv[0]} ({tool}); rebuild it with "
-                    "`shidashi factory <arch> toolbox <init>`"
+                    f"`shidashi factory <arch> toolbox <init>` (exit {done.exit_code}{said})"
                 )
             found[tool] = output.splitlines()[0]
         return found

@@ -8,7 +8,9 @@ root + ``systemd-nspawn`` and are exercised by the host-gated integration tests.
 """
 
 import datetime
+import itertools
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -45,6 +47,21 @@ _HOST_OPTIONS = ("--register=no", "--resolv-conf=copy-host", "--timezone=off")
 #: The tmpfs gives the tools a writable /tmp; everything else they write goes to
 #: the RW binds.
 _READ_ONLY_OPTIONS = ("--read-only", "--tmpfs=/tmp:mode=1777")
+
+#: One machine name per read-only run (story 026). nspawn names the machine after the
+#: directory by default, and on systemd 262 a second read-only container on the same
+#: tree fails with "Mount point '/run/systemd/nspawn/<name>/unix-export' exists
+#: already, refusing" -- measured on the bentoo-lab, 2026-10-14.
+_RUNS = itertools.count(1)
+_MACHINE_UNSAFE = re.compile(r"[^A-Za-z0-9._-]+")
+
+
+def _machine_name(rootfs: Path) -> str:
+    """A machine name unique to this run: ``<rootfs name>-<pid>-<n>``, ≤ 64 characters."""
+    suffix = f"-{os.getpid()}-{next(_RUNS)}"
+    stem = _MACHINE_UNSAFE.sub("-", rootfs.name).strip("-.") or "shidashi"
+    return stem[: 64 - len(suffix)] + suffix
+
 
 #: Files an OCI runtime leaves in a container: podman's and docker's.
 _CONTAINER_MARKS = (Path("/run/.containerenv"), Path("/.dockerenv"))
@@ -105,6 +122,7 @@ def _nspawn_argv(
     ephemeral: bool,
     keep_unit: bool = False,
     read_only: bool = False,
+    machine: str | None = None,
 ) -> list[str]:
     """Build the ``systemd-nspawn`` command line (R4.4/R7.1/R7.2). **Pure**, no side effects.
 
@@ -128,6 +146,8 @@ def _nspawn_argv(
         cmd.append("--ephemeral")
     if read_only:
         cmd.extend(_READ_ONLY_OPTIONS)
+    if machine is not None:
+        cmd.append(f"--machine={machine}")
     cmd.extend(_emit_binds(binds, binds_rw))
     cmd.append("--")
     cmd.extend(argv)
@@ -141,6 +161,7 @@ def _nspawn_shell_argv(
     binds_rw: Sequence[tuple[Path, Path]] = (),
     keep_unit: bool = False,
     read_only: bool = False,
+    machine: str | None = None,
 ) -> list[str]:
     """Build the line for an interactive ``systemd-nspawn`` shell (R7.1/R7.2). **Pure**.
 
@@ -156,6 +177,8 @@ def _nspawn_shell_argv(
         cmd.append("--keep-unit")
     if read_only:
         cmd.extend(_READ_ONLY_OPTIONS)
+    if machine is not None:
+        cmd.append(f"--machine={machine}")
     cmd.extend(_emit_binds(binds, binds_rw))
     return cmd
 
@@ -213,6 +236,7 @@ class Container:
             ephemeral=self.ephemeral,
             keep_unit=inside_container(),
             read_only=self.read_only,
+            machine=_machine_name(self.rootfs) if self.read_only else None,
         )
         if self.log is not None:
             return self._run_logged(cmd, argv, env=env, check=check)
@@ -320,6 +344,7 @@ class Container:
                     binds_rw=self.binds_rw,
                     keep_unit=inside_container(),
                     read_only=self.read_only,
+                    machine=_machine_name(self.rootfs) if self.read_only else None,
                 )
             )
 
