@@ -38,6 +38,7 @@ from shidashi.phases import (
     PhaseResult,
     attach_packages,
     build_key,
+    completed_through,
     fork_point,
     latest_resumable,
     plan_phase_run,
@@ -795,7 +796,7 @@ class Factory:
         completed = loaded.completed_phases if loaded is not None else ()
         seed_done = loaded.seed_done if loaded is not None else False
 
-        stopped_at_seed = self._seed_or_restore_stepwise(
+        stopped_at_seed, completed = self._seed_or_restore_stepwise(
             recipe,
             rootfs,
             pointer,
@@ -898,17 +899,19 @@ class Factory:
         interactive: bool,
         download: bool,
         on_checkpoint: CheckpointHook | None,
-    ) -> bool:
+    ) -> tuple[bool, tuple[str, ...]]:
         """Resolve the stepwise seed-or-restore in its three cases (R1.4/R2.5/R5.2/R6.4).
 
-        Returns ``True`` if an interactive ``"seed"`` checkpoint asked for STOP (the
-        caller returns early, rootfs kept); ``False`` if the build should go on.
+        Returns ``(stopped_at_seed, completed)``: ``stopped_at_seed`` is ``True`` if an
+        interactive ``"seed"`` checkpoint asked for STOP (the caller returns early, rootfs
+        kept); ``completed`` is what the build resumes from — trimmed to the restored
+        phase when the newest completed one had no snapshot on disk (R5.2).
 
         * (a) non-empty ``completed`` → :func:`shidashi.phases.latest_resumable` and, if there
           is a per-phase snapshot, :func:`restore_fork_point` into a clean rootfs. If the
           restore raises (tarball gone/corrupted — ``latest_resumable`` only probed
-          ``.exists()``), wraps it in :class:`FactoryError` and KEEPS the rootfs
-          (Reviewer #8) — it does not go on with an undefined rootfs.
+          ``.exists()``), wraps it in :class:`FactoryError` (Reviewer #8) — it does not go
+          on with the partial rootfs.
         * (b) ``seed_done`` without completed phases → reuses the persistent rootfs AS-IS,
           with no re-fetch/extract and no restore (R1.4 — Reviewer #5).
         * (c) no state → :func:`_fresh_seed`, marks ``seed_done`` and persists; if
@@ -924,22 +927,24 @@ class Factory:
                 completed=completed,
                 fork_points_dir=fork_points_dir,
             )
-            if path is not None:
-                shutil.rmtree(rootfs, ignore_errors=True)
-                rootfs.mkdir(parents=True, exist_ok=True)
-                try:
-                    restore_fork_point(path, rootfs)
-                except Exception as err:  # tarball gone/corrupted between the probe and the use
-                    raise FactoryError(
-                        f"failed to restore the snapshot of phase {phase!r} from {path}: {err}; "
-                        "the rootfs was kept — run with --reset to start over from scratch"
-                    ) from err
-            return False
+            if path is None or phase is None:
+                return (False, completed)
+            shutil.rmtree(rootfs, ignore_errors=True)
+            rootfs.mkdir(parents=True, exist_ok=True)
+            try:
+                restore_fork_point(path, rootfs)
+            except Exception as err:  # tarball gone/corrupted between the probe and the use
+                raise FactoryError(
+                    f"failed to restore the snapshot of phase {phase!r} from {path}: {err}; "
+                    "the rootfs is partial — run with --reset to start over from scratch"
+                ) from err
+            # the restored rootfs has none of the later phases' work: they run again (R5.2)
+            return (False, completed_through(recipe, completed, phase))
 
         if seed_done:
             # (b) seed already done by an earlier --until seed, with no completed phases:
             # reuse the persistent rootfs as it is — neither re-seed nor restore (R1.4).
-            return False
+            return (False, completed)
 
         # (c) no state. The bootstrap checkpoint, when one exists, replaces
         # the raw stage3 AND the ~15 min toolchain rebuild on top of it.
@@ -961,7 +966,8 @@ class Factory:
                     bootstrap_done=True,
                 ),
             )
-            return self._seed_checkpoint(rootfs, recipe, on_checkpoint) if interactive else False
+            stopped = self._seed_checkpoint(rootfs, recipe, on_checkpoint) if interactive else False
+            return (stopped, completed)
 
         # Fresh seed, and persist the seed_done milestone.
         shutil.rmtree(rootfs, ignore_errors=True)  # no state: nothing to keep
@@ -979,8 +985,8 @@ class Factory:
             ),
         )
         if interactive:
-            return self._seed_checkpoint(rootfs, recipe, on_checkpoint)
-        return False
+            return (self._seed_checkpoint(rootfs, recipe, on_checkpoint), completed)
+        return (False, completed)
 
     @staticmethod
     def _seed_checkpoint(

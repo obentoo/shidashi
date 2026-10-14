@@ -742,9 +742,9 @@ def plan_phase_run(
         raise ValueError(f"--until {until!r} is invalid; valid values: {', '.join(valid)}")
     plan: list[Phase] = []
     for phase in recipe.phases:
-        if phase.name in completed:
-            continue
-        plan.append(phase)
+        if phase.name not in completed:
+            plan.append(phase)
+        # checked for completed phases too: re-running the same --until plans nothing
         if phase.name == until:
             break
     if until == "seed":
@@ -770,6 +770,19 @@ def phase_snapshot_path(
         fork_points_dir
         / f"{_variant_key(recipe)}-{snapshot}-{pins}-{build_key(recipe)}-{phase}.tar"
     )
+
+
+def completed_through(
+    recipe: ResolvedRecipe, completed: tuple[str, ...], phase: str
+) -> tuple[str, ...]:
+    """The completed phases up to and including ``phase``, in recipe order (R5.2). Pure.
+
+    A resume that restores ``phase``'s snapshot has a rootfs with none of the later
+    phases' work, so those phases are no longer completed.
+    """
+    names = tuple(p.name for p in recipe.phases)
+    through = names[: names.index(phase) + 1]
+    return tuple(name for name in through if name in completed)
 
 
 def latest_resumable(
