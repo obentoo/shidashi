@@ -3,7 +3,15 @@
 # LEAF set. shidashi assemble runs them in the toolbox container (shidashi/toolbox.py):
 # grub-mkrescue drives xorriso (libisoburn) and builds the EFI image with mtools.
 # mksquashfs and unsquashfs come with @base (kits/core/fs: sys-fs/squashfs-tools).
+#
+# The boot test too (story 024): on a node without QEMU (the slim worker) the whole boot
+# test runs in a podman container imported from the v3-systemd toolbox
+# (shidashi/vmrunner.py). qemu brings qemu-system-x86_64 and its OVMF; openssh brings
+# ssh and ssh-keygen; systemd-ssh-proxy comes with the stage3's systemd. No virtiofsd:
+# a boot test passes no shares.
 
 sys-boot/grub
 dev-libs/libisoburn
 sys-fs/mtools
+app-emulation/qemu
+net-misc/openssh
