@@ -123,6 +123,7 @@ def _nspawn_argv(
     keep_unit: bool = False,
     read_only: bool = False,
     machine: str | None = None,
+    tmpfs: Sequence[Path] = (),
 ) -> list[str]:
     """Build the ``systemd-nspawn`` command line (R4.4/R7.1/R7.2). **Pure**, no side effects.
 
@@ -148,6 +149,7 @@ def _nspawn_argv(
         cmd.extend(_READ_ONLY_OPTIONS)
     if machine is not None:
         cmd.append(f"--machine={machine}")
+    cmd.extend(f"--tmpfs={path}" for path in tmpfs)
     cmd.extend(_emit_binds(binds, binds_rw))
     cmd.append("--")
     cmd.extend(argv)
@@ -162,6 +164,7 @@ def _nspawn_shell_argv(
     keep_unit: bool = False,
     read_only: bool = False,
     machine: str | None = None,
+    tmpfs: Sequence[Path] = (),
 ) -> list[str]:
     """Build the line for an interactive ``systemd-nspawn`` shell (R7.1/R7.2). **Pure**.
 
@@ -179,6 +182,7 @@ def _nspawn_shell_argv(
         cmd.extend(_READ_ONLY_OPTIONS)
     if machine is not None:
         cmd.append(f"--machine={machine}")
+    cmd.extend(f"--tmpfs={path}" for path in tmpfs)
     cmd.extend(_emit_binds(binds, binds_rw))
     return cmd
 
@@ -203,10 +207,13 @@ class Container:
         binds_rw: Sequence[tuple[Path, Path]] = (),
         log: Path | None = None,
         read_only: bool = False,
+        tmpfs: Sequence[Path] = (),
     ) -> None:
         self.rootfs = rootfs
         self.ephemeral = ephemeral
         self.read_only = read_only
+        #: tmpfs mounts made before the binds (the toolbox's /work, story 026)
+        self.tmpfs: tuple[Path, ...] = tuple(tmpfs)
         self.binds: tuple[tuple[Path, Path], ...] = tuple(binds)
         self.binds_rw: tuple[tuple[Path, Path], ...] = tuple(binds_rw)
         #: When set, every command's output is appended here AS IT RUNS. A base
@@ -237,6 +244,7 @@ class Container:
             keep_unit=inside_container(),
             read_only=self.read_only,
             machine=_machine_name(self.rootfs) if self.read_only else None,
+            tmpfs=self.tmpfs,
         )
         if self.log is not None:
             return self._run_logged(cmd, argv, env=env, check=check)
@@ -345,6 +353,7 @@ class Container:
                     keep_unit=inside_container(),
                     read_only=self.read_only,
                     machine=_machine_name(self.rootfs) if self.read_only else None,
+                    tmpfs=self.tmpfs,
                 )
             )
 

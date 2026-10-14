@@ -124,6 +124,11 @@ def _require_tarball(tarball: Path) -> None:
         raise ToolboxError(f"no toolbox at {tarball}")
 
 
+def _work_dir(rootfs: Path) -> Path:
+    """Where :data:`WORK` lives in the tree: nspawn mounts the toolbox's tmpfs there."""
+    return rootfs / WORK.relative_to("/")
+
+
 def _extract(tarball: Path, rootfs: Path) -> bool:
     """Under ``<rootfs>.lock`` EXCLUSIVE: extract ``tarball`` unless it is already there.
 
@@ -134,12 +139,16 @@ def _extract(tarball: Path, rootfs: Path) -> bool:
     stamp = _stamp_path(rootfs)
     with locks.hold(_lock_path(rootfs), what=_what(rootfs)):
         if _is_current(tarball, rootfs):
+            # a tree extracted before story 026 has no /work: give it one here
+            _work_dir(rootfs).mkdir(exist_ok=True)
             return False
         stamp.unlink(missing_ok=True)
         shutil.rmtree(rootfs, ignore_errors=True)
         rootfs.mkdir(parents=True)
         try:
             restore_fork_point(tarball, rootfs)
+            # the tree runs read-only: nspawn cannot create /work there (story 026)
+            _work_dir(rootfs).mkdir(exist_ok=True)
         except (OSError, FactoryError) as err:
             stamp.unlink(missing_ok=True)
             raise ToolboxError(f"cannot extract the toolbox {tarball}: {err}") from err
@@ -188,7 +197,7 @@ def using(tarball: Path, rootfs: Path) -> Generator[bool]:
     extracted = False
     while True:
         with locks.hold(_lock_path(rootfs), what=_what(rootfs), shared=True):
-            if _is_current(tarball, rootfs):
+            if _is_current(tarball, rootfs) and _work_dir(rootfs).is_dir():
                 yield extracted
                 return
         # the shared hold is released: the exclusive one is never a conversion
@@ -227,6 +236,8 @@ class Toolbox:
             binds_rw=[(host.resolve(), WORK / name) for name, host in rw.items()],
             log=log,
             read_only=True,
+            # a tmpfs on /work: under it nspawn can create every /work/<name> mount point
+            tmpfs=(WORK,),
         )
 
     def path(self, host: Path) -> Path:
