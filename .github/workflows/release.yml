@@ -50,7 +50,10 @@ jobs:
       - name: Set up uv and Python 3.14
         uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
-          version: "0.13.0"
+          # The uv the maintainers' Gentoo hosts ship (dev-python/uv), so CI and
+          # local runs agree. Dependabot does not move this input: bump it by hand
+          # when ::gentoo does.
+          version: "0.12.23"
           python-version: "3.14"
 
       # Frozen: exactly uv.lock, never a fresh resolution (pyproject's [tool.uv]
