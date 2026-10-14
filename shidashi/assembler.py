@@ -1289,8 +1289,20 @@ class Assembler:
                                             }
                                         )
                                     )
+                                    trunk_plan = checkpoint.plan_tokens(text)
                                     if trunk_settle:
                                         container.run(iso_settle_argv(trunk_settle, jobs=self.jobs))
+                                        # the cut-free plan, as _still_valid resolves it on the
+                                        # next run: the install's own list is the under-cut one
+                                        pretended = container.run(
+                                            [
+                                                *iso_emerge_argv(branch.assembler.recipe),
+                                                "--pretend",
+                                            ]
+                                        )
+                                        trunk_plan = checkpoint.plan_tokens(
+                                            pretended.stdout + pretended.stderr
+                                        )
                                     with branch.store.locked():
                                         branch.mark = branch.store.save(
                                             rootfs,
@@ -1301,9 +1313,7 @@ class Assembler:
                                             data={
                                                 "since": trunk_since,
                                                 "reused": list(parse_reused_atoms(text)),
-                                                **branch.assembler._plan_data(
-                                                    checkpoint.plan_tokens(text)
-                                                ),
+                                                **branch.assembler._plan_data(trunk_plan),
                                             },
                                         )
                                         # this image grew from it too (R3.11); claimed before the
