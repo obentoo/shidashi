@@ -16,6 +16,11 @@ no longer pass it: before each, the three flavors' own checkpoints are released 
 guest's store (``checkpoint.Store.release``, as root in the guest), keeping the trunk.
 The toolbox is extracted at most once across the three rounds, and its stamp names the
 tarball the assembles used.
+
+v4: ``SHIDASHI_BUILDER_VM=local`` runs the same proof on the machine the test runs on, as
+root, with the worker's work-disk layout (``/mnt/work``) -- the bentoo-lab, the project's
+lab: the "guest" commands run here, each job is a ``systemd-run`` unit and the jobs, runs
+and ISOs land under ``SHIDASHI_PARALLEL_OUT`` (default ``/mnt/work/out-par``).
 """
 
 import json
@@ -33,15 +38,26 @@ import shidashi
 
 _REPO = Path(shidashi.__file__).resolve().parents[1]
 _BUILDER = _REPO / "lab" / "vm" / "builder.sh"
-_OUT = Path(os.environ.get("SHIDASHI_VM_DIR", "/var/lib/shidashi/vm")) / "builder" / "out"
+#: "1": the builder VM; "local": this machine, as root (the bentoo-lab)
+_MODE = os.environ.get("SHIDASHI_BUILDER_VM")
+_LOCAL = _MODE == "local"
+if _LOCAL:
+    _OUT = Path(os.environ.get("SHIDASHI_PARALLEL_OUT", "/mnt/work/out-par"))
+    #: where the jobs' --output-dir points, as the builder sees it
+    _OUT_SEEN = str(_OUT)
+else:
+    _OUT = Path(os.environ.get("SHIDASHI_VM_DIR", "/var/lib/shidashi/vm")) / "builder" / "out"
+    _OUT_SEEN = "/mnt/out"
 
 pytestmark = pytest.mark.skipif(
-    os.environ.get("SHIDASHI_BUILDER_VM") != "1" or not _OUT.is_dir(),
-    reason="needs the builder VM started and set up, and SHIDASHI_BUILDER_VM=1 (root in the guest)",
+    not (_MODE == "1" and _OUT.is_dir())
+    and not (_LOCAL and os.geteuid() == 0 and Path("/mnt/work/scratch").is_dir()),
+    reason="needs SHIDASHI_BUILDER_VM=1 with the builder VM started and set up (root in the "
+    "guest), or SHIDASHI_BUILDER_VM=local as root on a machine with /mnt/work (the bentoo-lab)",
 )
 
 
-#: Inside the guest (lab/vm/guest-setup.sh): the scratch, the store and the toolbox.
+#: Inside the guest (lab/vm/guest-setup.sh), or on the bentoo-lab: the store and the toolbox.
 _STORE = "/mnt/work/scratch/assemble/checkpoints/v3-systemd"
 _TOOLBOX = "/mnt/work/scratch/toolbox/v3-systemd"
 _KEYS = ("v3-desktop-systemd", "v3-kde-systemd", "v3-gnome-systemd", "v3-wm-systemd")
@@ -53,6 +69,10 @@ _TOOLBOX_STEPS: list[tuple[int, bool, str]] = []
 
 def _guest(command: str) -> str:
     """``command`` run as root in the builder guest, its stdout."""
+    if _LOCAL:
+        return subprocess.run(
+            ["bash", "-c", command], capture_output=True, text=True, check=True, timeout=900
+        ).stdout
     vm_dir = Path(os.environ.get("SHIDASHI_VM_DIR", "/var/lib/shidashi/vm")) / "builder"
     done = subprocess.run(
         [
@@ -78,7 +98,8 @@ def _guest(command: str) -> str:
 
 
 def _guest_python(code: str) -> str:
-    return _guest(f"cd {_REPO} && .venv/bin/python -c {json.dumps(code)}")
+    python = sys.executable if _LOCAL else ".venv/bin/python"
+    return _guest(f"cd {_REPO} && {python} -c {json.dumps(code)}")
 
 
 def _trunk_images() -> set[str]:
@@ -102,7 +123,38 @@ def _toolbox_state() -> str:
 def _job(name: str, *args: str) -> None:
     rc = _OUT / "jobs" / f"{name}.rc"
     rc.unlink(missing_ok=True)
-    subprocess.run([str(_BUILDER), "job", name, *args], check=True, timeout=900)
+    if not _LOCAL:
+        subprocess.run([str(_BUILDER), "job", name, *args], check=True, timeout=900)
+        return
+    # as lab/vm/builder.sh's job, on this machine: a transient unit, the log and rc in out/jobs
+    (_OUT / "jobs").mkdir(parents=True, exist_ok=True)
+    (_OUT / "runs").mkdir(parents=True, exist_ok=True)
+    subprocess.run(["systemctl", "reset-failed", f"shidashi-{name}"], check=False)
+    subprocess.run(
+        [
+            "systemd-run",
+            f"--unit=shidashi-{name}",
+            "--collect",
+            "--quiet",
+            f"--working-directory={_REPO}",
+            "--setenv=SHIDASHI_CACHE=/mnt/work/cache",
+            "--setenv=SHIDASHI_SCRATCH=/mnt/work/scratch",
+            f"--setenv=SHIDASHI_RUNS={_OUT}/runs",
+            f"--setenv=PYTHONPATH={_REPO}",
+            "/bin/bash",
+            "-c",
+            'job=$1; shift; "$@" > "$job.log" 2>&1; '
+            'echo $? > "$job.rc.tmp" && mv -f "$job.rc.tmp" "$job.rc"',
+            "bash",
+            str(_OUT / "jobs" / name),
+            sys.executable,
+            "-c",
+            "from shidashi.cli import app; app()",
+            *args,
+        ],
+        check=True,
+        timeout=60,
+    )
 
 
 def _wait(name: str, timeout: float) -> int:
@@ -155,7 +207,7 @@ def test_a_concurrent_build_of_three_flavors_from_one_trunk(round_: int) -> None
         "kde,gnome,wm",
         "--skip-factory",
         "--output-dir",
-        f"/mnt/out/{out}",
+        f"{_OUT_SEEN}/{out}",
     )
     assert _wait(f"par-build-{round_}", 4 * 3600) == 0, _log(f"par-build-{round_}")[-4000:]
     par = _OUT / out
@@ -192,7 +244,7 @@ def test_a_concurrent_build_of_three_flavors_from_one_trunk(round_: int) -> None
 
 def test_two_hand_started_assembles_of_different_images_both_succeed() -> None:
     for name, image in (("par-min", "minimal"), ("par-wrk", "worker")):
-        _job(name, "assemble", "v3", image, "systemd", "--output-dir", "/mnt/out/par-hand")
+        _job(name, "assemble", "v3", image, "systemd", "--output-dir", f"{_OUT_SEEN}/par-hand")
     assert _wait("par-min", 2 * 3600) == 0, _log("par-min")[-4000:]
     assert _wait("par-wrk", 2 * 3600) == 0, _log("par-wrk")[-4000:]
     assert "currently busy" not in _log("par-min") + _log("par-wrk")  # nspawn's toolbox lock
@@ -200,7 +252,9 @@ def test_two_hand_started_assembles_of_different_images_both_succeed() -> None:
 
 def test_a_second_assemble_of_the_same_image_is_refused_naming_the_first() -> None:
     started = time.time()
-    _job("par-first", "assemble", "v3", "minimal", "systemd", "--output-dir", "/mnt/out/par-same")
+    _job(
+        "par-first", "assemble", "v3", "minimal", "systemd", "--output-dir", f"{_OUT_SEEN}/par-same"
+    )
     first_pid = None
     deadline = time.monotonic() + 300
     while first_pid is None and time.monotonic() < deadline:
@@ -213,7 +267,15 @@ def test_a_second_assemble_of_the_same_image_is_refused_naming_the_first() -> No
         time.sleep(2)
     assert first_pid is not None, "the first assemble never opened its run"
     time.sleep(15)  # past the root and toolbox checks, into the image lock
-    _job("par-second", "assemble", "v3", "minimal", "systemd", "--output-dir", "/mnt/out/par-same")
+    _job(
+        "par-second",
+        "assemble",
+        "v3",
+        "minimal",
+        "systemd",
+        "--output-dir",
+        f"{_OUT_SEEN}/par-same",
+    )
     assert _wait("par-second", 600) == 1
     said = _log("par-second")
     assert re.search(rf"being assembled by pid {first_pid}\b", said), said[-2000:]
