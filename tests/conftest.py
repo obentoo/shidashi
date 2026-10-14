@@ -55,6 +55,60 @@ def _build_host_ok(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(doctor, "require_build_host", lambda _work_dir: None)
 
 
+@pytest.fixture
+def qemu_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The node has QEMU, whatever the machine running the suite has (a CI runner has
+    none): ``vmrunner`` takes its native path -- straight to ``vm.boot_test`` and
+    ``vm.read_build_info``, which such a test stubs -- and its preflight needs nothing
+    (story 024). Opt-in per test, never autouse: tests/test_vmrunner*.py test
+    ``vmrunner.native`` itself."""
+    from shidashi import vmrunner
+
+    monkeypatch.setattr(vmrunner, "native", lambda *_a, **_k: True)
+
+
+#: podman's default seccomp profile, cut to the shape the runner reads: the socket rules
+#: of /usr/share/containers/seccomp.json (containers-common, podman 6), AF_VSOCK deny
+#: included. tests/test_vmrunner_review.py reads the real file where there is one.
+_SECCOMP_DEFAULT = {
+    "defaultAction": "SCMP_ACT_ERRNO",
+    "defaultErrno": "ENOSYS",
+    "defaultErrnoRet": 38,
+    "syscalls": [
+        {"names": ["read", "write"], "action": "SCMP_ACT_ALLOW", "args": []},
+        {
+            "names": ["socket"],
+            "action": "SCMP_ACT_ERRNO",
+            "args": [{"index": 0, "value": 40, "valueTwo": 0, "op": "SCMP_CMP_EQ"}],
+            "errnoRet": 1,
+            "errno": "EPERM",
+        },
+        {
+            "names": ["socket"],
+            "action": "SCMP_ACT_ALLOW",
+            "args": [{"index": 0, "value": 16, "valueTwo": 0, "op": "SCMP_CMP_NE"}],
+            "excludes": {"caps": ["CAP_AUDIT_WRITE"]},
+        },
+    ],
+}
+
+
+@pytest.fixture(autouse=True)
+def _seccomp_default(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The runner's default seccomp profile is a fixture copy of podman's, never the
+    machine's own (story 024, task 2.4): a CI runner without containers-common has no
+    /usr/share/containers/seccomp.json. A test may point it elsewhere itself."""
+    import json
+
+    from shidashi import vmrunner
+
+    profile = tmp_path_factory.mktemp("seccomp") / "seccomp.json"
+    profile.write_text(json.dumps(_SECCOMP_DEFAULT), encoding="utf-8")
+    monkeypatch.setattr(vmrunner, "_DEFAULT_SECCOMP", profile)
+
+
 @pytest.fixture(autouse=True)
 def _locks_in_tmp(
     tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
