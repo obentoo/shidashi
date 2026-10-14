@@ -97,6 +97,19 @@ def test_check_paths_returns_empty_without_a_known_gap(tmp_path: Path) -> None:
 _HAS_TOOLCHAIN = shutil.which("gcc") is not None and shutil.which("objdump") is not None
 
 
+def _build_arrowlake(src: Path, out: Path) -> None:
+    """Compile ``src`` with -march=arrowlake, or skip naming why gcc refused it."""
+    build = subprocess.run(
+        ["gcc", "-march=arrowlake", "-O2", str(src), "-o", str(out)],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=120,
+    )
+    if build.returncode != 0:
+        pytest.skip(f"gcc cannot target arrowlake here: {build.stderr.strip()[:120]}")
+
+
 @pytest.mark.skipif(not _HAS_TOOLCHAIN, reason="needs gcc and objdump")
 def test_detects_avx_ifma_in_a_real_binary(tmp_path: Path) -> None:
     src = tmp_path / "ifma.c"
@@ -110,14 +123,7 @@ def test_detects_avx_ifma_in_a_real_binary(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     binary = tmp_path / "ifma"
-    build = subprocess.run(
-        ["gcc", "-march=arrowlake", "-O2", str(src), "-o", str(binary)],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if build.returncode != 0:
-        pytest.skip(f"gcc cannot target arrowlake here: {build.stderr.strip()[:120]}")
+    _build_arrowlake(src, binary)
 
     findings = check_paths([binary], "arrowlake", "znver5")
     assert findings, "AVX-IFMA should have been flagged"
@@ -134,14 +140,7 @@ def test_plain_arrowlake_binary_is_clean(tmp_path: Path) -> None:
     src = tmp_path / "plain.c"
     src.write_text("int main(void){return 0;}\n", encoding="utf-8")
     binary = tmp_path / "plain"
-    build = subprocess.run(
-        ["gcc", "-march=arrowlake", "-O2", str(src), "-o", str(binary)],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if build.returncode != 0:
-        pytest.skip("gcc cannot target arrowlake here")
+    _build_arrowlake(src, binary)
     assert check_paths([binary], "arrowlake", "znver5") == []
 
 
@@ -227,14 +226,7 @@ def test_check_rootfs_finds_an_offending_binary(tmp_path: Path) -> None:
         "  return _mm256_extract_epi64(_mm256_madd52lo_epu64(c,a,b),0)!=15;\n}\n",
         encoding="utf-8",
     )
-    build = subprocess.run(
-        ["gcc", "-march=arrowlake", "-O2", str(src), "-o", str(binroot / "ifma")],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if build.returncode != 0:
-        pytest.skip("gcc cannot target arrowlake here")
+    _build_arrowlake(src, binroot / "ifma")
 
     findings = check_rootfs(tmp_path, "arrowlake", host="znver5")
     assert [f.path.name for f in findings] == ["ifma"]
