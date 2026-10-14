@@ -363,7 +363,7 @@ def test_stepwise_failure_retry_then_continue(monkeypatch: pytest.MonkeyPatch) -
     container = _FakeContainer(fail_first=1)  # 1st emerge fails, 2nd passes
     failures: list[str] = []
 
-    def on_failure(phase: str, _err: Any) -> Any:
+    def on_failure(phase: str, _err: Any, _shell: Any) -> Any:
         failures.append(phase)
         return FailureDecision.RETRY
 

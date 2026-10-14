@@ -163,7 +163,7 @@ def test_a_refused_recheck_persists_only_the_earlier_phases_and_never_retries(
     check_or_record(pkgdir, _fp("16.2.0"))
     failures: list[str] = []
 
-    def on_failure(name: str, _err: Exception) -> FailureDecision:
+    def on_failure(name: str, _err: Exception, _shell: Callable[[], None]) -> FailureDecision:
         failures.append(name)
         return FailureDecision.RETRY
 

@@ -629,19 +629,22 @@ def _on_checkpoint(phase: str, diff: PhaseDiff) -> CheckpointDecision:
     return CheckpointDecision.CONTINUE
 
 
-def _on_failure(phase: str, err: Exception) -> FailureDecision:
-    """Phase failure callback: print the emerge output and ask retry/abort (R3.1–R3.3).
+def _on_failure(phase: str, err: Exception, shell: Callable[[], None]) -> FailureDecision:
+    """Phase failure callback: print, open the shell, then ask retry/abort (R3.1–R3.3).
 
     ``err`` is the phase's :class:`~shidashi.factory.FactoryError`; prints ``err.phase`` and
-    the end of ``err.output`` (the raw ``emerge`` output) to stderr and maps the choice to
-    :class:`~shidashi.factory.FailureDecision`: ``r`` → ``RETRY`` (re-runs the same phase),
-    anything else → ``ABORT``. Opening the failure shell belongs to the build/driver
-    layer -- the callback only prints and asks (R3.4: it never skips the phase).
+    the end of ``err.output`` (the raw ``emerge`` output) to stderr, then calls ``shell``
+    (the live container's shell, handed in by the retry loop) so the break can be fixed in
+    place, and only then maps the choice to :class:`~shidashi.factory.FailureDecision`:
+    ``r`` → ``RETRY`` (re-runs the same phase), anything else → ``ABORT`` (R3.4: there is
+    no skip).
     """
     failing = getattr(err, "phase", None) or phase
     output = getattr(err, "output", "")
     _err_console.print(f"[bold red]phase failed[/bold red] {failing}: {escape(str(err))}")
     _print_output(output)
+    _err_console.print("opening a shell in the build container; exit it to retry or abort")
+    shell()
     choice = _prompt_choice("retry/abort", ["r", "a"], "a")
     if choice == "r":
         return FailureDecision.RETRY

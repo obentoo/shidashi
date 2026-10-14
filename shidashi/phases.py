@@ -1650,7 +1650,8 @@ def run_phases(
 
 
 CheckpointHook = Callable[[str, PhaseDiff], CheckpointDecision]
-FailureHook = Callable[[str, Exception], FailureDecision]
+# the third argument opens a shell in the live container: the hook decides when (R3.1)
+FailureHook = Callable[[str, Exception, Callable[[], None]], FailureDecision]
 
 
 @dataclasses.dataclass
@@ -1722,9 +1723,11 @@ def _run_phase_retrying(
     emerge's ``CalledProcessError``): without ``on_failure`` it re-raises (the
     non-interactive ``--until`` path; the state of the earlier phases is already persisted and
     the rootfs is kept → exit 1, R3.5). With ``on_failure``, it asks
-    ``on_failure(phase.name, err)``: ``RETRY`` re-runs the SAME phase (same argv —
-    a new loop); ``ABORT`` calls ``on_abort`` (persist the state of the earlier
-    phases) and raises the :class:`FactoryError`. NEVER skips a failed phase (R3.4).
+    ``on_failure(phase.name, err, container.shell)`` — the hook opens the live
+    container's shell between showing the failure and asking (R3.1): ``RETRY``
+    re-runs the SAME phase (same argv — a new loop); ``ABORT`` calls ``on_abort``
+    (persist the state of the earlier phases) and raises the :class:`FactoryError`.
+    NEVER skips a failed phase (R3.4).
     """
     while True:
         try:
@@ -1732,7 +1735,7 @@ def _run_phase_retrying(
         except (FactoryError, subprocess.CalledProcessError) as err:
             if on_failure is None:
                 raise
-            if on_failure(phase.name, err) is FailureDecision.RETRY:
+            if on_failure(phase.name, err, container.shell) is FailureDecision.RETRY:
                 continue
             on_abort()
             if isinstance(err, FactoryError):
@@ -1763,8 +1766,8 @@ def run_phases_stepwise(
 
     * runs it via :func:`run_phase` in a retry loop (:func:`_run_phase_retrying`):
       without ``on_failure`` a failure propagates with the earlier state persisted and the
-      rootfs kept (R3.5); with ``on_failure``, ``RETRY`` re-runs the same phase and
-      ``ABORT`` persists and raises (R3.1–R3.3); never skips (R3.4);
+      rootfs kept (R3.5); with ``on_failure`` (handed ``container.shell``), ``RETRY``
+      re-runs the same phase and ``ABORT`` persists and raises (R3.1–R3.3); never skips (R3.4);
     * composes the diff via :func:`compute_phase_diff` from the phase's captured
       output (without re-running emerge), with ``prior_atoms`` = every atom of the
       earlier phases (R4.1/R4.2);
