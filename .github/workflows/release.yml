@@ -38,6 +38,15 @@ jobs:
         with:
           persist-credentials: false
 
+      # The tools the provisioning, publish and VM tests drive for real; without them
+      # those tests skip and CI never covers them. rsync is already on the hosted
+      # runner -- it is listed so `act` (whose image lacks it) runs the worker tests too.
+      - name: Install test tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends \
+            xorriso squashfs-tools qemu-utils mtools rsync
+
       - name: Set up uv and Python 3.14
         uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
