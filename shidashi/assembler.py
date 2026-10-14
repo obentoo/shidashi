@@ -864,18 +864,44 @@ class Assembler:
         With ``image``, ``recipe`` is that image's trunk, judged before the trunk is
         installed: the refusal and its rebuild hint name the image being assembled.
         """
-        shown = image or recipe
+        index_text = self._read_index()
+        if index_text is None:
+            return None
+        pretended = container.run([*iso_emerge_argv(recipe), "--pretend"])
+        plan_text = pretended.stdout + pretended.stderr
+        self._judge_plan_text(container, index_text, plan_text, recipe, image=image)
+        return checkpoint.plan_tokens(plan_text)
+
+    def _read_index(self) -> str | None:
+        """The binhost's ``Packages`` index text, or ``None`` when there is none."""
         index = self.binhost_dir / "Packages"
         try:
-            text = index.read_text(encoding="utf-8", errors="replace")
+            return index.read_text(encoding="utf-8", errors="replace")
         except FileNotFoundError:
             return None
         except OSError as err:
             raise AssemblerError(f"cannot read the binhost index {index}: {err}") from err
-        pretended = container.run([*iso_emerge_argv(recipe), "--pretend"])
-        plan_text = pretended.stdout + pretended.stderr
+
+    @staticmethod
+    def _judge_plan_text(
+        container: Container,
+        index_text: str,
+        plan_text: str,
+        recipe: ResolvedRecipe,
+        *,
+        image: ResolvedRecipe | None = None,
+    ) -> None:
+        """Refuse ``plan_text`` when it holds a stale binpkg (R2.1, R2.2).
+
+        ``plan_text`` is one resolution's own output, judged by the subslot and the
+        soname rules against ``index_text``. The refusal names ``image`` (with
+        ``recipe`` as its trunk) or, without it, ``recipe``.
+        """
+        shown = image or recipe
         try:
-            by_subslot, by_soname = judge_plan(container, binpkgs.parse_index(text), plan_text)
+            by_subslot, by_soname = judge_plan(
+                container, binpkgs.parse_index(index_text), plan_text
+            )
         except binpkgs.BinpkgError as err:
             raise AssemblerError(f"{err}:\n{err.output.strip()}") from err
         if by_subslot or by_soname:
@@ -891,7 +917,24 @@ class Assembler:
                 f"{what} would install binpkgs built against a library "
                 f"its tree no longer ships; nothing was installed.\n{detail}"
             )
-        return checkpoint.plan_tokens(plan_text)
+
+    def _refuse_stale_cut_atoms(self, container: Container, atoms: Sequence[str]) -> None:
+        """Stop when a cut atom's final binpkg is stale (story 025, E2). PRIVILEGED.
+
+        ``--nodeps`` pretend of ``atoms`` with the settle's options, run after the
+        cuts are cleared: the binpkgs the settle installs and the ISO ships, without
+        the cut-free cycle a bare rootfs cannot break (C1). Judged on its OWN output,
+        never with another resolution's, so no package is judged twice. A failing
+        pretend raises :class:`subprocess.CalledProcessError` with emerge's output.
+        """
+        index_text = self._read_index()
+        if index_text is None:
+            return
+        argv = ["emerge", *ISO_SETTLE_OPTIONS, "--nodeps", "--verbose", "--pretend", *atoms]
+        pretended = container.run(argv)
+        self._judge_plan_text(
+            container, index_text, pretended.stdout + pretended.stderr, self.recipe
+        )
 
     def _judge_image_before_trunk(
         self,
@@ -908,13 +951,15 @@ class Assembler:
         The image's configuration is written only after the trunk is installed (the
         trunk checkpoint is every flavor's), so its plan is resolved on a copy of the
         seeded rootfs, ``<rootfs>.judge``, configured as the image: the same pretend
-        and judge as an install without a trunk. With cycle cuts it is resolved twice:
-        under the cuts (what the install merges first), then without them (what the
-        settle installs and the ISO ships, and what the INSTALL checkpoint is checked
-        against on the next run, :func:`_still_valid`). Returns the cut-free plan's
-        tokens. The copy -- a snapshot on btrfs, else ``cp -a --reflink=auto`` -- is
-        removed afterwards, refusal or not, and a copy a killed run left is removed
-        before it; a failure to remove it never hides the error that ended the judgement.
+        and judge as an install without a trunk. With cycle cuts the whole plan is
+        resolved under the cuts (what the install merges first); the cut-free side is
+        judged as the cut atoms' final binpkgs alone, ``--nodeps`` (what the settle
+        installs and the ISO ships) -- a cut-free ``--emptytree`` pretend on the bare
+        copy always ends in the cycle the cuts exist to break (story 025, C1). Returns
+        the under-cut plan's tokens, or ``None`` without an index. The copy -- a
+        snapshot on btrfs, else ``cp -a --reflink=auto`` -- is removed afterwards,
+        refusal or not, and a copy a killed run left is removed before it; a failure
+        to remove it never hides the error that ended the judgement.
         """
         judge = rootfs.with_name(f"{rootfs.name}.judge")
         checkpoint.remove_tree(judge, backend)
@@ -943,7 +988,7 @@ class Assembler:
                 plan = self._refuse_stale_plan(container, self.recipe)
                 if plan is not None and cuts:
                     clear_use_break(judge)
-                    plan = self._refuse_stale_plan(container, self.recipe)
+                    self._refuse_stale_cut_atoms(container, sorted({c.atom for c in cuts}))
         except BaseException:
             # the judgement's own error is the one to report, not a cleanup's
             with contextlib.suppress(checkpoint.CheckpointError, OSError):
@@ -1142,6 +1187,8 @@ class Assembler:
 
             #: the image's plan, judged before a trunk built in this run installs (R2.4)
             pre_judged: tuple[str, ...] | None = None
+            #: the install grew from a trunk (set by the install step; read by the settle)
+            branched = False
             with run.step("configure") as step:
                 if resumed is None and branch is None:
                     self._configure(rootfs, cuts=cuts, atoms=atoms)
@@ -1366,8 +1413,10 @@ class Assembler:
                             reused = earlier + parse_reused_atoms(
                                 installed.stdout + installed.stderr
                             )
-                            if branched and judged is not None:
+                            if branched and judged is not None and not cuts:
                                 plan = judged  # resolved once, before the install
+                            # with cuts the judged plan is the under-cut one: the cut-free
+                            # plan is resolved here, in the installed rootfs (story 025)
                             elif branched:
                                 pretended = container.run([*iso_emerge_argv(recipe), "--pretend"])
                                 plan = checkpoint.plan_tokens(pretended.stdout + pretended.stderr)
@@ -1399,6 +1448,15 @@ class Assembler:
                             )
                             if settle:
                                 container.run(iso_settle_argv(settle, jobs=self.jobs))
+                                if branched:
+                                    # the cut-free plan, where it is resolvable: on the bare
+                                    # seed its cycles have no installed instance to break them
+                                    pretended = container.run(
+                                        [*iso_emerge_argv(recipe), "--pretend"]
+                                    )
+                                    plan = checkpoint.plan_tokens(
+                                        pretended.stdout + pretended.stderr
+                                    )
                             step.add(atoms=list(settle))
                             if store is not None and fps is not None:
                                 # a newer install makes this image's later checkpoints stale
