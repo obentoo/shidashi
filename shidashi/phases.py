@@ -1812,6 +1812,12 @@ def run_phases_stepwise(
     plan = plan_phase_run(recipe, completed=completed, until=until)
     _before, after = stages_flow().split()
     last_done = next((p.name for p in reversed(recipe.phases) if p.name in completed), None)
+    # a resume carries the earlier runs' diffs, and their atoms for the rebuild check
+    # (R4.2/R4.4) -- only for the phases still completed after a fallback restore
+    saved = state.load_state(state_path)
+    prior_diffs = tuple(
+        d for d in (saved.phase_diffs if saved is not None else ()) if d.phase in completed
+    )
 
     run = _RunState(
         recipe=recipe,
@@ -1819,7 +1825,9 @@ def run_phases_stepwise(
         snapshot=snapshot,
         completed=completed,
         pins=pins,
+        phase_diffs=prior_diffs,
         accumulated_breaks=pending_breaks(recipe, through=last_done),
+        prior_atoms=tuple(atom for d in prior_diffs for atom in d.built),
     )
     results: list[PhaseResult] = []
 
