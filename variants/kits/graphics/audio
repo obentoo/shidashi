@@ -7,3 +7,7 @@
 media-sound/jack2
 media-video/pipewire
 sys-auth/rtkit
+# Intel Sound Open Firmware: linux-firmware does not carry it, and without it snd_sof finds no
+# DSP firmware on Intel laptops from Tiger Lake on (digital microphones) and the machine stays
+# silent. Desktop images only, by the author's decision (story 027): not core/boot.
+sys-firmware/sof-firmware

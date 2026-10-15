@@ -71,6 +71,7 @@ sys-auth/rtkit
 sys-block/fio
 sys-block/zram-init
 sys-firmware/intel-microcode
+sys-firmware/sof-firmware
 sys-fs/btrfs-progs
 sys-fs/dmraid
 sys-fs/exfatprogs

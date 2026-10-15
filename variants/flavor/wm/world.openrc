@@ -110,6 +110,7 @@ sys-cluster/kubelet
 sys-cluster/minikube
 sys-devel/distcc
 sys-firmware/intel-microcode
+sys-firmware/sof-firmware
 sys-fs/btrfs-progs
 sys-fs/dmraid
 sys-fs/exfatprogs
