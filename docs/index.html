@@ -123,7 +123,7 @@ flowchart LR
     S["official stage3<br/>(seed)"]:::seed --> F
     subgraph FAC["PACKAGE FACTORY · per (arch × flavor × init)"]
       direction TB
-      F["isolated container<br/>systemd-nspawn"]:::proc --> F2["emerge in PHASES<br/>ccache / sccache / mold"]:::proc
+      F["isolated container<br/>systemd-nspawn"]:::proc --> F2["emerge in PHASES<br/>ccache / mold"]:::proc
       F2 --> F3["binpkgs gpkg<br/>multi-instance"]:::art
     end
     F3 --> BH[("BINHOST<br/>per arch")]:::store
@@ -260,7 +260,7 @@ flowchart LR
     <div class="grid">
       <div class="card"><h3>Per arch (physical)</h3><p>Mandatory: a <code>znver5</code> binpkg (AVX-512) does not run on <code>v3</code>. One tree per arch.</p></div>
       <div class="card"><h3>Per USE (logical)</h3><p>multi-instance + <code>BUILD_ID</code> absorbs the flavor/init variations within each arch.</p></div>
-      <div class="card"><h3>Shared cache</h3><p>ccache/sccache are keyed by flags → safe across flavors without breaking container purity.</p></div>
+      <div class="card"><h3>Shared cache</h3><p>ccache is keyed by flags → safe across flavors without breaking container purity.</p></div>
     </div>
   </section>
 

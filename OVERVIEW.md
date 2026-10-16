@@ -123,7 +123,7 @@ The **desktop ≈ flavor** (KDE→Qt, GNOME→GTK, WM→Wayland/Hyprland·Sway·
        (heavy compilation, slow)                  (selection + packaging, fast)
 ```
 
-**Why decouple:** the Factory carries the compilation cost (hours, with ccache/sccache); the Assembler becomes nearly instantaneous (`--usepkgonly`). The weekly ISO becomes cheap.
+**Why decouple:** the Factory carries the compilation cost (hours, with ccache); the Assembler becomes nearly instantaneous (`--usepkgonly`). The weekly ISO becomes cheap.
 
 > **Why NOT model it on the Gentoo Handbook steps:** the Handbook describes an interactive,
 > human, bare-metal installation (disks, network, bootloader…), mixing *package build* and
@@ -173,10 +173,11 @@ binhost/
 └── arrowlake/
 ```
 
-> **The compilation cache is shared, not segregated.** ccache (C/C++) and sccache (Rust) can use a
+> **The compilation cache is shared, not segregated.** ccache (C/C++) can use a
 > single physical directory across flavors **without breaking purity**: each entry's hash **includes the flags**
 > (`-march`, `CFLAGS`…), so `znver5` never collides with `v3`. Purity is guaranteed by the *container*, not
 > by cache segregation. `mold` is a linker — it produces no cache; it is just a per-arch `RUSTFLAGS`/`LDFLAGS` knob.
+> There is no Rust cache: sccache was removed on 2026-10-15 (see the note in the base `make.conf`).
 
 ### 6.4 Build in stages (D24)
 
@@ -514,7 +515,7 @@ strategy:
 | Helpers in the container | Bash (`emerge`, `eselect`) |
 | Isolation | `systemd-nspawn` |
 | Phase cache | btrfs subvol / tarball |
-| Compilation cache | ccache (C/C++) + sccache (Rust) — **shared** across flavors |
+| Compilation cache | ccache (C/C++) — **shared** across flavors |
 | Linker | mold (per-arch knob) |
 | squashfs compression | zstd |
 | Live boot | dracut `dmsquash-live` |
@@ -681,7 +682,7 @@ The reference `make.conf` (already organized into named groups) maps directly:
 | `COMMON_FLAGS GOAMD64 RUSTFLAGS CPU_FLAGS_X86 CHOST` | `variants/arch/<x>/portage/` |
 | `DESKTOPS REMOVED` (graphical part) | `variants/flavor/<y>/portage/` |
 | `SYSTEMD` / elogind | `variants/init/<z>/portage/` |
-| `FEATURES DISTDIR PKGDIR ccache/sccache` | `variants/base/portage/` |
+| `FEATURES DISTDIR PKGDIR ccache` | `variants/base/portage/` |
 
 > The first bentoo release is, essentially, the current make.conf factored into
 > `base + arch/v3 + flavor/kde + init/systemd` (and `flavor/minimal`). **It is not created from scratch —

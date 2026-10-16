@@ -3,7 +3,7 @@
 Orchestrates, for a :class:`~shidashi.recipe.ResolvedRecipe`, the multi-instance build
 of binpkgs in a clean container per flavor (OVERVIEW §6.1–§6.3): seed/extraction of the
 stage3 (or reuse of a trunk fork point), overlaying of the portage layers
-+ installation of the sets, mounting of the binds (repos RO; PKGDIR/ccache/sccache/DISTDIR
++ installation of the sets, mounting of the binds (repos RO; PKGDIR/ccache/DISTDIR
 RW over the fixed paths of ``make.conf``) and execution of the phases (OVERVIEW §6.4)
 followed by the settle-pass. The privilege guard (root) is the **first** thing
 :meth:`Factory.build` does — Shidashi never escalates privileges on its own (R8.1).
@@ -69,7 +69,6 @@ __all__ = [
 # over these fixed targets — ``make.conf`` is not edited.
 _PKGDIR_DST = Path("/var/cache/binpkgs")
 _CCACHE_DST = Path("/var/cache/ccache")
-_SCCACHE_DST = Path("/var/cache/sccache")
 _DISTDIR_DST = Path("/var/cache/distfiles")
 
 
@@ -364,8 +363,8 @@ def _build_binds(
       resolved rootfs's ``repos.conf``; the pinned repos, bound RO).
     - ``binds_rw`` maps the *host-side* directories (under ``cache_dir()``) over the
       fixed targets of the container's ``make.conf``: ``pkgdir`` → ``/var/cache/binpkgs``,
-      ``ccache_dir()`` → ``/var/cache/ccache``, ``sccache_dir()`` → ``/var/cache/sccache``,
-      ``distdir()`` → ``/var/cache/distfiles``. Binpkgs and caches persist on the host.
+      ``ccache_dir()`` → ``/var/cache/ccache``, ``distdir()`` → ``/var/cache/distfiles``.
+      Binpkgs and caches persist on the host.
 
     ``repos_conf_dir`` is optional to keep the test call (which monkeypatches
     ``bind_repos``) trivial; :meth:`Factory.build` passes the rootfs's real
@@ -377,7 +376,6 @@ def _build_binds(
     binds_rw: list[tuple[Path, Path]] = [
         (pkgdir, _PKGDIR_DST),
         (config.ccache_dir(), _CCACHE_DST),
-        (config.sccache_dir(), _SCCACHE_DST),
         (config.distdir(), _DISTDIR_DST),
     ]
     return binds_ro, binds_rw

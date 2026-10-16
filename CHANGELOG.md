@@ -127,6 +127,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`::gentoo` re-pinned to 20260928, `::bentoo` to the same day.** The 20260919
   snapshot rotated off the mirror, and 20260926 a day after it was pinned.
 
+### Removed
+
+- **sccache is no longer wired into the build.** It never ran: `package.env/sccache`
+  listed no package and its cache stayed empty. Turned on, it would have broken the
+  build -- its TCP port is unreachable under the nspawn network sandbox, the
+  sandbox had no write access to its cache and the cache was owned by root. Only
+  about 17 packages compile Rust from source, and sccache itself would have had to
+  be built in every bootstrap. `env/sccache.conf`, `package.env/sccache`, the
+  stats hook in the base `bashrc` (its only content) and the container bind are
+  gone; `dev-util/sccache` stays in `@devel` for the user.
+
 ### Fixed
 
 - **`shidashi doctor` reported `gcc ok` on a host whose gcc cannot name its CPU, and

@@ -1,7 +1,7 @@
 """UNIT + INTEGRATION tests of shidashi.factory (story 003 groups 5 and 6).
 
 UNIT (deterministic, non-Gentoo CI):
-* 6.1 ``_build_binds`` maps pkgdir/ccache/sccache/distdir → the container's fixed
+* 6.1 ``_build_binds`` maps pkgdir/ccache/distdir → the container's fixed
   paths as RW and the repos as RO (``resolve.bind_repos`` monkeypatched);
   ``FactoryResult``/``FactoryError`` are frozen/typed;
 * 6.2 (unit) ``Factory.build`` raises before any work when
@@ -137,10 +137,10 @@ def test_build_binds_maps_caches_rw_and_repos_ro(
     assert Path("/var/cache/binpkgs") in rw_dsts
     rw_by_dst = {dst: src for src, dst in binds_rw}
     assert rw_by_dst[Path("/var/cache/binpkgs")] == pkgdir
-    # host ccache/sccache/distdir (under cache_dir) are RW too
+    # host ccache/distdir (under cache_dir) are RW too; sccache is gone (2026-10-15)
     rw_srcs = {src for src, _dst in binds_rw}
     assert tmp_path / "cache" / "ccache" in rw_srcs
-    assert tmp_path / "cache" / "sccache" in rw_srcs
+    assert Path("/var/cache/sccache") not in rw_dsts
     assert tmp_path / "cache" / "distfiles" in rw_srcs
 
 
