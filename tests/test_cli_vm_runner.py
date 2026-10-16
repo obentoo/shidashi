@@ -28,11 +28,15 @@ import pytest
 from typer.testing import CliRunner
 
 import shidashi
-from shidashi import cli, vm, vmrunner
+from shidashi import cli, schedule, vm, vmrunner
 from shidashi.assembler import AssembleResult
 from shidashi.cli import app
 
 runner = CliRunner()
+
+#: Every build is planned (story 014): plan on this host alone, never from the real
+#: recipes' worlds nor the user's paired workers (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("host_only_planner")
 
 
 def _report(iso: Path, *, passed: bool = True) -> dict[str, Any]:
@@ -170,7 +174,8 @@ def test_without_boot_test_a_missing_runner_stops_nothing(
     """Wrong collapse: a build that boots nothing must not need the runner."""
     fake = _Runner(monkeypatch)
     fake.preflight_error = _no_runner()
-    done = runner.invoke(app, argv)
+    # build: the host's serial share (story 014); assemble ignores it
+    done = runner.invoke(app, argv, env={schedule.SERIAL_SHARE_ENV: "1"})
     assert done.exit_code == 0, done.output
     assert "assemble:minimal" in lab
     assert fake.booted == []
@@ -254,6 +259,7 @@ def test_serial_build_boot_tests_every_iso_through_the_runner(
             "out",
             "--boot-test",
         ],
+        env={schedule.SERIAL_SHARE_ENV: "1"},  # the host's serial share (story 014)
     )
     assert done.exit_code == 0, done.output
     assert fake.preflights >= 1

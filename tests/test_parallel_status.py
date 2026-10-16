@@ -38,6 +38,10 @@ from shidashi.cli import app
 
 runner = CliRunner()
 
+#: Every build is planned (story 014): plan on this host alone, never from the real
+#: recipes' worlds nor the user's paired workers (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("host_only_planner")
+
 
 def _parallel() -> ModuleType:
     return importlib.import_module("shidashi.parallel")

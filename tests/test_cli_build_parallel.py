@@ -33,13 +33,17 @@ from typing import Any
 import pytest
 from typer.testing import CliRunner
 
-from shidashi import cli, doctor, ownership, parallel, vm
+from shidashi import cli, doctor, ownership, parallel, schedule, vm
 from shidashi.assembler import AssembleResult
 from shidashi.cli import app
 from shidashi.factory import FactoryError
 from shidashi.parallel import ChildResult
 
 runner = CliRunner()
+
+#: Every build is planned (story 014): plan on this host alone, never from the real
+#: recipes' worlds nor the user's paired workers (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("host_only_planner")
 
 
 class _Lab:
@@ -216,6 +220,8 @@ def test_serial_keeps_the_in_process_loop(lab: _Lab) -> None:
             "--jobs",
             "24",
         ],
+        # the host's serial share: the one child a planned --serial build starts
+        env={schedule.SERIAL_SHARE_ENV: "1"},
     )
     assert done.exit_code == 0, done.output
     assert lab.calls == ["in-process:gnome", "in-process:kde"]  # one after another, in order

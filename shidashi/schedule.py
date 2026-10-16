@@ -18,28 +18,53 @@ paired worker -- makes each image. This part is pure, a function of data only:
 - :func:`plan` -- the assignment with the smallest makespan, deterministic on ties
   (R1.1-R1.4, R1.7);
 - :func:`render_plan` and :func:`render_report` -- the lines the CLI prints and the
-  build's exit code (R1.5, R3.1, R4.4, R4.5, R4.9).
+  build's exit code (R1.5, R3.1, R4.4, R4.5, R4.9);
+- :func:`execute` -- the I/O part that runs a plan: the host's assemble children and one
+  ``shidashi worker job`` child per worker in ONE ``run_children`` call, then the
+  workers' results moved into the output directory (R1.7, R3.2, R4.1-R4.3, R4.6-R4.9,
+  R6.1, R6.3).
 
 Every input of the planner is data, so its decision is reproducible from the audit trail.
 The library raises, it does not log -- the command reports.
 """
 
+import contextlib
 import dataclasses
+import errno
+import hashlib
 import itertools
 import json
 import os
 import pwd
+import re
+import shutil
 import socket
+import stat
 import statistics
+import subprocess
+import sys
 import threading
 import time
 import warnings
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, Protocol
 
-from shidashi import assembler, checkpoint, config, isaguard, remote, worker, workers, world
+from shidashi import (
+    assembler,
+    checkpoint,
+    config,
+    isaguard,
+    kyomei_protocol,
+    locks,
+    parallel,
+    publish,
+    remote,
+    worker,
+    workers,
+    world,
+)
 
 #: Seconds per package when a node has no measured rate (R2.3).
 DEFAULT_SEC_PER_PKG = 1.7
@@ -425,6 +450,40 @@ def image_specs(
 REGISTRY_NODE = "worker registry"
 
 
+@dataclass(frozen=True)
+class _InvokingUser:
+    """The person behind ``sudo``: who a worker child runs as (R6.1)."""
+
+    name: str
+    uid: int
+    gid: int
+    home: Path
+    data_home: Path
+
+
+def _invoking_user() -> _InvokingUser | None:
+    """``SUDO_USER`` when the build runs under ``sudo`` (effective uid 0 with ``SUDO_USER``
+    set), else None. Their data home is ``$XDG_DATA_HOME`` when set, else their
+    ``~/.local/share`` from ``pwd.getpwnam``. Raises :class:`LookupError` when
+    ``SUDO_USER`` names no user of this system."""
+    user = os.environ.get("SUDO_USER")
+    if not user or os.geteuid() != 0:
+        return None
+    try:
+        entry = pwd.getpwnam(user)
+    except KeyError as err:
+        raise LookupError(f"SUDO_USER={user!r} is not a user of this system") from err
+    home = Path(entry.pw_dir)
+    data_home = os.environ.get("XDG_DATA_HOME")
+    return _InvokingUser(
+        name=user,
+        uid=entry.pw_uid,
+        gid=entry.pw_gid,
+        home=home,
+        data_home=Path(data_home) if data_home else home / ".local" / "share",
+    )
+
+
 def invoking_user_workers_dir() -> Path:
     """The workers directory of the user who invoked the build (R6.1).
 
@@ -434,16 +493,10 @@ def invoking_user_workers_dir() -> Path:
     :func:`config.workers_dir`. Raises :class:`LookupError` when ``SUDO_USER`` names no
     user of this system.
     """
-    user = os.environ.get("SUDO_USER")
-    if not user or os.geteuid() != 0:
+    user = _invoking_user()
+    if user is None:
         return config.workers_dir()
-    try:
-        home = Path(pwd.getpwnam(user).pw_dir)
-    except KeyError as err:
-        raise LookupError(f"SUDO_USER={user!r} is not a user of this system") from err
-    data_home = os.environ.get("XDG_DATA_HOME")
-    base = Path(data_home) if data_home else home / ".local" / "share"
-    return base / "shidashi" / "worker"
+    return user.data_home / "shidashi" / "worker"
 
 
 def _unreachable(name: str, note: str) -> Node:
@@ -629,6 +682,68 @@ def discover(*, local: bool, timeout: float = 10.0, workers_dir: Path | None = N
         except LookupError as err:
             return [*nodes, _unreachable(REGISTRY_NODE, f"cannot read the worker registry: {err}")]
     return [*nodes, *_workers(workers_dir, timeout)]
+
+
+# --- the tree every node builds ----------------------------------------------------------------
+
+#: The Shidashi checkout this module runs from: the tree the host builds (C6).
+_CHECKOUT = Path(__file__).resolve().parent.parent
+
+#: How long ``git status`` may take before the tree is called unknown.
+_GIT_TIMEOUT_S = 30.0
+
+
+class TreeStateError(Exception):
+    """The checkout's changes could not be listed (no git, not a checkout, git failed)."""
+
+
+def dirty_files() -> list[str]:
+    """Every path ``git status`` lists in the Shidashi checkout, untracked files included
+    (R3.4, C6).
+
+    Stricter on purpose than ``worker job``'s own check, which ignores untracked files:
+    the host builds the working tree while a worker builds ``git archive HEAD``, so any
+    difference splits the build across two commits. Run with ``-c
+    safe.directory=<checkout>``: git refuses a checkout another user owns, and the build
+    runs as root on the user's. As root it must also leave the checkout as it found it:
+    ``--no-optional-locks`` keeps ``status`` from refreshing the user's ``.git/index``
+    (it would be rewritten root-owned) and ``core.fsmonitor=false`` runs no hook the
+    checkout configures. A rename names both paths. Raises :class:`TreeStateError` when
+    git cannot answer.
+    """
+    argv = [
+        shutil.which("git") or "git",
+        "--no-optional-locks",
+        "-c",
+        "core.fsmonitor=false",
+        "-c",
+        f"safe.directory={_CHECKOUT}",
+        "-C",
+        str(_CHECKOUT),
+        "status",
+        "--porcelain=v1",
+        "-z",
+        "--untracked-files=all",
+    ]
+    try:
+        done = subprocess.run(argv, capture_output=True, timeout=_GIT_TIMEOUT_S, check=False)
+    except (OSError, subprocess.TimeoutExpired) as err:
+        raise TreeStateError(f"git status in {_CHECKOUT}: {err}") from err
+    if done.returncode != 0:
+        why = os.fsdecode(done.stderr or b"").strip() or f"exit {done.returncode}"
+        raise TreeStateError(f"git status in {_CHECKOUT}: {why}")
+    entries = iter(os.fsdecode(done.stdout or b"").split("\0"))
+    paths: list[str] = []
+    for entry in entries:
+        if len(entry) < 4:  # the empty tail after the last NUL
+            continue
+        status, path = entry[:2], entry[3:]
+        paths.append(path)
+        if "R" in status or "C" in status:  # -z: the source path is the next entry
+            source = next(entries, "")
+            if source:
+                paths.append(source)
+    return paths
 
 
 def free_threads(node: Node) -> float:
@@ -838,7 +953,7 @@ def render_report(plan: Plan, outcomes: Sequence[Outcome]) -> tuple[int, list[st
     for outcome in outcomes:
         node = outcome.node or "-"
         if outcome.ok:
-            isos = " ".join(iso.name for iso in outcome.isos) or "no ISO"
+            isos = " ".join(str(iso) for iso in outcome.isos) or "no ISO"
             line = (
                 f"{outcome.image}  {node}  ok in {_duration(outcome.duration_s)}"
                 f" (estimated {_duration(outcome.estimate_s)})  {isos}"
@@ -852,3 +967,970 @@ def render_report(plan: Plan, outcomes: Sequence[Outcome]) -> tuple[int, list[st
         lines.append(line)
     lines += [f"{name}  skipped: {why}" for name, why in sorted(plan.skipped_nodes.items())]
     return (0 if all(o.ok for o in outcomes) else 1), lines
+
+
+# --- the executor ------------------------------------------------------------------------------
+
+#: The key of the one child that builds the host's share with ``--serial`` (R4.8).
+SERIAL_KEY = "host-serial"
+
+#: Set to ``1`` in the environment of that child alone (its argv starts with ``env``):
+#: it then assembles its images in its own process instead of planning and executing
+#: again -- a ``build --serial --local`` would otherwise start itself forever.
+SERIAL_SHARE_ENV = "SHIDASHI_SERIAL_SHARE"
+
+#: A host child ``index`` boot-tests from vsock CID ``100 + index``: away from the
+#: hand-run default 42; each child allocates upward from its base (story 006 R4.1).
+CHILD_BASE_CID = 100
+
+#: What ``run_children`` says of a child whose argv has no ``--result-file``: a worker
+#: child and a serial build child have none, so it is no failure of theirs.
+NO_RESULT_FILE = "no result file"
+
+#: What a worker ISO carries beside it, by the suffix added to the ISO's name.
+_ISO_COMPANIONS = (".DIGESTS", ".contents.gz", ".packages", ".spdx.json")
+
+#: The ``build --compression`` value producing a set of compressions.
+_COMPRESSION_FLAGS = {("zstd",): None, ("xz",): "xz", ("xz", "zstd"): "both"}
+
+#: How much of a child's log is read for its error text.
+_LOG_TAIL_BYTES = 64 * 1024
+
+#: What ``parallel.run_children`` says of a child the signal stopped (or never started).
+_STOPPED = "interrupted"
+
+#: The scratch subdirectory holding each worker job's results, one per worker name.
+_WORKER_RESULTS = "worker-results"
+
+#: Opening a directory the invoking user may rearrange: never through a symlink.
+_DIR_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+
+#: Opening a file the invoking user may rearrange: never through a symlink, never
+#: blocking on a FIFO planted in its place.
+_FILE_FLAGS = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK
+
+#: How much of a worker's small results file (``<job>.rc``, ``<job>.runs``, SHA256SUMS)
+#: is read.
+_SMALL_BYTES = 1024 * 1024
+
+#: One SHA-256 digest as ``sha256sum`` writes it.
+_DIGEST_RE = re.compile(r"[0-9a-f]{64}")
+
+
+class Interrupted(KeyboardInterrupt):
+    """A distributed build stopped by a signal (R4.7).
+
+    ``outcomes`` are the host's images (and the unplaceable ones) as they ended, and
+    those of every worker job that had ended on its own before the signal, its results
+    moved in as after a full run; ``jobs`` the worker jobs the signal stopped, left
+    running on their workers; ``signum`` the signal, so the command exits
+    ``128 + signum``.
+    """
+
+    def __init__(self, outcomes: Sequence[Outcome], jobs: Sequence[WorkerJob], signum: int) -> None:
+        super().__init__(f"interrupted by signal {signum}")
+        self.outcomes: tuple[Outcome, ...] = tuple(outcomes)
+        self.jobs: tuple[WorkerJob, ...] = tuple(jobs)
+        self.signum: int = int(signum)
+
+
+def _build_flags(options: BuildOptions) -> list[str]:
+    """The ``build`` options that differ from its defaults and reach every assemble."""
+    try:
+        compression = _COMPRESSION_FLAGS[tuple(sorted(set(options.compressions)))]
+    except KeyError:
+        raise ValueError(f"no build --compression produces {options.compressions!r}") from None
+    flags = ["--compression", compression] if compression is not None else []
+    switches = (
+        (options.stage4, "--stage4"),
+        (not options.sbom, "--no-sbom"),
+        (options.fresh, "--fresh"),
+        (not options.trunk, "--no-trunk"),
+        (options.keep, "--keep"),
+        (not options.download, "--no-download"),
+        (options.boot_test, "--boot-test"),
+        (options.verbose, "--verbose"),
+    )
+    return flags + [flag for wanted, flag in switches if wanted]
+
+
+def _host_argvs(
+    share: Sequence[ImageSpec], options: BuildOptions, logs: Path
+) -> dict[str, list[str]]:
+    """The host share's children: one ``assemble`` per image exactly as ``cli.build``
+    passes it (story 006), or with ``serial`` ONE ``build --serial`` child holding every
+    host image with the unsplit jobs (R4.8), marked by :data:`SERIAL_SHARE_ENV` in its
+    own environment only."""
+    jobs = options.jobs or os.cpu_count() or 1
+    if options.serial:
+        return {
+            SERIAL_KEY: [
+                shutil.which("env") or "env",
+                f"{SERIAL_SHARE_ENV}=1",
+                sys.executable,
+                *parallel.CHILD_COMMAND,
+                "build",
+                options.arch,
+                options.init,
+                "--images",
+                ",".join(spec.image for spec in share),
+                "--serial",
+                "--local",
+                "--skip-factory",
+                "--jobs",
+                str(jobs),
+                "--output-dir",
+                str(options.output_dir),
+                *_build_flags(options),
+            ]
+        }
+    each = parallel.job_share(jobs, len(share))
+    return {
+        spec.image: parallel.assemble_argv(
+            spec.image,
+            arch=options.arch,
+            init=options.init,
+            jobs=each,
+            output_dir=options.output_dir,
+            result_file=logs / f"{spec.image}.json",
+            compressions=options.compressions,
+            stage4=options.stage4,
+            sbom=options.sbom,
+            fresh=options.fresh,
+            trunk=options.trunk,
+            download=options.download,
+            keep=options.keep,
+            boot_test=options.boot_test,
+            cid=CHILD_BASE_CID + index if options.boot_test else None,
+            verbose=options.verbose,
+            status_file=logs / f"{spec.image}.status",
+        )
+        for index, spec in enumerate(share)
+    }
+
+
+def _worker_argv(
+    name: str,
+    job: str,
+    results: Path,
+    share: Sequence[ImageSpec],
+    options: BuildOptions,
+    user: _InvokingUser | None,
+) -> list[str]:
+    """A worker share's child: ``shidashi worker job`` running ONE ``build`` of its images
+    there (C4), as the invoking user under ``sudo`` (R6.1).
+
+    ``--local``: the worker does not plan again; ``--skip-factory``: it does not take the
+    arch's owner lock; no ``--jobs``: it splits its own threads. The identity drop keeps
+    the environment -- every ``SHIDASHI_*`` included -- and sets the user's ``HOME``,
+    ``USER``, ``LOGNAME`` and ``XDG_DATA_HOME``, so the job reads their pairing key and
+    pinned host keys, never root's.
+    """
+    drop: list[str] = []
+    if user is not None:
+        drop = [
+            shutil.which("setpriv") or "setpriv",
+            "--reuid",
+            str(user.uid),
+            "--regid",
+            str(user.gid),
+            "--init-groups",
+            shutil.which("env") or "env",
+            f"HOME={user.home}",
+            f"USER={user.name}",
+            f"LOGNAME={user.name}",
+            f"XDG_DATA_HOME={user.data_home}",
+        ]
+    job_options = ["worker", "job", name, job, "--results", str(results)]
+    if options.allow_dirty:
+        job_options.append("--allow-dirty")
+    remote_args = [
+        "build",
+        options.arch,
+        options.init,
+        "--images",
+        ",".join(spec.image for spec in share),
+        "--local",
+        "--skip-factory",
+        *_build_flags(options),
+    ]
+    return [*drop, sys.executable, *parallel.CHILD_COMMAND, *job_options, "--", *remote_args]
+
+
+def _results_dir(node: str, job: str) -> Path:
+    """``<scratch>/worker-results/<node>/<job>``, the worker share's results directory.
+
+    Raises ``ValueError`` when ``node`` is no host name -- ``../..`` would put root's
+    directories outside ``worker-results``, ``-x`` would read as an option of the child --
+    or the path would leave ``worker-results`` anyway."""
+    if not re.fullmatch(kyomei_protocol.HOSTNAME_RE, node):
+        raise ValueError(f"invalid worker name {node!r}: not a host name")
+    base = config.scratch_dir() / _WORKER_RESULTS
+    results = base / node / job
+    if not Path(os.path.normpath(results)).is_relative_to(os.path.normpath(base)):
+        raise ValueError(f"invalid worker name {node!r}: {results} leaves {base}")
+    return results
+
+
+def _open_dir(name: str, dir_fd: int, *, create: bool = False) -> int:
+    """Open directory ``name`` under ``dir_fd`` without following a symlink; with
+    ``create``, make it first (mode 0o755). Raises ``OSError`` (``ELOOP`` for a symlink,
+    ``ENOTDIR`` for anything else that is no directory)."""
+    if create:
+        with contextlib.suppress(FileExistsError):
+            os.mkdir(name, 0o755, dir_fd=dir_fd)
+    return os.open(name, _DIR_FLAGS, dir_fd=dir_fd)
+
+
+def _open_results(results: Path) -> int:
+    """A descriptor of ``results`` (``<scratch>/worker-results/<node>/<job>``), every
+    component below the scratch directory opened without following a symlink.
+    Raises ``OSError``."""
+    scratch = results.parent.parent.parent
+    fd = os.open(scratch, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+    try:
+        for part in (_WORKER_RESULTS, results.parent.name, results.name):
+            inner = _open_dir(part, fd)
+            os.close(fd)
+            fd = inner
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd
+
+
+def _prepare_results(results: Path, job: str, user: _InvokingUser | None) -> None:
+    """Make ``results`` (``<scratch>/worker-results/<node>/<job>``) for a worker share's
+    child, without an earlier job's ``<job>.rc`` or ``<job>.runs`` (they would pass for
+    this job's end).
+
+    Every component below the scratch directory is made and opened without following a
+    symlink, and the stale files are removed through the job directory's descriptor
+    (``unlink`` never follows). Under ``sudo``, ``worker-results/`` and
+    ``worker-results/<node>/`` stay owned like the scratch directory -- root's -- mode
+    0o755, so the user can neither rename the job's directory nor plant a link in its
+    place; only the ``<job>`` leaf goes to the user the child runs as, through its own
+    descriptor. Raises ``OSError`` naming ``results``."""
+    scratch = results.parent.parent.parent
+    fds: list[int] = []
+    try:
+        scratch.mkdir(parents=True, exist_ok=True)
+        fds.append(os.open(scratch, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC))
+        top = os.fstat(fds[0])
+        for part in (_WORKER_RESULTS, results.parent.name):
+            fds.append(_open_dir(part, fds[-1], create=True))
+            if user is not None:
+                st = os.fstat(fds[-1])
+                if (st.st_uid, st.st_gid) != (top.st_uid, top.st_gid):
+                    os.fchown(fds[-1], top.st_uid, top.st_gid)
+                if stat.S_IMODE(st.st_mode) != 0o755:
+                    os.fchmod(fds[-1], 0o755)
+        fds.append(_open_dir(job, fds[-1], create=True))
+        for stale in (f"{job}.rc", f"{job}.runs"):
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(stale, dir_fd=fds[-1])
+        if user is not None:
+            # a refusal is not fatal here: the child, as the user, names what it cannot write
+            with contextlib.suppress(OSError):
+                os.fchown(fds[-1], user.uid, user.gid)
+    except OSError as err:
+        raise OSError(f"preparing {results}: {_why(err)}") from err
+    finally:
+        for fd in fds:
+            os.close(fd)
+
+
+def _why(err: OSError) -> str:
+    """``err`` in words, a refused symlink said plainly."""
+    if err.errno == errno.ELOOP:
+        return f"{err.filename} is a symlink" if err.filename else "a symlink"
+    return f"{err.filename}: {err.strerror}" if err.filename and err.strerror else str(err)
+
+
+def _read_small(name: str, dir_fd: int) -> str:
+    """The text of regular file ``name`` under ``dir_fd``, read without following a
+    symlink, at most :data:`_SMALL_BYTES`. Raises ``OSError``."""
+    fd = os.open(name, _FILE_FLAGS, dir_fd=dir_fd)
+    with os.fdopen(fd, "rb") as handle:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise OSError(errno.EINVAL, "not a regular file", name)
+        return handle.read(_SMALL_BYTES).decode("utf-8", "replace")
+
+
+def _sha256_fd(fd: int) -> str:
+    """The SHA-256 of the open file ``fd``, from its first byte."""
+    os.lseek(fd, 0, os.SEEK_SET)
+    with open(fd, "rb", closefd=False) as handle:
+        return hashlib.file_digest(handle, "sha256").hexdigest()
+
+
+def _safe_name(name: str) -> bool:
+    """Whether ``name`` is one plain file name (a run id read from a results file)."""
+    return bool(name) and name not in (".", "..") and Path(name).name == name
+
+
+def _manifest(run_id: str | None) -> dict[str, object] | None:
+    """The manifest of ``run_id`` in the host's runs, None when absent or unreadable."""
+    if not run_id or not _safe_name(run_id):
+        return None
+    try:
+        data = json.loads((config.runs_dir() / run_id / "manifest.json").read_text("utf-8"))
+    except OSError, ValueError:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _steps(manifest: Mapping[str, object]) -> list[dict[str, object]]:
+    steps = manifest.get("steps")
+    return [s for s in steps if isinstance(s, dict)] if isinstance(steps, list) else []
+
+
+def _seconds(value: object) -> float:
+    return float(value) if isinstance(value, int | float) and not isinstance(value, bool) else 0.0
+
+
+def _estimate_s(
+    estimates: Mapping[tuple[str, str], Estimate],
+    spec: ImageSpec,
+    node: str,
+    manifest: Mapping[str, object] | None,
+) -> float:
+    """The image's estimate on ``node``, plus its trunk's when its run installed it (R4.4)."""
+    cost = estimates.get((spec.key, node))
+    if cost is None:
+        return 0.0
+    built = manifest is not None and any(
+        s.get("step") == "trunk" and s.get("built") == spec.trunk_key
+        for s in _steps(manifest)
+        if spec.trunk_key is not None
+    )
+    return cost.seconds + (cost.trunk_seconds if built else 0.0)
+
+
+def _log_tail(log: Path) -> list[str]:
+    """The last lines of a child's log; none when it cannot be read."""
+    try:
+        with log.open("rb") as handle:
+            handle.seek(max(0, log.stat().st_size - _LOG_TAIL_BYTES))
+            return handle.read().decode("utf-8", "replace").splitlines()
+    except OSError:
+        return []
+
+
+def _log_error(log: Path) -> str:
+    """The last ``error:`` of a child's log with its indented continuation lines (a
+    ``JobRefused``'s ``fix:``), on one line; ``""`` when there is none."""
+    lines = _log_tail(log)
+    starts = [n for n, line in enumerate(lines) if line.lstrip().startswith("error:")]
+    if not starts:
+        return ""
+    first = starts[-1]
+    block = [lines[first].lstrip().removeprefix("error:").strip()]
+    for line in lines[first + 1 :]:
+        if not line[:1].isspace() or not line.strip():
+            break
+        block.append(line.strip())
+    return "; ".join(part for part in block if part)
+
+
+def _last_line(log: Path) -> str:
+    """The last non-empty line of a child's log; ``""`` when there is none."""
+    return next((line.strip() for line in reversed(_log_tail(log)) if line.strip()), "")
+
+
+def _host_outcomes(
+    share: Sequence[ImageSpec],
+    node: str,
+    by_key: Mapping[str, parallel.ChildResult],
+    estimates: Mapping[tuple[str, str], Estimate],
+    options: BuildOptions,
+    started: float,
+) -> dict[str, Outcome]:
+    """Each host image's outcome from its child's result (C1); with ``serial``, from the
+    one build child holding them all."""
+    outcomes: dict[str, Outcome] = {}
+    serial = by_key.get(SERIAL_KEY) if options.serial else None
+    for spec in share:
+        result = serial if options.serial else by_key.get(spec.image)
+        if result is None:
+            outcomes[spec.key] = Outcome(
+                image=spec.key,
+                node=node,
+                ok=False,
+                duration_s=0.0,
+                estimate_s=_estimate_s(estimates, spec, node, None),
+                log=None,
+                error="its child reported nothing",
+            )
+            continue
+        if options.serial:
+            # the serial build writes no result file: its exit code is its verdict
+            error = result.error if result.error != NO_RESULT_FILE else None
+            ok = result.exit_code == 0 and error is None
+            isos = _latest_isos(options.output_dir, spec.key, since=started) if ok else ()
+            manifest = None
+        else:
+            error, ok, isos = result.error, not result.failed, result.isos
+            manifest = _manifest(result.run_id)
+        outcomes[spec.key] = Outcome(
+            image=spec.key,
+            node=node,
+            ok=ok,
+            duration_s=result.duration_s,
+            estimate_s=_estimate_s(estimates, spec, node, manifest),
+            log=result.log,
+            isos=isos,
+            error="" if ok else (error or f"exit code {result.exit_code}"),
+        )
+    return outcomes
+
+
+def _latest_isos(output_dir: Path, key: str, *, since: float) -> tuple[Path, ...]:
+    """The ISO ``latest-<key>.txt`` names, when this build wrote it (a serial share)."""
+    latest = output_dir / f"latest-{key}.txt"
+    try:
+        if latest.stat().st_mtime < since:
+            return ()
+        lines = latest.read_text("utf-8").splitlines()
+    except OSError:
+        return ()
+    names = [line.split()[0] for line in lines if line.strip() and not line.startswith("#")]
+    found = [output_dir / n for n in names[:1] if _safe_name(n)]
+    return tuple(iso for iso in found if iso.is_file())
+
+
+@dataclass
+class _Mover:
+    """Moves worker results into the output directory, owned like it (R4.2, R6.3), and
+    gathers their SHA256SUMS lines -- the host's own hashes -- for the one write after
+    every child (R4.2).
+
+    Both ends belong to the invoking user, who may rearrange them while root works:
+    a source is opened without following a symlink and must be a regular file with one
+    link; the destination is reached through the output directory's descriptor, refused
+    when it is a symlink or a directory, and replaced by ``rename`` (which never follows
+    its last component) -- across filesystems by a fresh ``O_EXCL`` file renamed into
+    place. Every chown and hash goes through the moved file's own descriptor.
+    """
+
+    output_dir: Path
+    sums: dict[str, str] = field(default_factory=dict)
+    _out: int | None = None
+    _owner: tuple[int, int] = (-1, -1)
+
+    def _out_fd(self) -> int:
+        if self._out is None:
+            self.output_dir.mkdir(parents=True, exist_ok=True)
+            fd = os.open(self.output_dir, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+            st = os.fstat(fd)
+            self._out, self._owner = fd, (st.st_uid, st.st_gid)
+        return self._out
+
+    def close(self) -> None:
+        if self._out is not None:
+            os.close(self._out)
+            self._out = None
+
+    def move(
+        self, iso_dir: Path, iso_fd: int, names: Sequence[str], worker_sums: Mapping[str, str]
+    ) -> list[Path]:
+        """Move ``names`` from ``iso_dir`` (open as ``iso_fd``) into the output directory:
+        all of them, or none when one is not a regular file with one link, its SHA-256
+        is not the one the worker's SHA256SUMS lists for it, or its destination exists
+        and is no regular file. Raises ``OSError`` naming the file."""
+        try:
+            out = self._out_fd()
+        except OSError as err:
+            raise OSError(f"opening {self.output_dir}: {_why(err)}") from err
+        with contextlib.ExitStack() as stack:
+            ready: list[tuple[str, int, os.stat_result, str]] = []
+            for name in names:
+                src = iso_dir / name
+                try:
+                    fd = os.open(name, _FILE_FLAGS, dir_fd=iso_fd)
+                except OSError as err:
+                    raise OSError(f"{src}: {_why(err)}") from err
+                stack.callback(os.close, fd)
+                st = os.fstat(fd)
+                if not stat.S_ISREG(st.st_mode):
+                    raise OSError(f"{src} is not a regular file")
+                if st.st_nlink != 1:
+                    raise OSError(f"{src} has {st.st_nlink} hard links")
+                digest = _sha256_fd(fd)
+                claimed = worker_sums.get(name)
+                if claimed is not None and claimed != digest:
+                    raise OSError(
+                        f"{src}: its SHA256 {digest} is not the {claimed} "
+                        f"the worker's SHA256SUMS lists"
+                    )
+                self._check_dest(out, name)
+                ready.append((name, fd, st, digest))
+            moved = []
+            for name, fd, st, digest in ready:
+                try:
+                    self._place(iso_fd, out, name, fd, st)
+                except OSError as err:
+                    raise OSError(
+                        f"moving {iso_dir / name} into {self.output_dir}: {_why(err)}"
+                    ) from err
+                if not name.startswith("latest-"):
+                    self.sums[name] = digest
+                moved.append(self.output_dir / name)
+            return moved
+
+    def _check_dest(self, out: int, name: str) -> None:
+        dest = self.output_dir / name
+        try:
+            st = os.stat(name, dir_fd=out, follow_symlinks=False)
+        except FileNotFoundError:
+            return
+        except OSError as err:
+            raise OSError(f"{dest}: {_why(err)}") from err
+        if not stat.S_ISREG(st.st_mode):
+            what = "a symlink" if stat.S_ISLNK(st.st_mode) else "not a regular file"
+            raise OSError(f"{dest} already exists and is {what}")
+
+    def _place(self, iso_fd: int, out: int, name: str, fd: int, st: os.stat_result) -> None:
+        """Rename ``name`` into the output directory and chown it there; across
+        filesystems, copy it in and remove the source."""
+        try:
+            os.replace(name, name, src_dir_fd=iso_fd, dst_dir_fd=out)
+        except OSError as err:
+            if err.errno != errno.EXDEV:
+                raise
+            self._copy(out, name, fd)
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(name, dir_fd=iso_fd)
+            return
+        landed = os.stat(name, dir_fd=out, follow_symlinks=False)
+        if (landed.st_dev, landed.st_ino) != (st.st_dev, st.st_ino):
+            # what landed is not the file checked: take it back out of the output dir
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(name, dir_fd=out)
+            raise OSError(errno.EBUSY, "replaced while it was moved", name)
+        os.fchown(fd, *self._owner)
+
+    def _copy(self, out: int, name: str, src: int) -> None:
+        """Copy open file ``src`` to ``name`` in the output directory: into a new file
+        (``O_EXCL``, never a planted name), owned and synced, renamed into place."""
+        tmp = f".{name}.{os.getpid()}.tmp"
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC
+        dst = os.open(tmp, flags, 0o644, dir_fd=out)
+        try:
+            try:
+                os.lseek(src, 0, os.SEEK_SET)
+                with (
+                    open(src, "rb", closefd=False) as source,
+                    open(dst, "wb", closefd=False) as target,
+                ):
+                    shutil.copyfileobj(source, target, 1024 * 1024)
+                os.fchmod(dst, 0o644)
+                os.fchown(dst, *self._owner)
+                os.fsync(dst)
+            finally:
+                os.close(dst)
+            os.replace(tmp, name, src_dir_fd=out, dst_dir_fd=out)
+        except BaseException:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp, dir_fd=out)
+            raise
+
+
+def _read_sums(iso_fd: int | None) -> dict[str, str]:
+    """``SHA256SUMS`` under ``iso_fd`` as file name -> digest, read without following a
+    symlink; empty when absent or unreadable."""
+    if iso_fd is None:
+        return {}
+    try:
+        text = _read_small("SHA256SUMS", iso_fd)
+    except OSError:
+        return {}
+    sums = {}
+    for line in text.splitlines():
+        digest, _, name = line.partition("  ")
+        if _safe_name(name) and _DIGEST_RE.fullmatch(digest):
+            sums[name] = digest
+    return sums
+
+
+def _entry(name: str, dir_fd: int | None) -> os.stat_result | None:
+    """``name`` under ``dir_fd`` as it is -- a symlink is not followed -- None when absent
+    or unreadable (a name too long, as ``Path.is_file`` would say)."""
+    if dir_fd is None:
+        return None
+    try:
+        return os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
+    except OSError:
+        return None
+
+
+def _latest_run(manifests: Sequence[Mapping[str, object]]) -> Mapping[str, object] | None:
+    return max(
+        manifests, key=lambda m: (str(m.get("started") or ""), str(m.get("run"))), default=None
+    )
+
+
+def _all_ok(manifest: Mapping[str, object]) -> bool:
+    steps = _steps(manifest)
+    return (
+        manifest.get("status") == "ok"
+        and bool(steps)
+        and all(s.get("status") == "ok" for s in steps)
+    )
+
+
+def _artifact_names(manifest: Mapping[str, object]) -> tuple[list[tuple[str, str]], list[str]]:
+    """``([(iso name, role)], [every artifact's name])`` the run recorded."""
+    artifacts = manifest.get("artifacts")
+    isos: list[tuple[str, str]] = []
+    names: list[str] = []
+    for art in artifacts if isinstance(artifacts, list) else []:
+        if not isinstance(art, dict) or not isinstance(art.get("path"), str):
+            continue
+        name, role = Path(art["path"]).name, str(art.get("role") or "")
+        if not _safe_name(name):
+            continue
+        names.append(name)
+        if role.startswith("iso"):
+            isos.append((name, role))
+    return isos, names
+
+
+def _companions(iso: str, role: str) -> list[str]:
+    """``iso``'s companion files; the packages list and SBOM are named after the zstd ISO."""
+    names = [iso + suffix for suffix in _ISO_COMPANIONS]
+    profile = role.partition(":")[2]
+    if profile and profile != "zstd" and iso.endswith(f"-{profile}.iso"):
+        base = iso.removesuffix(f"-{profile}.iso") + ".iso"
+        names += [f"{base}.packages", f"{base}.spdx.json"]
+    return names
+
+
+def _worker_outcomes(
+    wjob: WorkerJob,
+    share: Sequence[ImageSpec],
+    result: parallel.ChildResult | None,
+    child_log: Path,
+    estimates: Mapping[tuple[str, str], Estimate],
+    options: BuildOptions,
+    mover: _Mover,
+) -> dict[str, Outcome]:
+    """A worker share's outcomes from its results directory and the runs pulled into the
+    host's runs (R4.6, R3.2); every ok image's ISO, its companions and the job's build
+    bundle moved into the output directory (R4.2, R4.9, R6.3)."""
+    results, job, node = wjob.results, wjob.job, wjob.worker
+    job_log = results / f"{job}.log"
+    log = job_log if job_log.is_file() else child_log
+    exit_code = result.exit_code if result is not None else parallel.NOT_STARTED
+    child_error = result.error if result is not None else "its child reported nothing"
+    start_error = child_error if child_error not in (None, NO_RESULT_FILE) else ""
+    quoted = _log_error(child_log) if exit_code != 0 else ""
+
+    def failed(
+        spec: ImageSpec, error: str, manifest: Mapping[str, object] | None = None
+    ) -> Outcome:
+        return Outcome(
+            image=spec.key,
+            node=node,
+            ok=False,
+            duration_s=0.0,
+            estimate_s=_estimate_s(estimates, spec, node, manifest),
+            log=log,
+            error=error,
+        )
+
+    with contextlib.ExitStack() as stack:
+        # every read goes through descriptors opened without following a symlink: the
+        # user the child ran as owns the job's directory and may rearrange it (R6.1)
+        rc: int | None = None
+        leaf: int | None = None
+        try:
+            leaf = _open_results(results)
+            stack.callback(os.close, leaf)
+            rc = int(_read_small(f"{job}.rc", leaf).strip())
+        except OSError, ValueError:
+            rc = None
+        if rc is None or leaf is None:
+            # the job's end was never seen: refused, lost, or its pull failed (R3.2)
+            reason = quoted or start_error or (_last_line(child_log) if exit_code != 0 else "")
+            end = f"job {job} on {node} ended without {results / f'{job}.rc'} (exit {exit_code})"
+            return {
+                spec.key: failed(spec, f"{reason} ({end})" if reason else end) for spec in share
+            }
+        try:
+            listed = _read_small(f"{job}.runs", leaf).split()
+        except OSError:
+            listed = []
+        iso_dir = results / "iso"
+        iso_fd: int | None = None
+        try:
+            iso_fd = _open_dir("iso", leaf)
+            stack.callback(os.close, iso_fd)
+        except FileNotFoundError:
+            iso_fd = None  # nothing arrived: every ISO is missing
+        except OSError as err:
+            unusable = f"{iso_dir}: {_why(err)}"
+            return {spec.key: failed(spec, unusable) for spec in share}
+        return _collect_worker_results(
+            wjob, share, listed, iso_dir, iso_fd, failed, log, quoted, estimates, options, mover
+        )
+
+
+def _collect_worker_results(
+    wjob: WorkerJob,
+    share: Sequence[ImageSpec],
+    listed: Sequence[str],
+    iso_dir: Path,
+    iso_fd: int | None,
+    failed: Callable[..., Outcome],
+    log: Path,
+    quoted: str,
+    estimates: Mapping[tuple[str, str], Estimate],
+    options: BuildOptions,
+    mover: _Mover,
+) -> dict[str, Outcome]:
+    """The outcomes of a worker job whose end was seen, its results moved (R4.6, R4.2)."""
+    job, node = wjob.job, wjob.worker
+    run_ids = [run_id for run_id in listed if _safe_name(run_id)]
+    manifests = [m for m in (_manifest(run_id) for run_id in run_ids) if m is not None]
+    build_run = _latest_run([m for m in manifests if m.get("command") == "build"])
+    worker_sums = _read_sums(iso_fd)
+    note = f"; {quoted}" if quoted else ""
+    outcomes: dict[str, Outcome] = {}
+    for spec in share:
+        step = next(
+            (s for s in _steps(build_run or {}) if s.get("step") == f"assemble:{spec.image}"),
+            None,
+        )
+        if build_run is None:
+            outcomes[spec.key] = failed(
+                spec, f"no build run of job {job} reached {config.runs_dir()}{note}"
+            )
+            continue
+        if step is None or step.get("status") != "ok":
+            why = (step or {}).get("error") or "no such step"
+            outcomes[spec.key] = failed(
+                spec, f"assemble:{spec.image} failed on {node}: {why}{note}"
+            )
+            continue
+        runs = [
+            m
+            for m in manifests
+            if m.get("command") == "assemble" and _image_key(_argv(m)) == spec.key
+        ]
+        done = _latest_run([m for m in runs if _all_ok(m)])
+        if done is None:
+            what = "did not end ok" if runs else f"did not reach {config.runs_dir()}"
+            outcomes[spec.key] = failed(spec, f"the assemble run of {spec.key} {what}{note}")
+            continue
+        isos, artifacts = _artifact_names(done)
+        # absent only: a symlink or anything else in its place is refused by the mover
+        missing = [name for name, _ in isos if _entry(name, iso_fd) is None]
+        if not isos or missing or iso_fd is None:
+            what = ", ".join(missing) if missing else f"of run {done.get('run')}"
+            outcomes[spec.key] = failed(spec, f"the ISO {what} did not reach {iso_dir}{note}", done)
+            continue
+        names = [name for iso, role in isos for name in (iso, *_companions(iso, role))]
+        names += [*artifacts, f"latest-{spec.key}.txt"]
+        present = [n for n in dict.fromkeys(names) if _entry(n, iso_fd) is not None]
+        try:
+            moved = mover.move(iso_dir, iso_fd, present, worker_sums)
+        except OSError as err:
+            outcomes[spec.key] = failed(spec, str(err), done)
+            continue
+        steps = _steps(done)
+        duration = done.get("duration_s")
+        outcomes[spec.key] = Outcome(
+            image=spec.key,
+            node=node,
+            ok=True,
+            duration_s=_seconds(duration)
+            if duration is not None
+            else sum(_seconds(s.get("duration_s")) for s in steps),
+            estimate_s=_estimate_s(estimates, spec, node, done),
+            log=log,
+            isos=tuple(path for path in moved if path.name in {iso for iso, _ in isos}),
+            # with --no-sbom nobody asked for one: "syft absent" would be untrue (R4.9)
+            sbom=not options.sbom or any(n.endswith(".spdx.json") for n in present),
+        )
+    # the job's audit trail, named after the worker's build run
+    for run_id in run_ids:
+        bundle = f"{run_id}.build.tar.zst"
+        if iso_fd is None or _entry(bundle, iso_fd) is None:
+            continue
+        try:
+            mover.move(iso_dir, iso_fd, [bundle], worker_sums)
+        except OSError as err:
+            outcomes = {
+                key: dataclasses.replace(o, ok=False, error=str(err)) if o.ok else o
+                for key, o in outcomes.items()
+            }
+    return outcomes
+
+
+def _argv(manifest: Mapping[str, object]) -> list[str]:
+    argv = manifest.get("argv")
+    return [str(a) for a in argv] if isinstance(argv, list) else []
+
+
+def execute(
+    plan: Plan,
+    specs: Mapping[str, ImageSpec],
+    estimates: Mapping[tuple[str, str], Estimate],
+    *,
+    options: BuildOptions,
+    logs: Path,
+    run_id: str,
+    runner: Callable[..., list[parallel.ChildResult]] | None = None,
+    host: str | None = None,
+) -> list[Outcome]:
+    """Run ``plan`` on every node at once; one :class:`Outcome` per planned image.
+
+    The host's share is story 006's children -- one ``assemble`` each, as ``cli.build``
+    passes them, or one ``build --serial`` child (R4.8) -- and each worker's share ONE
+    ``shidashi worker job`` child, key ``@<worker>``, run as the invoking user (R6.1).
+    Every child goes into ONE ``runner(argvs, logs=logs)`` call (R4.1; by default
+    :func:`parallel.run_children`, which must run on the main thread for a signal to
+    stop the build). ``host`` names the plan's host node -- by default
+    ``socket.gethostname()``, the name :func:`discover` gives it; every other node of the
+    plan is a worker.
+
+    After the call a worker's outcomes come from its results directory and the runs
+    pulled into the host's (R4.6, R3.2), its ISOs, their companions and its build
+    bundle are moved into ``options.output_dir`` owned like it (R6.3), and their
+    SHA256SUMS lines merged there by this process alone, after every child (R4.2). An
+    unplaceable image is a failed outcome without a node (R1.7). No owner lock is taken:
+    assembles only read the binhost. A signal raises :class:`Interrupted` with the
+    host's outcomes, those of the worker jobs that had already ended (their results moved
+    in as usual) and the worker jobs it stopped (R4.7).
+
+    Under ``sudo`` this process is root and the worker results are the invoking user's:
+    a worker whose name is no host name gets no child; ``worker-results/<worker>/`` stays
+    root's and only the job's own directory is the user's; every file there is opened
+    without following a symlink, and only a regular file is moved, chowned and hashed --
+    through its own descriptor. The SHA256SUMS lines published are this process's own
+    hashes; a worker line contradicting one fails its image.
+    """
+    run = runner if runner is not None else parallel.run_children
+    here = host if host is not None else socket.gethostname()
+    job = f"build-{run_id[-6:]}"
+    worker.validate_job_name(job)
+
+    planned = [*plan.assignments, *(k for k in plan.unplaceable if k not in plan.assignments)]
+    order = [k for k in specs if k in planned] + [k for k in planned if k not in specs]
+    outcomes: dict[str, Outcome] = {}
+    host_share: list[ImageSpec] = []
+    shares: dict[str, list[ImageSpec]] = {}
+    for key in order:
+        node = plan.assignments.get(key)
+        spec = specs.get(key)
+        if node is None or spec is None:
+            error = plan.unplaceable.get(key) or f"no image spec for {key}"
+            outcomes[key] = Outcome(
+                image=key,
+                node=node or "",
+                ok=False,
+                duration_s=0.0,
+                estimate_s=0.0,
+                log=None,
+                error=error,
+            )
+        elif node == here:
+            host_share.append(spec)
+        else:
+            shares.setdefault(node, []).append(spec)
+
+    argvs = _host_argvs(host_share, options, logs) if host_share else {}
+    jobs: dict[str, WorkerJob] = {}
+    user: _InvokingUser | None = None
+    refused: Exception | None = None
+    try:
+        user = _invoking_user() if shares else None
+    except LookupError as err:  # an unknown SUDO_USER: no worker child may run as it
+        refused = err
+    for node, share in shares.items():
+        try:
+            if refused is not None:
+                raise refused
+            # a name that is no host name gets no directory and no child (R6.1)
+            results = _results_dir(node, job)
+            _prepare_results(results, job, user)
+        except (OSError, LookupError, ValueError) as err:
+            for spec in share:
+                outcomes[spec.key] = Outcome(
+                    image=spec.key,
+                    node=node,
+                    ok=False,
+                    duration_s=0.0,
+                    estimate_s=_estimate_s(estimates, spec, node, None),
+                    log=None,
+                    error=f"job {job} on {node} not started: {err}",
+                )
+            continue
+        argvs[f"@{node}"] = _worker_argv(node, job, results, share, options, user)
+        jobs[node] = WorkerJob(worker=node, job=job, results=results)
+
+    started = time.time()
+    try:
+        children = run(argvs, logs=logs) if argvs else []
+    except parallel.Interrupted as err:
+        stopped = {r.image: r for r in err.results}
+        outcomes.update(_host_outcomes(host_share, here, stopped, estimates, options, started))
+        running: list[WorkerJob] = []
+        ended: dict[str, WorkerJob] = {}
+        for name, wjob in jobs.items():
+            got = stopped.get(f"@{name}")
+            if got is None or got.exit_code == parallel.NOT_STARTED:
+                continue  # never started: nothing runs on that worker
+            if got.error == _STOPPED:
+                running.append(wjob)
+            else:
+                ended[name] = wjob  # its job had ended on its own before the signal
+        outcomes.update(_collect_workers(ended, shares, stopped, logs, estimates, options))
+        raise Interrupted(
+            [outcomes[k] for k in order if k in outcomes], running, err.signum
+        ) from err
+
+    by_key = {r.image: r for r in children}
+    outcomes.update(_host_outcomes(host_share, here, by_key, estimates, options, started))
+    outcomes.update(_collect_workers(jobs, shares, by_key, logs, estimates, options))
+    return [outcomes[k] for k in order]
+
+
+def _collect_workers(
+    jobs: Mapping[str, WorkerJob],
+    shares: Mapping[str, Sequence[ImageSpec]],
+    by_key: Mapping[str, parallel.ChildResult],
+    logs: Path,
+    estimates: Mapping[tuple[str, str], Estimate],
+    options: BuildOptions,
+) -> dict[str, Outcome]:
+    """``jobs``' outcomes, their results moved into ``options.output_dir`` and their
+    SHA256SUMS lines merged there by this process alone, after every child (R4.2)."""
+    outcomes: dict[str, Outcome] = {}
+    mover = _Mover(options.output_dir)
+    try:
+        for node, wjob in jobs.items():
+            outcomes.update(
+                _worker_outcomes(
+                    wjob,
+                    shares[node],
+                    by_key.get(f"@{node}"),
+                    logs / f"@{node}.log",
+                    estimates,
+                    options,
+                    mover,
+                )
+            )
+    finally:
+        mover.close()
+    if mover.sums:
+        try:
+            publish.update_sha256sums(options.output_dir, mover.sums)
+        except (OSError, locks.LockError, locks.LockBusy) as err:
+            sums_error = f"merging SHA256SUMS of {options.output_dir}: {err}"
+            outcomes = {
+                key: dataclasses.replace(got, ok=False, error=sums_error) if got.ok else got
+                for key, got in outcomes.items()
+            }
+    return outcomes

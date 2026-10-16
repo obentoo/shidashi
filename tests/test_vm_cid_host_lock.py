@@ -41,7 +41,7 @@ import pytest
 from typer.testing import CliRunner
 
 import shidashi
-from shidashi import audit, cli, locks, ownership, vm
+from shidashi import audit, cli, locks, ownership, schedule, vm
 from shidashi.assembler import AssembleResult
 from shidashi.cli import app
 
@@ -354,6 +354,7 @@ def test_an_assemble_boot_test_skips_a_cid_vm_test_holds(
 
 
 @pytest.mark.usefixtures("qemu_host")
+@pytest.mark.usefixtures("host_only_planner")  # a planned build (story 014)
 def test_serial_boot_test_allocates_from_42_upward(
     tmp_path: Path, cids: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -379,7 +380,8 @@ def test_serial_boot_test_allocates_from_42_upward(
     monkeypatch.setattr(vm, "boot_test", boot_test)
     argv = ["build", "v3", "systemd", "--images", "minimal", "--skip-factory", "--serial"]
     with _elsewhere(_HOLD, str(cids / "cid-42.lock")):
-        done = runner.invoke(app, [*argv, "--boot-test"])
+        # the host's serial share (story 014)
+        done = runner.invoke(app, [*argv, "--boot-test"], env={schedule.SERIAL_SHARE_ENV: "1"})
     assert done.exit_code == 0, done.output
     assert seen == [(43, True)], f"--serial did not allocate from 42 upward: {seen}"
 

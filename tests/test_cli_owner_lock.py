@@ -10,11 +10,15 @@ from typing import Any
 import pytest
 from typer.testing import CliRunner
 
-from shidashi import cli, ownership
+from shidashi import cli, ownership, schedule
 from shidashi.assembler import AssembleResult
 from shidashi.cli import app
 
 runner = CliRunner()
+
+#: Every build is planned (story 014): plan on this host alone, never from the real
+#: recipes' worlds nor the user's paired workers (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("host_only_planner")
 
 
 @pytest.fixture
@@ -92,7 +96,11 @@ def test_a_host_build_for_a_worker_owned_arch_skips_its_factory_and_still_assemb
     lab: list[str],
 ) -> None:
     _hold("v3")  # a worker (bentoo-lab) owns v3
-    result = runner.invoke(app, ["build", "v3", "systemd", "--images", "minimal", "--serial"])
+    result = runner.invoke(
+        app,
+        ["build", "v3", "systemd", "--images", "minimal", "--serial"],
+        env={schedule.SERIAL_SHARE_ENV: "1"},  # the host's serial share (story 014)
+    )
     assert not any(b.startswith("factory:") for b in lab)  # the factory is skipped
     assert "assembler:v3" in lab  # the assembles still run (R5.8, story 014 R3.3)
     skipped = [line for line in result.output.splitlines() if "bentoo-lab" in line]

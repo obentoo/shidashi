@@ -34,6 +34,10 @@ from shidashi.cli import app
 from shidashi.parallel import ChildResult
 
 runner = CliRunner()
+
+#: Every build is planned (story 014): plan on this host alone, never from the real
+#: recipes' worlds nor the user's paired workers (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("host_only_planner")
 _BUILD = ["build", "v3", "systemd", "--images", "kde,gnome", "--skip-factory"]
 
 

@@ -8,11 +8,15 @@ import pytest
 import typer
 from typer.testing import CliRunner
 
-from shidashi import cli
+from shidashi import cli, schedule
 from shidashi.assembler import AssembleResult
 from shidashi.cli import app, plan_tree
 
 runner = CliRunner()
+
+#: The in-process ``--serial`` build is now the host's serial share of a planned build
+#: (story 014, R4.8): the child ``schedule.execute`` starts, marked by this environment.
+SERIAL_SHARE = {schedule.SERIAL_SHARE_ENV: "1"}
 
 
 def test_plan_tree_builds_flavors_and_lets_their_chain_settle_minimal() -> None:
@@ -67,6 +71,7 @@ def test_build_runs_the_factory_then_every_iso_in_one_audited_run(
     result = runner.invoke(
         app,
         ["build", "v3", "systemd", "--images", "kde,minimal", "--compression", "both", "--serial"],
+        env=SERIAL_SHARE,
     )
     assert result.exit_code == 0, result.output
     assert lab == [
@@ -91,7 +96,9 @@ def test_build_runs_the_factory_then_every_iso_in_one_audited_run(
 
 def test_skip_factory_assembles_from_what_is_built(lab: list[str]) -> None:
     result = runner.invoke(
-        app, ["build", "v3", "systemd", "--images", "minimal", "--skip-factory", "--serial"]
+        app,
+        ["build", "v3", "systemd", "--images", "minimal", "--skip-factory", "--serial"],
+        env=SERIAL_SHARE,
     )
     assert result.exit_code == 0, result.output
     assert lab == ["assemble:minimal:('zstd',)"]
@@ -121,7 +128,9 @@ def test_boot_test_gates_the_build(
 
     monkeypatch.setattr(vm, "boot_test", boot_test)
     result = runner.invoke(
-        app, ["build", "v3", "systemd", "--images", "minimal,kde", "--boot-test", "--serial"]
+        app,
+        ["build", "v3", "systemd", "--images", "minimal,kde", "--boot-test", "--serial"],
+        env=SERIAL_SHARE,
     )
     assert booted == ["bentoo-x-minimal.iso", "bentoo-x-kde.iso"]
     assert result.exit_code == 1 and "failed its boot test: uefi: os-release" in result.output

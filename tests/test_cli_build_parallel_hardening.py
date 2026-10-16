@@ -30,12 +30,16 @@ import pytest
 import typer
 from typer.testing import CliRunner
 
-from shidashi import audit, cli, doctor, ownership, parallel
+from shidashi import audit, cli, doctor, ownership, parallel, schedule
 from shidashi.assembler import AssembleResult
 from shidashi.cli import app
 from shidashi.parallel import ChildResult
 
 runner = CliRunner()
+
+#: Every build is planned (story 014): plan on this host alone, never from the real
+#: recipes' worlds nor the user's paired workers (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("host_only_planner")
 _IMAGES = ["--images", "kde,gnome,wm"]
 
 
@@ -143,7 +147,8 @@ def test_an_inherited_shidashi_jobs_is_replaced_by_the_share(
 def test_serial_keeps_the_full_jobs_for_its_in_process_assembles(lab: _Lab) -> None:
     """Wrongly collapsed: the share is the children's; --serial runs every image with all."""
     argv = ["build", "v3", "systemd", *_IMAGES, "--skip-factory", "--serial", "--jobs", "24"]
-    done = runner.invoke(app, argv)
+    # the host's serial share: the one child a planned --serial build starts
+    done = runner.invoke(app, argv, env={schedule.SERIAL_SHARE_ENV: "1"})
     assert done.exit_code == 0, done.output
     assert lab.serial_jobs_env == ["24", "24", "24"]
 

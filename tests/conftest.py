@@ -1,6 +1,7 @@
 """Shared fixtures."""
 
 import os
+from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
@@ -146,3 +147,53 @@ def _no_mdns_answer(monkeypatch: pytest.MonkeyPatch) -> None:
     from shidashi import remote
 
     monkeypatch.setattr(remote, "find", lambda _name, **_kw: None)
+
+
+@pytest.fixture
+def host_only_planner(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """``shidashi build`` plans every image on this host, from nothing on this machine.
+
+    Every build is planned (story 014): without this, a test of the build CLI would read
+    the real recipes' worlds (``schedule.image_specs``) and the invoking user's worker
+    registry, then ssh each paired worker (``schedule.discover``). HOME and
+    ``XDG_DATA_HOME`` point into ``tmp_path``, ``SUDO_USER`` is dropped, the specs come
+    from the image names alone and the only node is the host, able to run every arch it
+    is asked for. Opt-in per module (``pytestmark``), never autouse: tests of the planner
+    patch these seams themselves.
+    """
+    import socket
+
+    from shidashi import schedule
+
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "home" / ".local" / "share"))
+    monkeypatch.delenv("SUDO_USER", raising=False)
+    arches: set[str] = set()
+
+    def image_specs(
+        arch: str, init: str, images: Sequence[str], **_kw: object
+    ) -> dict[str, schedule.ImageSpec]:
+        arches.add(arch)
+        return {
+            f"{arch}-{image}-{init}": schedule.ImageSpec(
+                key=f"{arch}-{image}-{init}", arch=arch, image=image, packages=1000
+            )
+            for image in images
+        }
+
+    def discover(**_kw: object) -> list[schedule.Node]:
+        return [
+            schedule.Node(
+                name=socket.gethostname(),
+                kind="host",
+                threads=os.cpu_count() or 1,
+                load1=0.0,
+                runnable_arches=frozenset(arches),
+                trunks=frozenset(),
+                sec_per_pkg=None,
+                reachable=True,
+            )
+        ]
+
+    monkeypatch.setattr(schedule, "image_specs", image_specs)
+    monkeypatch.setattr(schedule, "discover", discover)
