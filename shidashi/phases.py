@@ -881,6 +881,60 @@ def _run_emerge(
     return parse_built_atoms(raw_output), raw_output
 
 
+# --- ccache hit rate (audit) -----------------------------------------------------
+
+#: The ``ccache --print-stats`` counters that tell a hit from a miss.
+_CCACHE_COUNTERS = ("direct_cache_hit", "preprocessed_cache_hit", "cache_miss")
+
+
+def parse_ccache_stats(text: str) -> dict[str, int]:
+    """The hit/miss counters of ``ccache --print-stats`` (``key<TAB>value`` lines). Pure."""
+    counters: dict[str, int] = {}
+    for line in text.splitlines():
+        key, _, value = line.partition("\t")
+        if key in _CCACHE_COUNTERS and value.strip().isdigit():
+            counters[key] = int(value)
+    return counters
+
+
+def ccache_counters(container: Container) -> dict[str, int] | None:
+    """The shared cache's hit/miss counters, read from inside the container. I/O.
+
+    ``None`` when the rootfs has no ccache yet (the bootstrap installs it), the
+    command fails or a counter is missing: the numbers are for the audit, never a
+    reason to stop a build.
+    """
+    if not (container.rootfs / "usr" / "bin" / "ccache").exists():
+        return None
+    result = container.run(
+        ["env", "CCACHE_DIR=/var/cache/ccache", "ccache", "--print-stats"], check=False
+    )
+    if result.exit_code != 0:
+        return None
+    counters = parse_ccache_stats(result.stdout)
+    return counters if len(counters) == len(_CCACHE_COUNTERS) else None
+
+
+def ccache_delta(
+    before: Mapping[str, int] | None, after: Mapping[str, int] | None
+) -> dict[str, object] | None:
+    """What one emerge did to the cache: hits, misses and the hit rate. Pure.
+
+    A difference, not a reset: zeroing the counters would erase the cache's
+    lifetime totals. The cache directory is shared, so a build running at the
+    same time adds its own compiles to the difference. ``None`` when either
+    reading is missing or the counters went backwards (zeroed in between).
+    """
+    if before is None or after is None:
+        return None
+    hits = sum(after[k] - before[k] for k in ("direct_cache_hit", "preprocessed_cache_hit"))
+    misses = after["cache_miss"] - before["cache_miss"]
+    if hits < 0 or misses < 0:
+        return None
+    total = hits + misses
+    return {"hits": hits, "misses": misses, "hit_rate": round(hits / total, 4) if total else None}
+
+
 # --- module-rebuild (F83) --------------------------------------------------------
 #
 # A binpkg of an out-of-tree module (nvidia-drivers, r8168...) carries modules for
@@ -1461,9 +1515,13 @@ def run_phase(
                     usepkg_exclude=stale.plan.exclude if stale is not None else (),
                 )
                 since = int(time.time())
+                cache_before = ccache_counters(container)
                 built, output = _run_emerge(container, argv, phase=phase.name)
                 reused = parse_reused_atoms(output)
                 step.add(argv=argv, built=len(built), reused=len(reused))
+                cache = ccache_delta(cache_before, ccache_counters(container))
+                if cache is not None:
+                    step.add(ccache=cache)
                 attach_packages(
                     container.rootfs,
                     phase.stage or phase.name,

@@ -102,6 +102,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **ccache survives from one build to the next.** It hit 10.85% of 466k
+  compiles, for two reasons, both reproduced with ccache 4.14. It identified gcc
+  by its mtime, and the bootstrap rebuilds gcc on every fresh stage3, so each
+  build discarded the previous one's cache; `CCACHE_COMPILERCHECK="%compiler%
+  -dumpfullversion"` identifies it by release (16.2.1), so a weekly gcc snapshot
+  keeps the cache and a new release starts a fresh one. And the build directory carries the package
+  version, so a version bump missed even for unchanged files;
+  `CCACHE_BASEDIR="/var/tmp/portage"` makes those paths relative. Each stage's
+  `emerge-stage` audit step now records the cache's hits, misses and hit rate
+  for that emerge.
 - **kde, gnome and wm grow from a shared trunk.** Their `desktop` stage is
   identical, so the assemble installs it once, straight from the stage3, keeps it as
   a checkpoint and branches each flavor from it with `--update --deep --newuse`; kde
