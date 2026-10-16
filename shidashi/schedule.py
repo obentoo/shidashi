@@ -7,7 +7,12 @@ paired worker -- makes each image. This part is pure, a function of data only:
   :class:`BuildOptions`, :class:`Outcome`, :class:`WorkerJob` -- the models;
 - :func:`free_threads` and :func:`with_history` -- what a node has to offer (R2.2, R2.4);
 - :func:`load_history` -- each node's measured costs, read from the audit runs the
-  pipeline already writes (R2.1, R2.2, R2.6, R2.7) -- the one part here that reads files;
+  pipeline already writes (R2.1, R2.2, R2.6, R2.7);
+- :func:`image_specs` -- every image of the build with its package count and trunk key,
+  from the runs or the recipe's world (R2.2, R2.5, R2.8); with :func:`load_history`,
+  read-only;
+- :func:`discover` -- the host and each paired worker of the invoking user as nodes,
+  every worker probed with story 010's status within 10 s (R1.6, R3.1, R3.6, R6.1, R6.2);
 - :func:`estimate` -- an image's cost on a node, from its history, its package count or
   the 1.7 s default (R2.1-R2.5);
 - :func:`plan` -- the assignment with the smallest makespan, deterministic on ties
@@ -22,12 +27,19 @@ The library raises, it does not log -- the command reports.
 import dataclasses
 import itertools
 import json
+import os
+import pwd
+import socket
 import statistics
+import threading
+import time
 import warnings
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, Protocol
+
+from shidashi import assembler, checkpoint, config, isaguard, remote, worker, workers, world
 
 #: Seconds per package when a node has no measured rate (R2.3).
 DEFAULT_SEC_PER_PKG = 1.7
@@ -234,8 +246,10 @@ def _share(argv: Sequence[str], threads: object) -> float:
     return min(1.0, jobs / threads)
 
 
-def _read_run(run_dir: Path, node: str) -> _Run | None:
+def _read_run(run_dir: Path, node: str | None) -> _Run | None:
     """The run in ``run_dir`` when it is an all-ok assemble that ``node`` made, else None.
+
+    ``node=None`` accepts the run whichever node made it.
 
     Raises ``OSError`` or ``ValueError`` when its manifest cannot be read.
     """
@@ -247,7 +261,7 @@ def _read_run(run_dir: Path, node: str) -> _Run | None:
         raise ValueError("the manifest is not an object")
     inputs = manifest.get("inputs") or {}
     hostname = manifest.get("hostname") or inputs.get("hostname")
-    if manifest.get("command") != "assemble" or hostname != node:
+    if manifest.get("command") != "assemble" or (node is not None and hostname != node):
         return None
     steps = manifest.get("steps") or []
     if manifest.get("status") != "ok" or not steps:
@@ -292,6 +306,26 @@ def _read_run(run_dir: Path, node: str) -> _Run | None:
     )
 
 
+def _read_runs(runs_dir: Path, node: str | None) -> list[_Run]:
+    """The all-ok assemble runs ``node`` (any node when None) recorded, oldest first.
+
+    A run whose manifest cannot be read is skipped with one warning naming it; a run
+    without a manifest (running or killed) is skipped silently.
+    """
+    runs: list[_Run] = []
+    if runs_dir.is_dir():
+        for run_dir in sorted(p for p in runs_dir.iterdir() if p.is_dir()):
+            try:
+                run = _read_run(run_dir, node)
+            except (OSError, ValueError, TypeError, AttributeError) as exc:
+                warnings.warn(f"skipping unreadable run {run_dir.name}: {exc}", stacklevel=3)
+                continue
+            if run is not None:
+                runs.append(run)
+    runs.sort(key=lambda r: (r.started, r.run_id))
+    return runs
+
+
 def load_history(runs_dir: Path, *, node: str) -> History:
     """``node``'s measured costs, from the assemble runs it recorded in ``runs_dir``.
 
@@ -302,17 +336,7 @@ def load_history(runs_dir: Path, *, node: str) -> History:
     run's ``jobs / threads`` (R2.7). A run whose manifest cannot be read is skipped with
     one warning naming it; a run without a manifest (running or killed) is skipped.
     """
-    runs: list[_Run] = []
-    if runs_dir.is_dir():
-        for run_dir in sorted(p for p in runs_dir.iterdir() if p.is_dir()):
-            try:
-                run = _read_run(run_dir, node)
-            except (OSError, ValueError, TypeError, AttributeError) as exc:
-                warnings.warn(f"skipping unreadable run {run_dir.name}: {exc}", stacklevel=2)
-                continue
-            if run is not None:
-                runs.append(run)
-    runs.sort(key=lambda r: (r.started, r.run_id))
+    runs = _read_runs(runs_dir, node)
     durations: dict[str, float] = {}
     counts: dict[str, int] = {}
     trunks: dict[str, float] = {}
@@ -341,6 +365,270 @@ def load_history(runs_dir: Path, *, node: str) -> History:
         rate=statistics.median(rates) if rates else None,
         used=tuple(sorted(used)),
     )
+
+
+class ImageSpecError(Exception):
+    """An image of the build whose recipe or world cannot be resolved; names the image."""
+
+
+def _world_size(arch: str, target: str, init: str, *, any_stage: bool = False) -> int:
+    """The length of ``target``'s world (R2.8); raises :class:`ImageSpecError` naming it."""
+    try:
+        recipe = config.load_recipe(arch, target, init, any_stage=any_stage)
+        return len(world.current_atoms(recipe, config.variants_dir()))
+    except (config.UnknownAxisError, world.StaleWorldError, OSError, ValueError) as exc:
+        raise ImageSpecError(f"cannot resolve {arch}-{target}-{init}: {exc}") from exc
+
+
+def image_specs(
+    arch: str, init: str, images: Sequence[str], *, runs_dir: Path
+) -> dict[str, ImageSpec]:
+    """Every image of the build as an :class:`ImageSpec`, keyed by ``<arch>-<image>-<init>``.
+
+    ``packages`` is the length of ``packages.json`` of the latest all-ok assemble of the
+    image on ANY node -- the package set does not depend on the machine -- else the length
+    of its recipe's world (R2.8). An image with a trunk carries ``trunk_key``
+    (``<arch>-<trunk stage>-<init>``, the key its trunk checkpoint is claimed by, R2.5) and
+    ``trunk_packages``, counted the same way for that key. Read-only: no fingerprint is
+    computed and no tree is fetched -- a fingerprint embeds the host's cache paths and
+    never matches a worker's checkpoint. Raises :class:`ImageSpecError` naming an image
+    whose recipe or world cannot be resolved.
+    """
+    counts: dict[str, int] = {}
+    for run in _read_runs(runs_dir, None):  # oldest first: a later run overwrites
+        if run.packages is not None:
+            counts[run.image_key] = run.packages
+    specs: dict[str, ImageSpec] = {}
+    for image in images:
+        key = f"{arch}-{image}-{init}"
+        try:
+            recipe = config.load_recipe(arch, image, init)
+        except (config.UnknownAxisError, OSError, ValueError) as exc:
+            raise ImageSpecError(f"cannot resolve image {image!r} ({key}): {exc}") from exc
+        if key not in counts:
+            counts[key] = _world_size(arch, image, init)
+        spec = ImageSpec(key=key, arch=arch, image=image, packages=counts[key])
+        trunk = assembler.trunk_stage(recipe)
+        if trunk is not None:
+            trunk_key = f"{arch}-{trunk}-{init}"
+            if trunk_key not in counts:
+                # the trunk is a stage, not an image: only any_stage loads its recipe
+                counts[trunk_key] = _world_size(arch, trunk, init, any_stage=True)
+            spec = dataclasses.replace(spec, trunk_key=trunk_key, trunk_packages=counts[trunk_key])
+        specs[key] = spec
+    return specs
+
+
+# --- node discovery ----------------------------------------------------------------------------
+
+#: The name of the unreachable node that says why no worker was read (R6.2).
+REGISTRY_NODE = "worker registry"
+
+
+def invoking_user_workers_dir() -> Path:
+    """The workers directory of the user who invoked the build (R6.1).
+
+    Under ``sudo`` (effective uid 0 with ``SUDO_USER`` set) it is ``SUDO_USER``'s:
+    ``$XDG_DATA_HOME`` when set, else their ``~/.local/share`` from ``pwd.getpwnam``, plus
+    ``shidashi/worker`` -- never root's, whose registry is empty and key absent. Otherwise
+    :func:`config.workers_dir`. Raises :class:`LookupError` when ``SUDO_USER`` names no
+    user of this system.
+    """
+    user = os.environ.get("SUDO_USER")
+    if not user or os.geteuid() != 0:
+        return config.workers_dir()
+    try:
+        home = Path(pwd.getpwnam(user).pw_dir)
+    except KeyError as err:
+        raise LookupError(f"SUDO_USER={user!r} is not a user of this system") from err
+    data_home = os.environ.get("XDG_DATA_HOME")
+    base = Path(data_home) if data_home else home / ".local" / "share"
+    return base / "shidashi" / "worker"
+
+
+def _unreachable(name: str, note: str) -> Node:
+    """A worker the plan skips, with why (R3.1, R3.6, R6.2)."""
+    return Node(
+        name=name,
+        kind="worker",
+        threads=0,
+        load1=0.0,
+        runnable_arches=frozenset(),
+        trunks=frozenset(),
+        sec_per_pkg=None,
+        reachable=False,
+        note=note,
+    )
+
+
+def _host_trunks() -> frozenset[str]:
+    """The image keys claiming the host's install checkpoints (R2.5).
+
+    The union of the ``images`` field of every ``install-*.json`` manifest under
+    ``<scratch>/assemble/checkpoints/*/``, ``install-partial-*`` excluded (it matches the
+    same glob). An absent store or an unreadable manifest contributes nothing.
+    """
+    root = config.scratch_dir() / "assemble" / "checkpoints"
+    keys: set[str] = set()
+    try:
+        manifests = sorted(root.glob("*/install-*.json"))
+    except OSError:
+        return frozenset()
+    for manifest in manifests:
+        if manifest.name.startswith(f"{checkpoint.PARTIAL}-"):
+            continue
+        try:
+            images = json.loads(manifest.read_text(encoding="utf-8")).get("images")
+        except OSError, ValueError, AttributeError:
+            continue
+        if isinstance(images, list):
+            keys.update(i for i in images if isinstance(i, str) and i)
+    return frozenset(keys)
+
+
+def _host() -> Node:
+    """This machine as a node: its threads, load, ISA and trunks (Q4: never an error)."""
+    note = ""
+    try:
+        load1 = os.getloadavg()[0]
+    except OSError as err:
+        load1, note = 0.0, f"load average unavailable ({err}); counted as 0"
+    return Node(
+        name=socket.gethostname(),
+        kind="host",
+        threads=os.cpu_count() or 1,
+        load1=load1,
+        runnable_arches=frozenset(isaguard.runnable(isaguard.local_cpu_flags())),
+        trunks=_host_trunks(),
+        sec_per_pkg=None,
+        reachable=True,
+        note=note,
+    )
+
+
+def _remote(entry: workers.WorkerEntry, address: str, workers_dir: Path) -> remote.Remote:
+    """How to reach ``entry`` at ``address`` with the key and pins of ``workers_dir``.
+
+    Not :meth:`remote.Remote.for_worker`: that one reads :func:`config.workers_dir`,
+    which under ``sudo`` is root's (R6.1).
+    """
+    return remote.Remote(
+        name=entry.name,
+        address=address,
+        key=workers_dir / "id_ed25519",
+        known_hosts=workers_dir / "known_hosts",
+        expected_fingerprint=entry.host_key_fingerprint,
+    )
+
+
+def _probe(entry: workers.WorkerEntry, workers_dir: Path, timeout: float) -> worker.WorkerStatus:
+    """Story 010's status of ``entry``, wherever it is now -- as ``cli._on_worker`` finds it.
+
+    The recorded address, else the one the worker answers from over mDNS. When the
+    RECORDED address does not answer, the worker is looked up by name once and probed
+    once more there; a changed host key is never retried. Raises as ``worker.status``
+    and :func:`remote.resolve_address` do.
+    """
+    recorded = entry.address is not None
+    where = remote.resolve_address(entry)
+    try:
+        answer = worker.status(_remote(entry, where, workers_dir), timeout=timeout)
+    except remote.RemoteUnreachable as err:
+        if not recorded:
+            raise
+        failure = str(err)
+    else:
+        if not recorded or answer.reachable is True:
+            return answer
+        failure = answer.reason or "no answer"
+    try:
+        where = remote.resolve_address(entry.model_copy(update={"address": None}))
+    except remote.RemoteUnreachable as lookup:
+        reason = f"{' '.join(failure.split())}; {lookup}"
+        raise remote.RemoteUnreachable(entry.name, None, reason) from lookup
+    return worker.status(_remote(entry, where, workers_dir), timeout=timeout)
+
+
+def _worker_node(name: str, status: worker.WorkerStatus) -> Node:
+    """The node a status describes, named by the registry (C3); unreachable when the
+    worker did not answer or cannot take a job (R3.6). A status missing a field raises
+    ``AttributeError`` or :class:`ValueError` (the caller makes it unreachable)."""
+    if status.reachable is not True:
+        return _unreachable(name, status.reason or "no answer")
+    if status.accepts_jobs is not True:
+        return _unreachable(name, "no work disk mounted: it does not accept jobs")
+    if status.jobs:
+        return _unreachable(name, f"job {', '.join(status.jobs)} already running")
+    threads, load1 = status.threads, status.load1
+    if isinstance(threads, bool) or not isinstance(threads, int) or threads < 1:
+        raise ValueError(f"no thread count (threads={threads!r})")
+    if isinstance(load1, bool) or not isinstance(load1, int | float):
+        raise ValueError(f"no load average (load1={load1!r})")
+    return Node(
+        name=name,
+        kind="worker",
+        threads=threads,
+        load1=float(load1),
+        runnable_arches=frozenset(status.runnable_arches),
+        trunks=frozenset(status.trunk_keys),
+        sec_per_pkg=None,
+        reachable=True,
+    )
+
+
+def _workers(workers_dir: Path, timeout: float) -> list[Node]:
+    """Every paired worker of ``workers_dir`` as a node, all probed at once within
+    ``timeout`` seconds; an unreadable registry is one unreachable node saying why (R6.2)."""
+    registry = workers_dir / "workers.json"
+    try:
+        entries = workers.load_registry(registry)
+    except (workers.RegistryError, OSError) as err:
+        return [_unreachable(REGISTRY_NODE, f"cannot read {registry}: {err}")]
+    found: dict[str, Node] = {}
+    lock = threading.Lock()
+
+    def probe(entry: workers.WorkerEntry) -> None:
+        try:
+            node = _worker_node(entry.name, _probe(entry, workers_dir, timeout))
+        except (AttributeError, TypeError, ValueError) as err:
+            node = _unreachable(entry.name, f"malformed status: {err}")
+        except Exception as err:  # RemoteUnreachable, HostKeyMismatch, UnknownFlag, OSError
+            node = _unreachable(entry.name, str(err) or type(err).__name__)
+        with lock:
+            found[entry.name] = node
+
+    threads = [
+        threading.Thread(target=probe, args=(entry,), name=f"discover-{name}", daemon=True)
+        for name, entry in sorted(entries.items())
+    ]
+    deadline = time.monotonic() + timeout
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(max(0.0, deadline - time.monotonic()))
+    with lock:  # a probe still running is left behind (daemon): its answer is too late
+        late = f"timed out: no answer within {timeout:g} s"
+        return [found.get(name) or _unreachable(name, late) for name in sorted(entries)]
+
+
+def discover(*, local: bool, timeout: float = 10.0, workers_dir: Path | None = None) -> list[Node]:
+    """The nodes of a build: the host, then each paired worker (R1.6, R3.1, R3.6, R6.1, R6.2).
+
+    ``local=True`` is the host alone, the registry untouched. Otherwise the registry of
+    ``workers_dir`` -- by default the invoking user's (:func:`invoking_user_workers_dir`)
+    -- is read and every worker probed in its own thread, joined by one ``timeout``
+    deadline. A worker that cannot be planned is a node with ``reachable=False`` and the
+    reason in ``note``; nothing here raises for a worker.
+    """
+    nodes = [_host()]
+    if local:
+        return nodes
+    if workers_dir is None:
+        try:
+            workers_dir = invoking_user_workers_dir()
+        except LookupError as err:
+            return [*nodes, _unreachable(REGISTRY_NODE, f"cannot read the worker registry: {err}")]
+    return [*nodes, *_workers(workers_dir, timeout)]
 
 
 def free_threads(node: Node) -> float:

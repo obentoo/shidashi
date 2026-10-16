@@ -130,7 +130,9 @@ class WorkerStatus:
     directory answers for the RAM root). ``smart`` is the work disk's SMART verdict,
     None when the image has no ``smartctl``. ``trunks`` are the assemble checkpoints on
     the work disk as ``<arch>-<init>/<step>-<fp24>``; ``jobs`` the active
-    ``shidashi-job-*`` units, by exact name without ``.service``.
+    ``shidashi-job-*`` units, by exact name without ``.service``. ``trunk_keys`` are the
+    image keys claiming its install checkpoints (``install-partial-*`` excluded), sorted
+    and unique: the host compares trunks by them, never by fingerprint (story 014).
     """
 
     name: str
@@ -150,6 +152,7 @@ class WorkerStatus:
     smart: str | None = None
     trunks: tuple[str, ...] = ()
     jobs: tuple[str, ...] = ()
+    trunk_keys: tuple[str, ...] = ()
 
 
 #: ``status``'s whole-command bound for one worker (the listing uses 5 s, R1.4).
@@ -164,6 +167,24 @@ _LIST_JOBS = (
     "systemctl list-units 'shidashi-job-*' --state=active,activating,deactivating,reloading "
     "--plain --no-legend --full"
 )
+#: Prints the claimant keys of every ``install-*.json`` manifest below the working
+#: directory, ``install-partial-*`` excluded; a manifest it cannot parse prints nothing.
+#: Only ``[a-z0-9-]`` keys are printed, so a manifest cannot forge a probe section. No
+#: single quote: it runs inside one.
+_CLAIMANTS_PY = """
+import glob, json, re
+for path in sorted(glob.glob("*/install-*.json")):
+    if path.split("/", 1)[1].startswith("install-partial-"):
+        continue
+    try:
+        with open(path, encoding="utf-8") as fh:
+            images = json.load(fh).get("images") or []
+    except (OSError, ValueError, AttributeError):
+        continue
+    for key in images:
+        if isinstance(key, str) and re.fullmatch("[a-z0-9-]+", key):
+            print(key)
+"""
 #: The status probe: one shell script, one ssh round trip. Each section starts with an
 #: ``@name`` line; nothing in it is interpolated from input. ``df`` runs only once
 #: ``findmnt`` has proved ``/mnt/work`` mounted. SMART reads the disk holding the work
@@ -182,6 +203,8 @@ if findmnt -no TARGET -M {WORK} >/dev/null 2>&1; then
   echo @trunks
   (cd {WORKER_CHECKPOINTS} 2>/dev/null &&
     for f in */*.json; do if [ -f "$f" ]; then printf '%s\\n' "$f"; fi; done)
+  echo @claimants
+  (cd {WORKER_CHECKPOINTS} 2>/dev/null && python3 -I -c '{_CLAIMANTS_PY}' 2>/dev/null)
 fi
 echo @jobs
 {_LIST_JOBS} 2>/dev/null
@@ -246,6 +269,7 @@ def status(remote: Remote, *, timeout: float = STATUS_TIMEOUT) -> WorkerStatus:
         # each manifest is <arch>-<init>/<step>-<fp24>.json: the trunk is its name
         trunks=tuple(sorted(m.removesuffix(".json") for m in sections.get("trunks", []) if m)),
         jobs=_active_jobs(sections.get("jobs", [])),
+        trunk_keys=tuple(sorted({k for k in sections.get("claimants", []) if k})),
     )
 
 
