@@ -448,6 +448,33 @@ shidashi worker unlock v3 --force
 `shidashi worker run bentoo-lab -- CMD…` runs any command there, and
 `shidashi worker poweroff bentoo-lab` turns it off (refused while a job runs).
 
+### Distributing a build
+
+`sudo shidashi build` splits its images between the host and every paired worker that
+answers. It reads the workers paired by the user who ran `sudo` (`SUDO_USER`), not root's,
+and each worker's share runs as that user — one `shidashi worker job` per worker — beside the
+host's own assembles:
+
+```sh
+sudo shidashi build v3 systemd --plan     # print the split and the estimates, build nothing
+sudo shidashi build v3 systemd            # build it: host and workers at once
+sudo shidashi build v3 systemd --local    # the host alone, whatever answers
+```
+
+The split minimizes the time the slowest node takes, estimated from each node's own audit
+runs (its last successful assemble of the image, else its seconds per package, else 1.7 s),
+scaled by its free threads; a trunk a node already holds costs nothing there, and the desktop
+flavors stay together unless splitting them wins. A worker is left out — and named, with why —
+when it does not answer within 10 s, has no work disk, already runs a job, or its CPU cannot
+run the arch. Every build records its plan in the audit trail before it starts.
+
+A worker builds the committed `HEAD`, the host its working tree, so a build that gives a worker
+any image is refused while the checkout has changes, untracked files included;
+`--allow-dirty` builds anyway. The workers' ISOs, their companion files and build bundle land
+in the output directory beside the host's, owned like it, with their `SHA256SUMS` lines
+computed on the host. Ctrl+C prints, per worker, the `worker logs … -f` and
+`worker sync pull … --job …` commands that follow and bring back a job left running.
+
 ## Contributing
 
 Issues and pull requests are welcome. Before pushing, run the checks above; the CI job can be

@@ -61,6 +61,7 @@ from shidashi import (
     parallel,
     publish,
     remote,
+    resolve,
     worker,
     workers,
     world,
@@ -400,7 +401,13 @@ def _world_size(arch: str, target: str, init: str, *, any_stage: bool = False) -
     """The length of ``target``'s world (R2.8); raises :class:`ImageSpecError` naming it."""
     try:
         recipe = config.load_recipe(arch, target, init, any_stage=any_stage)
-        return len(world.current_atoms(recipe, config.variants_dir()))
+        try:
+            return len(world.current_atoms(recipe, config.variants_dir()))
+        except world.StaleWorldError:
+            if not any_stage:
+                raise
+            # a stage (the trunk) has no committed world file: count what its kits ask for
+            return len(resolve.world_atoms(recipe))
     except (config.UnknownAxisError, world.StaleWorldError, OSError, ValueError) as exc:
         raise ImageSpecError(f"cannot resolve {arch}-{target}-{init}: {exc}") from exc
 
