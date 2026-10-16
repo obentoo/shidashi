@@ -67,7 +67,6 @@ def test_push_plan_mirrors_the_arch_subset_under_mnt_work_cache(
         config.pkgdir("v3", gen),
         config.distdir(),
         config.ccache_dir(),
-        config.sccache_dir(),
         cache / "trees",
         cache / "repos",
     ):
@@ -87,7 +86,7 @@ def test_push_copies_exactly_the_arch_subset(fw: FakeWorker, host: dict[str, Pat
     sent = worker.push(fw.remote(), "v3", bwlimit=None)
     w = fw.work / "cache"
     for key in (
-        *("binpkg", "distfile", "ccache", "sccache", "tree", "repo", "stage3"),
+        *("binpkg", "distfile", "ccache", "tree", "repo", "stage3"),
         *("fork_point", "phase_snapshot", "bootstrap"),
     ):
         rel = host[key].relative_to(fw.host_cache)

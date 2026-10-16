@@ -676,7 +676,6 @@ def push_plan(arch: str, generation: str) -> list[tuple[str, str]]:
         mirror(config.pkgdir(arch, generation)),
         mirror(config.distdir()),
         mirror(config.ccache_dir()),
-        mirror(config.sccache_dir()),
         mirror(cache / "trees"),
         mirror(cache / "repos"),
         # the stage3 filename carries its snapshot: every init's of this generation
@@ -728,7 +727,7 @@ def _push_sources(arch: str, generation: str, commit: str) -> list[tuple[list[st
     to send, in order. I/O (filesystem, git).
 
     A glob expands to what exists; an entry with nothing of its kind on the host yet
-    (no sccache, no fork point) drops. The fork points are only those of
+    (no ccache yet, no fork point) drops. The fork points are only those of
     ``commit``'s keys (:func:`_restorable_fork_points`, R3.5).
     """
     fork_points = f"{config.fork_points_dir()}/"
@@ -862,7 +861,7 @@ def pull_destinations(
     """
     dests = [results, config.runs_dir()]
     if arch is not None:
-        dests += [results / "iso", config.distdir(), config.ccache_dir(), config.sccache_dir()]
+        dests += [results / "iso", config.distdir(), config.ccache_dir()]
         if binhost_generation is not None:
             dests += [config.pkgdir(arch, binhost_generation), config.fork_points_dir()]
     return dests
@@ -1011,9 +1010,9 @@ def _pull_unmarked(
 
     Always ``out/jobs/<job>.log``, ``.rc`` and ``.runs`` into ``results`` and the runs
     listed in ``<job>.runs`` into ``config.runs_dir()``; with an ``arch`` also
-    ``out/iso/<job>/`` into ``results/iso/`` and the distfiles, ccache and sccache (an
+    ``out/iso/<job>/`` into ``results/iso/`` and the distfiles and ccache (an
     archless pull takes only the log, rc and runs; a pull without a ``job`` takes only
-    the arch's distfiles, ccache and sccache). Only with ``owner`` -- and
+    the arch's distfiles and ccache). Only with ``owner`` -- and
     :func:`ownership.require_free` raises :class:`ownership.OwnedElsewhere` when someone
     else holds the arch -- the arch's fork points of ``owner.commit``'s keys come
     (:func:`_restorable_fork_points`: none, with one warning, when those keys cannot
@@ -1048,7 +1047,7 @@ def _pull_unmarked(
     iso_dir = f"{WORK}/out/iso/{job}" if job else None
     caches = [
         (f"{WORKER_CACHE}/{d.relative_to(cache)}", d)
-        for d in (config.distdir(), config.ccache_dir(), config.sccache_dir())
+        for d in (config.distdir(), config.ccache_dir())
     ]
     fork_dir = f"{WORKER_CACHE}/{config.fork_points_dir().relative_to(cache)}"
     patterns = list(job_files)
@@ -1836,7 +1835,8 @@ def _present(remote: Remote, patterns: Sequence[str]) -> list[str]:
     """Which of ``patterns`` exist on the worker (a glob yields each match), in one ssh.
 
     rsync cannot skip a missing ``dir/`` source (``--ignore-missing-args`` covers
-    files only), so a pull asks first instead of failing on an absent sccache.
+    files only), so a pull asks first instead of failing on a cache directory the
+    worker does not have yet.
     """
     words = " ".join(_shell_pattern(p) for p in patterns)
     command = f'for p in {words}; do [ -e "$p" ] && printf \'%s\\n\' "$p"; done; true'

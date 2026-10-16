@@ -9,8 +9,8 @@ the override when the env var exists, the default when it is absent.
 
 Story 003 (2.1): new build/cache helpers — ``build_root()``
 (``scratch_dir()/build``), ``pkgdir(arch)`` (``cache_dir()/binpkgs/<arch>``,
-partitioned per arch), ``ccache_dir()``/``sccache_dir()``/``distdir()``
-(``cache_dir()/{ccache,sccache,distfiles}``) and ``fork_points_dir()``
+partitioned per arch), ``ccache_dir()``/``distdir()``
+(``cache_dir()/{ccache,distfiles}``) and ``fork_points_dir()``
 (``cache_dir()/fork-points``). All read the env per call.
 """
 
@@ -100,13 +100,11 @@ def test_pkgdir_partitions_per_arch(monkeypatch: pytest.MonkeyPatch, tmp_path: P
 # --- cache subdirs (shared across flavors/archs) -----------------------------
 
 
-def test_ccache_sccache_distdir_under_cache(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_ccache_distdir_under_cache(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("SHIDASHI_CACHE", str(tmp_path / "cache"))
     base = tmp_path / "cache"
     assert config.ccache_dir() == base / "ccache"
-    assert config.sccache_dir() == base / "sccache"
+    assert not hasattr(config, "sccache_dir")  # sccache removed (2026-10-15)
     assert config.distdir() == base / "distfiles"
 
 

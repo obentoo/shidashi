@@ -881,7 +881,6 @@ def seed_host_cache(fw: FakeWorker, *, orphans: bool = False) -> dict[str, Path]
         "other_arch": c / "binpkgs" / "znver5" / gen / "z-1.gpkg.tar",
         "distfile": c / "distfiles" / "big-1.0.tar.gz",
         "ccache": c / "ccache" / "0" / "entry",
-        "sccache": c / "sccache" / "entry",
         "tree": c / "trees" / "gentoo-20260823.tar.xz",
         "repo": c / "repos" / "bentoo" / "profiles" / "repo_name",
         "stage3": c / pointer.filename,

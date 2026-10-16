@@ -502,7 +502,6 @@ def test_contract_the_jobs_cache_is_where_the_push_wrote(
         ("pkgdir", lambda: config.pkgdir("v3", gen)),
         ("distfiles", config.distdir),
         ("ccache", config.ccache_dir),
-        ("sccache", config.sccache_dir),
     )
     host = {name: str(fn()) for name, fn in dirs}
     env = _setenv(worker.job_unit_argv("fac-v3", COMMIT, FACTORY))
@@ -511,7 +510,6 @@ def test_contract_the_jobs_cache_is_where_the_push_wrote(
         "pkgdir": str(config.pkgdir("v3", gen)),
         "distfiles": str(config.distdir()),
         "ccache": str(config.ccache_dir()),
-        "sccache": str(config.sccache_dir()),
     }
     for name, path in host.items():
         assert plan[path] == on_worker[name], name

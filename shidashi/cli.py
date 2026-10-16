@@ -3526,7 +3526,7 @@ def worker_sync_push(
     ] = None,
     address: _AddressOption = None,
 ) -> None:
-    """Send the worker ARCH's cache -- PKGDIR, distfiles, ccache and sccache, the pinned
+    """Send the worker ARCH's cache -- PKGDIR, distfiles and ccache, the pinned
     trees and repositories, the stage3 and the fork points -- and the runtime venv."""
     try:
         sent, _entry = _on_worker(

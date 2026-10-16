@@ -288,15 +288,6 @@ def ccache_dir() -> Path:
     return cache_dir() / "ccache"
 
 
-def sccache_dir() -> Path:
-    """Return the shared ``sccache`` directory (R6.2): ``cache_dir()/sccache``.
-
-    Shared across flavors/archs (Rust compilation cache). Inherits the
-    ``SHIDASHI_CACHE`` override (read per call).
-    """
-    return cache_dir() / "sccache"
-
-
 def distdir() -> Path:
     """Return the shared ``DISTDIR`` (R6.2): ``cache_dir()/distfiles``.
 
