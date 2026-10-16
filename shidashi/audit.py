@@ -29,6 +29,7 @@ import re
 import resource
 import secrets
 import shutil
+import socket
 import subprocess
 import time
 from collections.abc import Callable, Generator, Mapping, Sequence
@@ -324,13 +325,17 @@ def run(
 ) -> Generator[Run]:
     """Open a run for the duration of the block and make it :func:`current`.
 
-    Records the repository state and ``inputs`` first. The run closes with the
+    Records the repository state, the machine (``hostname``, ``threads``) and ``inputs``
+    first -- a worker's runs pulled into the host's runs directory are told apart by the
+    hostname (story 014). The run closes with the
     status of the block -- ``ok``, ``error`` (the exception is recorded and
     re-raised) or ``interrupted`` (Ctrl+C) -- and writes the manifest and report.
     """
     recorder = Run(runs_dir / new_run_id(), command=command, argv=argv, disk=disk)
     token = _CURRENT.set(recorder)
     recorder.input("repository", repo_state())
+    recorder.input("hostname", socket.gethostname())
+    recorder.input("threads", os.cpu_count() or 1)
     for name, value in (inputs or {}).items():
         recorder.input(name, value)
     try:
@@ -362,7 +367,10 @@ def read_events(path: Path) -> list[dict[str, Any]]:
 
 
 def build_manifest(events: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
-    """The run's summary: inputs, steps with timings, artifacts, metrics. Pure."""
+    """The run's summary: inputs, steps with timings, artifacts, metrics. Pure.
+
+    ``hostname`` is the machine that ran it, ``None`` for a run recorded before it was.
+    """
     manifest: dict[str, Any] = {
         "run": None,
         "command": None,
@@ -438,6 +446,7 @@ def build_manifest(events: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         elif kind == "attachment":
             manifest["attachments"].append(event.get("path"))
     manifest["commands"]["duration_s"] = round(manifest["commands"]["duration_s"], 3)
+    manifest["hostname"] = manifest["inputs"].get("hostname")
     # a step that started and never ended: the run died inside it
     for path, begun in starts.items():
         manifest["steps"].append({"step": path, "started": begun.get("ts"), "status": "unfinished"})

@@ -2,6 +2,8 @@
 
 import datetime
 import json
+import os
+import socket
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -145,7 +147,12 @@ def test_run_makes_itself_current_and_closes_with_the_blocks_status(
     assert audit.current() is not r
     manifest = json.loads((r.path / "manifest.json").read_text())
     assert manifest["status"] == "ok"
-    assert manifest["inputs"] == {"repository": {"commit": "abc", "dirty": False}, "flavor": "kde"}
+    assert manifest["inputs"] == {
+        "repository": {"commit": "abc", "dirty": False},
+        "hostname": socket.gethostname(),
+        "threads": os.cpu_count() or 1,
+        "flavor": "kde",
+    }
 
     with pytest.raises(ValueError), audit.run(tmp_path, command="x", argv=[]) as failed:
         raise ValueError("nope")

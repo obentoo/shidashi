@@ -6,6 +6,8 @@ paired worker -- makes each image. This part is pure, a function of data only:
 - :class:`Node`, :class:`ImageSpec`, :class:`Estimate`, :class:`Plan`,
   :class:`BuildOptions`, :class:`Outcome`, :class:`WorkerJob` -- the models;
 - :func:`free_threads` and :func:`with_history` -- what a node has to offer (R2.2, R2.4);
+- :func:`load_history` -- each node's measured costs, read from the audit runs the
+  pipeline already writes (R2.1, R2.2, R2.6, R2.7) -- the one part here that reads files;
 - :func:`estimate` -- an image's cost on a node, from its history, its package count or
   the 1.7 s default (R2.1-R2.5);
 - :func:`plan` -- the assignment with the smallest makespan, deterministic on ties
@@ -19,6 +21,9 @@ The library raises, it does not log -- the command reports.
 
 import dataclasses
 import itertools
+import json
+import statistics
+import warnings
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -150,6 +155,192 @@ class CostHistory(Protocol):
     def sec_per_pkg(self) -> float | None: ...
 
     def run_ids(self) -> list[str]: ...
+
+
+@dataclass(frozen=True)
+class History:
+    """One node's measured costs (see :func:`load_history`); every duration is whole-node."""
+
+    durations: dict[str, float] = field(default_factory=dict)
+    trunk_durations: dict[str, float] = field(default_factory=dict)
+    package_counts: dict[str, int] = field(default_factory=dict)
+    rate: float | None = None
+    used: tuple[str, ...] = ()
+
+    def duration(self, image_key: str) -> float | None:
+        return self.durations.get(image_key)
+
+    def trunk_duration(self, trunk_key: str) -> float | None:
+        return self.trunk_durations.get(trunk_key)
+
+    def packages(self, image_key: str) -> int | None:
+        return self.package_counts.get(image_key)
+
+    def sec_per_pkg(self) -> float | None:
+        return self.rate
+
+    def run_ids(self) -> list[str]:
+        return list(self.used)
+
+
+@dataclass(frozen=True)
+class _Run:
+    """What :func:`load_history` keeps of one successful assemble run."""
+
+    run_id: str
+    started: str
+    image_key: str
+    seconds: float
+    trunk: tuple[str, float] | None
+    install_seconds: float | None
+    packages: int | None
+    restored_own: bool
+    restored_any: bool
+
+
+def _image_key(argv: Sequence[str]) -> str | None:
+    """``<arch>-<image>-<init>`` from an assemble argv, wherever it starts (a child's: ``-c``)."""
+    args = list(argv)
+    if "assemble" not in args:
+        return None
+    at = args.index("assemble")
+    target = args[at + 1 : at + 4]
+    if len(target) < 3 or any(a.startswith("-") for a in target):
+        return None
+    return "-".join(target)
+
+
+def _jobs(argv: Sequence[str]) -> int | None:
+    args = list(argv)
+    for n, arg in enumerate(args):
+        value = None
+        if arg == "--jobs" and n + 1 < len(args):
+            value = args[n + 1]
+        elif arg.startswith("--jobs="):
+            value = arg.removeprefix("--jobs=")
+        if value is not None:
+            try:
+                return int(value)
+            except ValueError:
+                return None
+    return None
+
+
+def _share(argv: Sequence[str], threads: object) -> float:
+    """The share of the node's threads the run had: ``jobs / threads``, 1 when unknown (R2.7)."""
+    jobs = _jobs(argv)
+    if jobs is None or not isinstance(threads, int) or threads <= 0 or jobs <= 0:
+        return 1.0
+    return min(1.0, jobs / threads)
+
+
+def _read_run(run_dir: Path, node: str) -> _Run | None:
+    """The run in ``run_dir`` when it is an all-ok assemble that ``node`` made, else None.
+
+    Raises ``OSError`` or ``ValueError`` when its manifest cannot be read.
+    """
+    manifest_path = run_dir / "manifest.json"
+    if not manifest_path.is_file():
+        return None  # still running, or killed: no manifest yet
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if not isinstance(manifest, dict):
+        raise ValueError("the manifest is not an object")
+    inputs = manifest.get("inputs") or {}
+    hostname = manifest.get("hostname") or inputs.get("hostname")
+    if manifest.get("command") != "assemble" or hostname != node:
+        return None
+    steps = manifest.get("steps") or []
+    if manifest.get("status") != "ok" or not steps:
+        return None
+    if any(step.get("status") != "ok" for step in steps):
+        return None
+    argv = manifest.get("argv") or []
+    key = _image_key(argv)
+    if key is None:
+        return None
+    share = _share(argv, inputs.get("threads"))
+    top = [step for step in steps if "/" not in str(step.get("step"))]
+    seconds = 0.0
+    trunk: tuple[str, float] | None = None
+    install: float | None = None
+    for step in top:
+        name = str(step.get("step"))
+        took = float(step.get("duration_s") or 0.0)
+        if name == "trunk":
+            if isinstance(step.get("built"), str):
+                trunk = (step["built"], took * share)
+        elif not name.startswith("boot-test"):  # the boot test is not the image's cost (R2.6)
+            seconds += took
+        if name == "install":
+            install = took
+    packages = None
+    with_packages = run_dir / "packages.json"
+    if with_packages.is_file():
+        listed = json.loads(with_packages.read_text(encoding="utf-8"))
+        packages = len(listed) if isinstance(listed, list) else None
+    return _Run(
+        run_id=str(manifest.get("run") or run_dir.name),
+        started=str(manifest.get("started") or ""),
+        image_key=key,
+        seconds=seconds * share,
+        trunk=trunk,
+        install_seconds=None if install is None else install * share,
+        packages=packages,
+        # a restore anywhere but the trunk is the image's own install or packages checkpoint
+        restored_own=any("restored" in s for s in steps if s.get("step") != "trunk"),
+        restored_any=any("restored" in s for s in steps),
+    )
+
+
+def load_history(runs_dir: Path, *, node: str) -> History:
+    """``node``'s measured costs, from the assemble runs it recorded in ``runs_dir``.
+
+    Per image, the latest all-ok run that restored none of its own checkpoints gives the
+    duration (R2.1) and the package count; a ``trunk`` step that built its trunk gives the
+    trunk's duration (R2.6); the node's seconds per package is the median over the runs
+    that restored nothing at all (R2.2). Durations are scaled to the whole node by the
+    run's ``jobs / threads`` (R2.7). A run whose manifest cannot be read is skipped with
+    one warning naming it; a run without a manifest (running or killed) is skipped.
+    """
+    runs: list[_Run] = []
+    if runs_dir.is_dir():
+        for run_dir in sorted(p for p in runs_dir.iterdir() if p.is_dir()):
+            try:
+                run = _read_run(run_dir, node)
+            except (OSError, ValueError, TypeError, AttributeError) as exc:
+                warnings.warn(f"skipping unreadable run {run_dir.name}: {exc}", stacklevel=2)
+                continue
+            if run is not None:
+                runs.append(run)
+    runs.sort(key=lambda r: (r.started, r.run_id))
+    durations: dict[str, float] = {}
+    counts: dict[str, int] = {}
+    trunks: dict[str, float] = {}
+    used: set[str] = set()
+    for run in runs:  # oldest first: a later run overwrites
+        if not run.restored_own and run.seconds > 0:
+            durations[run.image_key] = run.seconds
+            if run.packages is not None:
+                counts[run.image_key] = run.packages
+            used.add(run.run_id)
+        if run.trunk is not None:
+            trunks[run.trunk[0]] = run.trunk[1]
+            used.add(run.run_id)
+    rates = [
+        run.install_seconds / run.packages
+        for run in runs
+        if not run.restored_any and run.install_seconds and run.packages
+    ]
+    used |= {
+        run.run_id for run in runs if not run.restored_any and run.install_seconds and run.packages
+    }
+    return History(
+        durations=durations,
+        trunk_durations=trunks,
+        package_counts=counts,
+        rate=statistics.median(rates) if rates else None,
+        used=tuple(sorted(used)),
+    )
 
 
 def free_threads(node: Node) -> float:
