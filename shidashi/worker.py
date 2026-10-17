@@ -1019,8 +1019,6 @@ def pull(
     (:func:`ownership.pulling`): ``worker unlock`` without --force refuses while it
     runs, and a second pull of the arch raises :class:`ownership.PullRunning`.
     """
-    if owned is None:
-        owned = arch is not None and owns_cache(remote.name, arch)
     if owner is None or arch is None:
         return _pull_unmarked(
             remote,
@@ -1054,11 +1052,11 @@ def _pull_unmarked(
     init: str = "systemd",
     owner: ownership.Owner | None = None,
     bwlimit: int | None = None,
-    owned: bool = False,
+    owned: bool | None = None,
 ) -> PullResult:
     """Bring a job's results back from the worker; never deletes on the host.
 
-    With ``owned`` (story 028) the worker keeps ``arch``'s cache: only the job's log,
+    With ``owned`` (story 028; read from the registry when not given) the worker keeps ``arch``'s cache: only the job's log,
     rc, runs and ISOs come, never its binpkgs, fork points, distfiles or ccache, and
     a pull with no ``job`` has nothing to bring (``ValueError``).
 
@@ -1087,6 +1085,8 @@ def _pull_unmarked(
         raise ValueError("a pull names a job, an arch or both")
     if arch is not None:
         _require_arch(arch)
+    if owned is None:
+        owned = arch is not None and owns_cache(remote.name, arch)
     if owned and job is None:
         raise ValueError(
             f"{arch}'s cache stays on {remote.name}: a pull without a job has nothing to bring back"
