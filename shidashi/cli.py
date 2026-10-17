@@ -1088,6 +1088,52 @@ def _terminated(signum: int, frame: object) -> None:
     raise SystemExit(128 + signum)
 
 
+def _stopped(signum: int, frame: object) -> None:
+    """SIGTERM or SIGHUP as an exit that unwinds, like :func:`_terminated`: every
+    ``finally`` still runs and the audit run records its end. Fires once: both signals
+    are ignored from here on, so a second one cannot cut the unwinding short."""
+    del frame
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    signal.signal(signal.SIGHUP, signal.SIG_IGN)
+    raise SystemExit(128 + signum)
+
+
+@contextlib.contextmanager
+def _unwinding_on_stop(*, keep_ignored: bool = False) -> Generator[None]:
+    """The block with SIGTERM and SIGHUP routed to :func:`_stopped`, the previous
+    handlers restored on the way out. Handlers install on the main thread only.
+
+    ``keep_ignored``: a signal ignored on purpose (``nohup``) stays ignored, as
+    :func:`parallel.run_children` leaves it."""
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+    wanted = [
+        sig
+        for sig in (signal.SIGTERM, signal.SIGHUP)
+        if not (keep_ignored and signal.getsignal(sig) is signal.SIG_IGN)
+    ]
+    previous = {sig: signal.signal(sig, _stopped) for sig in wanted}
+    try:
+        yield
+    finally:
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
+
+
+def _stop_under_way() -> None:
+    """Ignore SIGTERM and SIGHUP from here on: a stop is being reported.
+
+    A hangup is rarely one signal -- ``sudo`` relays the terminal's SIGHUP, then the
+    hung-up pty sends its own (2026-10-17). :func:`parallel.run_children` caught the
+    first and restored the previous handler as it returned; the next one must not end
+    the build before its audit run records what stopped and how to resume it (R4.10).
+    The caller's :func:`_unwinding_on_stop` restores the handlers on the way out."""
+    if threading.current_thread() is threading.main_thread():
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        signal.signal(signal.SIGHUP, signal.SIG_IGN)
+
+
 @contextlib.contextmanager
 def _child_result(
     path: Path | None, image: str, *, status_file: Path | None = None
@@ -1353,6 +1399,8 @@ def assemble(
             ToolboxError,
             CheckpointError,
             vm.VmError,
+            # an artifact not made, a corrupt SHA256SUMS refused (story 014 R4.12)
+            publish.PublishError,
             # a full disk, a read-only scratch: the message names the path
             OSError,
         ) as err:
@@ -1488,6 +1536,7 @@ def _run_image_children(
         ):
             results = parallel.run_children(argvs, logs=logs)
     except parallel.Interrupted as err:
+        _stop_under_way()  # before the first write to a terminal that may be gone
         ended = _as_ended(err.results, resultless)
         _echo_ended(ended)
         try:
@@ -1583,6 +1632,8 @@ def _build_errors() -> Generator[None]:
         CheckpointError,
         # a serial boot test that could not run (VmRunnerError is one): no verdict
         vm.VmError,
+        # an artifact not made, a corrupt SHA256SUMS refused (story 014 R4.12)
+        publish.PublishError,
         # a full disk, a read-only scratch: the message names the path
         OSError,
     ) as err:
@@ -1710,20 +1761,53 @@ def _refuse_dirty_tree(plan: schedule.Plan, host: str, *, allow_dirty: bool) -> 
     raise typer.Exit(1)
 
 
+def _resume_commands(arch: str, job: schedule.WorkerJob) -> tuple[str, str]:
+    """The two commands that resume a worker job a signal left running: follow its log,
+    then pull its results (R4.7). Run as the user who paired the worker -- no ``sudo``."""
+    return (
+        f"shidashi worker logs {job.worker} {job.job} -f",
+        f"shidashi worker sync pull {job.worker} --arch {arch} --job {job.job}",
+    )
+
+
 def _resume_lines(arch: str, jobs: Sequence[schedule.WorkerJob]) -> list[str]:
     """For each worker job a signal left running: how to follow it and pull its results
-    (R4.7). Run as the user who paired the worker -- no ``sudo``."""
+    (R4.7), as :func:`_resume_commands` says."""
     lines = []
     for job in jobs:
-        lines.append(
-            f"{job.worker}  job {job.job} keeps running; follow it: "
-            f"shidashi worker logs {job.worker} {job.job} -f"
-        )
-        lines.append(
-            f"{job.worker}  then pull its results: "
-            f"shidashi worker sync pull {job.worker} --arch {arch} --job {job.job}"
-        )
+        follow, pull = _resume_commands(arch, job)
+        lines.append(f"{job.worker}  job {job.job} keeps running; follow it: {follow}")
+        lines.append(f"{job.worker}  then pull its results: {pull}")
     return lines
+
+
+def _stopped_images(err: schedule.Interrupted) -> list[str]:
+    """The images the signal stopped -- not those that had ended on their own."""
+    return [o.image for o in err.outcomes if o.error == "interrupted"]
+
+
+def _record_interrupted(trail: audit.Recorder, arch: str, err: schedule.Interrupted) -> None:
+    """The ``interrupted`` step of the build's run (R4.10): the signal, the stopped
+    images and each worker job's resume commands. Written before anything is printed:
+    after a hangup the run is all that keeps them. A trail it cannot write (a full disk)
+    is said, never raised in place of the interrupt."""
+    jobs = []
+    for job in err.jobs:
+        follow, pull = _resume_commands(arch, job)
+        jobs.append({"worker": job.worker, "job": job.job, "follow": follow, "pull": pull})
+    try:
+        name = signal.Signals(err.signum).name
+    except ValueError:
+        name = str(err.signum)
+    try:
+        with trail.step("interrupted") as step:
+            step.add(signal=name, signum=err.signum, stopped=_stopped_images(err), jobs=jobs)
+    except OSError as record_err:
+        with _terminal_may_be_gone(sys.stderr):
+            _err_console.print(
+                f"[bold red]error:[/bold red] recording the interrupt: {escape(str(record_err))}",
+                soft_wrap=True,
+            )
 
 
 def _echo_interrupted(plan: schedule.Plan, arch: str, err: schedule.Interrupted) -> None:
@@ -1731,7 +1815,7 @@ def _echo_interrupted(plan: schedule.Plan, arch: str, err: schedule.Interrupted)
     running, and which images were stopped -- their checkpoints kept."""
     _echo_summary(schedule.render_report(plan, err.outcomes)[1])
     _echo_summary(_resume_lines(arch, err.jobs))
-    stopped = [o.image for o in err.outcomes if o.error == "interrupted"]
+    stopped = _stopped_images(err)
     with _terminal_may_be_gone(sys.stderr):
         _err_console.print(
             "[bold red]interrupted:[/bold red] stopped "
@@ -1834,7 +1918,9 @@ def _build_planned(
     host = next((node.name for node in nodes if node.kind == "host"), socket.gethostname())
 
     summary: list[str] = []
-    with _build_errors():
+    # a stop outside run_children unwinds (the run records its end) instead of killing
+    # the build; a nohup'd SIGHUP stays ignored (R4.10)
+    with _unwinding_on_stop(keep_ignored=True), _build_errors():
         try:
             with _build_run(
                 options,
@@ -1854,17 +1940,23 @@ def _build_planned(
                     )
                     raise typer.Exit(1)
                 if not plan_only:
-                    summary = _execute_plan(
-                        trail,
-                        plan,
-                        specs,
-                        estimates,
-                        options,
-                        recipes,
-                        pkgdir,
-                        factory_targets if not skip_factory else [],
-                        host=host,
-                    )
+                    try:
+                        summary = _execute_plan(
+                            trail,
+                            plan,
+                            specs,
+                            estimates,
+                            options,
+                            recipes,
+                            pkgdir,
+                            factory_targets if not skip_factory else [],
+                            host=host,
+                        )
+                    except schedule.Interrupted as err:
+                        _stop_under_way()
+                        # in the run, before any write: the terminal may be gone (R4.10)
+                        _record_interrupted(trail, options.arch, err)
+                        raise
         except schedule.Interrupted as err:
             _echo_interrupted(plan, options.arch, err)
             # 128 + the signal: 130 for Ctrl+C (SIGINT), 143 for SIGTERM, 129 for SIGHUP
@@ -3592,7 +3684,12 @@ def worker_job(
     try:
         worker_mod.validate_job_name(job)  # before any contact (R3.11)
         entry = _paired(worker)
-        with _worker_audit("worker-job", worker=worker, job=job, args=list(args)):
+        # a stop (build's SIGTERM, a closed terminal's SIGHUP) ends the audit run with
+        # 128 + signum and sends nothing: the job keeps running on the worker (R4.11)
+        with (
+            _unwinding_on_stop(),
+            _worker_audit("worker-job", worker=worker, job=job, args=list(args)),
+        ):
             result, _entry = _on_worker(
                 entry,
                 address,

@@ -585,13 +585,20 @@ def _remote(entry: workers.WorkerEntry, address: str, workers_dir: Path) -> remo
     )
 
 
-def _probe(entry: workers.WorkerEntry, workers_dir: Path, timeout: float) -> worker.WorkerStatus:
+def _probe(
+    entry: workers.WorkerEntry,
+    workers_dir: Path,
+    timeout: float,
+    first: dict[str, str] | None = None,
+) -> worker.WorkerStatus:
     """Story 010's status of ``entry``, wherever it is now -- as ``cli._on_worker`` finds it.
 
     The recorded address, else the one the worker answers from over mDNS. When the
     RECORDED address does not answer, the worker is looked up by name once and probed
-    once more there; a changed host key is never retried. Raises as ``worker.status``
-    and :func:`remote.resolve_address` do.
+    once more there; a changed host key is never retried. The recorded address's failure
+    goes into ``first`` (keyed by the worker's name) before the retry, so a deadline that
+    cuts the retry still names it, and a failed retry carries both reasons (R3.8). Raises
+    as ``worker.status`` and :func:`remote.resolve_address` do.
     """
     recorded = entry.address is not None
     where = remote.resolve_address(entry)
@@ -605,12 +612,31 @@ def _probe(entry: workers.WorkerEntry, workers_dir: Path, timeout: float) -> wor
         if not recorded or answer.reachable is True:
             return answer
         failure = answer.reason or "no answer"
+    failure = " ".join(failure.split())
+    if first is not None:
+        first[entry.name] = failure
     try:
         where = remote.resolve_address(entry.model_copy(update={"address": None}))
-    except remote.RemoteUnreachable as lookup:
-        reason = f"{' '.join(failure.split())}; {lookup}"
-        raise remote.RemoteUnreachable(entry.name, None, reason) from lookup
-    return worker.status(_remote(entry, where, workers_dir), timeout=timeout)
+        answer = worker.status(_remote(entry, where, workers_dir), timeout=timeout)
+    except remote.RemoteUnreachable as retry:
+        raise remote.RemoteUnreachable(entry.name, None, f"{failure}; {retry}") from retry
+    if answer.reachable is not True:
+        return dataclasses.replace(answer, reason=f"{failure}; {answer.reason or 'no answer'}")
+    return answer
+
+
+#: What :func:`remote.resolve_address` tells the ``worker`` commands to do, which
+#: ``build`` cannot: it takes no ``--address`` (R3.7).
+_WORKER_ADDRESS_FIX = "pass --address ADDR"
+
+
+def _build_fix(name: str, reason: str) -> str:
+    """``reason`` with the address fix of the ``worker`` commands replaced by fixes
+    ``shidashi build`` accepts (R3.7)."""
+    fix = (
+        f"build with --local, or reach it once with `shidashi worker status {name} --address ADDR`"
+    )
+    return reason.replace(_WORKER_ADDRESS_FIX, fix)
 
 
 def _worker_node(name: str, status: worker.WorkerStatus) -> Node:
@@ -649,15 +675,16 @@ def _workers(workers_dir: Path, timeout: float) -> list[Node]:
     except (workers.RegistryError, OSError) as err:
         return [_unreachable(REGISTRY_NODE, f"cannot read {registry}: {err}")]
     found: dict[str, Node] = {}
+    first: dict[str, str] = {}  # a recorded address's failure, while its retry runs
     lock = threading.Lock()
 
     def probe(entry: workers.WorkerEntry) -> None:
         try:
-            node = _worker_node(entry.name, _probe(entry, workers_dir, timeout))
+            node = _worker_node(entry.name, _probe(entry, workers_dir, timeout, first))
         except (AttributeError, TypeError, ValueError) as err:
             node = _unreachable(entry.name, f"malformed status: {err}")
         except Exception as err:  # RemoteUnreachable, HostKeyMismatch, UnknownFlag, OSError
-            node = _unreachable(entry.name, str(err) or type(err).__name__)
+            node = _unreachable(entry.name, _build_fix(entry.name, str(err)) or type(err).__name__)
         with lock:
             found[entry.name] = node
 
@@ -672,7 +699,10 @@ def _workers(workers_dir: Path, timeout: float) -> list[Node]:
         thread.join(max(0.0, deadline - time.monotonic()))
     with lock:  # a probe still running is left behind (daemon): its answer is too late
         late = f"timed out: no answer within {timeout:g} s"
-        return [found.get(name) or _unreachable(name, late) for name in sorted(entries)]
+        return [
+            found.get(name) or _unreachable(name, "; ".join(filter(None, (first.get(name), late))))
+            for name in sorted(entries)
+        ]
 
 
 def discover(*, local: bool, timeout: float = 10.0, workers_dir: Path | None = None) -> list[Node]:
@@ -1958,7 +1988,8 @@ def _collect_workers(
     if mover.sums:
         try:
             publish.update_sha256sums(options.output_dir, mover.sums)
-        except (OSError, locks.LockError, locks.LockBusy) as err:
+        # PublishError: a corrupt SHA256SUMS, refused and left as it was (R4.12)
+        except (OSError, publish.PublishError, locks.LockError, locks.LockBusy) as err:
             sums_error = f"merging SHA256SUMS of {options.output_dir}: {err}"
             outcomes = {
                 key: dataclasses.replace(got, ok=False, error=sums_error) if got.ok else got

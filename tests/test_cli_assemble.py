@@ -16,7 +16,7 @@ from typing import Any
 import pytest
 from typer.testing import CliRunner
 
-from shidashi import cli
+from shidashi import cli, publish
 from shidashi.assembler import AssemblerError
 from shidashi.checkpoint import CheckpointError
 from shidashi.cli import app
@@ -213,6 +213,8 @@ def test_assemble_binhost_default_is_per_arch_and_generation(
         (ToolboxError("no toolbox fork point for v3-systemd"), "toolbox fork point"),
         (CheckpointError("btrfs subvolume snapshot failed: No space left"), "No space left"),
         (OSError(28, "No space left on device", "/var/tmp/shidashi/assemble"), "/var/tmp/shidashi"),
+        # story 014 R4.12: a corrupt SHA256SUMS fails the image, named, with no traceback
+        (publish.CorruptSums(Path("/out/SHA256SUMS"), 3, "bad line"), "/out/SHA256SUMS line 3"),
     ],
 )
 def test_assemble_known_errors_exit1(

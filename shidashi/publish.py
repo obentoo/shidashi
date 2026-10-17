@@ -19,6 +19,7 @@ import datetime
 import gzip
 import hashlib
 import os
+import re
 import shutil
 import subprocess
 from collections.abc import Iterable, Mapping, Sequence
@@ -34,6 +35,22 @@ if TYPE_CHECKING:
 
 class PublishError(Exception):
     """An artifact could not be made."""
+
+
+class CorruptSums(PublishError):
+    """``path`` (a SHA256SUMS) is not UTF-8 text, or its line ``line_no`` (from 1) is
+    not ``<64 hex digits>  <file name>``: it is refused, never rewritten (story 014
+    R4.12)."""
+
+    def __init__(self, path: Path, line_no: int, reason: str) -> None:
+        self.path = path
+        self.line_no = line_no
+        self.reason = reason
+        super().__init__(f"{path} line {line_no}: {reason}; left unchanged")
+
+
+#: One SHA256SUMS line as ``sha256sum`` writes it for a file of this directory.
+_SUMS_LINE_RE = re.compile(r"[0-9a-f]{64}  [^/\n]+")
 
 
 def release_name(recipe: ResolvedRecipe, when: datetime.datetime) -> str:
@@ -70,19 +87,40 @@ def write_digests(iso: Path) -> tuple[Path, str]:
     return path, sha256
 
 
+def _read_sums(path: Path) -> dict[str, str]:
+    """``path`` (a SHA256SUMS) as file name -> digest; empty when it is missing.
+    Raises :class:`CorruptSums` when it is not UTF-8 or a non-empty line is not
+    ``<64 hex digits>  <file name>``. I/O."""
+    try:
+        raw = path.read_bytes()
+    except FileNotFoundError:
+        return {}
+    try:
+        text = raw.decode("utf-8", errors="strict")
+    except UnicodeDecodeError as err:
+        line_no = raw.count(b"\n", 0, err.start) + 1
+        raise CorruptSums(path, line_no, f"not UTF-8 text ({err.reason})") from err
+    lines: dict[str, str] = {}
+    for line_no, line in enumerate(text.split("\n"), start=1):
+        if not line:
+            continue
+        if not _SUMS_LINE_RE.fullmatch(line):
+            raise CorruptSums(path, line_no, "not '<64 lowercase hex digits>  <file name>'")
+        digest, _, name = line.partition("  ")
+        lines[name] = digest
+    return lines
+
+
 def update_sha256sums(directory: Path, sums: Mapping[str, str]) -> Path:
     """Set the lines of ``sums`` (file name -> SHA256) in ``directory/SHA256SUMS``,
     keeping the other files' lines. Under ``directory/.SHA256SUMS.lock``: two
     publishers into one directory would each read the old file and write theirs,
-    losing the other's line (story 006 R3.7). I/O."""
+    losing the other's line (story 006 R3.7). A missing file is created; one that
+    cannot be read back raises :class:`CorruptSums` before any temporary file exists,
+    and stays byte-for-byte as it was (story 014 R4.12). I/O."""
     path = directory / "SHA256SUMS"
     with locks.hold(directory / ".SHA256SUMS.lock", what=f"SHA256SUMS of {directory}"):
-        lines: dict[str, str] = {}
-        if path.is_file():
-            for line in path.read_text(encoding="utf-8").splitlines():
-                digest, _, name = line.partition("  ")
-                if name:
-                    lines[name] = digest
+        lines = _read_sums(path)
         lines.update(sums)
         tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
         try:

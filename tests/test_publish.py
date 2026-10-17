@@ -38,10 +38,12 @@ def test_digests_are_gentoos_format_and_match_the_tools(tmp_path: Path) -> None:
 
 
 def test_sha256sums_update_their_own_lines_and_keep_the_others(tmp_path: Path) -> None:
-    (tmp_path / "SHA256SUMS").write_text("aaa  other.iso\nbbb  b.iso\n")
-    publish.update_sha256sums(tmp_path, {"b.iso": "ccc", "b.iso.packages": "ddd"})
+    # 64-hex digests: a wrong-shaped line is refused (story 014 R4.12)
+    aaa, bbb, ccc, ddd = (hashlib.sha256(s.encode()).hexdigest() for s in "abcd")
+    (tmp_path / "SHA256SUMS").write_text(f"{aaa}  other.iso\n{bbb}  b.iso\n")
+    publish.update_sha256sums(tmp_path, {"b.iso": ccc, "b.iso.packages": ddd})
     assert (tmp_path / "SHA256SUMS").read_text() == (
-        "ccc  b.iso\nddd  b.iso.packages\naaa  other.iso\n"
+        f"{ccc}  b.iso\n{ddd}  b.iso.packages\n{aaa}  other.iso\n"
     )
 
 

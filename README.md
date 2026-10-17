@@ -496,6 +496,19 @@ in the output directory beside the host's, owned like it, with their `SHA256SUMS
 computed on the host. Ctrl+C prints, per worker, the `worker logs … -f` and
 `worker sync pull … --job …` commands that follow and bring back a job left running.
 
+A distributed build takes hours, so run it detached from the terminal — closing the terminal
+stops the build (exit 129). Refresh sudo first, so the detached command does not wait for a
+password:
+
+```sh
+sudo -v && sudo nohup shidashi build v3 systemd > /tmp/build.log 2>&1 &
+# or inside tmux: tmux new -s build 'sudo shidashi build v3 systemd'
+```
+
+If the terminal hangs up anyway, the workers keep building: the build's audit run records an
+`interrupted` step with each worker job's commands, and its results come back with
+`shidashi worker sync pull <worker> --arch <arch> --job <job>`.
+
 ## Contributing
 
 Issues and pull requests are welcome. Before pushing, run the checks above; the CI job can be
