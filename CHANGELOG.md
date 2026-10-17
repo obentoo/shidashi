@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **An arch's cache can stay on its worker.** Every factory job used to copy the arch's
+  binpkgs and fork points back to the host, about 90 GB for v3, so the host held a full copy
+  even when only the worker built that arch. `shidashi worker cache-owner bentoo-lab --arch v3`
+  now keeps v3's cache on bentoo-lab: a push sends only the pinned inputs and a job's pull
+  brings back only its log, runs and ISOs. Host `factory`, `assemble` and `build --local` of v3
+  are refused, naming the worker, and `build` sends v3's factory and every image to it.
+  `--off` undoes it. Nothing is deleted on either side.
 - **The gnome image ships GNOME: `gnome-light` and GDM.** Its kit was a curation
   placeholder with no atoms, so the gnome ISO booted to a tty with the desktop
   trunk but no shell and no display manager. `kits/desktops/gnome` now installs

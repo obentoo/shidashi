@@ -448,6 +448,27 @@ shidashi worker unlock v3 --force
 `shidashi worker run bentoo-lab -- CMD…` runs any command there, and
 `shidashi worker poweroff bentoo-lab` turns it off (refused while a job runs).
 
+#### An arch whose cache stays on the worker
+
+By default every job brings an arch's binpkgs and fork points home, so the host keeps a full
+copy (about 90 GB for v3). To keep that cache on the worker instead:
+
+```sh
+shidashi worker cache-owner bentoo-lab --arch v3        # v3's cache now stays on bentoo-lab
+shidashi worker cache-owner bentoo-lab                  # which archs bentoo-lab owns
+shidashi worker cache-owner bentoo-lab --arch v3 --off  # back under the host
+```
+
+For an owned arch, a push sends only the pinned inputs (trees, repositories, stage3), and a
+job's pull brings back only its log, exit code, audit runs and ISOs. Binpkgs, fork points,
+distfiles and ccache stay on the worker. On the host, `factory`, `assemble` and
+`build --local` of that arch are refused, naming the worker and the `shidashi worker job` to
+run instead. `build` sends the factory and every image to the owner, and when the owner is
+offline nothing is built. Ownership cannot change while the arch's owner lock is held.
+
+Nothing is deleted on either side. The host's earlier copy stays until you remove it:
+`/var/cache/shidashi/binpkgs/v3` and `/var/cache/shidashi/fork-points/v3-*`.
+
 ### Distributing a build
 
 `sudo shidashi build` splits its images between the host and every paired worker that
