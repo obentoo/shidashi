@@ -657,8 +657,22 @@ class _Transfer:
     excludes: tuple[str, ...] = ()
 
 
-def push_plan(arch: str, generation: str) -> list[tuple[str, str]]:
+def owns_cache(worker: str, arch: str) -> bool:
+    """Whether ``worker`` owns ``arch``'s cache in the host's registry (story 028). I/O.
+
+    :class:`workers.RegistryError` propagates: an unreadable registry must not
+    silently turn into "the host owns it".
+    """
+    registry = workers.load_registry(config.workers_dir() / "workers.json")
+    return workers.cache_owner(registry, arch) == worker
+
+
+def push_plan(arch: str, generation: str, *, owned: bool = False) -> list[tuple[str, str]]:
     """``(host path, worker path)`` pairs a push of ``arch`` sends, in order. Pure.
+
+    ``owned`` (story 028): the worker owns ``arch``'s cache, so only the pinned inputs
+    go -- the trees, the repositories and the stage3. The PKGDIR, distfiles, ccache
+    and fork points stay where they are, on the worker.
 
     A directory ends with ``/`` (its content goes into the worker directory); a host
     path whose last component is a glob (the stage3, the fork points) is expanded at
@@ -672,6 +686,9 @@ def push_plan(arch: str, generation: str) -> list[tuple[str, str]]:
         return f"{path}/", f"{WORKER_CACHE}/{path.relative_to(cache)}/"
 
     fork_points = config.fork_points_dir()
+    stage3 = (f"{cache}/stage3-*{generation}*", f"{WORKER_CACHE}/")
+    if owned:
+        return [mirror(cache / "trees"), mirror(cache / "repos"), stage3]
     return [
         mirror(config.pkgdir(arch, generation)),
         mirror(config.distdir()),
@@ -679,7 +696,7 @@ def push_plan(arch: str, generation: str) -> list[tuple[str, str]]:
         mirror(cache / "trees"),
         mirror(cache / "repos"),
         # the stage3 filename carries its snapshot: every init's of this generation
-        (f"{cache}/stage3-*{generation}*", f"{WORKER_CACHE}/"),
+        stage3,
         (
             f"{fork_points}/{arch}-*{generation}*",
             f"{WORKER_CACHE}/{fork_points.relative_to(cache)}/",
@@ -695,6 +712,7 @@ def push(
     bwlimit: int | None,
     gen: str | None = None,
     commit: str | None = None,
+    owned: bool | None = None,
 ) -> int:
     """Send ``arch``'s cache subset and the runtime venv to the worker; return bytes sent.
 
@@ -707,10 +725,13 @@ def push(
     a non-zero exit raises :class:`SyncError` naming the step. ``gen`` is the
     generation to send (a job's, from its commit); without it, the host checkout's.
     ``commit`` is the commit the push ships (a job's); without it, the host
-    checkout's HEAD.
+    checkout's HEAD. ``owned``: the worker owns ``arch``'s cache (story 028) and only
+    the pinned inputs go; without it, read from the registry (:func:`owns_cache`).
     """
     _require_arch(arch)
-    sources = _push_sources(arch, gen or generation(init), commit or "HEAD")
+    if owned is None:
+        owned = owns_cache(remote.name, arch)
+    sources = _push_sources(arch, gen or generation(init), commit or "HEAD", owned=owned)
     plan = [
         _Transfer(
             tuple(host_sources),
@@ -722,7 +743,9 @@ def push(
     return _send(remote, [_runtime_transfer(remote), *plan], bwlimit=bwlimit)
 
 
-def _push_sources(arch: str, generation: str, commit: str) -> list[tuple[list[str], str]]:
+def _push_sources(
+    arch: str, generation: str, commit: str, *, owned: bool = False
+) -> list[tuple[list[str], str]]:
     """``(host sources, worker path)`` of each :func:`push_plan` entry with something
     to send, in order. I/O (filesystem, git).
 
@@ -732,7 +755,7 @@ def _push_sources(arch: str, generation: str, commit: str) -> list[tuple[list[st
     """
     fork_points = f"{config.fork_points_dir()}/"
     planned: list[tuple[list[str], str]] = []
-    for host_path, worker_path in push_plan(arch, generation):
+    for host_path, worker_path in push_plan(arch, generation, owned=owned):
         found = _expand(host_path)
         if found and host_path.startswith(fork_points):
             found = _restorable_fork_points(found, commit=commit, arch=arch)
@@ -851,15 +874,22 @@ def _check_space(dest: str, needed: int, free: int) -> None:
 
 
 def pull_destinations(
-    arch: str | None, *, results: Path, binhost_generation: str | None = None
+    arch: str | None,
+    *,
+    results: Path,
+    binhost_generation: str | None = None,
+    owned: bool = False,
 ) -> list[Path]:
     """The host directories a pull writes. Pure.
 
     Always ``results`` and ``config.runs_dir()``; with an arch also ``results/iso``
     and the shared caches; with ``binhost_generation`` (a pull by the lock holder) also
-    the arch's PKGDIR of that generation and the fork points.
+    the arch's PKGDIR of that generation and the fork points. ``owned`` (story 028):
+    the worker keeps the arch's cache, so only ``results/iso`` is added.
     """
     dests = [results, config.runs_dir()]
+    if arch is not None and owned:
+        return [*dests, results / "iso"]
     if arch is not None:
         dests += [results / "iso", config.distdir(), config.ccache_dir()]
         if binhost_generation is not None:
@@ -978,21 +1008,40 @@ def pull(
     init: str = "systemd",
     owner: ownership.Owner | None = None,
     bwlimit: int | None = None,
+    owned: bool | None = None,
 ) -> PullResult:
     """Bring a job's results back from the worker; never deletes on the host.
 
-    See :func:`_pull_unmarked` for what comes back. A pull as ``owner`` writes the
+    See :func:`_pull_unmarked` for what comes back. ``owned`` (story 028): the
+    worker owns ``arch``'s cache; without it, read from the registry
+    (:func:`owns_cache`). A pull as ``owner`` writes the
     arch's binhost, so it marks itself for that whole time
     (:func:`ownership.pulling`): ``worker unlock`` without --force refuses while it
     runs, and a second pull of the arch raises :class:`ownership.PullRunning`.
     """
+    if owned is None:
+        owned = arch is not None and owns_cache(remote.name, arch)
     if owner is None or arch is None:
         return _pull_unmarked(
-            remote, arch, job, results=results, init=init, owner=owner, bwlimit=bwlimit
+            remote,
+            arch,
+            job,
+            results=results,
+            init=init,
+            owner=owner,
+            bwlimit=bwlimit,
+            owned=owned,
         )
     with ownership.pulling(arch):
         return _pull_unmarked(
-            remote, arch, job, results=results, init=init, owner=owner, bwlimit=bwlimit
+            remote,
+            arch,
+            job,
+            results=results,
+            init=init,
+            owner=owner,
+            bwlimit=bwlimit,
+            owned=owned,
         )
 
 
@@ -1005,8 +1054,13 @@ def _pull_unmarked(
     init: str = "systemd",
     owner: ownership.Owner | None = None,
     bwlimit: int | None = None,
+    owned: bool = False,
 ) -> PullResult:
     """Bring a job's results back from the worker; never deletes on the host.
+
+    With ``owned`` (story 028) the worker keeps ``arch``'s cache: only the job's log,
+    rc, runs and ISOs come, never its binpkgs, fork points, distfiles or ccache, and
+    a pull with no ``job`` has nothing to bring (``ValueError``).
 
     Always ``out/jobs/<job>.log``, ``.rc`` and ``.runs`` into ``results`` and the runs
     listed in ``<job>.runs`` into ``config.runs_dir()``; with an ``arch`` also
@@ -1033,6 +1087,10 @@ def _pull_unmarked(
         raise ValueError("a pull names a job, an arch or both")
     if arch is not None:
         _require_arch(arch)
+    if owned and job is None:
+        raise ValueError(
+            f"{arch}'s cache stays on {remote.name}: a pull without a job has nothing to bring back"
+        )
     gen: str | None = None
     if owner is not None:
         if arch is None:
@@ -1040,15 +1098,21 @@ def _pull_unmarked(
         ownership.require_free(arch, as_owner=owner)
         # the generation the owner's job built, not the one the host pins by now
         gen = owner.generation or generation(init)
-    require_writable(pull_destinations(arch, results=results, binhost_generation=gen))
+    if owned:
+        gen = None  # the binhost and fork points stay on the worker
+    require_writable(pull_destinations(arch, results=results, binhost_generation=gen, owned=owned))
 
     cache = config.cache_dir()
     job_files = [f"{WORK}/out/jobs/{job}{ext}" for ext in (".log", ".rc", ".runs")] if job else []
     iso_dir = f"{WORK}/out/iso/{job}" if job else None
-    caches = [
-        (f"{WORKER_CACHE}/{d.relative_to(cache)}", d)
-        for d in (config.distdir(), config.ccache_dir())
-    ]
+    caches = (
+        []
+        if owned
+        else [
+            (f"{WORKER_CACHE}/{d.relative_to(cache)}", d)
+            for d in (config.distdir(), config.ccache_dir())
+        ]
+    )
     fork_dir = f"{WORKER_CACHE}/{config.fork_points_dir().relative_to(cache)}"
     patterns = list(job_files)
     if arch is not None:
@@ -1069,6 +1133,8 @@ def _pull_unmarked(
     index_ready = False
     if arch is None:
         reason: str | None = "an archless job has no binhost"
+    elif owned:
+        reason = f"{arch}'s cache stays on {remote.name}: nothing of it comes to the host"
     elif worker_pkgdir is None:
         reason = (
             f"the caller does not hold {arch}'s owner lock: "
@@ -1181,6 +1247,8 @@ def job(
     target = _cpu_guard(name, args, entry.cpu_flags)
     arch, init = target if target is not None else (None, "systemd")
     writer = ownership.writes_pkgdir(args)
+    # read once: a registry changed mid-job must not split its push from its pull
+    owned = arch is not None and owns_cache(name, arch)
     if writer and arch is None:
         raise JobRefused(
             f"{args[0]} writes an arch's PKGDIR but names no arch",
@@ -1190,7 +1258,7 @@ def job(
     job_gen = generation_at(repo, commit, init) if arch is not None else None
     binhost_gen = job_gen if writer else None
     problem = _writability_problem(
-        pull_destinations(arch, results=out, binhost_generation=binhost_gen)
+        pull_destinations(arch, results=out, binhost_generation=binhost_gen, owned=owned)
     )
     if problem is not None:
         reason, fix = problem
@@ -1208,6 +1276,7 @@ def job(
         arch=arch,
         init=init,
         writes_pkgdir=writer,
+        owned=owned,
         results=str(out),
     )
     owner = None
@@ -1230,9 +1299,17 @@ def job(
         if owner is not None:
             rec.event("worker.lock", action="acquired", arch=locked, owner=owner.model_dump())
             _clear_stale_job_files(remote, job)
-        with rec.step("worker.push", worker=name, arch=arch) as step:
+        with rec.step("worker.push", worker=name, arch=arch, owned=owned) as step:
             if arch is not None:
-                sent = push(remote, arch, init=init, bwlimit=bwlimit, gen=job_gen, commit=commit)
+                sent = push(
+                    remote,
+                    arch,
+                    init=init,
+                    bwlimit=bwlimit,
+                    gen=job_gen,
+                    commit=commit,
+                    owned=owned,
+                )
             else:
                 sent = _push_runtime(remote, bwlimit=bwlimit)
             step.add(bytes_sent=sent)
@@ -1285,7 +1362,16 @@ def job(
 
     try:
         with rec.step("worker.pull", worker=name, arch=arch) as step:
-            pulled = pull(remote, arch, job, results=out, init=init, owner=owner, bwlimit=bwlimit)
+            pulled = pull(
+                remote,
+                arch,
+                job,
+                results=out,
+                init=init,
+                owner=owner,
+                bwlimit=bwlimit,
+                owned=owned,
+            )
             step.add(bytes_received=pulled.bytes, binhost=pulled.binhost)
     except BaseException:
         _failed_pull(job, locked, resume[1])
