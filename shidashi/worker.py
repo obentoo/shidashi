@@ -1770,17 +1770,35 @@ def _resume_commands(
     return f"shidashi worker logs {name} {job} -f", pull_cmd
 
 
+def _tell(text: str) -> None:
+    """``text`` on stderr, dropped when the terminal is gone.
+
+    These lines are printed while a stop (SIGTERM, SIGHUP) unwinds ``job``. After a
+    hangup a write raises ``EIO`` (a hung-up tty) or ``EPIPE`` (a closed pipe); that
+    ``OSError`` would replace the stop's own exit, so the line is dropped and stderr is
+    pointed at ``/dev/null`` -- the interpreter's flush at exit cannot fail too. Nothing
+    but the write's own ``OSError`` is caught (R4.11)."""
+    try:
+        print(text, file=sys.stderr, flush=True)
+    except OSError:
+        with contextlib.suppress(OSError, ValueError):
+            devnull = os.open(os.devnull, os.O_WRONLY)
+            try:
+                os.dup2(devnull, sys.stderr.fileno())
+            finally:
+                os.close(devnull)
+
+
 def _left_running(
     name: str, job: str, locked: str | None, resume: tuple[str, str], *, why: str | None
 ) -> None:
     """Say the job keeps running on the worker and how to pick it up again."""
     head = f"{why}: " if why else ""
     lock = f"; {locked}'s owner lock stays held by it" if locked else ""
-    print(
+    _tell(
         f"{head}job {job} keeps running on {name}{lock}.\n"
         f"  follow it:              {resume[0]}\n"
-        f"  pull its results after: {resume[1]}",
-        file=sys.stderr,
+        f"  pull its results after: {resume[1]}"
     )
 
 
@@ -1797,7 +1815,7 @@ def _start_unconfirmed(
     if locked:
         lines[0] += f" {locked}'s owner lock stays held by it."
         lines.append(f"  if it did not start, release the lock: shidashi worker unlock {locked}")
-    print("\n".join(lines), file=sys.stderr)
+    _tell("\n".join(lines))
 
 
 def _failed_pull(job: str, locked: str | None, retry: str) -> None:
@@ -1808,7 +1826,7 @@ def _failed_pull(job: str, locked: str | None, retry: str) -> None:
         lines.append(
             f"  or give its binpkgs up and release the lock: shidashi worker unlock {locked}"
         )
-    print("\n".join(lines), file=sys.stderr)
+    _tell("\n".join(lines))
 
 
 def _read_rc(path: Path) -> int:
