@@ -14,7 +14,12 @@ with the missing piece named -- a skip is not a pass. Optional:
 ``SHIDASHI_HOST_ONLY_SECONDS`` (the wall clock of the same four ISOs built with
 ``--local``) turns on the 30%-faster check of the success metric.
 
-    sudo -E SHIDASHI_DISTRIBUTED_WORKER=bentoo-lab \
+The builds it starts see the REAL environment: tests/conftest.py points every test's
+``XDG_DATA_HOME`` and ``SHIDASHI_RUNS`` at temporary directories, which would hide the
+invoking user's worker registry (no worker, no arch ownership: a host factory) and the
+runs the worker's job pulls; :func:`_real_environment` puts back what the suite started with.
+
+    sudo SHIDASHI_DISTRIBUTED_WORKER=bentoo-lab \
         uv run pytest -q tests/test_distributed_release.py -s
 """
 
@@ -34,6 +39,21 @@ IMAGES = ("minimal", "worker", "kde", "gnome")
 WORKER = os.environ.get("SHIDASHI_DISTRIBUTED_WORKER", "")
 SHIDASHI = [sys.executable, "-P", "-c", "from shidashi.cli import app; app()"]
 COMPANIONS = (".DIGESTS", ".contents.gz", ".packages")
+#: What tests/conftest.py redirects per test, as the suite started (read at import time,
+#: before any fixture runs): ``None`` when unset.
+_REAL_ENV = {name: os.environ.get(name) for name in ("XDG_DATA_HOME", "SHIDASHI_RUNS")}
+
+
+@pytest.fixture(autouse=True)
+def _real_environment(
+    _runs_in_tmp: None, _registry_in_tmp: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Undo conftest's redirections (it runs first: this fixture depends on them)."""
+    for name, value in _REAL_ENV.items():
+        if value is None:
+            monkeypatch.delenv(name, raising=False)
+        else:
+            monkeypatch.setenv(name, value)
 
 
 def _missing() -> str | None:
