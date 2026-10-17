@@ -43,6 +43,10 @@ class WorkerEntry(pydantic.BaseModel):
     cpu_flags: tuple[str, ...] = ()
     image: str = ""
     provisioned: bool = False
+    #: The archs whose binpkgs, fork points, distfiles and ccache live only on this
+    #: worker (story 028): the push and pull leave them there, and the host refuses
+    #: to build them. A registry written before the field loads with none.
+    cache_archs: tuple[str, ...] = ()
 
 
 def load_registry(path: Path) -> dict[str, WorkerEntry]:
@@ -62,6 +66,17 @@ def load_registry(path: Path) -> dict[str, WorkerEntry]:
         if entry.name != name:
             raise RegistryError(f"{path}: the entry under {name!r} is named {entry.name!r}")
     return entries
+
+
+def cache_owner(entries: Mapping[str, WorkerEntry], arch: str) -> str | None:
+    """The worker whose ``cache_archs`` names ``arch``; ``None`` when nobody's does. Pure.
+
+    Two workers claiming one arch is a registry error, not a choice to make here.
+    """
+    owners = sorted(name for name, entry in entries.items() if arch in entry.cache_archs)
+    if len(owners) > 1:
+        raise RegistryError(f"{arch} is claimed by more than one worker: {', '.join(owners)}")
+    return owners[0] if owners else None
 
 
 def save_registry(path: Path, entries: Mapping[str, WorkerEntry]) -> None:

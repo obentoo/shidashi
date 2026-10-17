@@ -3389,6 +3389,71 @@ def worker_unlock(
     typer.echo(f"released {arch} (was held by {who})")
 
 
+@worker_app.command("cache-owner")
+def worker_cache_owner(
+    worker: Annotated[str, typer.Argument(help="The paired worker's name.")],
+    arch: Annotated[
+        str | None,
+        typer.Option("--arch", help="The arch whose cache stays on WORKER."),
+    ] = None,
+    off: Annotated[
+        bool,
+        typer.Option("--off", help="Bring ARCH's cache back under the host."),
+    ] = False,
+) -> None:
+    """Keep ARCH's binpkgs, fork points, distfiles and ccache on WORKER only; with
+    --off, under the host again; without --arch, list what WORKER owns. Nothing is
+    copied or deleted on either side."""
+    if off and arch is None:
+        raise typer.BadParameter("--off needs --arch", param_hint="--off")
+    if arch is not None:
+        known = config.available_names("arch")
+        if arch not in known:
+            raise typer.BadParameter(
+                f"unknown arch {arch!r}: expected one of {', '.join(known)}",
+                param_hint="--arch",
+            )
+    path = config.workers_dir() / "workers.json"
+    try:
+        entry = _paired(worker)
+        if arch is None:
+            owned = ", ".join(entry.cache_archs) or "no arch"
+            typer.echo(f"{worker} owns the cache of: {owned}")
+            return
+        registry = workers_mod.load_registry(path)
+        owner = workers_mod.cache_owner(registry, arch)
+        if not off and owner not in (None, worker):
+            raise _worker_error(
+                f"{arch}'s cache is owned by worker {owner}: withdraw it first with "
+                f"shidashi worker cache-owner {owner} --arch {arch} --off"
+            )
+        wanted = (
+            tuple(a for a in entry.cache_archs if a != arch)
+            if off
+            else tuple(dict.fromkeys((*entry.cache_archs, arch)))
+        )
+        if wanted == entry.cache_archs:
+            state = "does not own" if off else "already owns"
+            typer.echo(f"{worker} {state} {arch}'s cache")
+            return
+        # a running job pushes and pulls by the ownership it started with
+        holder = ownership.current(arch)
+        if holder is not None:
+            raise _worker_error(
+                f"{arch}'s owner lock is held by {_holder_text(holder)}: change its cache "
+                "owner once that has ended"
+            )
+        registry[worker] = entry.model_copy(update={"cache_archs": wanted})
+        workers_mod.save_registry(path, registry)
+    except (workers_mod.RegistryError, ownership.LockError, OSError) as err:
+        raise _worker_error(err) from err
+    audit.current().event("worker.cache_owner", worker=worker, arch=arch, owned=not off)
+    if off:
+        typer.echo(f"{arch}'s cache is under the host again (was on {worker})")
+    else:
+        typer.echo(f"{arch}'s cache now stays on {worker}")
+
+
 @worker_app.command("poweroff")
 def worker_poweroff(
     worker: Annotated[str, typer.Argument(help="The paired worker's name.")],
