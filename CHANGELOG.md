@@ -111,7 +111,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   version, so a version bump missed even for unchanged files;
   `CCACHE_BASEDIR="/var/tmp/portage"` makes those paths relative. Each stage's
   `emerge-stage` audit step now records the cache's hits, misses and hit rate
-  for that emerge.
+  for that emerge. Measured on bentoo-lab (v3, 2026-10-17): a second from-source
+  build of the base stage, with gcc rebuilt by the bootstrap, hit 99.6% of 48k
+  compiles (11.6% with an empty cache), and its emerge took 312 min instead of
+  378 (-17%). The wall clock gains less than the hit rate suggests: llvm, gcc and
+  glibc stay outside ccache, and configure and install steps are not cached.
 - **kde, gnome and wm grow from a shared trunk.** Their `desktop` stage is
   identical, so the assemble installs it once, straight from the stage3, keeps it as
   a checkpoint and branches each flavor from it with `--update --deep --newuse`; kde
