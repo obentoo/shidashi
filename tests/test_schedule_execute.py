@@ -302,10 +302,17 @@ def lab(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[Lab]:
     monkeypatch.setenv("SHIDASHI_CACHE", str(tmp_path / "cache"))
     monkeypatch.delenv("SUDO_USER", raising=False)
     monkeypatch.setattr(os, "cpu_count", lambda: 32)
-    monkeypatch.setattr(ownership, "acquire", lambda *a, **_k: state.acquired.append(a) or a[-1])
-    monkeypatch.setattr(
-        vm, "boot_test", lambda iso, **_k: state.booted.append(iso) or {"passed": True}
-    )
+
+    def acquire(*a: Any, **_k: Any) -> Any:
+        state.acquired.append(a)
+        return a[-1]
+
+    def boot_test(iso: Any, **_k: Any) -> dict[str, bool]:
+        state.booted.append(iso)
+        return {"passed": True}
+
+    monkeypatch.setattr(ownership, "acquire", acquire)
+    monkeypatch.setattr(vm, "boot_test", boot_test)
     real_chown = os.chown
 
     def chown(path: Any, uid: int, gid: int, *a: Any, **k: Any) -> None:

@@ -226,7 +226,7 @@ def _build(*args: str) -> Any:
 
 def _build_manifest(root: Path) -> dict[str, Any]:
     for path in sorted((root / "runs").glob("*/manifest.json")):
-        manifest = json.loads(path.read_text())
+        manifest: dict[str, Any] = json.loads(path.read_text())
         if manifest.get("command") == "build":
             return manifest
     raise AssertionError("no build run")
@@ -234,7 +234,9 @@ def _build_manifest(root: Path) -> dict[str, Any]:
 
 def _plan_step(root: Path) -> dict[str, Any]:
     manifest = _build_manifest(root)
-    steps = [s for s in manifest["steps"] if str(s.get("step")).split("/")[-1] == "plan"]
+    steps: list[dict[str, Any]] = [
+        s for s in manifest["steps"] if str(s.get("step")).split("/")[-1] == "plan"
+    ]
     assert steps, [s.get("step") for s in manifest["steps"]]
     return steps[0]
 

@@ -100,7 +100,7 @@ def _then(lab: Lab, after: Any) -> Any:
     inner = _runner(lab)
 
     def run(argvs: dict[str, list[str]], *a: object, **kw: Any) -> list[parallel.ChildResult]:
-        results = inner(argvs, *a, **kw)
+        results: list[parallel.ChildResult] = inner(argvs, *a, **kw)
         after()
         return results
 
