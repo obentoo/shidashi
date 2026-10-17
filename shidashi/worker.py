@@ -1056,9 +1056,10 @@ def _pull_unmarked(
 ) -> PullResult:
     """Bring a job's results back from the worker; never deletes on the host.
 
-    With ``owned`` (story 028; read from the registry when not given) the worker keeps ``arch``'s cache: only the job's log,
-    rc, runs and ISOs come, never its binpkgs, fork points, distfiles or ccache, and
-    a pull with no ``job`` has nothing to bring (``ValueError``).
+    With ``owned`` (story 028; read from the registry when not given) the worker
+    keeps ``arch``'s cache: only the job's log, rc, runs and ISOs come, never its
+    binpkgs, fork points, distfiles or ccache, and a pull with no ``job`` has nothing
+    to bring (``ValueError``).
 
     Always ``out/jobs/<job>.log``, ``.rc`` and ``.runs`` into ``results`` and the runs
     listed in ``<job>.runs`` into ``config.runs_dir()``; with an ``arch`` also

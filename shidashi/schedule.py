@@ -157,6 +157,10 @@ class BuildOptions:
     allow_dirty: bool = False
     serial: bool = False
     verbose: bool = False
+    #: The worker that owns the arch's cache (story 028): every image goes to it.
+    cache_owner: str | None = None
+    #: The owner's build runs the arch's factory too (the host does not have its binhost).
+    owner_factory: bool = False
 
 
 @dataclass(frozen=True)
@@ -878,6 +882,8 @@ def plan(
     images: Sequence[ImageSpec],
     nodes: Sequence[Node],
     estimates: Mapping[tuple[str, str], Estimate],
+    *,
+    owner: str | None = None,
 ) -> Plan:
     """The assignment of ``images`` to ``nodes`` with the smallest makespan.
 
@@ -886,14 +892,30 @@ def plan(
     Exhaustive while ``reachable nodes ** placeable images <= 4096`` (an offline worker or
     an image nobody runs must not push a small search into greedy), greedy above it; ties go to
     fewer trunks installed, then more work on the host, then the lowest assignment
-    (R1.4) -- the result does not depend on the order of ``nodes``.
+    (R1.4) -- the result does not depend on the order of ``nodes``. With ``owner``
+    (story 028) the owner of the arch's cache is the only candidate: when it cannot
+    take the images they stay unplaced naming it, never falling back to another node.
     """
     reachable = sorted((n for n in nodes if n.reachable), key=lambda n: n.name)
     skipped = {n.name: n.note or "unreachable" for n in nodes if not n.reachable}
     candidates = {
-        image.key: [n for n in reachable if image.arch in n.runnable_arches] for image in images
+        image.key: [
+            n
+            for n in reachable
+            if image.arch in n.runnable_arches and (owner is None or n.name == owner)
+        ]
+        for image in images
     }
-    unplaceable = {i.key: f"no node runs {i.arch}" for i in images if not candidates[i.key]}
+    unplaceable = {
+        i.key: (
+            f"{i.arch}'s cache lives on {owner}, which cannot take it now"
+            f" ({skipped.get(owner, 'not paired or not running ' + i.arch)})"
+            if owner is not None
+            else f"no node runs {i.arch}"
+        )
+        for i in images
+        if not candidates[i.key]
+    }
     placeable = sorted((i for i in images if candidates[i.key]), key=lambda i: i.key)
     by_name = {n.name: n for n in reachable}
 
@@ -1151,6 +1173,8 @@ def _worker_argv(
     job_options = ["worker", "job", name, job, "--results", str(results)]
     if options.allow_dirty:
         job_options.append("--allow-dirty")
+    # the owner of the arch's cache builds its binhost itself (story 028)
+    factory_here = options.owner_factory and options.cache_owner == name
     remote_args = [
         "build",
         options.arch,
@@ -1158,7 +1182,7 @@ def _worker_argv(
         "--images",
         ",".join(spec.image for spec in share),
         "--local",
-        "--skip-factory",
+        *(() if factory_here else ("--skip-factory",)),
         *_build_flags(options),
     ]
     return [*drop, sys.executable, *parallel.CHILD_COMMAND, *job_options, "--", *remote_args]

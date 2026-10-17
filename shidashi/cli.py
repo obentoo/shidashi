@@ -195,6 +195,32 @@ def _owner_lock(arch: str, command: str) -> Generator[None]:
             ownership.release(arch, expected=owner)
 
 
+def _cache_owner(arch: str) -> str | None:
+    """The worker owning ``arch``'s cache in the invoking user's registry (story 028);
+    exit 1 when that registry cannot be read."""
+    try:
+        registry_dir = schedule.invoking_user_workers_dir()
+        registry = workers_mod.load_registry(registry_dir / "workers.json")
+        return workers_mod.cache_owner(registry, arch)
+    except (LookupError, workers_mod.RegistryError, OSError) as err:
+        raise _worker_error(err) from err
+
+
+def _refuse_owned_arch(arch: str, command: str) -> None:
+    """Exit 1 when a worker owns ``arch``'s cache (story 028): its binhost and fork
+    points are not on this host, so a host factory, assemble or local build of it
+    would build from nothing. Names the worker and what to run instead. Under sudo
+    the registry read is the invoking user's, never root's (story 014's R6.1)."""
+    owner = _cache_owner(arch)
+    if owner is None:
+        return
+    audit.current().event("owned_arch.refused", arch=arch, command=command, worker=owner)
+    raise _worker_error(
+        f"{arch}'s binhost and fork points live on worker {owner}: run "
+        f"shidashi worker job {owner} {command}-{arch} -- {' '.join(sys.argv[1:])}"
+    )
+
+
 def _worker_holder(arch: str) -> ownership.Owner | None:
     """The WORKER holding ``arch``'s lock, if any; exit 1 when the lock cannot be read."""
     try:
@@ -741,6 +767,7 @@ def factory(
     the phase that failed and the emerge ``output``.
     """
     _apply_work_dir(work_dir)
+    _refuse_owned_arch(arch, "factory")
     _require_build_host()
     if jobs is not None:
         os.environ["SHIDASHI_JOBS"] = str(jobs)  # read by resolve.apply_portage
@@ -1257,6 +1284,7 @@ def assemble(
 
     with _child_result(result_file, flavor, status_file=status_file) as child:
         _apply_work_dir(work_dir)
+        _refuse_owned_arch(arch, "assemble")
         if boot_test:  # before the host check, the seed and the assemble (R3.1)
             _require_boot_test_runner()
         _require_build_host()
@@ -1802,7 +1830,7 @@ def _build_planned(
         for spec in images
         for node in nodes
     }
-    plan = schedule.plan(images, nodes, estimates)
+    plan = schedule.plan(images, nodes, estimates, owner=options.cache_owner)
     host = next((node.name for node in nodes if node.kind == "host"), socket.gethostname())
 
     summary: list[str] = []
@@ -1996,6 +2024,8 @@ def build(
     ISOs or log, and exits 1 if any failed.
     """
     _apply_work_dir(work_dir)
+    if local:  # every image on this host; without --local the owner gets them all
+        _refuse_owned_arch(arch, "build")
     if boot_test:  # before the host check, the seed and the factory (R3.1)
         _require_boot_test_runner()
     _require_build_host()
@@ -2029,6 +2059,18 @@ def build(
             )
             skip_factory = True
 
+    # story 028: a worker that owns the arch's cache builds its binhost and every image;
+    # the host has none of it to build from
+    cache_owner = _cache_owner(arch)
+    owner_factory = cache_owner is not None and not skip_factory
+    if cache_owner is not None:
+        skip_factory = True
+        _err_console.print(
+            f"{arch}'s cache lives on {cache_owner}: its factory and every image run there",
+            markup=False,
+            soft_wrap=True,
+        )
+
     options = schedule.BuildOptions(
         arch=arch,
         init=init,
@@ -2046,6 +2088,8 @@ def build(
         allow_dirty=allow_dirty,
         serial=serial,
         verbose=verbose,
+        cache_owner=cache_owner,
+        owner_factory=owner_factory,
     )
     if serial and os.environ.get(schedule.SERIAL_SHARE_ENV) == "1":
         # the host's share of a planned --serial build (its argv sets the marker):

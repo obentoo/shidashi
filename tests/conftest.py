@@ -21,6 +21,16 @@ def _runs_in_tmp(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.M
 
 
 @pytest.fixture(autouse=True)
+def _registry_in_tmp(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No test reads the invoking user's worker registry. Story 028's guard refuses a
+    host factory of an arch a paired worker owns, so a v3 owned on this machine would
+    otherwise fail every v3 test. A test that pairs workers sets its own."""
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path_factory.mktemp("xdg-data")))
+
+
+@pytest.fixture(autouse=True)
 def _checkpoints_off(monkeypatch: pytest.MonkeyPatch) -> None:
     """The assemble's checkpoints stay off unless a test hands in a backend: on a
     btrfs /tmp the real ``btrfs`` command would otherwise run, without root."""
