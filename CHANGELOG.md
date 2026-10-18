@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-17
+
+A spare machine becomes a build oven: a worker boots paired, builds an arch and can keep
+its cache.
+
 ### Added
 
 - **An arch's cache can stay on its worker.** Every factory job used to copy the arch's
@@ -348,6 +353,7 @@ stage by stage.
   overlays are pinned; a generation fingerprint keeps binpkgs of two toolchains apart;
   every run leaves an audit trail.
 
-[Unreleased]: https://github.com/obentoo/shidashi/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/obentoo/shidashi/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/obentoo/shidashi/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/obentoo/shidashi/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/obentoo/shidashi/releases/tag/v0.1.0
