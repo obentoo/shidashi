@@ -208,6 +208,8 @@ class Toolbox:
     """The ISO tools in the toolbox rootfs, with the host's directories under :data:`WORK`.
 
     ``ro`` and ``rw`` name host directories; each is mounted at ``/work/<name>``.
+    ``file_binds`` are ``(host file, path inside)`` pairs bound read-write -- one socket or
+    file, never its directory; they are not ``/work`` mounts, so :meth:`path` ignores them.
     A host path resolves through the deepest mount that contains it, so the
     image's rootfs can be mounted read-only inside a scratch directory that is
     mounted read-write.
@@ -224,6 +226,7 @@ class Toolbox:
         ro: Mapping[str, Path] | None = None,
         rw: Mapping[str, Path] | None = None,
         log: Path | None = None,
+        file_binds: Sequence[tuple[Path, Path]] = (),
     ) -> None:
         ro, rw = dict(ro or {}), dict(rw or {})
         if overlap := ro.keys() & rw.keys():
@@ -233,7 +236,10 @@ class Toolbox:
             rootfs,
             ephemeral=False,
             binds=[(host.resolve(), WORK / name) for name, host in ro.items()],
-            binds_rw=[(host.resolve(), WORK / name) for name, host in rw.items()],
+            binds_rw=[
+                *((host.resolve(), WORK / name) for name, host in rw.items()),
+                *((host.resolve(), inside) for host, inside in file_binds),
+            ],
             log=log,
             read_only=True,
             # a tmpfs on /work: under it nspawn can create every /work/<name> mount point

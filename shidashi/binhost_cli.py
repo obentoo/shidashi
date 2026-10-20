@@ -13,7 +13,7 @@ from typing import Annotated, Any, NoReturn
 
 import typer
 
-from shidashi import binhost, binhost_quarantine, config, ownership, toolbox
+from shidashi import binhost, binhost_quarantine, config, ownership, publish_pool, toolbox
 from shidashi.binhost import BinhostError, BinpkgRef, Kind
 from shidashi.config import UnknownAxisError
 from shidashi.recipe import TOOLBOX_STAGE
@@ -81,9 +81,7 @@ def _toolbox_for(
         toolbox.ensure_rootfs(tarball, root)
     except (OSError, ToolboxError) as err:
         raise BinhostError(f"cannot use the toolbox {root} ({tarball.name}): {err}") from err
-    # passed only when set: the plain read-write toolbox is every caller but publish
-    extra: dict[str, Any] = {"file_binds": list(file_binds)} if file_binds else {}
-    return toolbox.Toolbox(root, rw=dict(rw), **extra)
+    return toolbox.Toolbox(root, rw=dict(rw), file_binds=list(file_binds))
 
 
 def _read_pool_refs(pkgdir: Path, arch: str) -> list[BinpkgRef]:
@@ -246,3 +244,76 @@ def _collect(arch: str, init: str, *, keep: int, dry_run: bool) -> None:
     typer.echo(f"moved {len(outcome.moved)} binpkgs to {root}")
     if failures:
         _die("\n".join(failures))
+
+
+def _default_publish_dest(arch: str, pkgdir: Path) -> Path:
+    """Where a generation's signed pool lives unless ``--dest`` says otherwise."""
+    return config.cache_dir() / "publish" / arch / pkgdir.name
+
+
+@app.command("publish")
+def publish_command(
+    arch: _ARCH,
+    key: Annotated[
+        str, typer.Option("--key", help="Fingerprint of the maintainer's key that signs.")
+    ],
+    init: _INIT = "systemd",
+    generation: _GENERATION = None,
+    dest: Annotated[
+        Path | None,
+        typer.Option(
+            "--dest",
+            help="Where the signed pool is made; default <cache>/publish/<arch>/<generation>.",
+        ),
+    ] = None,
+) -> None:
+    """Build the signed publish pool of one generation: its recorded finals, and no more."""
+    from shidashi import cli  # looked up at call time: the tests patch the owner and PKGDIR
+
+    # the pool and the maintainer's agent are on this host; a worker never gets the key (R5.10)
+    if (owner := cli._cache_owner(arch)) is not None:
+        _die(
+            f"{arch}'s binpkgs live on worker {owner}, not here: release them to publish from "
+            f"this host with `shidashi worker cache-owner {owner} --arch {arch} --off`"
+        )
+    try:
+        pkgdir = _pkgdir_of(arch, init, generation)
+        target = dest or _default_publish_dest(arch, pkgdir)
+
+        def toolbox_for(
+            rw: Mapping[str, Path], file_binds: Sequence[tuple[Path, Path]]
+        ) -> toolbox.Toolbox:
+            return _toolbox_for(arch, init, rw=rw, file_binds=file_binds)
+
+        result = publish_pool.publish(pkgdir, target, key=key, toolbox_for=toolbox_for)
+    except (BinhostError, SeedError, UnknownAxisError) as err:
+        _die(err)
+    typer.echo(f"published {result.published} binpkgs to {result.dest}")
+    typer.echo(f"{result.skipped_unrecorded} unrecorded binpkgs left out")
+
+
+@app.command("verify")
+def verify_command(
+    arch: _ARCH,
+    pubkey: Annotated[
+        Path, typer.Option("--pubkey", help="Armored public key file: the only key trusted.")
+    ],
+    init: _INIT = "systemd",
+    generation: _GENERATION = None,
+    dest: Annotated[
+        Path | None,
+        typer.Option(
+            "--dest",
+            help="The signed pool to check; default <cache>/publish/<arch>/<generation>.",
+        ),
+    ] = None,
+) -> None:
+    """Check every signature of the publish pool against --pubkey; exit 1 on any failure."""
+    try:
+        target = dest or _default_publish_dest(arch, _pkgdir_of(arch, init, generation))
+        failures = publish_pool.verify(target, pubkey=pubkey)
+    except (BinhostError, SeedError, UnknownAxisError) as err:
+        _die(err)
+    if failures:
+        _die("\n".join(failures))
+    typer.echo(f"verified {target}: every gpkg is signed by {pubkey}")
