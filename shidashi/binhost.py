@@ -187,6 +187,69 @@ def merge_stage(
     )
 
 
+def _read_int(path: Path) -> int | None:
+    """The integer in ``path``; ``None`` when the file is absent or holds anything else."""
+    try:
+        text = path.read_text(encoding="utf-8").strip()
+    except OSError, UnicodeDecodeError:
+        return None
+    return int(text) if text.isdigit() else None
+
+
+def installed_instances(rootfs: Path) -> dict[Pair, int]:
+    """``(cat/pf, BUILD_ID) -> BUILD_TIME`` for every package installed in ``rootfs``. I/O.
+
+    An entry missing either file, or holding a non-integer, is skipped, never guessed:
+    ``FEATURES=-buildpkg`` merges leave no ``BUILD_ID`` (R1.4). Portage's ``-MERGING-``
+    leftovers are not installed packages and are skipped too.
+    """
+    installed: dict[Pair, int] = {}
+    vdb = rootfs / "var/db/pkg"
+    if not vdb.is_dir():
+        return installed
+    for entry in sorted(vdb.glob("*/*")):
+        if not entry.is_dir() or entry.name.startswith("-"):
+            continue
+        build, stamp = _read_int(entry / "BUILD_ID"), _read_int(entry / "BUILD_TIME")
+        if build is not None and stamp is not None:
+            installed[(f"{entry.parent.name}/{entry.name}", build)] = stamp
+    return installed
+
+
+def _read_refs(pkgdir: Path) -> list[BinpkgRef]:
+    """The PKGDIR's index entries; an absent index has none. I/O."""
+    index = pkgdir / "Packages"
+    try:
+        text = index.read_text(encoding="utf-8", errors="replace")
+    except FileNotFoundError:
+        return []
+    except OSError as err:
+        raise BinhostError(f"cannot read the binhost index {index}: {err}") from err
+    return parse_refs(text)
+
+
+def record_stage(
+    pkgdir: Path, rootfs: Path, stage: str, cuts: Sequence[UseBreak]
+) -> tuple[int, int]:
+    """Record a shipped stage's finals and transients in ``pkgdir``; their counts. I/O.
+
+    A vdb ``(CPV, BUILD_ID)`` is final only when the index holds the same BUILD_ID *and*
+    BUILD_TIME: the releng stage3 carries BUILD_IDs of its own, and a bare match would name
+    an instance this factory never built (R1.7). Transients are the instances the ``cuts``
+    settled by this stage produced. A damaged existing record raises
+    :class:`BinhostError` before anything is written.
+    """
+    refs = _read_refs(pkgdir)
+    built = {(ref.cpv, ref.build_id): ref.build_time for ref in refs}
+    finals = [
+        pair for pair, stamp in installed_instances(rootfs).items() if built.get(pair) == stamp
+    ]
+    transients = [(ref.cpv, ref.build_id) for ref in cut_instances(refs, cuts)]
+    merged = merge_stage(load_record(pkgdir), stage, finals, transients)
+    save_record(pkgdir, merged)
+    return len(merged.finals[stage]), len(merged.transients[stage])
+
+
 def load_quarantined(pkgdir: Path) -> frozenset[str]:
     """The PATHs a GC moved aside; absent is empty, a damaged or unsafe list raises. I/O."""
     path = pkgdir / QUARANTINE_FILE

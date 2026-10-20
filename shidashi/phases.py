@@ -35,7 +35,7 @@ from pathlib import Path
 
 import pydantic
 
-from shidashi import audit, binpkgs, checkpoint, config, progress, state
+from shidashi import audit, binhost, binpkgs, checkpoint, config, progress, state
 from shidashi.container import Container
 from shidashi.flow import StagesFlow, active_flow
 from shidashi.recipe import Phase, ResolvedRecipe, UseBreak
@@ -1623,6 +1623,24 @@ def _audited_settle(
     return result
 
 
+def _audited_record_pool(container: Container, *, stage: str, cuts: tuple[UseBreak, ...]) -> None:
+    """Record the settled stage's finals and transients in the bound PKGDIR (story 029).
+
+    ``cuts`` is the tuple the stage's settle just undid, so a cut declared by a phase that
+    does not ship still lands in the next shipping stage's transients. No PKGDIR bound:
+    nothing to record, and no step either (same rule as ``stale-binpkgs``).
+    """
+    pkgdir = _host_pkgdir(container)
+    if pkgdir is None:
+        return
+    with audit.current().step("record-pool", stage=stage) as step:
+        try:
+            finals, transients = binhost.record_stage(pkgdir, container.rootfs, stage, cuts)
+        except binhost.BinhostError as err:
+            raise FactoryError(str(err), phase=stage) from err
+        step.add(finals=finals, transients=transients)
+
+
 def _audited_snapshot(rootfs: Path, dest: Path) -> None:
     """:func:`snapshot_fork_point` as an audited step, with the tarball's size.
 
@@ -1697,6 +1715,7 @@ def run_phases(
                         step.add(**module_rebuild(container, phase=phase.name))
                 elif kind == "settle" and phase.ships:
                     results.append(_audited_settle(container, recipe, pending, phase.stage))
+                    _audited_record_pool(container, stage=phase.stage, cuts=pending)
                     pending = ()
                 elif kind == "snapshot" and phase.stage:
                     _audited_snapshot(
@@ -1915,6 +1934,7 @@ def run_phases_stepwise(
                 results.append(
                     _audited_settle(container, recipe, run.accumulated_breaks, phase.stage)
                 )
+                _audited_record_pool(container, stage=phase.stage, cuts=run.accumulated_breaks)
                 run.accumulated_breaks = ()
             elif kind == "snapshot":
                 _audited_snapshot(
