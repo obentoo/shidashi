@@ -35,7 +35,17 @@ from rich.markup import escape
 from rich.prompt import Prompt
 from rich.table import Table
 
-from shidashi import audit, config, doctor, ownership, parallel, progress, publish, schedule
+from shidashi import (
+    audit,
+    binhost_cli,
+    config,
+    doctor,
+    ownership,
+    parallel,
+    progress,
+    publish,
+    schedule,
+)
 from shidashi import remote as remote_mod
 from shidashi import worker as worker_mod
 from shidashi import workers as workers_mod
@@ -77,6 +87,7 @@ kits_app = typer.Typer(no_args_is_help=True, help="The kit library: every packag
 app.add_typer(kits_app, name="kits")
 worker_app = typer.Typer(no_args_is_help=True, help="Drive a paired worker (shidashi kyomei).")
 app.add_typer(worker_app, name="worker")
+app.add_typer(binhost_cli.app, name="binhost")
 sync_app = typer.Typer(
     no_args_is_help=True, help="Copy an arch's cache to a worker, and results back from it."
 )
