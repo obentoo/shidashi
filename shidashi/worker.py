@@ -29,7 +29,7 @@ from pathlib import Path, PurePosixPath
 import yaml
 
 import shidashi
-from shidashi import audit, config, isaguard, ownership, phases, workers
+from shidashi import audit, binhost, config, isaguard, ownership, phases, workers
 from shidashi.recipe import RecipeChainError, RecipeSourceError
 from shidashi.remote import (
     Remote,
@@ -63,6 +63,8 @@ _RUN_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 #: ``emaint binhost --fix`` reads every binpkg of the PKGDIR: minutes, not seconds.
 _INDEX_TIMEOUT = 3600.0
 _PROBE_TIMEOUT = 60.0
+#: PATHs per quarantine ssh command (~150 bytes each): far below the 128 KiB argument cap.
+_QUARANTINE_BATCH = 200
 #: The pre-job probe is one short ssh round trip, bounded as a whole (story 009).
 _JOB_PROBE_TIMEOUT = 10.0
 #: ``systemd-run`` returns once the unit has started.
@@ -1121,8 +1123,10 @@ def _pull_unmarked(
             patterns += [iso_dir, f"{iso_dir}/*.iso"]
         patterns += [w for w, _ in caches]
     worker_pkgdir: str | None = None
+    host_pkgdir: Path | None = None
     if arch is not None and gen is not None:
         worker_pkgdir = f"{WORKER_CACHE}/binpkgs/{arch}/{gen}"
+        host_pkgdir = config.pkgdir(arch, gen)
         patterns += [worker_pkgdir, f"{fork_dir}/{arch}-*{gen}*"]
     present = _present(remote, patterns)
     fork_points: list[str] = []
@@ -1132,6 +1136,7 @@ def _pull_unmarked(
         fork_points = _restorable_fork_points(candidates, commit=owner.commit, arch=arch)
 
     index_ready = False
+    quarantined: Sequence[str] = ()
     if arch is None:
         reason: str | None = "an archless job has no binhost"
     elif owned:
@@ -1147,6 +1152,9 @@ def _pull_unmarked(
             f"{arch}'s binpkgs and index stay as they are on the host"
         )
     else:
+        if host_pkgdir is not None:
+            # before the reindex: an index must not name what a gc already set aside (R4.1)
+            quarantined = _apply_quarantine(remote, worker_pkgdir, host_pkgdir)
         _regenerate_index(remote, worker_pkgdir)
         index_ready, reason = True, None
 
@@ -1176,7 +1184,7 @@ def _pull_unmarked(
     if arch is not None and gen is not None and worker_pkgdir is not None:
         host_pkgdir = config.pkgdir(arch, gen)
         fetches += _binhost_fetches(
-            worker_pkgdir if index_ready else None, host_pkgdir, fork_points
+            worker_pkgdir if index_ready else None, host_pkgdir, fork_points, quarantined
         )
         staged_index = host_pkgdir / _STAGED_INDEX if index_ready else None
     _require_host_space(remote, fetches[record:], bwlimit=bwlimit)
@@ -1908,6 +1916,33 @@ def _unwritable(dest: Path, blocked: Path) -> tuple[str, str]:
     return reason, f"Fix it as root: {fix}"
 
 
+def _apply_quarantine(remote: Remote, worker_pkgdir: str, host_pkgdir: Path) -> list[str]:
+    """Move the host's quarantined PATHs aside on the worker, before its reindex.
+    Returns those PATHs, so the pull's fetch can exclude them too (R4.2).
+
+    A corrupt or unsafe list is a :class:`SyncError` before anything is moved or sent
+    (R4.4); an empty one makes no remote call. The moves go in batches: one ssh command
+    line holding thousands of PATHs would pass the kernel's per-argument limit.
+    """
+    try:
+        paths = sorted(binhost.load_quarantined(host_pkgdir))
+    except binhost.BinhostError as err:
+        raise SyncError("quarantine: the host's list", None, str(err)) from err
+    root = binhost.worker_quarantine_root(worker_pkgdir)
+    for start in range(0, len(paths), _QUARANTINE_BATCH):
+        script = binhost.quarantine_script(
+            worker_pkgdir, root, paths[start : start + _QUARANTINE_BATCH]
+        )
+        result = run(remote, script, timeout=_PROBE_TIMEOUT)
+        if result.exit_code != 0:
+            raise SyncError(
+                f"quarantine: move aside on {remote.name} ({worker_pkgdir})",
+                result.exit_code,
+                _tail(result.stderr or result.stdout),
+            )
+    return paths
+
+
 def _regenerate_index(remote: Remote, worker_pkgdir: str) -> None:
     """``emaint binhost --fix`` over the worker's PKGDIR, then prove the index exists."""
     pkgdir = shlex.quote(worker_pkgdir)
@@ -1973,17 +2008,23 @@ def _run_ids(text: str, runs_file: str) -> tuple[str, ...]:
 
 
 def _binhost_fetches(
-    worker_pkgdir: str | None, host_pkgdir: Path, fork_points: Sequence[str]
+    worker_pkgdir: str | None,
+    host_pkgdir: Path,
+    fork_points: Sequence[str],
+    quarantined: Sequence[str] = (),
 ) -> list[_Transfer]:
     """The arch's binpkgs, then its fork points, then its index into
     ``<host_pkgdir>/Packages.tmp`` -- which the caller ``os.replace``\\ s. Pure.
 
     ``worker_pkgdir`` is None when the worker has no PKGDIR (nothing was built): only
     the fork points come, and the host's binpkgs and index are left as they are.
+    ``quarantined`` PATHs are excluded from the binpkgs fetch, so a file the host's gc
+    moved aside never comes back from a worker that still holds it (R4.2).
     """
     fetches: list[_Transfer] = []
     if worker_pkgdir is not None:
-        fetches.append(_fetch([f"{worker_pkgdir}/"], f"{host_pkgdir}/", excludes=["/Packages"]))
+        excludes = ["/Packages", *(_anchored_literal(rel) for rel in quarantined)]
+        fetches.append(_fetch([f"{worker_pkgdir}/"], f"{host_pkgdir}/", excludes=excludes))
     if fork_points:
         fork_dest = f"{config.fork_points_dir()}/"
         fetches.append(_fetch(fork_points, fork_dest, step="pull cache/fork-points"))
@@ -2045,6 +2086,13 @@ def _host_repo() -> Path:
     return Path(shidashi.__file__).resolve().parent.parent
 
 
+def _anchored_literal(rel: str) -> str:
+    """``rel`` as an rsync exclude anchored at the transfer root and matched literally:
+    rsync reads ``[ * ? \\`` as glob syntax, so each is backslash-escaped -- else
+    ``a[b]`` would also leave out the innocent ``ab``."""
+    return "/" + re.sub(r"([*?\[\\])", r"\\\1", rel)
+
+
 def _host_bound_pths(venv: Path) -> list[str]:
     """rsync excludes, anchored at the venv root, for each ``.pth`` naming the host repo.
 
@@ -2061,8 +2109,7 @@ def _host_bound_pths(venv: Path) -> list[str]:
         except OSError:
             continue  # unreadable: rsync reports it if it matters
         if any(needle in content for needle in needles):
-            rel = pth.relative_to(venv).as_posix()
-            excludes.append("/" + re.sub(r"([*?\[\\])", r"\\\1", rel))
+            excludes.append(_anchored_literal(pth.relative_to(venv).as_posix()))
     return excludes
 
 

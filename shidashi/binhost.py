@@ -12,6 +12,7 @@ Pure functions come first; the few I/O ones (records, ``ebuild_available``) say 
 
 import json
 import os
+import shlex
 import tempfile
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
@@ -273,6 +274,42 @@ def add_quarantined(pkgdir: Path, paths: Iterable[str]) -> None:
             raise BinhostError(f"refusing to list {entry!r}: it leaves the pool {pkgdir}")
     merged = load_quarantined(pkgdir) | frozenset(added)
     _write_json(pkgdir / QUARANTINE_FILE, {"version": _SCHEMA_VERSION, "paths": sorted(merged)})
+
+
+def worker_quarantine_root(worker_pkgdir: str) -> str:
+    """Where a worker sets aside what the quarantine list names. Pure.
+
+    ``<cache>/binpkgs/<arch>/<generation>`` maps to
+    ``<cache>/quarantine/binpkgs/<arch>/<generation>``: outside the PKGDIR, so ``emaint``
+    never indexes it and a pull of the PKGDIR never carries it.
+    """
+    pkgdir = PurePosixPath(worker_pkgdir)
+    if len(pkgdir.parts) < 4 or pkgdir.parent.parent.name != "binpkgs":
+        raise BinhostError(f"{worker_pkgdir!r} is not <cache>/binpkgs/<arch>/<generation>")
+    cache = pkgdir.parents[2]
+    return str(cache / "quarantine" / "binpkgs" / pkgdir.parent.name / pkgdir.name)
+
+
+def quarantine_script(pkgdir: str, quarantine_root: str, paths: Iterable[str]) -> str:
+    """A ``set -eu`` script moving ``paths`` from ``pkgdir`` to ``quarantine_root``. Pure.
+
+    It runs on the worker, where ``pkgdir`` and ``quarantine_root`` are POSIX strings the
+    host cannot stat. Every word is ``shlex.quote``\\ d, so a PATH full of shell syntax is
+    moved as the one literal file it is; a PATH the worker does not have is skipped (the
+    host's list outlives what each worker holds). A PATH leaving the pool raises
+    :class:`BinhostError`: the list was already checked, this guards a direct caller.
+    """
+    lines = ["set -eu"]
+    for rel in sorted(set(paths)):
+        if _leaves_root(rel):
+            raise BinhostError(f"PATH {rel!r} leaves the pool {pkgdir}")
+        src = shlex.quote(f"{pkgdir}/{rel}")
+        dst = f"{quarantine_root}/{rel}"
+        lines.append(
+            f"if [ -e {src} ]; then mkdir -p -- {shlex.quote(str(PurePosixPath(dst).parent))}; "
+            f"mv -- {src} {shlex.quote(dst)}; fi"
+        )
+    return "\n".join(lines) + "\n"
 
 
 # --- classification ----------------------------------------------------------------------
