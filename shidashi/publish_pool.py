@@ -10,7 +10,6 @@ the copies a ``Packages`` of their own, and renames the finished tree over ``des
 
 import contextlib
 import os
-import pwd
 import shutil
 import subprocess
 import tarfile
@@ -21,6 +20,7 @@ from pathlib import Path, PurePosixPath
 from typing import IO, Protocol
 
 from shidashi.binhost import BinhostError, BinpkgRef, PoolRecord, load_record, parse_refs, safe_path
+from shidashi.invoker import invoking_user
 from shidashi.seed import signature_ok
 from shidashi.toolbox import WORK, Toolbox
 
@@ -69,17 +69,15 @@ def plan_publish(refs: Sequence[BinpkgRef], record: PoolRecord) -> list[BinpkgRe
 def _as_maintainer(argv: list[str]) -> list[str]:
     """``argv``, run as ``SUDO_USER`` with their home when this is root under ``sudo``.
 
-    The agent and the keyring are the maintainer's, never root's (same rule as
-    ``schedule._invoking_user``, which this does not import: it would pull in the scheduler).
+    The agent and the keyring are the maintainer's, never root's.
     """
-    user = os.environ.get("SUDO_USER")
-    if not user or os.geteuid() != 0:
-        return argv
     try:
-        home = pwd.getpwnam(user).pw_dir
-    except KeyError as err:
-        raise BinhostError(f"SUDO_USER={user!r} is not a user of this system") from err
-    return ["runuser", "-u", user, "--", "env", f"HOME={home}", *argv]
+        user = invoking_user()
+    except LookupError as err:
+        raise BinhostError(str(err)) from err
+    if user is None:
+        return argv
+    return ["runuser", "-u", user.name, "--", "env", f"HOME={user.home}", *argv]
 
 
 def _host_gpg(argv: list[str], what: str, stdin: bytes | None = None) -> bytes:

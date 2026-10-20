@@ -35,7 +35,6 @@ import hashlib
 import itertools
 import json
 import os
-import pwd
 import re
 import shutil
 import socket
@@ -66,6 +65,7 @@ from shidashi import (
     workers,
     world,
 )
+from shidashi.invoker import InvokingUser, invoking_user
 
 #: Seconds per package when a node has no measured rate (R2.3).
 DEFAULT_SEC_PER_PKG = 1.7
@@ -461,40 +461,6 @@ def image_specs(
 REGISTRY_NODE = "worker registry"
 
 
-@dataclass(frozen=True)
-class _InvokingUser:
-    """The person behind ``sudo``: who a worker child runs as (R6.1)."""
-
-    name: str
-    uid: int
-    gid: int
-    home: Path
-    data_home: Path
-
-
-def _invoking_user() -> _InvokingUser | None:
-    """``SUDO_USER`` when the build runs under ``sudo`` (effective uid 0 with ``SUDO_USER``
-    set), else None. Their data home is ``$XDG_DATA_HOME`` when set, else their
-    ``~/.local/share`` from ``pwd.getpwnam``. Raises :class:`LookupError` when
-    ``SUDO_USER`` names no user of this system."""
-    user = os.environ.get("SUDO_USER")
-    if not user or os.geteuid() != 0:
-        return None
-    try:
-        entry = pwd.getpwnam(user)
-    except KeyError as err:
-        raise LookupError(f"SUDO_USER={user!r} is not a user of this system") from err
-    home = Path(entry.pw_dir)
-    data_home = os.environ.get("XDG_DATA_HOME")
-    return _InvokingUser(
-        name=user,
-        uid=entry.pw_uid,
-        gid=entry.pw_gid,
-        home=home,
-        data_home=Path(data_home) if data_home else home / ".local" / "share",
-    )
-
-
 def invoking_user_workers_dir() -> Path:
     """The workers directory of the user who invoked the build (R6.1).
 
@@ -504,7 +470,7 @@ def invoking_user_workers_dir() -> Path:
     :func:`config.workers_dir`. Raises :class:`LookupError` when ``SUDO_USER`` names no
     user of this system.
     """
-    user = _invoking_user()
+    user = invoking_user()
     if user is None:
         return config.workers_dir()
     return user.data_home / "shidashi" / "worker"
@@ -1174,7 +1140,7 @@ def _worker_argv(
     results: Path,
     share: Sequence[ImageSpec],
     options: BuildOptions,
-    user: _InvokingUser | None,
+    user: InvokingUser | None,
 ) -> list[str]:
     """A worker share's child: ``shidashi worker job`` running ONE ``build`` of its images
     there (C4), as the invoking user under ``sudo`` (R6.1).
@@ -1260,7 +1226,7 @@ def _open_results(results: Path) -> int:
     return fd
 
 
-def _prepare_results(results: Path, job: str, user: _InvokingUser | None) -> None:
+def _prepare_results(results: Path, job: str, user: InvokingUser | None) -> None:
     """Make ``results`` (``<scratch>/worker-results/<node>/<job>``) for a worker share's
     child, without an earlier job's ``<job>.rc`` or ``<job>.runs`` (they would pass for
     this job's end).
@@ -1903,10 +1869,10 @@ def execute(
 
     argvs = _host_argvs(host_share, options, logs) if host_share else {}
     jobs: dict[str, WorkerJob] = {}
-    user: _InvokingUser | None = None
+    user: InvokingUser | None = None
     refused: Exception | None = None
     try:
-        user = _invoking_user() if shares else None
+        user = invoking_user() if shares else None
     except LookupError as err:  # an unknown SUDO_USER: no worker child may run as it
         refused = err
     for node, share in shares.items():

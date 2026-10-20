@@ -8,6 +8,7 @@ PKGDIR resolution and for the host's containers.
 import subprocess
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
+from contextlib import ExitStack
 from pathlib import Path
 from typing import Annotated, Any, NoReturn
 
@@ -53,6 +54,7 @@ def _pkgdir_of(arch: str, init: str, generation: str | None) -> Path:
 def _toolbox_for(
     arch: str,
     init: str,
+    stack: ExitStack,
     *,
     rw: Mapping[str, Path],
     file_binds: Sequence[tuple[Path, Path]] = (),
@@ -60,8 +62,8 @@ def _toolbox_for(
     """The toolbox of ``arch`` × ``init`` with ``rw`` mounted read-write, as the assembler's.
 
     The tarball is keyed by the current pins, so a toolbox of older pins is not it (D7).
-    ``ensure_rootfs`` (not ``using``) because the caller gets the Toolbox back and the lock
-    cannot outlive this function; the tools it runs only write the ``rw`` mounts.
+    The rootfs's shared lock (``toolbox.using``) is entered on ``stack``, so it outlives this
+    function and a concurrent toolbox rebuild waits until the caller closes the stack (R3.13).
     """
     recipe = config.load_recipe(arch, TOOLBOX_STAGE, init)
     seeds = config.seeds_dir()
@@ -78,7 +80,7 @@ def _toolbox_for(
         )
     root = config.scratch_dir() / "toolbox" / f"{arch}-{init}"
     try:
-        toolbox.ensure_rootfs(tarball, root)
+        stack.enter_context(toolbox.using(tarball, root))
     except (OSError, ToolboxError) as err:
         raise BinhostError(f"cannot use the toolbox {root} ({tarball.name}): {err}") from err
     return toolbox.Toolbox(root, rw=dict(rw), file_binds=list(file_binds))
@@ -215,32 +217,39 @@ def _gc_on_worker(cli: Any, owner: str, arch: str, *, init: str, keep: int, dry_
 
 
 def _collect(arch: str, init: str, *, keep: int, dry_run: bool) -> None:
-    """The gc proper, under the arch's lock: plan, check, move, record, reindex."""
-    try:
-        pkgdir = _pkgdir_of(arch, init, None)
-        plan = binhost.gc_plan(
-            _read_pool_refs(pkgdir, arch), available=_pinned_availability(arch, init), keep=keep
-        )
-        paths = [ref.path for ref in plan]
-        for rel in paths:  # the whole plan before the first move (R3.11)
-            binhost.safe_path(pkgdir, rel)
-        binhost.load_quarantined(pkgdir)  # a damaged list stops the gc here, not mid-way
-        if dry_run:
-            for rel in paths:
-                typer.echo(rel)
-            typer.echo(f"{len(paths)} binpkgs would move to quarantine")
-            return
-        # before the first move: an index naming moved files fails the next emerge (R3.12)
-        tools = _toolbox_for(arch, init, rw={_POOL_MOUNT: pkgdir})
-        root = binhost_quarantine.quarantine_dir(arch, pkgdir)
-        outcome = binhost_quarantine.quarantine_paths(pkgdir, root, paths)
-        binhost.add_quarantined(pkgdir, outcome.moved)
-    except (BinhostError, SeedError, UnknownAxisError) as err:
-        _die(err)
-    # a failed move still reindexes: what did move must leave the index
-    failures = [outcome.failure] if outcome.failure else []
-    if (reindex_failure := _reindex(tools, pkgdir)) is not None:
-        failures.append(reindex_failure)
+    """The gc proper, under the arch's lock: plan, check, move, record, reindex.
+
+    The toolbox rootfs's shared lock is held from before the first move until the reindex
+    is done, and released on every way out (R3.13).
+    """
+    with ExitStack() as stack:
+        try:
+            pkgdir = _pkgdir_of(arch, init, None)
+            plan = binhost.gc_plan(
+                _read_pool_refs(pkgdir, arch),
+                available=_pinned_availability(arch, init),
+                keep=keep,
+            )
+            paths = [ref.path for ref in plan]
+            for rel in paths:  # the whole plan before the first move (R3.11)
+                binhost.safe_path(pkgdir, rel)
+            binhost.load_quarantined(pkgdir)  # a damaged list stops the gc here, not mid-way
+            if dry_run:
+                for rel in paths:
+                    typer.echo(rel)
+                typer.echo(f"{len(paths)} binpkgs would move to quarantine")
+                return
+            # before the first move: an index naming moved files fails the next emerge (R3.12)
+            tools = _toolbox_for(arch, init, stack, rw={_POOL_MOUNT: pkgdir})
+            root = binhost_quarantine.quarantine_dir(arch, pkgdir)
+            outcome = binhost_quarantine.quarantine_paths(pkgdir, root, paths)
+            binhost.add_quarantined(pkgdir, outcome.moved)
+        except (BinhostError, SeedError, UnknownAxisError) as err:
+            _die(err)
+        # a failed move still reindexes: what did move must leave the index
+        failures = [outcome.failure] if outcome.failure else []
+        if (reindex_failure := _reindex(tools, pkgdir)) is not None:
+            failures.append(reindex_failure)
     typer.echo(f"moved {len(outcome.moved)} binpkgs to {root}")
     if failures:
         _die("\n".join(failures))
@@ -276,18 +285,20 @@ def publish_command(
             f"{arch}'s binpkgs live on worker {owner}, not here: release them to publish from "
             f"this host with `shidashi worker cache-owner {owner} --arch {arch} --off`"
         )
-    try:
-        pkgdir = _pkgdir_of(arch, init, generation)
-        target = dest or _default_publish_dest(arch, pkgdir)
+    # one hold across the signing and the reindex; closed on every exit, a refusal included
+    with ExitStack() as stack:
+        try:
+            pkgdir = _pkgdir_of(arch, init, generation)
+            target = dest or _default_publish_dest(arch, pkgdir)
 
-        def toolbox_for(
-            rw: Mapping[str, Path], file_binds: Sequence[tuple[Path, Path]]
-        ) -> toolbox.Toolbox:
-            return _toolbox_for(arch, init, rw=rw, file_binds=file_binds)
+            def toolbox_for(
+                rw: Mapping[str, Path], file_binds: Sequence[tuple[Path, Path]]
+            ) -> toolbox.Toolbox:
+                return _toolbox_for(arch, init, stack, rw=rw, file_binds=file_binds)
 
-        result = publish_pool.publish(pkgdir, target, key=key, toolbox_for=toolbox_for)
-    except (BinhostError, SeedError, UnknownAxisError) as err:
-        _die(err)
+            result = publish_pool.publish(pkgdir, target, key=key, toolbox_for=toolbox_for)
+        except (BinhostError, SeedError, UnknownAxisError) as err:
+            _die(err)
     typer.echo(f"published {result.published} binpkgs to {result.dest}")
     typer.echo(f"{result.skipped_unrecorded} unrecorded binpkgs left out")
 

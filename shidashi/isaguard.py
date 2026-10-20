@@ -60,7 +60,11 @@ CPUINFO_NAME: dict[str, str] = {
 ARCH_ORDER: tuple[str, ...] = ("znver5", "arrowlake", "v3")
 
 #: The commands that run an arch's binaries, and so are guarded.
-_CPU_COMMANDS = frozenset({"factory", "assemble", "build", "pretend"})
+_CPU_COMMANDS = frozenset({"factory", "assemble", "build", "pretend", "binhost"})
+
+#: The ``binhost`` subcommands that run the arch's own toolbox (``emaint``, ``gpkg-sign``);
+#: ``show`` and ``verify`` run no arch binary on a worker, so they are not guarded.
+_BINHOST_CPU_SUBCOMMANDS = frozenset({"gc", "publish"})
 
 
 class UnknownFlag(Exception):
@@ -105,8 +109,9 @@ def max_target(worker_flags: Sequence[str]) -> str | None:
 
 
 @functools.cache
-def _value_options(command: str) -> frozenset[str]:
-    """The option names of a Shidashi command that take a value (from its Typer params)."""
+def _value_options(command: str, subcommand: str | None = None) -> frozenset[str]:
+    """The option names of a Shidashi command that take a value (from its Typer params);
+    with ``subcommand``, those of that command inside the ``command`` sub-app."""
     import typer.core
     import typer.main
 
@@ -114,6 +119,8 @@ def _value_options(command: str) -> frozenset[str]:
 
     commands = getattr(typer.main.get_command(app), "commands", {})
     cmd = commands.get(command)
+    if subcommand is not None:
+        cmd = getattr(cmd, "commands", {}).get(subcommand)
     names: set[str] = set()
     for param in cmd.params if cmd is not None else ():
         if isinstance(param, typer.core.TyperOption) and not (param.is_flag or param.count):
@@ -127,22 +134,37 @@ def job_target(args: Sequence[str]) -> tuple[str, str] | None:
 
     The positionals after the command, skipping every option and, for an option that
     takes one, its value. ``init`` is the first later positional naming an init, else
-    ``systemd``.
+    ``systemd``. ``binhost`` is a sub-app: only its ``gc`` and ``publish`` are guarded,
+    the arch is the positional after the subcommand, and the init is its ``--init``
+    option rather than a positional.
     """
     if not args or args[0] not in _CPU_COMMANDS:
         return None
-    takes_value = _value_options(args[0])
+    sub: str | None = None
+    tail = args[1:]
+    if args[0] == "binhost":
+        if len(tail) == 0 or tail[0] not in _BINHOST_CPU_SUBCOMMANDS:
+            return None
+        sub, tail = tail[0], tail[1:]
+    takes_value = _value_options(args[0], sub)
     positionals: list[str] = []
-    rest = iter(args[1:])
+    init_option: str | None = None
+    rest = iter(tail)
     for arg in rest:
         if arg.startswith("-") and arg != "-":
-            if "=" not in arg and arg in takes_value:
+            name, equals, value = arg.partition("=")
+            if sub is not None and name == "--init":
+                init_option = value if equals else next(rest, None)
+            elif not equals and arg in takes_value:
                 next(rest, None)
             continue
         positionals.append(arg)
     if not positionals:
         return None
     inits = set(config.available_names("init"))
+    if sub is not None:
+        # An init the repo does not have is left for the command itself to refuse.
+        return positionals[0], init_option if init_option in inits else "systemd"
     init = next((p for p in positionals[1:] if p in inits), "systemd")
     return positionals[0], init
 
