@@ -245,7 +245,17 @@ def publish(
             )
         _run_in_toolbox(
             tools,
-            ["env", f"PKGDIR={tools.path(tmp)}", "emaint", "binhost", "--fix"],
+            # Over signed gpkgs emaint verifies each signature, and in the read-only toolbox
+            # gpg cannot create its random_seed: every binpkg is rejected and the index lists
+            # none (found on bentoo-lab, 2026-10-20). ``verify`` checks the signatures.
+            [
+                "env",
+                f"PKGDIR={tools.path(tmp)}",
+                "FEATURES=binpkg-ignore-signature",
+                "emaint",
+                "binhost",
+                "--fix",
+            ],
             f"emaint binhost --fix over {tmp}",
         )
     finally:

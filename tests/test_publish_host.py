@@ -121,18 +121,48 @@ def key(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Key]:
         shutil.rmtree(home, ignore_errors=True)
 
 
+#: Two packages every toolbox carries that own files (a package with an empty CONTENTS, such
+#: as ``app-alternatives/ninja``, is reported missing by ``quickpkg``). First run on
+#: bentoo-lab, 2026-10-20: the smallest-by-SIZE pick chose ``ninja-1`` and failed.
+_PACKAGES = ("app-alternatives/bzip2", "app-alternatives/gzip")
+
+
 def _two_small_packages(root: Path) -> list[str]:
-    """``=cat/pf`` of the two smallest packages installed in the toolbox."""
-    sized = []
-    for size in (root / "var/db/pkg").glob("*/*/SIZE"):
-        try:
-            sized.append(
-                (int(size.read_text().strip()), f"={size.parent.parent.name}/{size.parent.name}")
-            )
-        except ValueError:
-            continue
-    assert len(sized) >= 2, "the toolbox has fewer than two installed packages"
-    return [atom for _size, atom in sorted(sized)[:2]]
+    """``=cat/pf`` of the two fixed packages, at the version installed in the toolbox."""
+    atoms = []
+    for cp in _PACKAGES:
+        installed = sorted(
+            (root / "var/db/pkg" / cp.split("/")[0]).glob(f"{cp.split('/')[1]}-[0-9]*")
+        )
+        assert installed, f"the toolbox has no {cp} installed"
+        atoms.append(f"={cp.split('/')[0]}/{installed[0].name}")
+    return atoms
+
+
+def _quickpkg(root: Path, pool: Path, upper: Path, atoms: list[str]) -> None:
+    """``quickpkg`` the installed ``atoms`` into ``pool``, in the read-only toolbox.
+
+    Portage locks the vdb (``/var/db/.pkg.portage_lockfile``), and nspawn cannot create that
+    mount point in a read-only tree, so /var/db gets a writable overlay whose upper layer
+    is thrown away with the test. ``publish`` itself needs none of this: it never reads the
+    vdb. Run directly, not through ``Toolbox``, which has no overlay option.
+    """
+    upper.mkdir(parents=True)
+    subprocess.run(
+        [
+            "systemd-nspawn",
+            "--directory", str(root),
+            "--register=no", "--console=pipe", "--as-pid2", "--read-only",
+            "--tmpfs=/tmp:mode=1777", "--tmpfs=/work",
+            f"--overlay=/var/db:{upper}:/var/db",
+            f"--bind={pool}:/work/pool",
+            "--", "env", "PKGDIR=/work/pool", "PORTAGE_TMPDIR=/tmp", "BINPKG_FORMAT=gpkg",
+            "FEATURES=binpkg-multi-instance -binpkg-signing",
+            "quickpkg", "--include-config=y", *atoms,
+        ],
+        check=True,
+        capture_output=True,
+    )  # fmt: skip
 
 
 def _tree(root: Path) -> dict[str, bytes]:
@@ -145,19 +175,7 @@ def test_a_real_publish_signs_through_the_agent_and_verifies(
     # the build pool: two real gpkg files, made in the toolbox, recorded as finals
     pool = tmp_path / "binpkgs" / "v3" / "gen"
     pool.mkdir(parents=True)
-    maker = toolbox.Toolbox(toolbox_root, rw={"pool": pool})
-    maker.run(
-        [
-            "env",
-            "PKGDIR=/work/pool",
-            "PORTAGE_TMPDIR=/tmp",
-            "BINPKG_FORMAT=gpkg",
-            "FEATURES=binpkg-multi-instance -binpkg-signing",
-            "quickpkg",
-            "--include-config=y",
-            *_two_small_packages(toolbox_root),
-        ]
-    )
+    _quickpkg(toolbox_root, pool, tmp_path / "vdb-upper", _two_small_packages(toolbox_root))
     refs = parse_refs((pool / "Packages").read_text(encoding="utf-8"))
     assert len(refs) == 2, refs
     save_record(
@@ -177,7 +195,7 @@ def test_a_real_publish_signs_through_the_agent_and_verifies(
     assert result.published == 2
     assert verify(dest, pubkey=key.pubkey) == []
     files = _tree(dest)
-    assert set(files) == {r.path for r in refs} | {"Packages"}, sorted(files)
+    assert set(files) == {r.path for r in refs} | {"Packages", "Packages.gz"}, sorted(files)
     for name, data in files.items():  # no key material in the pool
         assert b"PRIVATE KEY" not in data, name
     assert _tree(pool) == pool_before  # the build pool stays unsigned, byte for byte

@@ -45,6 +45,7 @@ from pathlib import Path
 
 name, args = Path(sys.argv[0]).name, sys.argv[1:]
 log = {"tool": name, "argv": args, "pkgdir": os.environ.get("PKGDIR"),
+       "features": os.environ.get("FEATURES"),
        "env": {k: v for k, v in os.environ.items() if k.startswith("BINPKG_GPG")}}
 fail = os.environ.get("FAKE_FAIL", "")
 

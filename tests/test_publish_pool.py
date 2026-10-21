@@ -251,6 +251,26 @@ def test_publish_copies_signs_and_indexes_exactly_the_finals(lab: Lab) -> None:
     assert (result.dest, result.published, result.skipped_unrecorded) == (dest, 2, 2)
 
 
+def test_the_index_is_made_without_portage_verifying_the_signatures_it_just_made(
+    lab: Lab,
+) -> None:
+    """R5.5, found by the real run on bentoo-lab (task 5.4): over signed gpkgs a bare
+    ``emaint binhost --fix`` verifies each signature, and in the read-only toolbox gpg cannot
+    even create its random_seed, so every binpkg is rejected and the index lists none
+    (``PACKAGES: 0``). The fake toolbox cannot reproduce that, so pin the cause: the index
+    step must run with ``binpkg-ignore-signature`` (``verify`` is what checks the signatures)."""
+    _publish(lab)
+    indexes = FakeTools.calls("emaint")
+    assert len(indexes) == 1, indexes
+    assert "binpkg-ignore-signature" in (indexes[0].get("features") or "").split(), indexes[0]
+    assert FakeTools.calls("gpkg-sign"), "nothing was signed"
+    # signing itself must still verify nothing and ignore nothing
+    assert all(
+        "binpkg-ignore-signature" not in (s.get("features") or "")
+        for s in FakeTools.calls("gpkg-sign")
+    )
+
+
 def test_publish_never_writes_the_build_pool(lab: Lab) -> None:
     """R5.6. The fake gpkg-sign rewrites its file in place: signing in the build pool, or
     a hardlink instead of a copy, would change these bytes."""

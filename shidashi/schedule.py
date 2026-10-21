@@ -1251,6 +1251,9 @@ def _prepare_results(results: Path, job: str, user: InvokingUser | None) -> None
                 if (st.st_uid, st.st_gid) != (top.st_uid, top.st_gid):
                     os.fchown(fds[-1], top.st_uid, top.st_gid)
                 if stat.S_IMODE(st.st_mode) != 0o755:
+                    # A results DIRECTORY the invoking user must traverse (0o755 is the ordinary
+                    # directory mode), set by descriptor to avoid a race.
+                    # nosemgrep: insecure-file-permissions
                     os.fchmod(fds[-1], 0o755)
         fds.append(_open_dir(job, fds[-1], create=True))
         for stale in (f"{job}.rc", f"{job}.runs"):

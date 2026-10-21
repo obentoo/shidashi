@@ -210,6 +210,9 @@ def _download(url: str, dest: Path) -> None:
     The transfer shows on the terminal (:func:`shidashi.progress.copy`).
     """
     try:
+        # The URL is a pin from this repository (stage3 pointer / tree pin) and the bytes are
+        # digest- and GPG-verified after download.
+        # nosemgrep: dynamic-urllib-use-detected
         with urllib.request.urlopen(url) as resp, dest.open("wb") as out:  # noqa: S310
             progress.copy(resp, out, label=dest.name, total=getattr(resp, "length", None))
     except (urllib.error.URLError, OSError) as err:

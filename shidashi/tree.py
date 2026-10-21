@@ -104,6 +104,9 @@ def verify_detached(data: Path, signature: Path, *, keyring: Path = GENTOO_KEYRI
 
 def _download(url: str, dest: Path) -> None:
     try:
+        # The URL is a pin from this repository (stage3 pointer / tree pin) and the bytes are
+        # digest- and GPG-verified after download.
+        # nosemgrep: dynamic-urllib-use-detected
         with urllib.request.urlopen(url) as resp, dest.open("wb") as out:  # noqa: S310
             progress.copy(resp, out, label=dest.name, total=getattr(resp, "length", None))
     except (urllib.error.URLError, OSError) as err:
@@ -169,6 +172,9 @@ def ensure_tree(
     tmp = Path(tempfile.mkdtemp(prefix=".extract-", dir=dest.parent))
     progress.current().note(f"extracting {pin.filename}")
     try:
+        # extractall below uses filter="data" (PEP 706): it refuses path traversal, absolute
+        # names, links outside the tree and device files.
+        # nosemgrep: tarfile-extractall-traversal
         with tarfile.open(tarball, "r:*") as tar:
             tar.extractall(tmp, filter="data")
         top = tmp / f"gentoo-{pin.date}"

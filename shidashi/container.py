@@ -296,6 +296,7 @@ class Container:
                 stamp = datetime.datetime.now().isoformat(timespec="seconds")
                 out.write(f"### {stamp} $ {' '.join(argv)}\n")
                 out.flush()
+                # nosemgrep: python36-compatibility-Popen1 -- this project requires Python 3.14
                 with subprocess.Popen(
                     cmd,
                     stdin=subprocess.DEVNULL,
