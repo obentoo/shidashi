@@ -72,19 +72,33 @@ def parse_refs(index_text: str) -> list[BinpkgRef]:
     return refs
 
 
-def _leaves_root(rel: str) -> bool:
-    path = PurePosixPath(rel)
-    return path.is_absolute() or ".." in path.parts
+def require_path_shape(rel: str, where: str) -> None:
+    """Refuse a PATH that is not ``<category>/<name>[/...]`` of plain names (R3.11, R4.5). Pure.
+
+    The one shape rule for every PATH read from an index or a quarantine list, because it
+    later feeds a ``mv``, a copy or an rsync exclude: an empty entry or a bare directory
+    would move the whole PKGDIR aside. Not empty, not absolute, no empty, ``.`` or ``..``
+    component (so ``a/b/`` and ``a//b`` fail, which ``PurePosixPath`` would silently
+    normalise), at least two components. A name that merely *contains* ``..`` (``a..b``)
+    is valid. ``where`` says what was being checked; the error carries the entry.
+    """
+    parts = rel.split("/")
+    if not rel:
+        problem = "is empty"
+    elif rel.startswith("/"):
+        problem = "is absolute"
+    elif any(part in ("", ".", "..") for part in parts):
+        problem = "has an empty, '.' or '..' component"
+    elif len(parts) < 2:
+        problem = "has fewer than two components"
+    else:
+        return
+    raise BinhostError(f"{where}: PATH {rel!r} {problem}")
 
 
 def safe_path(root: Path, rel: str) -> Path:
-    """``root / rel``, refusing an absolute PATH or a ``..`` component (R3.11). Pure.
-
-    Every PATH read from an index or a list goes through here: it later feeds a ``mv``,
-    a copy or an rsync exclude. A name that merely *contains* ``..`` (``a..b``) is fine.
-    """
-    if _leaves_root(rel):
-        raise BinhostError(f"PATH {rel!r} leaves the pool {root}")
+    """``root / rel`` for a PATH of the strict shape (:func:`require_path_shape`). Pure."""
+    require_path_shape(rel, f"pool {root}")
     return root / rel
 
 
@@ -261,8 +275,7 @@ def load_quarantined(pkgdir: Path) -> frozenset[str]:
     if not isinstance(paths, list) or not all(isinstance(p, str) for p in paths):
         raise BinhostError(f"{path}: 'paths' is not a list of strings")
     for entry in paths:
-        if _leaves_root(entry):
-            raise BinhostError(f"{path}: entry {entry!r} leaves the pool")
+        require_path_shape(entry, f"{path}: quarantine list")
     return frozenset(paths)
 
 
@@ -270,8 +283,7 @@ def add_quarantined(pkgdir: Path, paths: Iterable[str]) -> None:
     """Union ``paths`` into the quarantine list, atomically. I/O."""
     added = list(paths)
     for entry in added:
-        if _leaves_root(entry):
-            raise BinhostError(f"refusing to list {entry!r}: it leaves the pool {pkgdir}")
+        require_path_shape(entry, f"refusing to list in {pkgdir}")
     merged = load_quarantined(pkgdir) | frozenset(added)
     _write_json(pkgdir / QUARANTINE_FILE, {"version": _SCHEMA_VERSION, "paths": sorted(merged)})
 
@@ -296,13 +308,12 @@ def quarantine_script(pkgdir: str, quarantine_root: str, paths: Iterable[str]) -
     It runs on the worker, where ``pkgdir`` and ``quarantine_root`` are POSIX strings the
     host cannot stat. Every word is ``shlex.quote``\\ d, so a PATH full of shell syntax is
     moved as the one literal file it is; a PATH the worker does not have is skipped (the
-    host's list outlives what each worker holds). A PATH leaving the pool raises
+    host's list outlives what each worker holds). A PATH of the wrong shape raises
     :class:`BinhostError`: the list was already checked, this guards a direct caller.
     """
     lines = ["set -eu"]
     for rel in sorted(set(paths)):
-        if _leaves_root(rel):
-            raise BinhostError(f"PATH {rel!r} leaves the pool {pkgdir}")
+        require_path_shape(rel, f"quarantine script for {pkgdir}")
         src = shlex.quote(f"{pkgdir}/{rel}")
         dst = f"{quarantine_root}/{rel}"
         lines.append(
