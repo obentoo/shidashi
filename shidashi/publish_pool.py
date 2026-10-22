@@ -18,8 +18,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
+from shidashi import gpgsign
 from shidashi.binhost import BinhostError, BinpkgRef, PoolRecord, load_record, parse_refs, safe_path
-from shidashi.invoker import invoking_user
 from shidashi.publish_verify import verify
 from shidashi.toolbox import WORK, Toolbox
 
@@ -32,7 +32,6 @@ _AGENT_SOCKET = "S.gpg-agent"
 #: the toolbox is read-only and its /run/lock may not exist, and files are signed one at a
 #: time here, so there is no concurrent gpg to serialise.
 _SIGNING_COMMAND = "/usr/bin/gpg --sign --armor [PORTAGE_CONFIG]"
-_HOST_TIMEOUT_S = 60
 _OUTPUT_TAIL_LINES = 20
 
 
@@ -65,36 +64,10 @@ def plan_publish(refs: Sequence[BinpkgRef], record: PoolRecord) -> list[BinpkgRe
 # --- the maintainer's agent and keyring, on the host ----------------------------------------
 
 
-def _as_maintainer(argv: list[str]) -> list[str]:
-    """``argv``, run as ``SUDO_USER`` with their home when this is root under ``sudo``.
-
-    The agent and the keyring are the maintainer's, never root's.
-    """
-    try:
-        user = invoking_user()
-    except LookupError as err:
-        raise BinhostError(str(err)) from err
-    if user is None:
-        return argv
-    return ["runuser", "-u", user.name, "--", "env", f"HOME={user.home}", *argv]
-
-
-def _host_gpg(argv: list[str], what: str, stdin: bytes | None = None) -> bytes:
-    """Stdout of a host ``gpg``/``gpgconf`` command; any failure is a :class:`BinhostError`."""
-    try:
-        done = subprocess.run(
-            argv,
-            input=stdin,
-            capture_output=True,
-            check=False,
-            timeout=_HOST_TIMEOUT_S,
-        )
-    except (OSError, subprocess.TimeoutExpired) as err:
-        raise BinhostError(f"cannot {what}: {err}") from err
-    if done.returncode != 0:
-        said = done.stderr.decode("utf-8", "replace").strip()
-        raise BinhostError(f"cannot {what} (exit {done.returncode}): {said}")
-    return done.stdout
+# One copy of the rule, in ``gpgsign`` (story 030); the aliases keep the names 029's code
+# and tests use.
+_as_maintainer = gpgsign.as_maintainer
+_host_gpg = gpgsign.host_gpg
 
 
 def _agent_extra_socket() -> Path:

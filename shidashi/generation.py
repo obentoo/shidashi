@@ -53,7 +53,8 @@ _LEADING_RELEASE = re.compile(r"\d+(?:\.\d+)*")
 class GenerationMismatchError(FactoryError):
     """The PKGDIR belongs to another generation; ``differences`` names the fields.
 
-    ``successor`` is the PKGDIR to pass as ``--pkgdir`` instead (D9);
+    ``pkgdir`` is the PKGDIR that refused (story 030 records it in the build
+    outcome); ``successor`` is the PKGDIR to pass as ``--pkgdir`` instead (D9);
     ``after_phase`` is the phase whose emerge a re-check followed, if any.
     """
 
@@ -62,11 +63,13 @@ class GenerationMismatchError(FactoryError):
         message: str,
         *,
         differences: dict[str, tuple[str, str]],
+        pkgdir: Path,
         successor: Path,
         after_phase: str | None = None,
     ) -> None:
         super().__init__(message, phase="generation")
         self.differences = differences
+        self.pkgdir = pkgdir
         self.successor = successor
         self.after_phase = after_phase
 
@@ -306,6 +309,7 @@ def check_or_record(
         "built with a different toolchain or flags, and Portage would reuse them without "
         f"checking. Start a new generation: --pkgdir {successor}{tail}",
         differences=differences,
+        pkgdir=pkgdir,
         successor=successor,
         after_phase=after_phase,
     )
