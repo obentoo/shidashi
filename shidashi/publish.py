@@ -15,6 +15,7 @@ Signing (a detached GPG signature of DIGESTS and SHA256SUMS) needs the
 maintainer's key and is left to the maintainer.
 """
 
+import contextlib
 import datetime
 import gzip
 import hashlib
@@ -126,8 +127,9 @@ def update_sha256sums(directory: Path, sums: Mapping[str, str]) -> Path:
         try:
             tmp.write_text("".join(f"{d}  {n}\n" for n, d in sorted(lines.items())), "utf-8")
             tmp.replace(path)
-        except OSError:
-            tmp.unlink(missing_ok=True)
+        except BaseException:  # a Ctrl-C mid-write must not leave the temp file either
+            with contextlib.suppress(OSError):  # never in place of the error being raised
+                tmp.unlink(missing_ok=True)
             raise
     return path
 

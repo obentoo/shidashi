@@ -313,3 +313,21 @@ def check_or_record(
         successor=successor,
         after_phase=after_phase,
     )
+
+
+def recorded_toolchain(pkgdir: Path) -> dict[str, str] | None:
+    """The gcc, glibc and binutils versions ``pkgdir``'s fingerprint records (story 030's
+    ``release.json``); ``None`` when it has none. I/O.
+
+    Raises :class:`FactoryError` naming the file when it cannot be read or parsed.
+    """
+    path = pkgdir / FINGERPRINT_FILE
+    try:
+        recorded = GenerationFingerprint.model_validate_json(path.read_bytes())
+    except FileNotFoundError:
+        return None
+    except (OSError, pydantic.ValidationError) as err:
+        raise FactoryError(
+            f"cannot read the generation fingerprint {path}: {err}", phase="generation"
+        ) from err
+    return {name: str(getattr(recorded, name)) for name in sorted(_TOOLCHAIN)}

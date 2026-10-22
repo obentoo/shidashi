@@ -226,7 +226,7 @@ shidashi vm test bentoo-…-kde-systemd-v3.iso   # boot it and check what it dec
 | `worker provision` | write a worker ISO that boots already paired | |
 | `kyomei` | pair a worker (a spare machine booted from the `worker` ISO) | |
 | `worker disk-init` | turn a disk of a paired worker into its work disk | |
-| `release` | publish a release (not implemented yet) | |
+| `release` | build, publish and sign one dated release | ✔ |
 
 ### Following a build
 
@@ -508,6 +508,47 @@ sudo -v && sudo nohup shidashi build v3 systemd > /tmp/build.log 2>&1 &
 If the terminal hangs up anyway, the workers keep building: the build's audit run records an
 `interrupted` step with each worker job's commands, and its results come back with
 `shidashi worker sync pull <worker> --arch <arch> --job <job>`.
+
+### Making a release
+
+`shidashi release` builds every ISO of the variants asked for, publishes each arch's signed
+binhost and signs the result with the maintainer's key, in one dated directory:
+
+```sh
+sudo shidashi release v3 systemd --key <FPR>   # one arch × init
+sudo shidashi release --all --key <FPR>        # every arch × init of the recipe axes
+```
+
+`--key` is the full fingerprint of a secret key in the keyring of the user who ran `sudo`;
+signing goes through that user's gpg-agent, and the key never leaves it. Each variant runs as
+its own `shidashi build --images all`, one after the other; a variant that fails does not stop
+the next, and the arches that built are still published and signed (an arch whose cache stays
+on a worker is skipped from publishing, and the summary says so). The release lands in
+`<cache>/releases/<YYYY.MM.DD>` (the start date in UTC; `--output-root` moves it) and holds:
+
+- the ISOs, `bentoo-YYYY.MM.DD-<flavor>-<init>-<arch>.iso`, each with its `.DIGESTS` file and
+  that file's signature, `<iso>.DIGESTS.asc`;
+- `release.json`: the pins (stage3, `::gentoo` snapshot, overlays), the shidashi commit, and per
+  variant how its build ended, its ISOs, its binhost generation and toolchain;
+- `bentoo-release-key.asc`, the public key that signed it;
+- `SHA256SUMS`, listing every file above, and `SHA256SUMS.asc`, signed last.
+
+The summary names, per variant, how it ended — with the successor PKGDIR when a toolchain change
+refused the build — and, per init, a newer Gentoo stage3 than the pin. That stage3 is only
+reported, never adopted: re-pinning stays a reviewed change. The exit code is 0 only when every
+variant built and published and the signatures verified. A directory already signed is never
+written again; a rerun the same UTC day into an unsigned one continues it.
+
+To check a release, with nothing but its directory:
+
+```sh
+gpg --import bentoo-release-key.asc
+gpg --verify SHA256SUMS.asc SHA256SUMS
+sha256sum -c SHA256SUMS
+```
+
+When mirroring the directory, leave out its dotfiles (`.outcome/`, `.*.lock`): they are the
+release's own bookkeeping and are not listed in `SHA256SUMS`.
 
 ## Contributing
 

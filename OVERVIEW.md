@@ -430,7 +430,7 @@ Host: **AMD Ryzen 9 9950X (Zen 5, v4 class, with AVX-512).** Consequences:
 - **`-march=native` is banned** (§9.3) — a prerequisite for any determinism; always an explicit `-march` per arch.
 - Known tension: the system uses `ACCEPT_KEYWORDS="~amd64"` (testing, changes fast). The snapshot pin is **even more critical** in that context — it is not optional.
 - Each release records: stage3 hash, repo snapshot hash, recipe hash, toolchain versions.
-- Versioned output: `bentoo-<flavor>-<init>-<arch>-<date>.iso` + `.sha256` + `.asc`.
+- Versioned output: `bentoo-YYYY.MM.DD-<flavor>-<init>-<arch>.iso` + `<iso>.DIGESTS` + `<iso>.DIGESTS.asc`, one `SHA256SUMS` + `SHA256SUMS.asc` and a `release.json` per dated release directory (`shidashi release`, story 030).
 
 ---
 
@@ -455,7 +455,8 @@ each init starts from its own stage3.
 │ CI reads the autobuild pointer files (no-multilib):   │
 │   .../latest-stage3-amd64-nomultilib-systemd.txt      │
 │   .../latest-stage3-amd64-nomultilib-openrc.txt       │
-│ Compares each one with the last recorded build.       │
+│ Compares each one with the pin (verified, reported;   │
+│ never acted on: re-pinning stays a reviewed change).  │
 └──────────────────┬────────────────────────────────────┘
                    │ changed? (toolchain-bump? → wipe; else → delta)
                    ▼
@@ -730,7 +731,7 @@ The reference `make.conf` (already organized into named groups) maps directly:
 - [x] init axis: `openrc`. *(systemd + openrc complete.)*
 
 ### Phase 4 — Automation
-- [ ] Weekly CI matrix (cron Sunday 00:00) + publishing + checksums/GPG. *(scaffold gated with `if: false`; still missing a self-hosted runner (Linux with systemd, root — or the builder VM below) + pointer file reading + a `release` command.)*
+- [ ] Weekly CI matrix (cron Sunday 00:00) + publishing + checksums/GPG. *(release half done: `shidashi release` builds, publishes and signs a dated release and reads the pointer files (story 030); still missing the self-hosted runner (Linux with systemd, root — or the builder VM below) and the weekly job (030b); the scaffold stays gated with `if: false`.)*
 - [x] Reproducible snapshot pin. *(stage3 in `seeds/stage3.toml`; `::gentoo` in `seeds/gentoo.toml` — signed daily snapshot, at least 7 days old (cooldown, D26), the overlays by commit in `seeds/overlays.toml`; factory/assemble/pretend bind only these pins, never the host's `/var/db/repos`.)*
 
 - [x] Builder VM: builds as the guest's root, no sudo on the host. *(`lab/vm/builder.sh`: a Bentoo `minimal` ISO under `shidashi vm`, the host's cache read-only under an overlay on the VM's disk; built the minimal, gnome and wm ISOs on 2026-10-02.)*

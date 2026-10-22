@@ -6,8 +6,9 @@ Each variant is built by the existing ``shidashi build`` as a child process, one
 test without a second orchestrator.
 
 :func:`run_build` must run on the MAIN thread for a stop signal to reach the child: only
-there may it install its SIGINT and SIGTERM handlers (``signal.signal``). The library
-raises, it does not log -- the command reports.
+there may it install its SIGINT, SIGTERM and SIGHUP handlers (``signal.signal``). The
+library raises, it does not log -- the command reports. Signing lives in ``release_sign``;
+its entry points are re-exported here.
 """
 
 import contextlib
@@ -24,19 +25,20 @@ from dataclasses import dataclass
 from pathlib import Path
 from types import FrameType
 
-from shidashi import config, gpgsign, parallel, publish, seed
+from shidashi import config, parallel, publish
 from shidashi.build_outcome import BuildOutcome, ReleaseError
+from shidashi.release_sign import RELEASE_KEY_FILE as RELEASE_KEY_FILE
+from shidashi.release_sign import SUMS_FILE as SUMS_FILE
+from shidashi.release_sign import sign_release as sign_release
+from shidashi.release_sign import verify_release as verify_release
 from shidashi.upstream import UpstreamStage3
 
-#: The signals a release forwards to its running child build (R9.1).
-_FORWARDED_SIGNALS = (signal.SIGINT, signal.SIGTERM)
+#: The signals that stop a release while a child build runs (R9.1; SIGHUP: a closed
+#: terminal). Each goes on to the child unless it already has its own copy.
+_ROUTED_SIGNALS = (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
 
 #: The release manifest's file name in the release directory (R5.1).
 MANIFEST_FILE = "release.json"
-#: The exported public key of ``--key``: what every signature is verified against (R6.1, R6.5).
-RELEASE_KEY_FILE = "bentoo-release-key.asc"
-#: The checksum list, signed last (R6.3).
-SUMS_FILE = "SHA256SUMS"
 
 
 @dataclass(frozen=True)
@@ -99,15 +101,15 @@ SignalHandler = Callable[[int, FrameType | None], None]
 
 @contextlib.contextmanager
 def _routing_stop_signals(handler: SignalHandler) -> Generator[None]:
-    """SIGINT and SIGTERM routed to ``handler`` for the block, the previous handlers
-    restored after it.
+    """SIGINT, SIGTERM and SIGHUP routed to ``handler`` for the block, the previous
+    handlers restored after it.
 
     Only the main thread may install a handler: elsewhere nothing is installed. A signal
     ignored on purpose (``nohup``) stays ignored, as ``parallel`` leaves it.
     """
     wanted: tuple[signal.Signals, ...] = ()
     if threading.current_thread() is threading.main_thread():
-        wanted = tuple(s for s in _FORWARDED_SIGNALS if signal.getsignal(s) is not signal.SIG_IGN)
+        wanted = tuple(s for s in _ROUTED_SIGNALS if signal.getsignal(s) is not signal.SIG_IGN)
     previous = []
     try:
         for signum in wanted:
@@ -119,24 +121,54 @@ def _routing_stop_signals(handler: SignalHandler) -> Generator[None]:
             signal.signal(caught, old if old is not None else signal.SIG_DFL)
 
 
+def _terminal_sent_it_to_the_child(signum: int) -> bool:
+    """Whether the child already has its own copy of ``signum``: a terminal's Ctrl-C goes
+    to its whole foreground process group, which the child shares with the release.
+
+    A ``kill -INT`` of a foreground release is taken for a Ctrl-C too: nothing in a Python
+    handler tells the two apart. SIGTERM never comes from a terminal. A SIGHUP always
+    does, as far as the release can tell: the hung-up pty signals its foreground group and
+    the shell its jobs' groups, the child's included -- and ``sudo`` relays its own to the
+    release. A second copy would end the child's grace period (``parallel._stop``).
+    """
+    if signum == signal.SIGHUP:
+        return True
+    if signum != signal.SIGINT:
+        return False
+    try:
+        tty = os.open("/dev/tty", os.O_RDONLY | os.O_NOCTTY)
+    except OSError:  # no controlling terminal: the SIGINT came from a kill
+        return False
+    try:
+        return os.tcgetpgrp(tty) == os.getpgrp()
+    except OSError:
+        return False
+    finally:
+        os.close(tty)
+
+
 def run_build(argv: Sequence[str]) -> int:
     """Run one child build with the terminal's output and no timeout (a build takes hours);
     return its exit code.
 
-    A SIGINT or SIGTERM received meanwhile is sent to the child -- a ``kill`` of the
-    release pid reaches no child through the process group -- and, once the child has
-    exited, raises ``KeyboardInterrupt`` (R9.1). Only the first one is forwarded: a second
-    signal must not cut the child's own cleanup short. The handler never waits itself:
-    ``Popen.wait`` holds a non-reentrant lock while it blocks, so a wait from the handler
-    would deadlock; the wait below resumes after the handler returns.
+    A SIGINT, SIGTERM or SIGHUP received meanwhile is sent to the child -- a ``kill`` of
+    the release pid reaches no child through the process group -- and, once the child has
+    exited, raises ``KeyboardInterrupt`` (R9.1). One signal at most is forwarded: a second
+    must not cut the child's own cleanup short. One the child already has is not
+    (:func:`_terminal_sent_it_to_the_child`), nor does it use up the forward: a SIGTERM
+    after it still goes on. The handler never waits itself: ``Popen.wait`` holds a
+    non-reentrant lock while it blocks, so a wait from the handler would deadlock; the
+    wait below resumes after the handler returns.
     """
     child: subprocess.Popen[bytes] | None = None
     received: list[int] = []
+    forwarded: list[int] = []
 
     def forward(signum: int, frame: FrameType | None) -> None:
         del frame
         received.append(signum)
-        if child is not None and len(received) == 1:
+        if child is not None and not forwarded and not _terminal_sent_it_to_the_child(signum):
+            forwarded.append(signum)
             child.send_signal(signum)
 
     with _routing_stop_signals(forward):
@@ -144,8 +176,9 @@ def run_build(argv: Sequence[str]) -> int:
             child = subprocess.Popen(list(argv))
         except OSError as err:
             raise ReleaseError(f"cannot start the child build {argv[0]}: {err}") from err
-        if received:
-            # A stop that arrived while the child was being started
+        if received and not forwarded:
+            # A stop that arrived while the child was being started: it had no copy then
+            forwarded.append(received[0])
             child.send_signal(received[0])
         code = child.wait()
     if received:
@@ -197,6 +230,10 @@ def _variant_entry(r: VariantResult) -> dict[str, object]:
     }
     if r.outcome.toolchain is not None:
         entry["toolchain_refusal"] = r.outcome.toolchain.model_dump(mode="json")
+    if r.outcome.status != "ok":
+        # why it failed: a child killed before its outcome file has nothing else (R3.7)
+        entry["exit_code"] = r.outcome.exit_code
+        entry["message"] = r.outcome.message
     return entry
 
 
@@ -276,11 +313,14 @@ def write_manifest(directory: Path, body: Mapping[str, object]) -> Path:
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(tmp, path)
-    except OSError as err:
+    except BaseException as err:
+        # BaseException: a Ctrl-C or SIGTERM mid-write must not leave the temp file either
         if tmp is not None:
             with contextlib.suppress(OSError):
                 tmp.unlink()
-        raise ReleaseError(f"{path}: cannot write the release manifest: {err}") from err
+        if isinstance(err, OSError):
+            raise ReleaseError(f"{path}: cannot write the release manifest: {err}") from err
+        raise
     publish.update_sha256sums(directory, {MANIFEST_FILE: publish.sha256_of(path)})
     return path
 
@@ -306,89 +346,6 @@ def read_earlier(directory: Path) -> dict[str, object] | None:
     if not isinstance(body, dict):
         raise ReleaseError(f"{path}: the earlier release manifest is not a JSON object")
     return body
-
-
-def sign_release(directory: Path, *, key: str) -> list[Path]:
-    """Export ``key``'s public key and list it in ``SHA256SUMS`` (R6.1), sign every
-    ``*.iso.DIGESTS`` (R6.2), then ``SHA256SUMS`` last (R6.3). Returns the signatures. I/O.
-
-    A signature covers its file, so no ``.asc`` is ever listed in ``SHA256SUMS`` (GOTCHA:
-    signing order); any write to it after the last signature would break that signature.
-    A failure re-raises and leaves no ``SHA256SUMS.asc`` (R6.6): a half-signed release must
-    not look signed.
-    """
-    made: list[Path] = []
-    try:
-        public = gpgsign.export_public(key, directory / RELEASE_KEY_FILE)
-        publish.update_sha256sums(directory, {public.name: publish.sha256_of(public)})
-        for digests in sorted(directory.glob("*.iso.DIGESTS")):
-            made.append(gpgsign.detach_sign(digests, key=key))
-        made.append(gpgsign.detach_sign(directory / SUMS_FILE, key=key))
-    except BaseException:
-        # BaseException: a Ctrl-C between the two last calls must not leave it either
-        (directory / f"{SUMS_FILE}.asc").unlink(missing_ok=True)
-        raise
-    return made
-
-
-def _key_matches(fingerprint: str, key: str) -> bool:
-    """Whether ``fingerprint`` is ``key``: the whole fingerprint, or a key ID ending it."""
-    wanted = key.replace(" ", "").upper().removeprefix("0X")
-    return len(wanted) >= 16 and fingerprint.upper().endswith(wanted)
-
-
-def _foreign_signer(status: str | None, key: str) -> str | None:
-    """Why a verified signature is not ``key``'s, from gpg's ``VALIDSIG`` lines, or ``None``.
-
-    ``VALIDSIG <signing-key fpr> ... <primary-key fpr>``: either may be ``key`` (a subkey
-    signs for its primary). A keyring holding a second key verifies that key's signatures
-    too, so a good signature alone is not proof it is ``key``'s. ``status`` is ``None`` for
-    a verifier that reports through its exceptions only (the unit tests' fake gpg).
-    """
-    if status is None:
-        return None
-    signers = [
-        (fields[2], fields[-1])
-        for fields in (line.split() for line in status.splitlines())
-        if fields[:2] == ["[GNUPG:]", "VALIDSIG"] and len(fields) > 2
-    ]
-    if not signers:
-        return "gpg reported no VALIDSIG"
-    for signing, primary in signers:
-        if not (_key_matches(signing, key) or _key_matches(primary, key)):
-            return f"signed by {primary}, not by {key}"
-    return None
-
-
-def verify_release(directory: Path, *, key: str) -> list[str]:
-    """Check every signature of ``directory`` against ``bentoo-release-key.asc`` alone, and
-    that ``key`` made it (R6.5). Returns one ``"<asc>: <reason>"`` per failure; empty = all
-    good. I/O.
-
-    The exported key ends in ``.asc`` but signs nothing: it is the keyring, never a
-    signature. A DIGESTS or ``SHA256SUMS`` without its signature is a failure too. The
-    caller removes ``SHA256SUMS.asc`` when the list is not empty (R6.6).
-    """
-    keyring = directory / RELEASE_KEY_FILE
-    expected = [*sorted(directory.glob("*.iso.DIGESTS")), directory / SUMS_FILE]
-    signatures = {p.with_name(f"{p.name}.asc") for p in expected}
-    signatures.update(p for p in directory.glob("*.asc") if p.name != RELEASE_KEY_FILE)
-    failures: list[str] = []
-    for asc in sorted(signatures):
-        if not asc.is_file():
-            failures.append(f"{asc.name}: missing")
-            continue
-        try:
-            # typed wider than seed's ``str``: see _foreign_signer
-            status: str | None = seed.gpg_verify(
-                asc, asc.with_name(asc.name.removesuffix(".asc")), keyring=keyring
-            )
-        except seed.SeedError as err:
-            failures.append(f"{asc.name}: {err}")
-            continue
-        if (why := _foreign_signer(status, key)) is not None:
-            failures.append(f"{asc.name}: {why}")
-    return failures
 
 
 def _variant_line(r: VariantResult) -> str:

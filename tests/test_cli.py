@@ -106,20 +106,6 @@ def test_list_shows_axis_names(variants_tree: Path) -> None:
     assert "openrc" in out
 
 
-# --- stubs (R6.2) ------------------------------------------------------------
-
-
-# NB: factory (story 003) and assemble (Phase 1) are no longer stubs; their
-# coverage lives in tests/test_cli_factory.py and tests/test_cli_assemble.py.
-# Only `release` is still a stub (Phase 4) — exit 2 with "Phase 0".
-
-
-def test_stub_release_exit2(variants_tree: Path) -> None:
-    result = runner.invoke(app, ["release", "--all"])
-    assert result.exit_code == 2
-    assert "Phase 0" in result.stdout
-
-
 # --- no args shows help (R6.3) ----------------------------------------------
 
 

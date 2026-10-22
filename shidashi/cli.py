@@ -45,6 +45,7 @@ from shidashi import (
     parallel,
     progress,
     publish,
+    release_cli,
     schedule,
 )
 from shidashi import remote as remote_mod
@@ -1056,9 +1057,6 @@ def _resolve_stale_state(err: StaleStateError) -> tuple[bool, bool]:
     if choice == "cancel":
         raise typer.Exit(1) from err
     return (choice == "reset", choice == "proceed")
-
-
-_STUB_MSG = "not implemented in Phase 0"
 
 
 def _render_assemble_pretty(result: AssembleResult, arch: str, flavor: str, init: str) -> None:
@@ -2439,16 +2437,8 @@ def doctor_cmd(
         typer.echo("builds and `shidashi vm`: ok")
 
 
-@app.command("release")
-def release(
-    arch: Annotated[str, typer.Argument(help="Arch axis (ignored by the stub).")] = "",
-    flavor: Annotated[str, typer.Argument(help="Flavor axis (ignored by the stub).")] = "",
-    init: Annotated[str, typer.Argument(help="Init axis (ignored by the stub).")] = "",
-    all_variants: Annotated[bool, typer.Option("--all", help="Release every variant.")] = False,
-) -> None:
-    """Stub: release publishing (not implemented in Phase 0) (R6.2)."""
-    typer.echo(f"release: {_STUB_MSG}")
-    raise typer.Exit(2)
+# story 030: the command lives in release_cli.py, which imports cli at call time
+app.command("release")(release_cli.release)
 
 
 @kits_app.command("check")

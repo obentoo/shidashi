@@ -87,10 +87,12 @@ def _write_published_file(dest: Path, content: bytes) -> None:
             out.write(content)
         tmp.chmod(_PUBLISHED_MODE)  # mkstemp creates 0600
         os.replace(tmp, dest)
-    except OSError as err:
+    except BaseException as err:  # a Ctrl-C mid-write must not leave the temp file either
         with contextlib.suppress(OSError):
             tmp.unlink()
-        raise GpgError(f"cannot write {dest}: {err}") from err
+        if isinstance(err, OSError):
+            raise GpgError(f"cannot write {dest}: {err}") from err
+        raise
 
 
 def detach_sign(path: Path, *, key: str) -> Path:

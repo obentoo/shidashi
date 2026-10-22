@@ -24,6 +24,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   each gpkg and indexes them, replacing the previous pool atomically and leaving the
   build pool untouched; `shidashi binhost verify <arch> --pubkey FILE` checks every
   signature and the signed Manifest. Publishing a worker-owned arch is not covered yet.
+- **One command makes a signed, dated release.** `shidashi release` was a stub, so a release
+  meant running each build, publishing each binhost and signing by hand. `sudo shidashi
+  release v3 systemd --key FPR` (or `--all`) now runs one `shidashi build --images all` per
+  variant into `<cache>/releases/<YYYY.MM.DD>`, publishes each arch that built, writes
+  `release.json` (pins, commit, how each variant ended, its generation and toolchain) and
+  signs every `<iso>.DIGESTS` and `SHA256SUMS` with the maintainer's key, through the gpg-agent
+  of the user who ran `sudo`; `SHA256SUMS.asc` appears only once every signature verified. A
+  failed variant does not stop the others, the summary names a toolchain refusal's successor
+  PKGDIR and a newer upstream stage3 (reported, never adopted), and the exit code is 0 only
+  when everything built, published and verified. `shidashi build --outcome-file` records how a
+  build ended, and a toolchain refusal now prints the successor PKGDIR on its own line.
 
 ## [0.2.0] - 2026-10-17
 

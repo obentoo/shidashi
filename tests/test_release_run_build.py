@@ -81,6 +81,9 @@ def test_run_build_sends_a_stop_signal_on_to_the_child_and_stops_the_release(
     release = subprocess.Popen(
         [sys.executable, "-P", "-c", RELEASE_SIDE, SIGNALLED_CHILD, str(tmp_path)],
         cwd=tmp_path,
+        # no controlling terminal, whatever runs the suite: a SIGINT here is a kill, never a
+        # terminal's Ctrl-C (which run_build leaves to the child's own copy)
+        start_new_session=True,
     )
     try:
         deadline = time.monotonic() + 30
