@@ -104,7 +104,7 @@ def _fetch(url: str) -> bytes:
     return data
 
 
-def _verified(raw: bytes, name: str, verify: Callable[..., None]) -> None:
+def _verified(raw: bytes, name: str, verify: Callable[..., object]) -> None:
     """Run ``verify`` over ``raw`` written to a temp file that is always removed."""
     with tempfile.TemporaryDirectory(prefix="shidashi-upstream-") as where:
         path = Path(where) / name
@@ -117,7 +117,7 @@ def check(
     *,
     download: bool,
     fetch: Callable[[str], bytes] = _fetch,
-    verify: Callable[..., None] = seed.gpg_verify,
+    verify: Callable[..., object] = seed.gpg_verify,
 ) -> UpstreamStage3:
     """Compare Gentoo's latest stage3 for ``init`` with the pin; report only (R7.1-R7.6).
 

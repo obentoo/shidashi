@@ -145,13 +145,15 @@ def signature_ok(status: str, returncode: int) -> bool:
     )
 
 
-def gpg_verify(*files: Path, keyring: Path = GENTOO_KEYRING) -> None:
+def gpg_verify(*files: Path, keyring: Path = GENTOO_KEYRING) -> str:
     """``gpg --verify *files`` against ``keyring`` alone, in a throwaway home.
 
     ``files`` is ``signature data`` for a detached signature, or the one file of
-    a cleartext-signed message. Raises :class:`SeedError` when ``gpg`` or the
-    keyring is missing, when the keyring imports nothing, or unless
-    :func:`signature_ok`.
+    a cleartext-signed message. ``keyring`` is imported, so an armored export
+    (``gpg --armor --export``) works as well as a binary keyring. Raises
+    :class:`SeedError` when ``gpg`` or the keyring is missing, when the keyring
+    imports nothing, or unless :func:`signature_ok`. Returns gpg's ``--status-fd``
+    lines, so a caller can tell which key signed (``VALIDSIG``).
     """
     name = files[-1].name
     if shutil.which("gpg") is None:
@@ -183,6 +185,7 @@ def gpg_verify(*files: Path, keyring: Path = GENTOO_KEYRING) -> None:
         shutil.rmtree(home, ignore_errors=True)
     if not signature_ok(result.stdout, result.returncode):
         raise SeedError(f"GPG verification failed for {name}:\n{result.stderr.strip()}")
+    return result.stdout
 
 
 def verify_signature(digests: Path, *, keyring: Path = GENTOO_KEYRING) -> None:
