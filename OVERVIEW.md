@@ -721,7 +721,7 @@ The reference `make.conf` (already organized into named groups) maps directly:
 - [x] Factory with phases + fork-point cache. *(impl. + tests; root-host pilot deferred.)*
 - [x] Persistent-trunk strategy (fork-point reuse) — weekly delta over the binhost. *(impl. in `factory.py`; host pilot deferred.)*
 - [ ] Wipe-on-toolchain + toolchain-bump phase (§6.6): GCC/glibc/binutils bump detection → `--emptytree` + `@preserved-rebuild` + subslot-rebuilds. *(story 006; zero occurrences in the code today.)*
-- [ ] Multi-instance binhost + signing.
+- [x] Multi-instance binhost + signing. *(story 029: pool record of finals and transients, `shidashi binhost show/gc/publish/verify`, quarantining USE-aware GC, signed publish pool; publishing a worker-owned arch is a follow-up.)*
 - [ ] LibreOffice Qt vs GTK as a proof of concept. *(Qt variant present in `flavor/kde`; GTK counterpart pending.)*
 
 ### Phase 3 — Matrix

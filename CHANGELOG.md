@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **The binhost knows its finals and can be published, signed.** A generation's PKGDIR
+  only grew, and nothing told a flavor's final binpkg from a transient a cycle cut built
+  on the way. Each shipped stage now records, in `.shidashi-pool.json` of its PKGDIR, the
+  instances it installed (finals) and the ones its cuts produced (transients).
+  `shidashi binhost show <arch>` prints every instance with its kind (final, transient,
+  old, unrecorded). `shidashi binhost gc <arch>` moves the versions no pinned repository
+  still carries, beyond `--keep` (default 2) per package, to
+  `<cache>/quarantine/binpkgs/`, under the arch's owner lock, and reindexes; nothing is
+  deleted, `--dry-run` shows the plan, and an image's `install` checkpoint still
+  restores afterwards. A worker's push and pull honour the quarantine, so a gc on one
+  side is not undone by the other. `shidashi binhost publish <arch> --key FPR` copies the
+  recorded finals, and no other instance, to `<cache>/publish/<arch>/<generation>`, signs
+  each gpkg and indexes them, replacing the previous pool atomically and leaving the
+  build pool untouched; `shidashi binhost verify <arch> --pubkey FILE` checks every
+  signature and the signed Manifest. Publishing a worker-owned arch is not covered yet.
+
 ## [0.2.0] - 2026-10-17
 
 A spare machine becomes a build oven: a worker boots paired, builds an arch and can keep
