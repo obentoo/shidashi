@@ -27,3 +27,7 @@ build/
 
 # shidashi worker job: the default results directory (./worker-results/<worker>/<job>)
 /worker-results/
+
+# the managed Claude Code rules block (/epic:epic init) -- local to this machine
+/CLAUDE.md
+/.ai-memory.toml
