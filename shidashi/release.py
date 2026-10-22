@@ -249,6 +249,26 @@ def _kept_from(earlier: Mapping[str, object], released: set[tuple[str, str]]) ->
     ]
 
 
+def _kept_inits(
+    earlier: Mapping[str, object], path: tuple[str, ...], released: set[str]
+) -> dict[str, object]:
+    """The per-init entries under ``earlier[path]`` of the inits this run did not release (R9.3).
+
+    ``snapshot`` shares ``pins.stage3`` with the init keys but describes this run, so it is
+    never kept.
+    """
+    section: object = earlier
+    for key in path:
+        section = section.get(key) if isinstance(section, dict) else None
+    if not isinstance(section, dict):
+        return {}
+    return {
+        str(init): entry
+        for init, entry in section.items()
+        if init != "snapshot" and init not in released and isinstance(entry, dict)
+    }
+
+
 def _variant_key(entry: object) -> tuple[str, str]:
     if isinstance(entry, dict):
         return (str(entry.get("arch", "")), str(entry.get("init", "")))
@@ -270,25 +290,34 @@ def manifest(
     ``repo`` is ``audit.repo_state()``; only its ``commit`` and ``dirty`` are kept.
     ``earlier`` is the directory's previous ``release.json`` (R9.3): its variants this
     run did not release are kept, the others replaced, and its ``started`` stays -- the
-    release began then. ``date`` is this run's start date, the directory's name.
+    release began then. ``pins.stage3[init]`` and ``upstream_stage3[init]`` of every init
+    this run did not release are kept too; ``snapshot``, ``gentoo`` and ``overlays`` are
+    this run's. ``date`` is this run's start date, the directory's name.
     """
     entries: list[object] = [_variant_entry(r) for r in results]
     start = _utc_stamp(started)
+    stage3: dict[str, object] = {"snapshot": pins.stage3_snapshot}
+    upstream_stage3: dict[str, object] = {}
     if earlier is not None:
         released = {(r.variant.arch, r.variant.init) for r in results}
         entries.extend(_kept_from(earlier, released))
         if isinstance(earlier.get("started"), str):
             start = str(earlier["started"])
-    stage3: dict[str, object] = {"snapshot": pins.stage3_snapshot}
+        # A rerun's pins and upstream list hold only the inits it released (release_cli
+        # builds them per released init): the others keep the earlier run's entries.
+        inits = {r.variant.init for r in results}
+        stage3.update(_kept_inits(earlier, ("pins", "stage3"), inits))
+        upstream_stage3.update(_kept_inits(earlier, ("upstream_stage3",), inits))
     for init, (filename, sha512) in sorted(pins.stage3.items()):
         stage3[init] = {"filename": filename, "sha512": sha512}
+    upstream_stage3.update({u.init: {"latest": u.latest, "note": u.note} for u in upstream})
     return {
         "date": started.astimezone(datetime.UTC).date().isoformat(),
         "started": start,
         "finished": _utc_stamp(finished),
         "shidashi": {"commit": repo.get("commit"), "dirty": repo.get("dirty")},
         "pins": {"stage3": stage3, "gentoo": dict(pins.gentoo), "overlays": dict(pins.overlays)},
-        "upstream_stage3": {u.init: {"latest": u.latest, "note": u.note} for u in upstream},
+        "upstream_stage3": upstream_stage3,
         "variants": sorted(entries, key=_variant_key),
     }
 

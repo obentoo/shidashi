@@ -624,6 +624,8 @@ def job_unit_argv(job: str, commit: str, args: Sequence[str]) -> list[str]:
         f"--setenv=SHIDASHI_SCRATCH={WORK}/scratch",
         f"--setenv=SHIDASHI_RUNS={out}/runs",
         f"--setenv=PYTHONPATH={src}",
+        # the shipped tree has no .git: audit.repo_state records this commit instead
+        f"--setenv={audit.SOURCE_COMMIT_VARIABLE}={commit}",
         # systemd un-doubles $$ when it executes the command: what bash and shidashi
         # get is exactly ``exec_start``
         *(word.replace("$", "$$") for word in exec_start),

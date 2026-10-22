@@ -88,8 +88,17 @@ def sha256_file(path: Path, *, chunk: int = 1 << 20) -> str:
     return digest.hexdigest()
 
 
-def repo_state(repo: Path = _REPO) -> dict[str, Any]:
-    """The repository commit the run is built from, and whether the tree was dirty."""
+# set on a worker job's unit by worker.job_unit_argv (story 030, R5.4)
+SOURCE_COMMIT_VARIABLE = "SHIDASHI_SOURCE_COMMIT"
+
+
+def repo_state(repo: Path = _REPO, environ: Mapping[str, str] | None = None) -> dict[str, Any]:
+    """The repository commit the run is built from, and whether the tree was dirty.
+
+    Without a repository (a worker job runs ``git archive HEAD``, no ``.git``) the commit is
+    ``SHIDASHI_SOURCE_COMMIT``, set by ``worker.job_unit_argv``, with a clean tree: only a full
+    object name is taken -- 40 hex (SHA-1) or 64 (SHA-256), git's two object formats.
+    """
 
     def git(*args: str) -> str | None:
         try:
@@ -100,9 +109,14 @@ def repo_state(repo: Path = _REPO) -> dict[str, Any]:
             return None
         return done.stdout.strip()
 
+    commit = git("rev-parse", "HEAD")
+    if commit is None:
+        shipped = (os.environ if environ is None else environ).get(SOURCE_COMMIT_VARIABLE, "")
+        if re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", shipped):
+            return {"commit": shipped, "branch": None, "dirty": False, "dirty_files": []}
     status = git("status", "--porcelain")
     return {
-        "commit": git("rev-parse", "HEAD"),
+        "commit": commit,
         "branch": git("rev-parse", "--abbrev-ref", "HEAD"),
         "dirty": bool(status) if status is not None else None,
         "dirty_files": status.splitlines() if status else [],
