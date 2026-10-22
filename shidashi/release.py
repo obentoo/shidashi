@@ -341,6 +341,9 @@ def write_manifest(directory: Path, body: Mapping[str, object]) -> Path:
             handle.write(data)
             handle.flush()
             os.fsync(handle.fileno())
+        # NamedTemporaryFile creates 0600; the manifest is published like every other file
+        # of the directory (gpgsign._PUBLISHED_MODE) — a non-root `sha256sum -c` must read it
+        tmp.chmod(0o644)
         os.replace(tmp, path)
     except BaseException as err:
         # BaseException: a Ctrl-C or SIGTERM mid-write must not leave the temp file either
