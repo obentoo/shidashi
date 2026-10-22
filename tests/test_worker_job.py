@@ -124,6 +124,8 @@ def test_unit_argv_runs_a_named_collected_unit_from_the_shipped_tree() -> None:
         "SHIDASHI_SCRATCH": "/mnt/work/scratch",
         "SHIDASHI_RUNS": "/mnt/work/out/runs",
         "PYTHONPATH": f"/mnt/work/src/{COMMIT}",
+        # story 030 R5.4: the audit run of a job records the commit it was shipped
+        "SHIDASHI_SOURCE_COMMIT": COMMIT,
     }
     tail = _wrapped(argv)
     i = tail.index("/mnt/work/runtime/venv/bin/python")
