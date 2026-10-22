@@ -38,6 +38,7 @@ from rich.table import Table
 from shidashi import (
     audit,
     binhost_cli,
+    build_outcome,
     config,
     doctor,
     ownership,
@@ -59,6 +60,7 @@ from shidashi.factory import (
     FailureDecision,
     StaleStateError,
 )
+from shidashi.generation import GenerationMismatchError
 from shidashi.image import ImageError
 from shidashi.phases import phase_target
 from shidashi.recipe import (
@@ -1482,6 +1484,7 @@ class _ImagesFailed(Exception):
         super().__init__(f"image(s) failed: {', '.join(failed)}")
         self.code = code
         self.lines = lines
+        self.failed = failed
 
 
 def _child_step(key: str) -> str:
@@ -1627,6 +1630,12 @@ def _build_errors() -> Generator[None]:
         _echo_summary(err.lines)
         _err_console.print(f"[bold red]error:[/bold red] {escape(str(err))}", soft_wrap=True)
         raise typer.Exit(err.code) from err
+    except GenerationMismatchError as err:
+        # before FactoryError, which it is: the cause build_outcome.recording reads, and
+        # the successor on a line of its own for whoever retries (story 030 R3.6)
+        _err_console.print(f"[bold red]phase failed[/bold red] {err.phase}: {escape(str(err))}")
+        _err_console.print(f"successor PKGDIR: {err.successor}", markup=False, soft_wrap=True)
+        raise typer.Exit(1) from err
     except FactoryError as err:
         where = f" {escape(str(err.phase))}" if err.phase else ""
         _err_console.print(f"[bold red]phase failed[/bold red]{where}: {escape(str(err))}")
@@ -2111,6 +2120,15 @@ def build(
             "untracked changes (a worker builds the last commit).",
         ),
     ] = False,
+    outcome_file: Annotated[
+        Path | None,
+        typer.Option(
+            "--outcome-file",
+            help="Write how this build ended, as JSON (used by shidashi release).",
+            # design.md: kept out of the main option list — release passes it, users do not.
+            rich_help_panel="Used by shidashi release",
+        ),
+    ] = None,
     verbose: Verbose = False,
 ) -> None:
     """Build a tree of images in one audited run: the plan, the factory, then every ISO.
@@ -2127,87 +2145,90 @@ def build(
     ISOs or log, and exits 1 if any failed.
     """
     _apply_work_dir(work_dir)
-    if local:  # every image on this host; without --local the owner gets them all
-        _refuse_owned_arch(arch, "build")
-    if boot_test:  # before the host check, the seed and the factory (R3.1)
-        _require_boot_test_runner()
-    _require_build_host()
-    if jobs is not None:
-        os.environ["SHIDASHI_JOBS"] = str(jobs)
-    if compression not in ("zstd", "xz", "both"):
-        _err_console.print("[bold red]error:[/bold red] --compression is zstd, xz or both")
-        raise typer.Exit(1)
-    compressions = ("zstd", "xz") if compression == "both" else (compression,)
-    wanted = (
-        config.target_names()
-        if images == "all"
-        else [i.strip() for i in images.split(",") if i.strip()]
-    )
-    try:
-        factory_targets, iso_targets = plan_tree(wanted)
-        recipes = {t: _resolve(arch, t, init) for t in {*factory_targets, *iso_targets}}
-        pkgdir = _generation_pkgdir(arch, init)
-    except (typer.BadParameter, config.UnknownAxisError, RecipeChainError, SeedError) as err:
-        _err_console.print(f"[bold red]error:[/bold red] {escape(str(err))}")
-        raise typer.Exit(1) from err
+    with build_outcome.recording(outcome_file, arch=arch, init=init, output_dir=output_dir):
+        if local:  # every image on this host; without --local the owner gets them all
+            _refuse_owned_arch(arch, "build")
+        if boot_test:  # before the host check, the seed and the factory (R3.1)
+            _require_boot_test_runner()
+        _require_build_host()
+        if jobs is not None:
+            os.environ["SHIDASHI_JOBS"] = str(jobs)
+        if compression not in ("zstd", "xz", "both"):
+            _err_console.print("[bold red]error:[/bold red] --compression is zstd, xz or both")
+            raise typer.Exit(1)
+        compressions = ("zstd", "xz") if compression == "both" else (compression,)
+        wanted = (
+            config.target_names()
+            if images == "all"
+            else [i.strip() for i in images.split(",") if i.strip()]
+        )
+        try:
+            factory_targets, iso_targets = plan_tree(wanted)
+            recipes = {t: _resolve(arch, t, init) for t in {*factory_targets, *iso_targets}}
+            pkgdir = _generation_pkgdir(arch, init)
+        except (typer.BadParameter, config.UnknownAxisError, RecipeChainError, SeedError) as err:
+            _err_console.print(f"[bold red]error:[/bold red] {escape(str(err))}")
+            raise typer.Exit(1) from err
 
-    if not skip_factory:
-        holder = _worker_holder(arch)
-        if holder is not None:  # R5.8: the worker writes this binhost; read it as it is
+        if not skip_factory:
+            holder = _worker_holder(arch)
+            if holder is not None:  # R5.8: the worker writes this binhost; read it as it is
+                _err_console.print(
+                    f"factory skipped: {arch} is owned by {holder.worker} (job {holder.job})"
+                    " — building from the binhost as it is",
+                    markup=False,
+                    soft_wrap=True,
+                )
+                skip_factory = True
+
+        # story 028: a worker that owns the arch's cache builds its binhost and every image;
+        # the host has none of it to build from
+        cache_owner = _cache_owner(arch)
+        owner_factory = cache_owner is not None and not skip_factory
+        if cache_owner is not None:
+            skip_factory = True
             _err_console.print(
-                f"factory skipped: {arch} is owned by {holder.worker} (job {holder.job})"
-                " — building from the binhost as it is",
+                f"{arch}'s cache lives on {cache_owner}: its factory and every image run there",
                 markup=False,
                 soft_wrap=True,
             )
-            skip_factory = True
 
-    # story 028: a worker that owns the arch's cache builds its binhost and every image;
-    # the host has none of it to build from
-    cache_owner = _cache_owner(arch)
-    owner_factory = cache_owner is not None and not skip_factory
-    if cache_owner is not None:
-        skip_factory = True
-        _err_console.print(
-            f"{arch}'s cache lives on {cache_owner}: its factory and every image run there",
-            markup=False,
-            soft_wrap=True,
+        options = schedule.BuildOptions(
+            arch=arch,
+            init=init,
+            output_dir=output_dir,
+            images=tuple(iso_targets),
+            jobs=jobs,
+            boot_test=boot_test,
+            compressions=compressions,
+            stage4=stage4,
+            sbom=not no_sbom,
+            fresh=fresh,
+            trunk=not no_trunk,
+            download=not no_download,
+            keep=keep,
+            allow_dirty=allow_dirty,
+            serial=serial,
+            verbose=verbose,
+            cache_owner=cache_owner,
+            owner_factory=owner_factory,
         )
-
-    options = schedule.BuildOptions(
-        arch=arch,
-        init=init,
-        output_dir=output_dir,
-        images=tuple(iso_targets),
-        jobs=jobs,
-        boot_test=boot_test,
-        compressions=compressions,
-        stage4=stage4,
-        sbom=not no_sbom,
-        fresh=fresh,
-        trunk=not no_trunk,
-        download=not no_download,
-        keep=keep,
-        allow_dirty=allow_dirty,
-        serial=serial,
-        verbose=verbose,
-        cache_owner=cache_owner,
-        owner_factory=owner_factory,
-    )
-    if serial and os.environ.get(schedule.SERIAL_SHARE_ENV) == "1":
-        # the host's share of a planned --serial build (its argv sets the marker):
-        # planned already, built here
-        _build_serial_share(options, recipes, pkgdir, factory_targets, skip_factory=skip_factory)
-        return
-    _build_planned(
-        options,
-        recipes,
-        pkgdir,
-        factory_targets,
-        skip_factory=skip_factory,
-        local=local,
-        plan_only=plan,
-    )
+        if serial and os.environ.get(schedule.SERIAL_SHARE_ENV) == "1":
+            # the host's share of a planned --serial build (its argv sets the marker):
+            # planned already, built here
+            _build_serial_share(
+                options, recipes, pkgdir, factory_targets, skip_factory=skip_factory
+            )
+            return
+        _build_planned(
+            options,
+            recipes,
+            pkgdir,
+            factory_targets,
+            skip_factory=skip_factory,
+            local=local,
+            plan_only=plan,
+        )
 
 
 def _world_recipes() -> list[ResolvedRecipe]:
