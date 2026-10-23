@@ -11,7 +11,7 @@ build/
 
 # epic: planning and lab notes -- local, kept out of git (2026-09-09).
 # The files stay on disk; they are no longer versioned.
-.epic/
+.epico/
 
 # the agent's local state (Claude Code) -- session config and memory, not the project's
 .claude/
