@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-22
+
+A release becomes one command: the binhost knows its final binpkgs, and a dated set of
+ISOs is built, published and signed with the maintainer's key.
+
 ### Added
 
 - **The binhost knows its finals and can be published, signed.** A generation's PKGDIR
@@ -27,7 +32,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **One command makes a signed, dated release.** `shidashi release` was a stub, so a release
   meant running each build, publishing each binhost and signing by hand. `sudo shidashi
   release v3 systemd --key FPR` (or `--all`) now runs one `shidashi build --images all` per
-  variant into `<cache>/releases/<YYYY.MM.DD>`, publishes each arch that built, writes
+  variant into `<cache>/releases/<YYYY.MM.DD>`, publishes each arch that built (a
+  worker-owned arch is skipped and named in the summary), writes
   `release.json` (pins, commit, how each variant ended, its generation and toolchain) and
   signs every `<iso>.DIGESTS` and `SHA256SUMS` with the maintainer's key, through the gpg-agent
   of the user who ran `sudo`; `SHA256SUMS.asc` appears only once every signature verified. A
@@ -382,7 +388,8 @@ stage by stage.
   overlays are pinned; a generation fingerprint keeps binpkgs of two toolchains apart;
   every run leaves an audit trail.
 
-[Unreleased]: https://github.com/obentoo/shidashi/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/obentoo/shidashi/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/obentoo/shidashi/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/obentoo/shidashi/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/obentoo/shidashi/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/obentoo/shidashi/releases/tag/v0.1.0
