@@ -41,6 +41,18 @@ LOCK_FILE = ".release.lock"
 RELEASE_DIR_MODE = 0o755
 
 
+def ensure_release_dir(path: Path) -> None:
+    """``path`` and every parent this creates are ``RELEASE_DIR_MODE``; a parent that already
+    existed keeps its mode. ``OSError`` as ``mkdir``/``chmod`` raise it. I/O."""
+    # mkdir's mode is masked by the umask and ignored for parents: under sudo with umask 077
+    # root would leave them 0700 and the maintainer's gpg could not reach the release
+    # (030 revalidation, 2026-10-22). A directory an earlier run left narrow is widened too.
+    missing_parents = [d for d in path.parents if not d.exists()]
+    path.mkdir(parents=True, exist_ok=True)
+    for directory in (*reversed(missing_parents), path):
+        directory.chmod(RELEASE_DIR_MODE)
+
+
 def _refuse_unsignable(dest: Path) -> None:
     """``ReleaseError`` when ``dest`` is already signed (R1.7), or when its ``.signing`` is
     no directory: the signing could not stage there and would fail hours later. Such a file
@@ -70,7 +82,7 @@ def claim_release_dir(dest: Path) -> Generator[None]:
     """
     _refuse_unsignable(dest)  # before the mkdir: a signed directory stays as it is
     try:
-        dest.mkdir(parents=True, exist_ok=True, mode=RELEASE_DIR_MODE)
+        ensure_release_dir(dest)
     except OSError as err:
         raise ReleaseError(f"cannot create the release directory {dest}: {err}") from err
     with contextlib.ExitStack() as held:  # only the acquire's errors are the lock's
@@ -184,7 +196,8 @@ def sign_and_verify(trail: audit.Recorder, dest: Path, key: str) -> list[str]:
     staged = stage / f"{SUMS_FILE}.asc"
     try:
         shutil.rmtree(stage, ignore_errors=True)  # what a killed run left; never a symlink's target
-        stage.mkdir(mode=RELEASE_DIR_MODE)
+        stage.mkdir()  # fails on whatever the rmtree could not clear: never reused
+        stage.chmod(RELEASE_DIR_MODE)  # mkdir's mode is masked by the umask
         with trail.step("sign"):
             sign_release(dest, key=key, stage=stage)
         with trail.step("verify signatures") as step:
@@ -212,6 +225,7 @@ __all__ = [
     "STAGE_DIR",
     "SUMS_FILE",
     "claim_release_dir",
+    "ensure_release_dir",
     "sign_and_verify",
     "sign_release",
     "verify_release",

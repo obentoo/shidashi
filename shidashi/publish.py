@@ -50,6 +50,9 @@ class CorruptSums(PublishError):
         super().__init__(f"{path} line {line_no}: {reason}; left unchanged")
 
 
+#: ``SHA256SUMS`` is published like every file of a release (gpgsign._PUBLISHED_MODE): a
+#: non-root ``sha256sum -c`` and the maintainer's gpg must read it whatever root's umask is.
+_SUMS_FILE_MODE = 0o644
 #: One SHA256SUMS line as ``sha256sum`` writes it for a file of this directory.
 _SUMS_LINE_RE = re.compile(r"[0-9a-f]{64}  [^/\n]+")
 
@@ -126,6 +129,7 @@ def update_sha256sums(directory: Path, sums: Mapping[str, str]) -> Path:
         tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
         try:
             tmp.write_text("".join(f"{d}  {n}\n" for n, d in sorted(lines.items())), "utf-8")
+            tmp.chmod(_SUMS_FILE_MODE)  # write_text's mode is masked by the umask
             tmp.replace(path)
         except BaseException:  # a Ctrl-C mid-write must not leave the temp file either
             with contextlib.suppress(OSError):  # never in place of the error being raised

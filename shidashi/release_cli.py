@@ -175,7 +175,7 @@ def _build(
     outcome = dest / ".outcome" / f"{v.arch}-{v.init}.json"
     with trail.step(f"build {v.arch}/{v.init}", arch=v.arch, init=v.init) as step:
         try:
-            outcome.parent.mkdir(mode=release_sign.RELEASE_DIR_MODE, exist_ok=True)
+            release_sign.ensure_release_dir(outcome.parent)
             outcome.unlink(missing_ok=True)
             code = release_core.run_build(release_core.build_argv(v, dest, outcome, passthrough))
         except (ReleaseError, OSError) as err:  # the child never started
