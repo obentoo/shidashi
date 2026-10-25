@@ -79,9 +79,12 @@ def release_dir(root: Path, when: datetime.date) -> Path:
     return root / f"{when:%Y.%m.%d}"
 
 
-def build_argv(v: Variant, out: Path, outcome: Path, passthrough: Sequence[str]) -> list[str]:
-    """The child ``shidashi build`` of one variant: every image, the release directory as
-    output, its outcome file (R2.1); ``passthrough`` follows in the order given (R2.2)."""
+def build_argv(
+    v: Variant, out: Path, outcome: Path, passthrough: Sequence[str], images: str = "all"
+) -> list[str]:
+    """The child ``shidashi build`` of one variant: ``images`` (every image by default,
+    story 032 R2.1), the release directory as output, its outcome file (R2.1);
+    ``passthrough`` follows in the order given (R2.2)."""
     return [
         sys.executable,
         *parallel.CHILD_COMMAND,
@@ -89,7 +92,7 @@ def build_argv(v: Variant, out: Path, outcome: Path, passthrough: Sequence[str])
         v.arch,
         v.init,
         "--images",
-        "all",
+        images,
         "-o",
         str(out),
         "--outcome-file",

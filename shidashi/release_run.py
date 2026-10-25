@@ -64,7 +64,11 @@ def _upstream(
 
 
 def _build(
-    trail: audit.Recorder, v: release_core.Variant, dest: Path, passthrough: Sequence[str]
+    trail: audit.Recorder,
+    v: release_core.Variant,
+    dest: Path,
+    passthrough: Sequence[str],
+    images: str = "all",
 ) -> BuildOutcome:
     """One child build and how it ended (R2.1, R3.7). Last run's outcome file is removed
     first: a child killed before writing its own must not be read as a success; one that
@@ -74,7 +78,9 @@ def _build(
         try:
             release_sign.ensure_release_dir(outcome.parent)
             outcome.unlink(missing_ok=True)
-            code = release_core.run_build(release_core.build_argv(v, dest, outcome, passthrough))
+            code = release_core.run_build(
+                release_core.build_argv(v, dest, outcome, passthrough, images)
+            )
         except (ReleaseError, OSError) as err:  # the child never started
             got = _error(v, parallel.NOT_STARTED, str(err))
         else:
@@ -159,6 +165,7 @@ def run(
     pins: release_core.ReleasePins,
     started: datetime.datetime,
     passthrough: Sequence[str],
+    images: str,
     download: bool,
 ) -> tuple[list[str], int]:
     """Everything after the preflight; the summary lines and the exit code.
@@ -171,7 +178,7 @@ def run(
     outcomes: list[tuple[release_core.Variant, BuildOutcome]] = []
     for v in variants:  # one at a time (R2.3); a failure goes on to the next (R2.4)
         state.running = v
-        outcomes.append((v, _build(trail, v, dest, passthrough)))
+        outcomes.append((v, _build(trail, v, dest, passthrough, images)))
         state.results.append(release_core.VariantResult(v, outcomes[-1][1], "not run: interrupted"))
     state.running = None
 

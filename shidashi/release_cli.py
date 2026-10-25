@@ -87,6 +87,24 @@ def _usage(
         raise typer.BadParameter("give --key FPR to sign the release, or --unsigned to skip it")
 
 
+def _images(wanted: str) -> str:
+    """``--images`` as the children get it: ``all``, or a comma list of image targets.
+
+    Raises ``ValueError`` naming every entry that is not a ``config.target_names()`` --
+    ``desktop`` and ``base`` are stages, not images, and ``all`` does not mix with names.
+    """
+    names = [name.strip() for name in wanted.split(",")]
+    if names == ["all"]:
+        return "all"
+    targets = config.target_names()
+    unknown = [name or "''" for name in names if name not in targets]
+    if unknown:
+        raise ValueError(
+            f"--images: unknown image {', '.join(unknown)}; choose from all or {', '.join(targets)}"
+        )
+    return ",".join(names)
+
+
 def _load_pins(inits: Sequence[str]) -> release_core.ReleasePins:
     """The pins the children build from, for ``release.json`` (R5.1). Raises ``SeedError``
     for a missing or broken pin: the build would stop on it, so the release does first."""
@@ -177,6 +195,10 @@ def release(
     verbose: Annotated[
         bool, typer.Option("--verbose", "-v", help="Passed to every build.")
     ] = False,
+    images: Annotated[
+        str,
+        typer.Option("--images", help="Comma list of images every build makes (default all)."),
+    ] = "all",
     key: Annotated[
         str | None,
         typer.Option("--key", help="Fingerprint of the maintainer's key that signs the release."),
@@ -208,6 +230,10 @@ def release(
             fingerprint = _signing_key(key)
         except ValueError as err:
             _die(cli, err)
+    try:
+        wanted_images = _images(images)
+    except ValueError as err:
+        _die(cli, err)
     cli._apply_work_dir(work_dir)
     cli._require_build_host()
     if boot_test:
@@ -271,6 +297,7 @@ def release(
                 pins=pins,
                 started=started,
                 passthrough=passthrough,
+                images=wanted_images,
                 download=not no_download,
             )
     except KeyboardInterrupt:
