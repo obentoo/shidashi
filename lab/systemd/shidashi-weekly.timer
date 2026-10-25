@@ -1,0 +1,11 @@
+[Unit]
+Description=Weekly Shidashi release, Sunday 01:00 UTC
+
+[Timer]
+OnCalendar=Sun *-*-* 01:00:00 UTC
+# a run missed while the host was off is made up when it comes back
+Persistent=true
+Unit=shidashi-weekly.service
+
+[Install]
+WantedBy=timers.target

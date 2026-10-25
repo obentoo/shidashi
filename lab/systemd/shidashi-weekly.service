@@ -1,0 +1,10 @@
+# Template: `builder.sh timer-install` writes this to ~/.config/systemd/user with @REPO@ set
+# to the checkout. `/usr/bin/env` is the executable so the unit verifies before that.
+[Unit]
+Description=Shidashi weekly unsigned release on the builder VM
+
+[Service]
+Type=oneshot
+# the token's PATH only -- the token itself is read by `shidashi ci` from that 0600 file
+Environment=SHIDASHI_GH_TOKEN_FILE=%h/.config/shidashi/github-token
+ExecStart=/usr/bin/env @REPO@/lab/vm/builder.sh weekly
