@@ -20,7 +20,9 @@ from typing import Protocol
 
 from shidashi import gpgsign
 from shidashi.binhost import BinhostError, BinpkgRef, PoolRecord, load_record, parse_refs, safe_path
+from shidashi.publish import PUBLISHED_FILE_MODE
 from shidashi.publish_verify import verify
+from shidashi.release_sign import RELEASE_DIR_MODE
 from shidashi.toolbox import WORK, Toolbox
 
 #: Mount names inside the toolbox (``/work/<name>``): the pool being built, the signing home.
@@ -121,6 +123,21 @@ def _copy_planned(build_pool: Path, tmp: Path, planned: Sequence[BinpkgRef]) -> 
             raise BinhostError(f"cannot copy {src} to {dst}: {err}") from err
 
 
+def _set_modes(root: Path) -> None:
+    """Every directory under ``root`` (itself included) 0755 and every file 0644. The copies
+    keep the build pool's modes, ``tmp.mkdir`` and the toolbox's tools follow the umask: a
+    pool served as is must be readable by the web server whatever they were (R1.5)."""
+    try:
+        root.chmod(RELEASE_DIR_MODE)
+        for here, dirs, files in os.walk(root):
+            for name in dirs:
+                (Path(here) / name).chmod(RELEASE_DIR_MODE)
+            for name in files:
+                (Path(here) / name).chmod(PUBLISHED_FILE_MODE)
+    except OSError as err:
+        raise BinhostError(f"cannot set the modes of the new pool {root}: {err}") from err
+
+
 def _swap_in(tmp: Path, dest: Path) -> None:
     """Rename ``tmp`` over ``dest``: the old pool is set aside first and restored on failure."""
     old = dest.parent / f".{dest.name}.old"
@@ -181,7 +198,11 @@ def publish(
     kept = frozenset().union(*record.finals.values(), *record.transients.values())
     skipped = sum(1 for ref in refs if (ref.cpv, ref.build_id) not in kept)
 
-    dest.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.parent.chmod(RELEASE_DIR_MODE)
+    except OSError as err:
+        raise BinhostError(f"cannot prepare {dest.parent}: {err}") from err
     try:
         if tmp.exists():  # a failed run's leftover
             shutil.rmtree(tmp)
@@ -233,6 +254,7 @@ def publish(
         )
     finally:
         shutil.rmtree(gnupghome, ignore_errors=True)
+    _set_modes(tmp)  # after gpkg-sign and emaint, so their files are covered; before the swap
     _swap_in(tmp, dest)
     return PublishResult(dest=dest, published=len(planned), skipped_unrecorded=skipped)
 
