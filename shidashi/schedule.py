@@ -59,6 +59,7 @@ from shidashi import (
     locks,
     parallel,
     publish,
+    release_sign,
     remote,
     resolve,
     worker,
@@ -1450,7 +1451,7 @@ class _Mover:
 
     def _out_fd(self) -> int:
         if self._out is None:
-            self.output_dir.mkdir(parents=True, exist_ok=True)
+            release_sign.ensure_release_dir(self.output_dir)  # mkdir's mode is umask-masked
             fd = os.open(self.output_dir, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
             st = os.fstat(fd)
             self._out, self._owner = fd, (st.st_uid, st.st_gid)
@@ -1538,6 +1539,8 @@ class _Mover:
             with contextlib.suppress(FileNotFoundError):
                 os.unlink(name, dir_fd=out)
             raise OSError(errno.EBUSY, "replaced while it was moved", name)
+        # a worker run under a strict umask built the file 0600, and a rename keeps the mode
+        os.fchmod(fd, publish.PUBLISHED_FILE_MODE)
         os.fchown(fd, *self._owner)
 
     def _copy(self, out: int, name: str, src: int) -> None:
@@ -1545,7 +1548,7 @@ class _Mover:
         (``O_EXCL``, never a planted name), owned and synced, renamed into place."""
         tmp = f".{name}.{os.getpid()}.tmp"
         flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC
-        dst = os.open(tmp, flags, 0o644, dir_fd=out)
+        dst = os.open(tmp, flags, publish.PUBLISHED_FILE_MODE, dir_fd=out)
         try:
             try:
                 os.lseek(src, 0, os.SEEK_SET)
@@ -1554,7 +1557,7 @@ class _Mover:
                     open(dst, "wb", closefd=False) as target,
                 ):
                     shutil.copyfileobj(source, target, 1024 * 1024)
-                os.fchmod(dst, 0o644)
+                os.fchmod(dst, publish.PUBLISHED_FILE_MODE)
                 os.fchown(dst, *self._owner)
                 os.fsync(dst)
             finally:

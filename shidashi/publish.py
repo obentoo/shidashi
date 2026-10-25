@@ -23,6 +23,7 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -52,7 +53,7 @@ class CorruptSums(PublishError):
 
 #: ``SHA256SUMS`` is published like every file of a release (gpgsign._PUBLISHED_MODE): a
 #: non-root ``sha256sum -c`` and the maintainer's gpg must read it whatever root's umask is.
-_SUMS_FILE_MODE = 0o644
+PUBLISHED_FILE_MODE = 0o644
 #: One SHA256SUMS line as ``sha256sum`` writes it for a file of this directory.
 _SUMS_LINE_RE = re.compile(r"[0-9a-f]{64}  [^/\n]+")
 
@@ -84,11 +85,36 @@ def write_digests(iso: Path) -> tuple[Path, str]:
     """``<iso>.DIGESTS`` in Gentoo's format; returns it and the ISO's SHA256."""
     sha512, blake2b, sha256 = _hashes(iso)
     path = iso.with_name(iso.name + ".DIGESTS")
-    path.write_text(
-        f"# SHA512 HASH\n{sha512}  {iso.name}\n# BLAKE2B HASH\n{blake2b}  {iso.name}\n",
-        encoding="utf-8",
-    )
+    text = f"# SHA512 HASH\n{sha512}  {iso.name}\n# BLAKE2B HASH\n{blake2b}  {iso.name}\n"
+    # a temporary file renamed over the target: a failed write must not leave a half-written
+    # .DIGESTS for the maintainer to sign (mkstemp creates 0600, hence the fchmod)
+    try:
+        fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    except OSError as err:
+        raise PublishError(f"cannot write {path}: {err}") from err
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            os.fchmod(handle.fileno(), PUBLISHED_FILE_MODE)
+            handle.write(text)
+        os.replace(tmp, path)
+    except BaseException as err:  # a Ctrl-C mid-write must not leave the temp file either
+        with contextlib.suppress(OSError):  # never in place of the error being raised
+            tmp.unlink(missing_ok=True)
+        if isinstance(err, OSError):
+            raise PublishError(f"cannot write {path}: {err}") from err
+        raise
     return path, sha256
+
+
+def publish_mode(path: Path) -> Path:
+    """``path`` set to the mode every published file has, whatever the umask it was made
+    under or the tool (syft, tar, grub-mkrescue) that made it. I/O."""
+    try:
+        path.chmod(PUBLISHED_FILE_MODE)
+    except OSError as err:
+        raise PublishError(f"cannot set the mode of {path}: {err}") from err
+    return path
 
 
 def _read_sums(path: Path) -> dict[str, str]:
@@ -129,7 +155,7 @@ def update_sha256sums(directory: Path, sums: Mapping[str, str]) -> Path:
         tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
         try:
             tmp.write_text("".join(f"{d}  {n}\n" for n, d in sorted(lines.items())), "utf-8")
-            tmp.chmod(_SUMS_FILE_MODE)  # write_text's mode is masked by the umask
+            tmp.chmod(PUBLISHED_FILE_MODE)  # write_text's mode is masked by the umask
             tmp.replace(path)
         except BaseException:  # a Ctrl-C mid-write must not leave the temp file either
             with contextlib.suppress(OSError):  # never in place of the error being raised
@@ -146,7 +172,7 @@ def write_packages(dest: Path, packages: Iterable[Mapping[str, Any]]) -> Path:
     """One ``category/package-version`` per line, sorted. I/O."""
     atoms = sorted(str(p["atom"]) for p in packages)
     dest.write_text("".join(f"{a}\n" for a in atoms), encoding="utf-8")
-    return dest
+    return publish_mode(dest)
 
 
 def write_contents(
@@ -167,7 +193,7 @@ def write_contents(
     ]
     with gzip.open(dest, "wt", encoding="utf-8") as out:
         out.write("".join(f"{p}\n" for p in sorted(paths)))
-    return dest
+    return publish_mode(dest)
 
 
 def write_sbom(rootfs: Path, dest: Path) -> Path | None:
@@ -183,7 +209,7 @@ def write_sbom(rootfs: Path, dest: Path) -> Path | None:
         )
     except subprocess.CalledProcessError as err:
         raise PublishError(f"syft {rootfs}: {err.stderr}") from err
-    return dest
+    return publish_mode(dest)
 
 
 #: zstd level of the SBOM inside the medium. Measured on the kde SBOM (236 MiB,
@@ -257,7 +283,7 @@ def make_stage4(
     except subprocess.CalledProcessError as err:
         dest.unlink(missing_ok=True)
         raise PublishError(f"stage4 {dest.name}: {err.stderr}") from err
-    return dest
+    return publish_mode(dest)
 
 
 def write_latest(directory: Path, key: str, iso: Path) -> Path:
@@ -269,7 +295,7 @@ def write_latest(directory: Path, key: str, iso: Path) -> Path:
         f"{iso.name} {iso.stat().st_size}\n",
         encoding="utf-8",
     )
-    return path
+    return publish_mode(path)
 
 
 def bundle_run(run_dir: Path, dest: Path) -> Path:
@@ -293,4 +319,4 @@ def bundle_run(run_dir: Path, dest: Path) -> Path:
         )
     except (OSError, subprocess.CalledProcessError) as err:
         raise PublishError(f"bundling {run_dir}: {err}") from err
-    return dest
+    return publish_mode(dest)

@@ -34,7 +34,19 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
 
-from shidashi import audit, binpkgs, checkpoint, config, image, locks, publish, slim, toolbox, world
+from shidashi import (
+    audit,
+    binpkgs,
+    checkpoint,
+    config,
+    image,
+    locks,
+    publish,
+    release_sign,
+    slim,
+    toolbox,
+    world,
+)
 from shidashi.container import CommandResult, Container
 from shidashi.phases import (
     ISO_EMERGE_OPTIONS,
@@ -1223,7 +1235,12 @@ class Assembler:
             binds_ro, binds_rw = _build_binds(
                 self.binhost_dir, rootfs / "etc" / "portage" / "repos.conf", repos=repos
             )
-            output_dir.mkdir(parents=True, exist_ok=True)
+            try:
+                release_sign.ensure_release_dir(output_dir)  # mkdir's mode is masked by the umask
+            except OSError as err:
+                raise AssemblerError(
+                    f"cannot prepare the output directory {output_dir}: {err}"
+                ) from err
             artifacts: list[Path] = []
             isos: list[Path] = []
             squashfs_files: list[Path] = []
@@ -1711,6 +1728,10 @@ class Assembler:
                         )
                         step.add(iso_bytes=iso.stat().st_size if iso.is_file() else None)
                     with run.step(f"publish:{profile}"):
+                        try:
+                            publish.publish_mode(iso)  # grub-mkrescue writes it under the umask
+                        except publish.PublishError as err:
+                            raise AssemblerError(str(err)) from err
                         digests, sha256 = publish.write_digests(iso)
                         contents = publish.write_contents(
                             squashfs,

@@ -3,7 +3,9 @@
 import datetime
 import gzip
 import hashlib
+import os
 import shutil
+import stat
 import subprocess
 from pathlib import Path
 
@@ -35,6 +37,78 @@ def test_digests_are_gentoos_format_and_match_the_tools(tmp_path: Path) -> None:
     if shutil.which("b2sum"):  # BLAKE2B as b2sum prints it
         b2 = subprocess.run(["b2sum", str(iso)], capture_output=True, text=True).stdout.split()[0]
         assert f"{b2}  b.iso" in text
+
+
+def _digests_iso(tmp_path: Path) -> Path:
+    iso = tmp_path / "b.iso"
+    iso.write_bytes(b"ISO" * 1000)
+    return iso
+
+
+def _digests_mode(path: Path) -> int:
+    return stat.S_IMODE(path.stat().st_mode)
+
+
+def test_digests_are_0644_under_a_strict_umask(tmp_path: Path) -> None:
+    """Story 031, R1.1: under sudo with umask 077 the maintainer's gpg could not read it."""
+    iso = _digests_iso(tmp_path)
+    previous = os.umask(0o077)
+    try:
+        path, _ = publish.write_digests(iso)
+    finally:
+        os.umask(previous)
+    assert _digests_mode(path) == 0o644
+
+
+def test_a_stale_0600_digests_rewritten_under_the_usual_umask_ends_0644(tmp_path: Path) -> None:
+    iso = _digests_iso(tmp_path)
+    stale = tmp_path / "b.iso.DIGESTS"
+    stale.write_text("an earlier run\n", encoding="utf-8")
+    stale.chmod(0o600)
+    previous = os.umask(0o022)
+    try:
+        path, _ = publish.write_digests(iso)
+    finally:
+        os.umask(previous)
+    assert _digests_mode(path) == 0o644
+
+
+@pytest.mark.parametrize(
+    "failure", [OSError("disk full"), KeyboardInterrupt()], ids=["oserror", "ctrl-c"]
+)
+@pytest.mark.parametrize("step", ["fchmod", "replace"])
+def test_a_failed_digests_write_keeps_the_previous_file_and_leaves_no_temp(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, step: str, failure: BaseException
+) -> None:
+    """Q10: a half-written .DIGESTS would be signed and published as the real one."""
+    iso = _digests_iso(tmp_path)
+    previous, _ = publish.write_digests(iso)
+    before = previous.read_bytes()
+    iso.write_bytes(b"another ISO" * 1000)  # so a successful write would differ
+
+    def fail(*_args: object, **_kwargs: object) -> None:
+        raise failure
+
+    monkeypatch.setattr(os, step, fail)
+    with pytest.raises((publish.PublishError, KeyboardInterrupt)):
+        publish.write_digests(iso)
+    assert previous.read_bytes() == before
+    assert sorted(entry.name for entry in tmp_path.iterdir()) == ["b.iso", "b.iso.DIGESTS"]
+
+
+def test_an_unwritable_digests_is_a_publish_error_naming_the_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    iso = _digests_iso(tmp_path)
+
+    def refuse(*_args: object, **_kwargs: object) -> None:
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(os, "replace", refuse)
+    with pytest.raises(publish.PublishError) as raised:
+        publish.write_digests(iso)
+    assert "b.iso.DIGESTS" in str(raised.value)
+    assert isinstance(raised.value.__cause__, OSError)
 
 
 def test_sha256sums_update_their_own_lines_and_keep_the_others(tmp_path: Path) -> None:
