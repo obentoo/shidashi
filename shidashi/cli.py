@@ -2437,8 +2437,8 @@ def doctor_cmd(
         typer.echo("builds and `shidashi vm`: ok")
 
 
-# story 030: the command lives in release_cli.py, which imports cli at call time
-app.command("release")(release_cli.release)
+# story 030: the commands live in release_cli.py, which imports cli at call time
+app.add_typer(release_cli.app, name="release")
 
 
 @kits_app.command("check")

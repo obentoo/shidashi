@@ -9,6 +9,7 @@ for is reached through its module attribute at call time -- ``release.run_build`
 
 import contextlib
 import datetime
+import json
 import re
 import signal
 import sys
@@ -18,15 +19,17 @@ from contextlib import ExitStack
 from enum import StrEnum
 from pathlib import Path
 from types import FrameType, ModuleType
-from typing import Annotated, NoReturn
+from typing import Annotated, Any, NoReturn
 
 import typer
 from rich.markup import escape
+from typer.core import TyperGroup
 
 from shidashi import (
     audit,
     config,
     gpgsign,
+    release_report,
     release_run,
     release_sign,
     seed,
@@ -41,6 +44,25 @@ from shidashi.build_outcome import ReleaseError
 _KEY_FORM = re.compile(r"[0-9A-F]{16}|[0-9A-F]{40}|[0-9A-F]{64}")
 #: 128 + SIGINT: the shell's code for a run stopped by Ctrl-C (R9.1).
 _INTERRUPTED_EXIT = 130
+
+
+#: The command a bare ``shidashi release v3 systemd`` runs: ``release`` became a group (story 032).
+_RUN_COMMAND = "run"
+
+
+class ReleaseGroup(TyperGroup):
+    """``shidashi release``: ``report`` and ``prune`` are subcommands, and anything else
+    -- ``v3 systemd``, ``--all`` -- is the release itself, so story 030's form keeps working."""
+
+    # ``ctx`` is Any: typer 0.27 keeps click's Context in a private module, and typer.Context
+    # is a subclass, which an override may not narrow to.
+    def parse_args(self, ctx: Any, args: list[str]) -> list[str]:
+        if not args or (args[0] not in self.commands and args[0] not in ctx.help_option_names):
+            args = [_RUN_COMMAND, *args]
+        return super().parse_args(ctx, args)
+
+
+app = typer.Typer(cls=ReleaseGroup, help="Build, sign and report one dated release.")
 
 
 class Compression(StrEnum):
@@ -307,3 +329,27 @@ def release(
         typer.echo(line)
     typer.echo(f"release: {dest}")
     raise typer.Exit(code)
+
+
+app.command(_RUN_COMMAND)(release)
+
+
+@app.command("report")
+def report(
+    directory: Annotated[Path, typer.Argument(help="A release directory holding release.json.")],
+    markdown: Annotated[
+        bool, typer.Option("--markdown", help="Print a Markdown table (a job summary).")
+    ] = False,
+) -> None:
+    """Print one release's variants, ISOs and why any failed; reads release.json, writes nothing."""
+    from shidashi import cli  # call time: cli imports this module to register the command
+
+    path = directory / release_core.MANIFEST_FILE
+    try:
+        body = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(body, dict):
+            raise ValueError("not a JSON object")
+        text = release_report.render(body, markdown=markdown)
+    except (OSError, ValueError, release_report.ReleaseReportError) as err:
+        _die(cli, f"{path}: {err}")
+    typer.echo(text, nl=False)
