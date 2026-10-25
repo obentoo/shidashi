@@ -1,0 +1,56 @@
+# Shidashi weekly release -- unsigned, on the maintainer's builder VM (story 032).
+#
+# Never started by GitHub's own schedule: a host timer (`lab/vm/builder.sh weekly`) boots the
+# VM, mints a just-in-time runner and dispatches this workflow, so a runner exists only for
+# this one job. Its job-started hook (`lab/vm/runner-hook.sh`) refuses everything but this
+# file, dispatched on main. The release is NOT signed here: no key reaches the VM, the
+# maintainer signs on the host (story 033).
+name: weekly-release
+
+on:
+  workflow_dispatch:
+
+# no token permission at all: the job reads a public checkout and writes nothing back
+permissions: {}
+
+jobs:
+  weekly-release:
+    name: weekly release (unsigned)
+    runs-on: [self-hosted, bentoo-builder]
+    # three flavors on one arch/init; the hook-bounded runner waits at most two days
+    timeout-minutes: 2880
+    steps:
+      # Actions pinned by commit SHA, never a mutable tag (the tag in the comment).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Nothing in the guest provides uv: same pins as the `quality` job in release.yml.
+      - name: Set up uv and Python 3.14
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.12.23"
+          python-version: "3.14"
+
+      - name: Install (locked)
+        run: uv sync --frozen
+
+      - name: Release (unsigned)
+        run: |
+          set -o pipefail
+          uv run --frozen shidashi release v3 systemd --unsigned --images minimal,kde,gnome --output-root /mnt/out/releases | tee "$RUNNER_TEMP/release.out"
+
+      # The directory is named from the release's START date, which a run crossing 00:00 UTC
+      # would miss if recomputed here: take the one `release` printed.
+      - name: Report
+        if: always()
+        run: |
+          dir=""
+          if [ -f "$RUNNER_TEMP/release.out" ]; then
+            dir=$(sed -n 's/^release: //p' "$RUNNER_TEMP/release.out" | tail -n 1)
+          fi
+          if [ -z "$dir" ]; then
+            echo "no release directory" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          uv run --frozen shidashi release report "$dir" --markdown >> "$GITHUB_STEP_SUMMARY"
