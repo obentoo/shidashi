@@ -87,8 +87,17 @@ _KEPT: list[dict[str, Any]] = [
 ]
 
 
-def _profile(*, deny: bool = True) -> dict[str, Any]:
-    rules = [*_KEPT[:2], _VSOCK_DENY, *_KEPT[2:]] if deny else list(_KEPT)
+def _masked(mask: int, datum: int, index: int = 0) -> dict[str, Any]:
+    """OCI masked-eq: the mask goes in ``value``, the datum in ``valueTwo``."""
+    return {"index": index, "value": mask, "valueTwo": datum, "op": "SCMP_CMP_MASKED_EQ"}
+
+
+#: The same deny in the shape containers-common wrote from 2026-10-22.
+_VSOCK_DENY_MASKED: dict[str, Any] = {**_VSOCK_DENY, "args": [_masked(0xFFFFFFFF, 40)]}
+
+
+def _profile(*, deny: bool = True, rule: dict[str, Any] | None = None) -> dict[str, Any]:
+    rules = [*_KEPT[:2], rule or _VSOCK_DENY, *_KEPT[2:]] if deny else list(_KEPT)
     return {
         "defaultAction": "SCMP_ACT_ERRNO",
         "defaultErrno": "ENOSYS",
@@ -171,6 +180,15 @@ def test_run_argv_adds_no_security_option_without_a_profile(tmp_path: Path) -> N
     assert "--security-opt" not in _run_argv(tmp_path)
 
 
+def test_run_argv_adds_no_capability(tmp_path: Path) -> None:
+    """Without CAP_AUDIT_WRITE the seccomp rule "socket allow, arg 0 NE 16" (the one that
+    excludes that cap) is what admits AF_VSOCK once the deny is gone; with the cap only the
+    "NE 40" allow applies and vsock falls to the default action (story 031, R2.1)."""
+    argv = _run_argv(tmp_path, seccomp=tmp_path / "scratch" / "vm" / "runner-seccomp.json")
+    assert not [t for t in argv if t.startswith("--cap-add")]
+    assert "--privileged" not in argv
+
+
 def test_the_minimal_profile_drops_only_the_vsock_rule(
     tmp_path: Path, default_profile: Path
 ) -> None:
@@ -192,6 +210,73 @@ def test_the_minimal_profile_replaces_a_stale_one(tmp_path: Path, default_profil
     assert [p.name for p in stale.parent.iterdir()] == ["runner-seccomp.json"]  # no temp left
 
 
+def _written_profile(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, profile: Any) -> Any:
+    default = tmp_path / "seccomp.json"
+    default.write_text(json.dumps(profile))
+    monkeypatch.setattr(vmrunner, "_DEFAULT_SECCOMP", default)
+    return json.loads(vmrunner.seccomp_profile(tmp_path / "scratch").read_text())
+
+
+def _socket_deny(*args: dict[str, Any], action: str = "SCMP_ACT_ERRNO") -> dict[str, Any]:
+    return {"names": ["socket"], "action": action, "args": list(args)}
+
+
+#: Rules a loose match would drop: each differs from the vsock deny in one field.
+_MASKED_LOOKALIKES = {
+    "other-mask": _socket_deny(_masked(0xFFFFFFFE, 40)),
+    "other-datum": _socket_deny(_masked(0xFFFFFFFF, 41)),
+    "swapped": _socket_deny(
+        {"index": 0, "value": 40, "valueTwo": 0xFFFFFFFF, "op": "SCMP_CMP_MASKED_EQ"}
+    ),
+    "other-index": _socket_deny(_masked(0xFFFFFFFF, 40, index=1)),
+    "allow": _socket_deny(_masked(0xFFFFFFFF, 40), action="SCMP_ACT_ALLOW"),
+    "other-syscall": {**_socket_deny(_masked(0xFFFFFFFF, 40)), "names": ["bind"]},
+}
+
+
+def test_the_masked_vsock_deny_is_the_one_rule_removed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """podman's profile from 2026-10-22: mask 0xffffffff, datum 40 (R2.1)."""
+    minimal = _written_profile(tmp_path, monkeypatch, _profile(rule=_VSOCK_DENY_MASKED))
+    assert minimal == _profile(deny=False)
+
+
+def test_a_profile_with_both_shapes_loses_exactly_those_two(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Either one alone keeps vsock denied, so both go and nothing else (R2.4)."""
+    both = _profile()
+    both["syscalls"] = [_VSOCK_DENY_MASKED, *both["syscalls"]]
+    assert _written_profile(tmp_path, monkeypatch, both) == _profile(deny=False)
+
+
+@pytest.mark.parametrize("name", list(_MASKED_LOOKALIKES))
+def test_a_masked_look_alike_is_kept(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str
+) -> None:
+    """R2.3 / R4.3: the real deny goes, the look-alike beside it stays."""
+    profile = _profile()
+    profile["syscalls"] = [*profile["syscalls"], _MASKED_LOOKALIKES[name]]
+    minimal = _written_profile(tmp_path, monkeypatch, profile)
+    assert minimal["syscalls"] == [*_KEPT, _MASKED_LOOKALIKES[name]]
+
+
+@pytest.mark.parametrize("name", list(_MASKED_LOOKALIKES))
+def test_a_masked_look_alike_alone_is_not_the_vsock_rule(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str
+) -> None:
+    """R4.2: no deny in either shape -> refused naming the file, never unconfined."""
+    default = tmp_path / "seccomp.json"
+    profile = _profile(deny=False)
+    profile["syscalls"] = [*profile["syscalls"], _MASKED_LOOKALIKES[name]]
+    default.write_text(json.dumps(profile))
+    monkeypatch.setattr(vmrunner, "_DEFAULT_SECCOMP", default)
+    with pytest.raises(vmrunner.VmRunnerError) as raised:
+        vmrunner.seccomp_profile(tmp_path / "scratch")
+    assert str(default) in str(raised.value)
+
+
 @pytest.mark.skipif(not _HOST_PROFILE.is_file(), reason=f"no {_HOST_PROFILE} on this machine")
 def test_the_hosts_own_default_profile_loses_exactly_one_rule(tmp_path: Path) -> None:
     default = json.loads(_HOST_PROFILE.read_text())
@@ -201,7 +286,14 @@ def test_the_hosts_own_default_profile_loses_exactly_one_rule(tmp_path: Path) ->
     assert len(minimal["syscalls"]) == len(default["syscalls"]) - 1
     (rule,) = removed
     assert rule["names"] == ["socket"] and rule["action"] == "SCMP_ACT_ERRNO"
-    assert [(a["index"], a["value"], a["op"]) for a in rule["args"]] == [(0, 40, "SCMP_CMP_EQ")]
+    (arg,) = rule["args"]
+    shapes = [
+        (0, 40, "SCMP_CMP_EQ"),
+        (0, 0xFFFFFFFF, "SCMP_CMP_MASKED_EQ"),
+    ]
+    assert (arg["index"], arg["value"], arg["op"]) in shapes
+    if arg["op"] == "SCMP_CMP_MASKED_EQ":
+        assert arg["valueTwo"] == 40
     assert {k: v for k, v in minimal.items() if k != "syscalls"} == {
         k: v for k, v in default.items() if k != "syscalls"
     }

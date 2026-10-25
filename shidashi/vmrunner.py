@@ -65,6 +65,10 @@ _SECCOMP_PROFILE = "runner-seccomp.json"
 #: test's ssh (``systemd-ssh-proxy``) needs.
 _AF_VSOCK = 40
 
+#: OCI masked-eq puts the mask in ``value`` and the datum in ``valueTwo``; the full
+#: 32-bit mask is what makes it an equality (containers-common, 2026-10-22).
+_FULL_MASK = 0xFFFFFFFF
+
 #: The lock serialising imports of the runner image, under the scratch directory.
 _IMAGE_LOCK = "vm-runner.lock"
 
@@ -405,14 +409,17 @@ def _denies_vsock(rule: object) -> bool:
     if not isinstance(rule, dict):
         return False
     args = rule.get("args")
-    return (
+    if not (
         rule.get("names") == ["socket"]
         and rule.get("action") == "SCMP_ACT_ERRNO"
         and isinstance(args, list)
         and len(args) == 1
         and isinstance(args[0], dict)
-        and (args[0].get("index"), args[0].get("value"), args[0].get("op"))
-        == (0, _AF_VSOCK, "SCMP_CMP_EQ")
+    ):
+        return False
+    shape = (args[0].get("index"), args[0].get("value"), args[0].get("op"))
+    return shape == (0, _AF_VSOCK, "SCMP_CMP_EQ") or (
+        shape == (0, _FULL_MASK, "SCMP_CMP_MASKED_EQ") and args[0].get("valueTwo") == _AF_VSOCK
     )
 
 
