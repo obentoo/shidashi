@@ -38,7 +38,7 @@ The full architecture is in **[OVERVIEW.md](OVERVIEW.md)**.
 | Package Factory (stage3 → binpkgs) | ✅ implemented and tested |
 | ISO Assembler (binpkgs → live ISO) | ✅ implemented and tested |
 | Boot test (`shidashi vm test`, BIOS + UEFI) | ✅ the `kde` and `minimal` ISOs pass |
-| Weekly releases (every Sunday, 00:00 UTC) | 🚧 planned: needs a self-hosted runner (Linux with systemd, root) |
+| Weekly release (every Sunday, 01:00 UTC) | 🚧 unsigned release on an ephemeral runner in the builder VM, started by a host timer; first host cycle not recorded yet. Signing and publishing the weekly: planned |
 
 Lint, types and tests run on every pull request. The roadmap is in
 [OVERVIEW.md §17](OVERVIEW.md#17-development-roadmap).
@@ -549,6 +549,64 @@ sha256sum -c SHA256SUMS
 
 When mirroring the directory, leave out its dotfiles (`.outcome/`, `.*.lock`): they are the
 release's own bookkeeping and are not listed in `SHA256SUMS`.
+
+### Unsigned releases, reports and retention
+
+`shidashi release` takes exactly one of `--key <FPR>` (sign, as above) and `--unsigned`. An
+unsigned release builds and records every variant but publishes no binhost and signs nothing:
+no key is read or checked, each variant's `publish` reads `skipped: unsigned`, and
+`release.json` says `"signed": false` (a `release.json` without `signed` is a signed one,
+from before this option). It exits 0 when every variant built, 1 otherwise. `--images
+minimal,kde,gnome` builds only those images in every variant (default `all`; a name that is not
+an image target exits 1 before any build).
+
+```sh
+shidashi release report <release-dir> [--markdown]   # variants, ISOs, why one failed; writes nothing
+shidashi release prune --keep 4 [--dry-run] [--purge-pruned]
+```
+
+`release report` renders `release.json` as a table, with the successor PKGDIR of a toolchain
+refusal; `--markdown` is the form the weekly job appends to its GitHub job summary. `release
+prune` moves every release but the `--keep` newest from `<cache>/releases` to
+`<cache>/releases/.pruned/`, in one rename, skipping a directory a running release holds;
+it deletes nothing unless `--purge-pruned` is given, and then only the `.pruned` entries beyond
+its own `--keep` newest. Names that are not a `YYYY.MM.DD` date are left alone.
+
+### The weekly release on the builder VM
+
+A release takes hours, so it runs where a build cannot touch the host: the
+[builder VM](#the-builder-vm). `lab/vm/builder.sh weekly` is one cycle — it boots the VM when
+it is down, asks GitHub for a **just-in-time runner** (one job, then it is gone, nothing stays
+registered), hands the runner's configuration to the guest over ssh stdin into its tmpfs
+(never an argument, never a shared directory), starts the runner, dispatches
+[`weekly-release.yml`](.github/workflows/weekly-release.yml), waits for the runner to exit, stops the VM
+and runs `release prune --keep 4` on the host's releases. The job runs
+`shidashi release v3 systemd --unsigned --images minimal,kde,gnome` and writes the report to the
+job summary. The VM's runner refuses every other job: its job-started hook
+([`runner-hook.sh`](lab/vm/runner-hook.sh)) admits only that workflow, dispatched on `main`.
+The runner is pinned by version and SHA-256 in [`lab/vm/runner.env`](lab/vm/runner.env); bump it
+within 30 days of a new runner release or GitHub stops handing it jobs.
+
+```sh
+lab/vm/builder.sh setup            # once the VM is up: shares, work disk, overlay
+lab/vm/builder.sh weekly           # one cycle now
+lab/vm/builder.sh timer-install    # a user timer: every Sunday 01:00 UTC, catching up a missed run
+loginctl enable-linger "$USER"     # so the timer also fires while you are logged out
+```
+
+The host needs a fine-grained personal access token for the repository `obentoo/shidashi`
+only, with **Administration: read and write** (mints the runner configuration) and **Actions:
+read and write** (dispatches the workflow). Save it as `~/.config/shidashi/github-token`, mode
+**0600**, owned by you, one line (`SHIDASHI_GH_TOKEN_FILE` points elsewhere); `shidashi ci`
+refuses a file of any other mode and never prints the token. The settings on GitHub:
+
+- an **organisation runner group** limited to this repository (and, where the plan offers it,
+  to `weekly-release.yml@refs/heads/main`); put its id in `RUNNER_GROUP_ID` in `lab/vm/runner.env`;
+- **Settings → Actions → General → Fork pull request workflows → Require approval for all
+  outside collaborators**;
+- the weekly workflow is `workflow_dispatch` only and grants its token no permission.
+
+The weekly release is unsigned: sign it on the host, where the key is.
 
 ## Contributing
 
