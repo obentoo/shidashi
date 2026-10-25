@@ -170,6 +170,7 @@ def test_without_earlier_only_this_runs_inits_appear() -> None:
         "date",
         "started",
         "finished",
+        "signed",
         "shidashi",
         "pins",
         "upstream_stage3",

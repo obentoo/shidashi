@@ -39,6 +39,8 @@ _ROUTED_SIGNALS = (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
 
 #: The release manifest's file name in the release directory (R5.1).
 MANIFEST_FILE = "release.json"
+#: The summary line of a release made with --unsigned (story 032 R1.5).
+UNSIGNED_LINE = "signing: skipped (unsigned release)"
 
 
 @dataclass(frozen=True)
@@ -284,8 +286,14 @@ def manifest(
     started: datetime.datetime,
     finished: datetime.datetime,
     earlier: Mapping[str, object] | None = None,
+    signed: bool = True,
 ) -> dict[str, object]:
     """The ``release.json`` body (R5.1, design.md "Data Models"). Pure.
+
+    ``signed`` says the release is made with a key -- written before the signing runs, so
+    ``release.json`` itself is in the signed ``SHA256SUMS`` -- and is this run's, never the
+    ``earlier`` manifest's (story 032 R1.4, R1.7). The default is ``True`` because every
+    release before ``--unsigned`` existed was signed.
 
     ``repo`` is ``audit.repo_state()``; only its ``commit`` and ``dirty`` are kept.
     ``earlier`` is the directory's previous ``release.json`` (R9.3): its variants this
@@ -315,6 +323,7 @@ def manifest(
         "date": started.astimezone(datetime.UTC).date().isoformat(),
         "started": start,
         "finished": _utc_stamp(finished),
+        "signed": signed,
         "shidashi": {"commit": repo.get("commit"), "dirty": repo.get("dirty")},
         "pins": {"stage3": stage3, "gentoo": dict(pins.gentoo), "overlays": dict(pins.overlays)},
         "upstream_stage3": upstream_stage3,
@@ -410,8 +419,13 @@ def summary(
     *,
     signed: bool,
     verify_failures: Sequence[str],
+    unsigned: bool = False,
 ) -> tuple[list[str], int]:
     """The release's summary lines and its exit code. Pure.
+
+    ``unsigned`` is a release made with ``--unsigned``: nothing was to be signed, so it
+    prints ``signing: skipped (unsigned release)`` and is judged on its variants alone
+    (story 032 R1.5, R1.6).
 
     One line per variant, one per init whose upstream is newer (R7.2) or unknown (R7.4),
     then the signing line. Exit 0 only when every variant is ``ok``, every publish was
@@ -420,7 +434,9 @@ def summary(
     """
     lines = [_variant_line(r) for r in results]
     lines.extend(line for u in upstream if (line := _upstream_line(u)) is not None)
-    if verify_failures:
+    if unsigned:
+        lines.append(UNSIGNED_LINE)
+    elif verify_failures:
         lines.append(f"signing: failed — {'; '.join(verify_failures)}")
     elif not signed:
         lines.append(f"signing: failed — {SUMS_FILE} left unattested")
@@ -429,7 +445,6 @@ def summary(
     good = (
         all(r.outcome.status == "ok" for r in results)
         and all(r.publish.startswith(("published", "skipped:")) for r in results)
-        and signed
-        and not verify_failures
+        and (unsigned or (signed and not verify_failures))
     )
     return lines, 0 if good else 1

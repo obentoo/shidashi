@@ -72,12 +72,19 @@ def _signing_key(key: str) -> str:
     return compact
 
 
-def _usage(arch: str | None, init: str | None, all_variants: bool) -> None:
-    """R1.3: ``--all`` alone, or both axes without it."""
+def _usage(
+    arch: str | None, init: str | None, all_variants: bool, key: str | None, unsigned: bool
+) -> None:
+    """R1.3: ``--all`` alone, or both axes without it; story 032 R1.2: ``--key`` or
+    ``--unsigned``, never both and never neither."""
     if all_variants and (arch is not None or init is not None):
         raise typer.BadParameter("--all releases every variant: give no ARCH or INIT with it")
     if not all_variants and (arch is None or init is None):
         raise typer.BadParameter("give ARCH and INIT, or --all")
+    if unsigned and key is not None:
+        raise typer.BadParameter("--unsigned makes no signature: give it or --key, not both")
+    if not unsigned and key is None:
+        raise typer.BadParameter("give --key FPR to sign the release, or --unsigned to skip it")
 
 
 def _load_pins(inits: Sequence[str]) -> release_core.ReleasePins:
@@ -130,10 +137,6 @@ def _stop_signals_stop_the_release() -> Generator[None]:
 
 
 def release(
-    key: Annotated[
-        str,
-        typer.Option("--key", help="Fingerprint of the maintainer's key that signs the release."),
-    ],
     arch: Annotated[str | None, typer.Argument(help="Arch axis (e.g. v3); not with --all.")] = None,
     init: Annotated[
         str | None, typer.Argument(help="Init axis (systemd, openrc); not with --all.")
@@ -174,22 +177,37 @@ def release(
     verbose: Annotated[
         bool, typer.Option("--verbose", "-v", help="Passed to every build.")
     ] = False,
+    key: Annotated[
+        str | None,
+        typer.Option("--key", help="Fingerprint of the maintainer's key that signs the release."),
+    ] = None,
+    unsigned: Annotated[
+        bool,
+        typer.Option(
+            "--unsigned",
+            help="No key: skip the binhost publish and the signature; sign later on the host.",
+        ),
+    ] = False,
 ) -> None:
     """Build every variant asked for, publish each arch's binhost, and sign one dated release.
 
-    ``sudo shidashi release v3 systemd --key FPR`` runs one ``shidashi build --images all``
-    per variant into ``<cache>/releases/<YYYY.MM.DD>`` (the start date in UTC), publishes
-    the signed binhost of each arch that built, writes ``release.json`` and signs
-    ``SHA256SUMS`` and every ``DIGESTS`` with the maintainer's key. Exit 0 only when every
-    variant built, published and the signatures verified.
+    ``sudo shidashi release v3 systemd --key FPR`` (or ``--unsigned``) runs one
+    ``shidashi build --images all`` per variant into ``<cache>/releases/<YYYY.MM.DD>`` (the
+    start date in UTC), publishes the signed binhost of each arch that built, writes
+    ``release.json`` and signs ``SHA256SUMS`` and every ``DIGESTS`` with the maintainer's
+    key. Exit 0 only when every variant built, published and the signatures verified;
+    ``--unsigned`` publishes and signs
+    nothing and exits 0 when every variant built.
     """
     from shidashi import cli  # call time: cli imports this module to register the command
 
-    _usage(arch, init, all_variants)
-    try:
-        key = _signing_key(key)
-    except ValueError as err:
-        _die(cli, err)
+    _usage(arch, init, all_variants, key, unsigned)
+    fingerprint: str | None = None
+    if key is not None:
+        try:
+            fingerprint = _signing_key(key)
+        except ValueError as err:
+            _die(cli, err)
     cli._apply_work_dir(work_dir)
     cli._require_build_host()
     if boot_test:
@@ -199,10 +217,11 @@ def release(
         pins = _load_pins(sorted({v.init for v in variants}))
     except (config.UnknownAxisError, seed.SeedError) as err:
         _die(cli, err)
-    try:
-        gpgsign.check_key(key)
-    except gpgsign.GpgError as err:
-        _die(cli, err)
+    if fingerprint is not None:
+        try:
+            gpgsign.check_key(fingerprint)
+        except gpgsign.GpgError as err:
+            _die(cli, err)
     started = datetime.datetime.now(datetime.UTC)
     dest = release_core.release_dir(output_root or config.cache_dir() / "releases", started.date())
     passthrough = _passthrough(
@@ -231,7 +250,8 @@ def release(
                         argv=sys.argv,
                         inputs={
                             "variants": [f"{v.arch}/{v.init}" for v in variants],
-                            "key": key,
+                            "key": fingerprint,
+                            "unsigned": unsigned,
                             "release_dir": str(dest),
                         },
                         disk=config.scratch_dir(),
@@ -247,7 +267,7 @@ def release(
                 trail,
                 state,
                 variants,
-                key=key,
+                key=fingerprint,
                 pins=pins,
                 started=started,
                 passthrough=passthrough,

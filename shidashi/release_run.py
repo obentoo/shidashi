@@ -155,13 +155,16 @@ def run(
     state: Progress,
     variants: Sequence[release_core.Variant],
     *,
-    key: str,
+    key: str | None,
     pins: release_core.ReleasePins,
     started: datetime.datetime,
     passthrough: Sequence[str],
     download: bool,
 ) -> tuple[list[str], int]:
-    """Everything after the preflight; the summary lines and the exit code."""
+    """Everything after the preflight; the summary lines and the exit code.
+
+    ``key`` is ``None`` for an ``--unsigned`` release: nothing is published or signed, each
+    built variant's publish reads ``skipped: unsigned``, and ``release.json`` says so (R1)."""
     dest = state.dest
     inits = sorted({v.init for v in variants})
     found = _upstream(trail, inits, pins.stage3_snapshot, download=download)
@@ -175,7 +178,9 @@ def run(
     published: dict[str, str] = {}
     for v, outcome in outcomes:  # one publish per arch with an ok variant (R4.1, R4.3)
         if outcome.status == "ok" and v.arch not in published:
-            published[v.arch] = _publish(cli, trail, v.arch, v.init, key)
+            published[v.arch] = (
+                "skipped: unsigned" if key is None else _publish(cli, trail, v.arch, v.init, key)
+            )
     notes: list[str] = []
     results = []
     for v, outcome in outcomes:
@@ -199,16 +204,21 @@ def run(
                 started=started,
                 finished=datetime.datetime.now(datetime.UTC),
                 earlier=release_core.read_earlier(dest),
+                signed=key is not None,
             )
             release_core.write_manifest(dest, body)
     except (ReleaseError, publish.PublishError, OSError) as err:
         notes.append(f"{release_core.MANIFEST_FILE}: {err}; nothing signed")
-        signed = False
+        attested = False
     else:
-        state.signing = True
-        failures = release_sign.sign_and_verify(trail, dest, key)
-        signed = not failures
-    lines, code = release_core.summary(results, found, signed=signed, verify_failures=failures)
+        attested = False
+        if key is not None:
+            state.signing = True
+            failures = release_sign.sign_and_verify(trail, dest, key)
+            attested = not failures
+    lines, code = release_core.summary(
+        results, found, signed=attested, verify_failures=failures, unsigned=key is None
+    )
     if notes:  # a corrupt fingerprint or manifest is the release's failure too
         lines += notes
         code = max(code, 1)

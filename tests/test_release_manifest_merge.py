@@ -94,6 +94,7 @@ def test_manifest_without_earlier_has_the_data_model_keys_and_a_separate_refusal
         "date",
         "started",
         "finished",
+        "signed",
         "shidashi",
         "pins",
         "upstream_stage3",
