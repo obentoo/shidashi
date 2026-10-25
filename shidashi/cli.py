@@ -39,6 +39,7 @@ from shidashi import (
     audit,
     binhost_cli,
     build_outcome,
+    ci_cli,
     config,
     doctor,
     ownership,
@@ -91,6 +92,7 @@ app.add_typer(kits_app, name="kits")
 worker_app = typer.Typer(no_args_is_help=True, help="Drive a paired worker (shidashi kyomei).")
 app.add_typer(worker_app, name="worker")
 app.add_typer(binhost_cli.app, name="binhost")
+app.add_typer(ci_cli.app, name="ci")
 sync_app = typer.Typer(
     no_args_is_help=True, help="Copy an arch's cache to a worker, and results back from it."
 )
