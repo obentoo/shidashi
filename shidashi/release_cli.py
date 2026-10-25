@@ -29,6 +29,7 @@ from shidashi import (
     audit,
     config,
     gpgsign,
+    release_prune_cli,
     release_report,
     release_run,
     release_sign,
@@ -332,6 +333,7 @@ def release(
 
 
 app.command(_RUN_COMMAND)(release)
+app.command("prune")(release_prune_cli.prune)
 
 
 @app.command("report")
