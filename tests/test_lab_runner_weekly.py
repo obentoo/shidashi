@@ -167,3 +167,29 @@ def test_weekly_whose_runner_never_exits_stops_the_vm_and_exits_1(
     assert time.monotonic() - began < 170
     calls = weekly_host.calls()
     assert first(calls, "vm", "start") < last(calls, "vm", "stop"), calls
+
+
+@pytest.mark.parametrize(
+    ("runner_status", "weekly_status"),
+    [
+        pytest.param(100, 0, id="job-passed"),
+        # Hostile halves: 101 (job with issues) and 102 (job failed) are not a passed cycle.
+        pytest.param(101, 101, id="job-with-issues"),
+        pytest.param(102, 102, id="job-failed"),
+    ],
+)
+def test_weekly_maps_the_runners_job_result_exit_code(
+    weekly_host: FakeBuilderHost, runner_status: int, weekly_status: int
+) -> None:
+    """With ``ACTIONS_RUNNER_RETURN_JOB_RESULT_FOR_HOSTED`` the runner exits 100 plus the job
+    result; 100 is a passed job (story 032, task 11.2)."""
+    weekly_host.runner.exit_with(runner_status)
+    done = weekly_host.builder("weekly")
+    assert done.returncode == weekly_status, done.stdout + done.stderr
+
+
+def test_guest_runner_asks_the_runner_for_the_job_result() -> None:
+    from tests._fake_builder_guest import CHECKOUT
+
+    script = (CHECKOUT / "lab" / "vm" / "guest-runner.sh").read_text(encoding="utf-8")
+    assert "ACTIONS_RUNNER_RETURN_JOB_RESULT_FOR_HOSTED=true" in script

@@ -30,6 +30,11 @@ def _fail(message: str) -> None:
     typer.echo(f"error: {message}", err=True)
 
 
+def _purge_plan(root: Path, keep: int, pruned: list[str]) -> list[str]:
+    """The ``.pruned`` entries beyond its ``keep`` newest, given what it holds (or will)."""
+    return release_prune.plan([], keep, pruned).purge
+
+
 def _move_aside(root: Path, name: str) -> str | None:
     """Move ``root/name`` into ``.pruned`` under its lock. ``None`` when moved; otherwise
     why it stayed: ``busy`` (a release holds it) or the ``OSError`` text."""
@@ -69,14 +74,15 @@ def prune(
     except OSError as err:
         _fail(f"cannot read {root}: {err}")
         raise typer.Exit(1) from err
-    done = release_prune.plan(names, keep, pruned_names if purge_pruned else [])
+    done = release_prune.plan(names, keep, [])
     for name in [*done.skipped, *stray]:
         typer.echo(f"skipped {name}: not a release directory")
     if dry_run:
         for name in done.move:
             typer.echo(f"would move {name} to {release_prune.PRUNED_DIR}/")
-        for name in done.purge:
-            typer.echo(f"would delete {release_prune.PRUNED_DIR}/{name}")
+        if purge_pruned:
+            for name in _purge_plan(root, keep, [*pruned_names, *done.move]):
+                typer.echo(f"would delete {release_prune.PRUNED_DIR}/{name}")
         return
     failed = False
     if done.move:
@@ -85,6 +91,7 @@ def prune(
         except OSError as err:
             _fail(f"cannot create {pruned_root}: {err}")
             raise typer.Exit(1) from err
+    moved: list[str] = []
     for name in done.move:
         why = _move_aside(root, name)
         if why == "busy":
@@ -93,8 +100,11 @@ def prune(
             _fail(f"cannot move {root / name}: {why}")
             failed = True
         else:
+            moved.append(name)
             typer.echo(f"moved {name} to {release_prune.PRUNED_DIR}/")
-    for name in done.purge:
+    # counted after the moves: the root keeps `keep` releases and so does .pruned, this
+    # run's own moves included (a plan made before them left `keep` plus the week's moves)
+    for name in _purge_plan(root, keep, [*pruned_names, *moved]) if purge_pruned else []:
         try:
             shutil.rmtree(pruned_root / name)
         except OSError as err:
