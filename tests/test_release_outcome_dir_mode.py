@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from shidashi import audit, release_cli
+from shidashi import audit, release_run
 from shidashi import release as release_core
 from shidashi.release_sign import RELEASE_DIR_MODE, ensure_release_dir
 
@@ -65,6 +65,6 @@ def test_the_outcome_directory_gets_the_release_dir_mode(
     (tmp_path / ".outcome").mkdir()
     (tmp_path / ".outcome").chmod(0o700)  # what an earlier run under umask 077 left
 
-    release_cli._build(audit.Recorder(), release_core.Variant("amd64", "openrc"), tmp_path, [])
+    release_run._build(audit.Recorder(), release_core.Variant("amd64", "openrc"), tmp_path, [])
 
     assert seen["outcome"] == RELEASE_DIR_MODE
