@@ -46,8 +46,10 @@ jobs:
         with:
           # The uv the maintainers' Gentoo hosts ship (dev-python/uv), so CI and
           # local runs agree. Dependabot does not move this input: bump it by hand
-          # when ::gentoo does.
-          version: "0.12.23"
+          # when ::gentoo does -- but never to a release younger than 7 days (the
+          # cooldown of [tool.uv]): the host has 0.13.7 (2026-11-03), so 0.13.6
+          # until 2026-11-10.
+          version: "0.13.6"
           python-version: "3.14"
 
       # Frozen: exactly uv.lock, never a fresh resolution (pyproject's [tool.uv]

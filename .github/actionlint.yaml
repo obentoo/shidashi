@@ -1,0 +1,5 @@
+# Labels of the self-hosted runners, so actionlint accepts `runs-on` that names them.
+# bentoo-builder: the builder VM runner of weekly-release.yml (story 032).
+self-hosted-runner:
+  labels:
+    - bentoo-builder
