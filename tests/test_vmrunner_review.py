@@ -277,7 +277,20 @@ def test_a_masked_look_alike_alone_is_not_the_vsock_rule(
     assert str(default) in str(raised.value)
 
 
-@pytest.mark.skipif(not _HOST_PROFILE.is_file(), reason=f"no {_HOST_PROFILE} on this machine")
+def _host_profile_denies_vsock() -> bool:
+    """Whether this machine's default profile carries the rule the runner removes. I/O."""
+    if not _HOST_PROFILE.is_file():
+        return False
+    rules = json.loads(_HOST_PROFILE.read_text()).get("syscalls", [])
+    return any(vmrunner._denies_vsock(rule) for rule in rules)
+
+
+# GitHub's ubuntu-24.04 image (20261025) ships a seccomp.json without the AF_VSOCK rule;
+# the runner refusing such a profile is covered by the R4.2 tests above.
+@pytest.mark.skipif(
+    not _host_profile_denies_vsock(),
+    reason=f"no {_HOST_PROFILE} denying socket(AF_VSOCK) on this machine",
+)
 def test_the_hosts_own_default_profile_loses_exactly_one_rule(tmp_path: Path) -> None:
     default = json.loads(_HOST_PROFILE.read_text())
     scratch = tmp_path / "scratch"
