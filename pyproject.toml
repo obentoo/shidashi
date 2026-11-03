@@ -30,6 +30,15 @@ build-backend = "hatchling.build"
 # here, not by hand. Install with `uv sync --frozen --extra dev` (uv.lock).
 exclude-newer = "7 days"
 
+[tool.uv.exclude-newer-package]
+# Cooldown waived at the author's request on 2026-11-03 for these releases only;
+# drop each entry once its date is 7 days old -- the global rule covers it then.
+mypy = "2026-11-03T13:00:00Z"
+pydantic = "2026-11-03T13:00:00Z"
+pydantic-core = "2026-11-03T13:00:00Z"
+pytest = "2026-11-03T13:00:00Z"
+types-pyyaml = "2026-11-03T13:00:00Z"
+
 [tool.hatch.build.targets.wheel]
 packages = ["shidashi"]
 
