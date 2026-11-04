@@ -579,8 +579,12 @@ A release takes hours, so it runs where a build cannot touch the host: the
 it is down, asks GitHub for a **just-in-time runner** (one job, then it is gone, nothing stays
 registered), hands the runner's configuration to the guest over ssh stdin into its tmpfs
 (never an argument, never a shared directory), starts the runner, dispatches
-[`weekly-release.yml`](.github/workflows/weekly-release.yml), waits for the runner to exit, stops the VM
-and runs `release prune --keep 4` on the host's releases. The job runs
+[`weekly-release.yml`](.github/workflows/weekly-release.yml) and waits for the runner to exit. It
+stops the VM only when it booted it: a VM that was already up is left running, so a
+`builder.sh job` there survives, and only the runner unit is stopped and its configuration
+removed. Then it runs `release prune --keep 4 --purge-pruned` on the host's releases: the 4
+newest stay, older ones move to `.pruned/`, and `.pruned/` entries beyond its 4 newest are
+deleted. The job runs
 `shidashi release v3 systemd --unsigned --images minimal,kde,gnome` and writes the report to the
 job summary. The VM's runner refuses every other job: its job-started hook
 ([`runner-hook.sh`](lab/vm/runner-hook.sh)) admits only that workflow, dispatched on `main`.

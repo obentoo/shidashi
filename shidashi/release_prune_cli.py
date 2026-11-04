@@ -30,7 +30,7 @@ def _fail(message: str) -> None:
     typer.echo(f"error: {message}", err=True)
 
 
-def _purge_plan(root: Path, keep: int, pruned: list[str]) -> list[str]:
+def _purge_plan(keep: int, pruned: list[str]) -> list[str]:
     """The ``.pruned`` entries beyond its ``keep`` newest, given what it holds (or will)."""
     return release_prune.plan([], keep, pruned).purge
 
@@ -81,7 +81,7 @@ def prune(
         for name in done.move:
             typer.echo(f"would move {name} to {release_prune.PRUNED_DIR}/")
         if purge_pruned:
-            for name in _purge_plan(root, keep, [*pruned_names, *done.move]):
+            for name in _purge_plan(keep, [*pruned_names, *done.move]):
                 typer.echo(f"would delete {release_prune.PRUNED_DIR}/{name}")
         return
     failed = False
@@ -104,7 +104,7 @@ def prune(
             typer.echo(f"moved {name} to {release_prune.PRUNED_DIR}/")
     # counted after the moves: the root keeps `keep` releases and so does .pruned, this
     # run's own moves included (a plan made before them left `keep` plus the week's moves)
-    for name in _purge_plan(root, keep, [*pruned_names, *moved]) if purge_pruned else []:
+    for name in _purge_plan(keep, [*pruned_names, *moved]) if purge_pruned else []:
         try:
             shutil.rmtree(pruned_root / name)
         except OSError as err:

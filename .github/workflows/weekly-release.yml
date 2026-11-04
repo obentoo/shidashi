@@ -13,6 +13,11 @@ on:
 # no token permission at all: the job reads a public checkout and writes nothing back
 permissions: {}
 
+# a second dispatch waits for the running release instead of cancelling hours of build (R7.6)
+concurrency:
+  group: weekly-release
+  cancel-in-progress: false
+
 jobs:
   weekly-release:
     name: weekly release (unsigned)

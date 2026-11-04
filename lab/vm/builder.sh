@@ -139,8 +139,15 @@ weekly() {
   # (guest-runner.sh sets it): 100 is a passed job, 102 a failed one
   [ "$rc" != 100 ] || rc=0
   echo "weekly: the runner exited $rc"
-  if ! stop_vm; then
-    echo "weekly: cannot stop the builder VM" >&2
+  if [ "$WEEKLY_BOOTED" = 1 ]; then
+    if ! stop_vm; then
+      echo "weekly: cannot stop the builder VM" >&2
+      rc=1
+    fi
+  # the VM was already up and may hold a `builder.sh job`: leave it running, but end the
+  # RemainAfterExit unit (or the next cycle cannot reuse its name) and drop the runner config
+  elif ! vm_run "systemctl stop $RUNNER_UNIT && rm -f /run/shidashi/jitconfig"; then
+    echo "weekly: cannot stop $RUNNER_UNIT or remove its config in the guest" >&2
     rc=1
   fi
   if ! shidashi release prune --keep 4 --purge-pruned --output-root "$OUT/releases"; then
