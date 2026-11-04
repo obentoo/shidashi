@@ -8,7 +8,8 @@
 #   lab/vm/builder.sh status             running units and finished jobs
 #   lab/vm/builder.sh stop
 #   lab/vm/builder.sh weekly             one unsigned release on an ephemeral GitHub runner
-#                                        in the VM (boots it, stops it, prunes the releases)
+#                                        in the VM (boots it when down, stops it only when
+#                                        it booted it, prunes the releases)
 #   lab/vm/builder.sh timer-install      run `weekly` every Sunday 01:00 UTC (user timer)
 #
 # Layout (each overridable through the environment):
@@ -63,11 +64,28 @@ stop_vm() { shidashi vm stop --name "$NAME" --work-dir "$STATE/host"; }
 
 RUNNER_UNIT=shidashi-runner
 WEEKLY_BOOTED=0   # this run booted the VM
-WEEKLY_OWNS=0     # the runner unit is started: a failure from here on must power the VM off
+WEEKLY_OWNS=0     # systemd-run was attempted: a failure from here on must end the runner
+
+# Stop and unload the runner unit and drop its config in the guest. The runner exits 100+
+# (guest-runner.sh), so its RemainAfterExit unit ends "failed", and systemd keeps a failed unit
+# loaded after `stop`: only `reset-failed` frees the name for the next systemd-run. A failed
+# stop counts unless the unit is not loaded at all, the usual state before systemd-run.
+end_runner() {
+  vm_run "ok=1
+    systemctl stop $RUNNER_UNIT || [ \"\$(systemctl show -p LoadState --value $RUNNER_UNIT)\" = not-found ] || ok=0
+    systemctl reset-failed $RUNNER_UNIT 2>/dev/null
+    rm -f /run/shidashi/jitconfig || ok=0
+    ! systemctl -q is-active $RUNNER_UNIT && ! systemctl -q is-failed $RUNNER_UNIT && [ \$ok = 1 ]"
+}
 
 weekly_abort() {
   echo "weekly: $*" >&2
-  if [ "$WEEKLY_BOOTED" = 1 ] || [ "$WEEKLY_OWNS" = 1 ]; then
+  if [ "$WEEKLY_BOOTED" = 1 ]; then
+    stop_vm || echo "weekly: cannot stop the builder VM" >&2
+  # a VM this run did not boot may hold a `builder.sh job`: power it off only when the
+  # runner cannot be ended any other way, since it must not outlive the cycle
+  elif [ "$WEEKLY_OWNS" = 1 ] && ! end_runner; then
+    echo "weekly: cannot end $RUNNER_UNIT in the guest; stopping the builder VM" >&2
     stop_vm || echo "weekly: cannot stop the builder VM" >&2
   fi
   exit 1
@@ -89,6 +107,7 @@ weekly() {
     start_vm || weekly_abort "cannot boot the builder VM"
   fi
   setup_guest || weekly_abort "cannot prepare the builder guest"
+  end_runner || weekly_abort "cannot clear a leftover runner unit $RUNNER_UNIT in the guest"
 
   trap 'weekly_abort "interrupted"' TERM INT HUP
   { set +x; } 2>/dev/null   # the config is a credential: never traced, never echoed
@@ -145,9 +164,9 @@ weekly() {
       rc=1
     fi
   # the VM was already up and may hold a `builder.sh job`: leave it running, but end the
-  # RemainAfterExit unit (or the next cycle cannot reuse its name) and drop the runner config
-  elif ! vm_run "systemctl stop $RUNNER_UNIT && rm -f /run/shidashi/jitconfig"; then
-    echo "weekly: cannot stop $RUNNER_UNIT or remove its config in the guest" >&2
+  # runner so the next cycle can start its unit again
+  elif ! end_runner; then
+    echo "weekly: cannot end $RUNNER_UNIT or remove its config in the guest" >&2
     rc=1
   fi
   if ! shidashi release prune --keep 4 --purge-pruned --output-root "$OUT/releases"; then
@@ -195,5 +214,5 @@ case "$cmd" in
     shidashi vm stop --name "$NAME" --work-dir "$STATE/host"
     ;;
   *)
-    sed -n '2,31p' "$0"; exit 2 ;;
+    awk 'NR > 1 && !/^#/ { exit } NR > 1' "$0"; exit 2 ;;   # the header comment only
 esac

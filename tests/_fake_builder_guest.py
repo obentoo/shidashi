@@ -317,6 +317,13 @@ if verb in ("is-active", "is-failed", "show", "status"):
         sys.exit(0)
     print(f"Active: {first['ActiveState']} ({first['SubState']})")
     sys.exit(0 if first["ActiveState"] == "active" else 3)
+if verb == "reset-failed":
+    # as systemd: a failed unit is unloaded, so its name is free for the next systemd-run
+    for u in units:
+        record = os.path.join(state, "units", u + ".json")
+        if os.path.isfile(record) and json.load(open(record))["status"] not in (None, 0):
+            os.remove(record)
+    sys.exit(0)
 if verb == "list-units":
     for name in sorted(os.listdir(os.path.join(state, "units"))) if os.path.isdir(
         os.path.join(state, "units")) else []:
