@@ -30,6 +30,7 @@ from shidashi import (
     config,
     gpgsign,
     release_prune_cli,
+    release_publish_cli,
     release_report,
     release_run,
     release_sign,
@@ -52,7 +53,7 @@ _RUN_COMMAND = "run"
 
 
 class ReleaseGroup(TyperGroup):
-    """``shidashi release``: ``report`` and ``prune`` are subcommands, and anything else
+    """``shidashi release``: ``report``, ``prune``, ``sign`` are subcommands, and anything else
     -- ``v3 systemd``, ``--all`` -- is the release itself, so story 030's form keeps working."""
 
     # ``ctx`` is Any: typer 0.27 keeps click's Context in a private module, and typer.Context
@@ -334,6 +335,7 @@ def release(
 
 app.command(_RUN_COMMAND)(release)
 app.command("prune")(release_prune_cli.prune)
+app.command("sign")(release_publish_cli.sign)
 
 
 @app.command("report")
