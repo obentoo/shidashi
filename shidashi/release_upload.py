@@ -2,13 +2,23 @@
 releases the bucket keeps (story 033 R3-R5). The planners here are pure; the rclone calls
 that act on their plans live beside them."""
 
+import contextlib
 import datetime
 import json
+import os
 import re
+import shutil
+import signal
+import stat
+import subprocess
+import time
 from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
+from shidashi import audit
+from shidashi.invoker import InvokingUser, invoking_user
 from shidashi.release_sign import RELEASE_KEY_FILE, SUMS_FILE
 
 #: The run bundle carries internal paths and build logs: it never leaves the host (R3.3).
@@ -202,3 +212,209 @@ def retention(
         refused=tuple(refused),
         index={**index, "releases": remaining},
     )
+
+
+# --- rclone: the one place that runs it (R2.2, R2.4, R3.4, R3.5) ---------------------------
+
+#: The rclone config holds the R2 secret: readable by its owner only.
+_CONFIG_MODE = 0o600
+#: ``cat``, ``moveto`` and ``purge`` touch one small object or one prefix.
+_SHORT_TIMEOUT_S = 120
+#: A bucket-scoped R2 token gets 403 on rclone's implicit bucket check (design.md gotcha).
+_NO_BUCKET_CHECK = "--s3-no-check-bucket"
+#: ``--timeout`` is rclone's idle timeout, not a wall clock: a multi-GiB ISO may take hours.
+_COPY_FLAGS = ("--checksum", _NO_BUCKET_CHECK, "--retries", "3", "--timeout", "30m")
+#: ``cat`` of a missing object: on S3/R2 rclone exits 0 with no output, so
+#: ``--error-on-no-transfer`` turns "nothing read" into exit 9 (measured with ``rclone serve
+#: s3``, 2026-11-04, tech review 3.x); the local backend (and FakeRclone) answers exit 3
+#: "not found". A 0-byte index object also exits 9: it is no index. The host proof records R2.
+_CAT_NO_TRANSFER_EXIT = 9
+_CAT_LOCAL_MISSING_EXIT = 3
+#: Never prompt: a prompt for an encrypted config's password goes to the captured stderr
+#: and blocks forever (measured, tech review 3.x).
+_NO_PROMPT = "--ask-password=false"
+
+#: Credentials as rclone or the S3 SDK print them. A bare 64-hex string is never redacted:
+#: an R2 secret looks like a SHA-256, and an error must still name the digest (R3.4).
+_REDACTIONS = (
+    # access_key_id = X, AWS_SECRET_ACCESS_KEY=X, "secret_access_key": "X", session tokens
+    re.compile(
+        r"(?i)((?:aws_)?(?:access_key_id|secret_access_key|session_token)\"?\s*[:=]\s*\"?)"
+        r"[^\s\",;)]+"
+    ),
+    # the whole SigV4 header value: Credential=<key id>/..., Signature=<hmac>
+    re.compile(r"(?i)(authorization\s*:\s*)[^\r\n]+"),
+    # a presigned URL's query parameters
+    re.compile(r"(?i)(x-amz-(?:credential|signature|security-token)=)[^&\s:]+"),
+)
+
+
+def redact(text: str) -> str:
+    """``text`` with every credential shape in :data:`_REDACTIONS` replaced by ``***``;
+    names, paths and digests stay (R3.5). Pure."""
+    for pattern in _REDACTIONS:
+        text = pattern.sub(r"\1***", text)
+    return text
+
+
+def _maintainer() -> InvokingUser | None:
+    try:
+        return invoking_user()
+    except LookupError as err:
+        raise UploadError(str(err)) from err
+
+
+def rclone_config() -> Path:
+    """The rclone config to use: ``$RCLONE_CONFIG``, else the invoking user's (under
+    ``sudo``) or ``$HOME``'s ``.config/rclone/rclone.conf``. It must be a regular file,
+    not a symlink, owned by that user, mode 0600 (R2.2, R2.4). Raises
+    :class:`UploadError` naming the path -- never the content."""
+    user = _maintainer()
+    named = os.environ.get("RCLONE_CONFIG")
+    if named:
+        path = Path(named)
+    else:
+        home = user.home if user is not None else Path(os.environ.get("HOME", "~")).expanduser()
+        path = home / ".config" / "rclone" / "rclone.conf"
+    owner = user.uid if user is not None else os.getuid()
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK)
+    except OSError as err:
+        raise UploadError(f"cannot open the rclone config {path}: {err.strerror}") from None
+    try:
+        info = os.fstat(fd)
+    except OSError as err:
+        raise UploadError(f"cannot read the rclone config {path}: {err.strerror}") from None
+    finally:
+        os.close(fd)
+    if (
+        not stat.S_ISREG(info.st_mode)
+        or info.st_uid != owner
+        or stat.S_IMODE(info.st_mode) != _CONFIG_MODE
+    ):
+        raise UploadError(
+            f"the rclone config {path} must be a regular file owned by uid {owner} with "
+            f"mode 0600 (found mode {stat.S_IMODE(info.st_mode):04o}, owner uid {info.st_uid})"
+        )
+    return path
+
+
+def rclone_binary() -> str:
+    """The absolute path of ``rclone`` on PATH; :class:`UploadError` when absent (R2.1)."""
+    found = shutil.which("rclone")
+    if found is None:
+        raise UploadError("rclone is not installed (not found on PATH)")
+    return found
+
+
+class RcloneRunner:
+    """Every rclone call of ``release upload``: an argv list, never a shell; an env of only
+    PATH, HOME and ``RCLONE_CONFIG``, so credentials in the caller's env (which rclone
+    prefers over the file) never reach it; under ``sudo``, run as the maintainer through
+    ``runuser``. Paths are relative to ``remote`` (``r2:bucket``). A failure is an
+    :class:`UploadError` naming the step, the path and rclone's last stderr line, redacted."""
+
+    def __init__(self, *, remote: str, config: Path, trail: audit.Recorder | None = None) -> None:
+        self._remote = remote
+        self._config = Path(config)
+        self._trail = trail
+        self._binary = rclone_binary()
+        user = _maintainer()
+        home = str(user.home) if user is not None else os.environ.get("HOME", "/")
+        self._env = {
+            "PATH": os.environ.get("PATH", os.defpath),
+            "HOME": home,
+            "RCLONE_CONFIG": str(self._config),
+        }
+        # The pattern of gpgsign.as_maintainer, built here so its errors are UploadError.
+        wrap = ["runuser", "-u", user.name, "--", "env"] if user is not None else []
+        self._prefix = [*wrap, f"HOME={home}", f"RCLONE_CONFIG={self._config}"] if wrap else []
+
+    def _at(self, path: str) -> str:
+        sep = "" if self._remote.endswith((":", "/")) else "/"
+        return f"{self._remote}{sep}{path}"
+
+    def _run(
+        self, step: str, path: str, args: list[str], timeout: float | None
+    ) -> subprocess.CompletedProcess[bytes]:
+        argv = [*self._prefix, self._binary, step, _NO_PROMPT, *args]
+        started = time.monotonic()
+        try:
+            # A session of its own: under sudo the child is runuser, and killing only it
+            # would leave rclone finishing a moveto/purge already reported as failed.
+            child = subprocess.Popen(
+                argv,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=self._env,
+                start_new_session=True,
+            )
+        except OSError as err:
+            self._log(step, path, started, None)
+            raise UploadError(f"rclone {step} {path}: cannot run rclone: {err.strerror}") from None
+        try:
+            out, err_out = child.communicate(timeout=timeout)
+        except BaseException as stop:
+            with contextlib.suppress(ProcessLookupError, PermissionError):
+                os.killpg(child.pid, signal.SIGKILL)
+            child.communicate()
+            self._log(step, path, started, None)
+            if isinstance(stop, subprocess.TimeoutExpired):
+                raise UploadError(f"rclone {step} {path}: timed out after {timeout} s") from None
+            raise
+        self._log(step, path, started, child.returncode)
+        return subprocess.CompletedProcess(argv, child.returncode, out, err_out)
+
+    def _log(self, step: str, path: str, started: float, code: int | None) -> None:
+        if self._trail is not None:
+            self._trail.event(
+                "rclone",
+                step=step,
+                path=path,
+                seconds=round(time.monotonic() - started, 3),
+                exit=code,
+            )
+
+    @staticmethod
+    def _failure(step: str, path: str, done: subprocess.CompletedProcess[bytes]) -> UploadError:
+        said = redact(done.stderr.decode("utf-8", "replace")).strip().splitlines()
+        last = said[-1].strip() if said else "(no message)"
+        return UploadError(f"rclone {step} {path} failed (exit {done.returncode}): {last}")
+
+    def copyto(self, local: Path, dst: str) -> None:
+        """Copy the file ``local`` to ``dst`` in the remote (R3.1, R3.4)."""
+        done = self._run("copyto", dst, [str(local.absolute()), self._at(dst), *_COPY_FLAGS], None)
+        if done.returncode != 0:
+            raise self._failure("copyto", dst, done)
+
+    def cat(self, path: str) -> bytes | None:
+        """The bytes of ``path``; ``None`` only when rclone says it is not there (R4.1).
+        Any other failure is an error: an unreadable index is not an empty one (R4.4)."""
+        args = [self._at(path), "--error-on-no-transfer"]
+        done = self._run("cat", path, args, _SHORT_TIMEOUT_S)
+        if done.returncode == 0:
+            return done.stdout
+        if done.returncode == _CAT_NO_TRANSFER_EXIT or (
+            done.returncode == _CAT_LOCAL_MISSING_EXIT and b"not found" in done.stderr
+        ):
+            return None
+        raise self._failure("cat", path, done)
+
+    def moveto(self, src: str, dst: str) -> None:
+        """Move ``src`` onto ``dst`` inside the remote (R4.5): copy + delete on S3."""
+        done = self._run(
+            "moveto", dst, [self._at(src), self._at(dst), _NO_BUCKET_CHECK], _SHORT_TIMEOUT_S
+        )
+        if done.returncode != 0:
+            raise self._failure("moveto", dst, done)
+
+    def purge(self, path: str) -> None:
+        """Delete ``path`` and everything under it from the remote (R5.1): irreversible."""
+        # The last guard before an irreversible delete: "" would purge the whole bucket.
+        release = path.removeprefix("releases/")
+        if not path.startswith("releases/") or not _RELEASE_DATE_RE.fullmatch(release):
+            raise UploadError(f"refusing to purge {path!r}: not releases/YYYY.MM.DD")
+        done = self._run("purge", path, [self._at(path), _NO_BUCKET_CHECK], _SHORT_TIMEOUT_S)
+        if done.returncode != 0:
+            raise self._failure("purge", path, done)
