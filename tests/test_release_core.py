@@ -36,7 +36,7 @@ import json
 import os
 import re
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -91,6 +91,12 @@ def fake_public_key(key: str) -> str:
     )
 
 
+#: Captured before any fake is installed (see FakeMaintainerGpg.public_key_fingerprint).
+_REAL_PUBLIC_KEY_FINGERPRINT: Callable[[Path], str] = importlib.import_module(
+    "shidashi.gpgsign"
+).public_key_fingerprint
+
+
 class FakeMaintainerGpg:
     """Stands in for the maintainer's gpg-agent and keyring (``gpgsign``) and for
     ``gpg --verify`` (``seed.gpg_verify``). Holds the secret of ``key`` only."""
@@ -129,6 +135,14 @@ class FakeMaintainerGpg:
         asc.write_text(fake_signature(key, path.read_bytes()), encoding="utf-8")
         return asc
 
+    def public_key_fingerprint(self, path: Path) -> str:
+        found = re.search(r"fake public key (\S+)", Path(path).read_text(encoding="utf-8"))
+        if found is None:
+            # A real armored key: tests that restore the real gpg (test_release_publish_
+            # contracts) restore only the names they knew of, so this one defers to it.
+            return _REAL_PUBLIC_KEY_FINGERPRINT(path)
+        return found.group(1)
+
     def gpg_verify(self, *files: Path, keyring: Path = seed.GENTOO_KEYRING) -> None:
         self.verified.append((tuple(Path(f).name for f in files), Path(keyring)))
         if len(files) != 2:
@@ -151,7 +165,12 @@ class FakeMaintainerGpg:
     def install(self, monkeypatch: pytest.MonkeyPatch) -> FakeMaintainerGpg:
         """Patch the module attributes and any name the release modules bound by import."""
         gpgsign = importlib.import_module("shidashi.gpgsign")
-        targets = {"check_key": gpgsign, "export_public": gpgsign, "detach_sign": gpgsign}
+        targets = {
+            "check_key": gpgsign,
+            "export_public": gpgsign,
+            "detach_sign": gpgsign,
+            "public_key_fingerprint": gpgsign,
+        }
         for name, module in targets.items():
             monkeypatch.setattr(module, name, getattr(self, name))
         monkeypatch.setattr(seed, "gpg_verify", self.gpg_verify)

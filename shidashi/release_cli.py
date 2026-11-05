@@ -336,6 +336,7 @@ def release(
 app.command(_RUN_COMMAND)(release)
 app.command("prune")(release_prune_cli.prune)
 app.command("sign")(release_publish_cli.sign)
+app.command("upload")(release_publish_cli.upload)
 
 
 @app.command("report")

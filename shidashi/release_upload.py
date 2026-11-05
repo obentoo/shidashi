@@ -32,7 +32,7 @@ INDEX_OBJECT = "releases/index.json"
 INDEX_SCHEMA = 1
 #: The bucket key of a release is its directory name. ``[0-9]``, not ``\d``, which also
 #: matches non-ASCII digits: the date ends up in a ``purge`` path.
-_RELEASE_DATE_RE = re.compile(r"[0-9]{4}\.[0-9]{2}\.[0-9]{2}")
+RELEASE_DATE_RE = re.compile(r"[0-9]{4}\.[0-9]{2}\.[0-9]{2}")
 #: The entry fields that name an object of the entry's own release.
 _ENTRY_PATH_FIELDS = ("sha256sums", "signature", "pubkey")
 
@@ -114,7 +114,7 @@ def _check_entry(item: object, position: int) -> None:
     if not isinstance(item, dict):
         raise _refuse_index(f"release {position} is not an object")
     date = item.get("date")
-    if not isinstance(date, str) or not _RELEASE_DATE_RE.fullmatch(date):
+    if not isinstance(date, str) or not RELEASE_DATE_RE.fullmatch(date):
         raise _refuse_index(f"release {position} has no YYYY.MM.DD date")
     isos = item.get("isos")
     if not isinstance(isos, list) or not all(isinstance(i, str) for i in isos):
@@ -413,7 +413,7 @@ class RcloneRunner:
         """Delete ``path`` and everything under it from the remote (R5.1): irreversible."""
         # The last guard before an irreversible delete: "" would purge the whole bucket.
         release = path.removeprefix("releases/")
-        if not path.startswith("releases/") or not _RELEASE_DATE_RE.fullmatch(release):
+        if not path.startswith("releases/") or not RELEASE_DATE_RE.fullmatch(release):
             raise UploadError(f"refusing to purge {path!r}: not releases/YYYY.MM.DD")
         done = self._run("purge", path, [self._at(path), _NO_BUCKET_CHECK], _SHORT_TIMEOUT_S)
         if done.returncode != 0:

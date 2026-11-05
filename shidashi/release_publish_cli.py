@@ -1,4 +1,5 @@
-"""``shidashi release sign``: sign a release made with ``--unsigned`` (story 033, R1).
+"""``shidashi release sign``: sign a release made with ``--unsigned`` (story 033, R1);
+``shidashi release upload``: publish a signed one to the bucket (R2-R5).
 
 Registered by ``release_cli``, which imports this module to do so; ``release_cli`` and
 ``cli`` are therefore imported here at call time, never at module level (design.md
@@ -6,17 +7,20 @@ GOTCHA: the import would be circular).
 """
 
 import json
+import shutil
 import sys
+import tempfile
 from collections.abc import Mapping, Sequence
 from contextlib import ExitStack
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 import typer
 from rich.markup import escape
 
 from shidashi import audit, config, gpgsign, publish, release_sign
 from shidashi import release as release_core
+from shidashi import release_upload as up
 from shidashi.build_outcome import ReleaseError
 
 #: 128 + SIGINT, as ``shidashi release`` exits on Ctrl-C.
@@ -82,8 +86,10 @@ def _refuse_before_claim(directory: Path) -> dict[str, object]:
     return signable_manifest(directory)
 
 
-def _open_trail(stack: ExitStack, directory: Path, fingerprint: str) -> audit.Recorder:
-    """The ``release-sign`` audit run, opened as ``shidashi release`` opens its own; a runs
+def _open_trail(
+    stack: ExitStack, directory: Path, inputs: Mapping[str, str], command: str = "release-sign"
+) -> audit.Recorder:
+    """The ``command`` audit run, opened as ``shidashi release`` opens its own; a runs
     directory that cannot be written disables the trail with a warning, never the signing."""
     from shidashi import cli  # call time: cli imports release_cli, which imports this module
 
@@ -91,9 +97,9 @@ def _open_trail(stack: ExitStack, directory: Path, fingerprint: str) -> audit.Re
         trail: audit.Recorder = stack.enter_context(
             audit.run(
                 config.runs_dir(),
-                command="release-sign",
+                command=command,
                 argv=sys.argv,
-                inputs={"key": fingerprint, "release_dir": str(directory)},
+                inputs={**inputs, "release_dir": str(directory)},
                 disk=directory,
             )
         )
@@ -188,7 +194,7 @@ def sign(
                 manifest = signable_manifest(directory)
             except ReleaseError as err:
                 release_cli._die(cli, err)
-            trail = _open_trail(stack, directory, fingerprint)
+            trail = _open_trail(stack, directory, {"key": fingerprint})
             failures = _sign_in_place(trail, directory, manifest, fingerprint)
     except KeyboardInterrupt:
         cli._err_console.print("[bold red]interrupted:[/bold red] the release is not signed")
@@ -203,3 +209,207 @@ def sign(
         raise typer.Exit(1)
     for line in _signed_lines(directory, fingerprint):
         typer.echo(line)
+
+
+# --- release upload (R2-R5) -------------------------------------------------------------------
+
+#: Where story 032 sets a pruned release aside: still a host copy (R5.3).
+_PRUNED_DIR = ".pruned"
+LATEST_OBJECT = "releases/latest.json"
+
+
+def _signed_manifest(directory: Path) -> dict[str, object]:
+    path = directory / release_core.MANIFEST_FILE
+    try:
+        body = json.loads(path.read_bytes())
+    except (OSError, ValueError) as err:
+        raise up.UploadError(f"{path}: cannot read the release manifest: {err}") from err
+    if not isinstance(body, dict) or body.get("signed") is not True:
+        raise up.UploadError(
+            f'{path} does not say "signed": true: sign it with `shidashi release sign` first'
+        )
+    return body
+
+
+def _entry_for(
+    directory: Path, manifest: Mapping[str, object], sums: Mapping[str, str]
+) -> dict[str, Any]:
+    """The index entry of this release (R4.1): its date is the directory name, the bucket
+    key -- ``release.json``'s ``date`` is ISO -- and its ISOs are those ``release.json``
+    names, which must be the ``*.iso`` that ``SHA256SUMS`` lists."""
+    date = directory.name
+    if not up.RELEASE_DATE_RE.fullmatch(date):
+        raise up.UploadError(f"{directory}: a release directory is named YYYY.MM.DD")
+    variants = manifest.get("variants")
+    named = [
+        iso
+        for v in (variants if isinstance(variants, list) else [])
+        if isinstance(v, dict)
+        for iso in (v.get("isos") or [])
+    ]
+    if not all(isinstance(iso, str) for iso in named):
+        raise up.UploadError(f"{release_core.MANIFEST_FILE}: an ISO name is not a string")
+    listed = sorted(n for n in sums if n.endswith(".iso"))
+    if sorted(named) != listed:
+        raise up.UploadError(
+            f"{release_core.MANIFEST_FILE} names the ISOs {sorted(named)} but "
+            f"{release_sign.SUMS_FILE} lists {listed}"
+        )
+    base = f"releases/{date}"
+    return {
+        "date": date,
+        "isos": listed,
+        "sha256sums": f"{base}/{release_sign.SUMS_FILE}",
+        "signature": f"{base}/{up.SUMS_SIGNATURE_FILE}",
+        "pubkey": f"{base}/{release_sign.RELEASE_KEY_FILE}",
+    }
+
+
+def _preflight(directory: Path) -> tuple[Path, str, up.UploadPlan, dict[str, Any]]:
+    """Every check before the first transfer (R2): rclone and its config, ``signed: true``,
+    every signature verifying against the key the directory carries, the upload set."""
+    up.rclone_binary()
+    rclone_conf = up.rclone_config()
+    manifest = _signed_manifest(directory)
+    key = gpgsign.public_key_fingerprint(directory / release_sign.RELEASE_KEY_FILE)
+    failures = release_sign.verify_release(directory, key=key)
+    if failures:
+        raise up.UploadError("; ".join(failures))
+    sums = publish._read_sums(directory / release_sign.SUMS_FILE)
+    present = [p.name for p in directory.iterdir() if p.is_file()]
+    plan = up.upload_set(sums, present)
+    # The signature vouches for SHA256SUMS, not for the bytes beside it: a file changed
+    # after signing would be published under a good signature (tech review 4.x).
+    for name in plan.data + plan.seal:
+        if name in sums and publish.sha256_of(directory / name) != sums[name]:
+            raise up.UploadError(f"{directory / name} does not match its SHA256SUMS line")
+    return rclone_conf, key, plan, _entry_for(directory, manifest, sums)
+
+
+def _checked_remote(remote: str) -> str:
+    """``remote`` when it names a configured remote (``name:bucket``). rclone also takes
+    ``:s3,secret_access_key=...:bucket``, which would skip the checked config and put the
+    secret in argv and the audit trail (R2.2, R3.5)."""
+    name, colon, bucket = remote.partition(":")
+    if not colon or not name or "," in name or not bucket.strip("/"):
+        # the value is not echoed: a refused remote may carry a secret (R3.5)
+        raise up.UploadError("--remote must be a remote from the rclone config, as NAME:BUCKET")
+    return remote
+
+
+def _host_dates(root: Path) -> set[str]:
+    """The release dates the host still holds, under ``root`` or ``root/.pruned`` (R5.3);
+    a look-alike name is no copy, a missing directory no crash."""
+    dates: set[str] = set()
+    for folder in (root, root / _PRUNED_DIR):
+        try:
+            names = [p.name for p in folder.iterdir() if p.is_dir()]
+        except OSError:
+            continue
+        dates.update(n for n in names if up.RELEASE_DATE_RE.fullmatch(n))
+    return dates
+
+
+def _put_public(runner: up.RcloneRunner, scratch: Path, obj: str, body: Mapping[str, Any]) -> None:
+    """``body`` as ``obj``, through a temporary object then ``moveto`` (R4.5): a reader
+    sees the old file or the new one, never half of one."""
+    name = obj.rsplit("/", 1)[-1]
+    local = scratch / name
+    local.write_text(json.dumps(body, indent=2) + "\n", encoding="utf-8")
+    local.chmod(0o644)  # public content; under sudo rclone runs as the maintainer
+    temporary = f"releases/.{name}.tmp"
+    runner.copyto(local, temporary)
+    runner.moveto(temporary, obj)
+
+
+def _publish_index(runner: up.RcloneRunner, index: Mapping[str, Any]) -> None:
+    scratch = Path(tempfile.mkdtemp(prefix="shidashi-index-"))
+    try:
+        scratch.chmod(0o755)
+        _put_public(runner, scratch, up.INDEX_OBJECT, index)
+        _put_public(runner, scratch, LATEST_OBJECT, up.latest(index))
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
+def _dry_run_lines(
+    plan: up.UploadPlan, merged: Mapping[str, Any], kept: up.RetentionPlan
+) -> list[str]:
+    lines = ["upload set (data, then seal):", *(f"  {n}" for n in (*plan.data, *plan.seal))]
+    lines += ["index.json:", json.dumps(merged, indent=2)]
+    lines += [f"purge: releases/{e['date']}" for e in kept.drop]
+    lines += [f"kept, no host copy (--yes deletes it): {e['date']}" for e in kept.refused]
+    return [*lines, "dry run: nothing copied, moved or purged"]
+
+
+def upload(
+    directory: Annotated[Path, typer.Argument(help="A release directory signed on this host.")],
+    remote: Annotated[
+        str, typer.Option("--remote", help="The rclone remote and bucket, e.g. r2:bentoo.")
+    ],
+    keep: Annotated[int, typer.Option("--keep", help="Releases the bucket keeps.")] = 4,
+    dry_run: Annotated[
+        bool, typer.Option("--dry-run", help="Print the plan; copy, move and purge nothing.")
+    ] = False,
+    yes: Annotated[
+        bool, typer.Option("--yes", help="Also delete a release the host holds no copy of.")
+    ] = False,
+    output_root: Annotated[
+        Path | None,
+        typer.Option("--output-root", help="Where the host keeps releases (default: DIR/..)."),
+    ] = None,
+) -> None:
+    """Verify a signed release, copy its public files to the bucket (signatures last),
+    rewrite the public index, then delete from the bucket the releases beyond --keep."""
+    from shidashi import cli, release_cli  # call time: release_cli imports this module
+
+    if keep < 1:
+        release_cli._die(cli, f"--keep must be at least 1, not {keep}")
+    directory = directory.absolute()
+    try:
+        remote = _checked_remote(remote)
+        rclone_conf, key, plan, entry = _preflight(directory)
+    except (up.UploadError, gpgsign.GpgError, publish.PublishError, OSError) as err:
+        release_cli._die(cli, err)
+    date = entry["date"]
+    host = _host_dates(output_root if output_root is not None else directory.parent)
+    try:
+        with release_cli._stop_signals_stop_the_release(), ExitStack() as stack:
+            inputs = {"key": key, "remote": remote}
+            trail = _open_trail(stack, directory, inputs, command="release-upload")
+            runner = up.RcloneRunner(remote=remote, config=rclone_conf, trail=trail)
+            # read before sending GiBs: an index that cannot be merged stops the run here
+            merged = up.merge_index(up.parse_index(runner.cat(up.INDEX_OBJECT)), entry)
+            kept = up.retention(merged, keep, date, host, yes)
+            if dry_run:
+                for line in _dry_run_lines(plan, kept.index, kept):
+                    typer.echo(line)
+                return
+            for name in (*plan.data, *plan.seal):  # SHA256SUMS.asc last (R3.2)
+                runner.copyto(directory / name, f"releases/{date}/{name}")
+            # read again: the transfer may have taken hours; no lock spans it (design.md)
+            merged = up.merge_index(up.parse_index(runner.cat(up.INDEX_OBJECT)), entry)
+            kept = up.retention(merged, keep, date, host, yes)
+            _publish_index(runner, kept.index)  # before any purge (R5.1)
+            for item in kept.refused:
+                typer.echo(f"kept, no host copy (--yes deletes it): releases/{item['date']}")
+            left: list[str] = []
+            for item in kept.drop:  # each one tried: the index no longer names any of them
+                try:
+                    runner.purge(f"releases/{item['date']}")
+                except up.UploadError as err:
+                    left.append(str(err))
+                    continue
+                typer.echo(f"purged: releases/{item['date']}")
+            if left:
+                raise up.UploadError(
+                    "; ".join(left) + " -- the index no longer names them: purge them by hand"
+                )
+    except up.UploadError as err:
+        release_cli._die(cli, err)
+    except KeyboardInterrupt:
+        cli._err_console.print("[bold red]interrupted:[/bold red] the upload stopped")
+        raise typer.Exit(_SIGN_INTERRUPTED_EXIT) from None
+    for name in (*plan.data, *plan.seal):
+        typer.echo(f"published: releases/{date}/{name}")
+    typer.echo(f"index: {up.INDEX_OBJECT}, {LATEST_OBJECT}")

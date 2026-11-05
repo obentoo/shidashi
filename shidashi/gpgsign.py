@@ -139,4 +139,37 @@ def export_public(key: str, dest: Path) -> Path:
     return dest
 
 
-__all__ = ["GpgError", "as_maintainer", "check_key", "detach_sign", "export_public", "host_gpg"]
+def public_key_fingerprint(path: Path) -> str:
+    """The fingerprint of the one primary key in the armored key file ``path`` (story 033
+    R2.3), read with ``gpg --show-keys`` in a throwaway home so no keyring is touched. A
+    file holding no key or more than one is a :class:`GpgError` naming it."""
+    with tempfile.TemporaryDirectory(prefix="shidashi-showkeys-") as home:
+        listing = host_gpg(
+            ["gpg", "--batch", "--homedir", home, "--with-colons", "--show-keys", "--", str(path)],
+            f"read the public key in {path}",
+        )
+    fingerprints: list[str] = []
+    after_pub = False
+    for line in listing.decode("utf-8", "replace").splitlines():
+        fields = line.split(":")
+        if fields[0] == "pub":
+            after_pub = True
+        elif fields[0] == "fpr" and after_pub and len(fields) > 9:
+            fingerprints.append(fields[9])  # the primary key's: the first fpr after its pub
+            after_pub = False
+        elif fields[0] == "sub":
+            after_pub = False
+    if len(fingerprints) != 1:
+        raise GpgError(f"{path} must hold exactly one public key, found {len(fingerprints)}")
+    return fingerprints[0]
+
+
+__all__ = [
+    "GpgError",
+    "as_maintainer",
+    "check_key",
+    "detach_sign",
+    "export_public",
+    "host_gpg",
+    "public_key_fingerprint",
+]
