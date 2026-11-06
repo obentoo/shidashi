@@ -237,6 +237,7 @@ def run_argv(
     scratch: Path,
     mounts_rw: Iterable[Path] = (),
     seccomp: Path | None = None,
+    cgroups: str | None = None,
 ) -> list[str]:
     """``podman run`` of ``inner_args`` through the venv's python in image ``tag``. Pure.
 
@@ -246,7 +247,13 @@ def run_argv(
     privilege, never a pull. ``variants`` defaults to the tree's ``variants/``; it is
     bound only when the tree does not already hold it. ``seccomp`` is the profile the
     container runs under (:func:`seccomp_profile`); ``None`` leaves podman's default.
+    ``cgroups="split"`` keeps the container under the caller's cgroup (story 034: rootful
+    podman otherwise moves it to its own ``libpod-*.scope``, outside the ``CPUWeight=`` and
+    ``MemoryMax=`` of the ``systemd-run`` unit that started it); ``None`` changes nothing.
     """
+    if cgroups not in (None, "split"):
+        raise ValueError(f"cgroups must be None or 'split', not {cgroups!r}")
+    cgroup_option = [] if cgroups is None else [f"--cgroups={cgroups}"]
     variants_dir = tree / "variants" if variants is None else _bindable(variants)
     read_only = [venv, tree, *mounts_ro]
     if not variants_dir.is_relative_to(tree):
@@ -263,6 +270,7 @@ def run_argv(
         "--name",
         _container(name),
         "--network=host",
+        *cgroup_option,
         "--device",
         _KVM,
         "--device",
