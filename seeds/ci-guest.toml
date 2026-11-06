@@ -1,0 +1,32 @@
+# Pinned inputs of the CI guest VM (story 034) — consumed by shidashi.ci_guest_seed.load_pins.
+#
+# The worker downloads the Ubuntu cloud image itself, checks it against `sha256`, and prepares
+# it once (packages from the apt snapshot below, the runner pinned in lab/vm/runner.env).
+# Any change here makes a new prepared-image key: the next job re-prepares the guest.
+#
+# Re-pinning: take the newest release directory at least 7 days old (constitution: nothing
+# younger than a week) from https://cloud-images.ubuntu.com/releases/26.04/, copy the digest
+# of ubuntu-26.04-server-cloudimg-amd64.img from that directory's SHA256SUMS, and move the
+# apt snapshot to the same day (snapshot.ubuntu.com, form YYYYMMDDTHHMMSSZ).
+
+# 2026-11-06: release-20261016, digest read from its SHA256SUMS. curl is not listed: the
+# Ubuntu cloud image ships it, and the prepare check must not name a download tool.
+schema = 1
+
+[image]
+url = "https://cloud-images.ubuntu.com/releases/26.04/release-20261016/ubuntu-26.04-server-cloudimg-amd64.img"
+sha256 = "5645d0318ad21f643ebb1ac4567514620e9893380b07b0201fda163baa5b7eb5"
+
+[apt]
+snapshot = "20261016T000000Z"
+packages = [
+    "docker.io",
+    "docker-buildx",
+    "docker-compose-v2",
+    "git",
+    "jq",
+    "unzip",
+    "build-essential",
+    "qemu-system-x86",
+    "qemu-utils",
+]
