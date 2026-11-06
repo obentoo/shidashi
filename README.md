@@ -38,7 +38,7 @@ The full architecture is in **[OVERVIEW.md](OVERVIEW.md)**.
 | Package Factory (stage3 → binpkgs) | ✅ implemented and tested |
 | ISO Assembler (binpkgs → live ISO) | ✅ implemented and tested |
 | Boot test (`shidashi vm test`, BIOS + UEFI) | ✅ the `kde` and `minimal` ISOs pass |
-| Weekly release (every Sunday, 01:00 UTC) | 🚧 unsigned release on an ephemeral runner in the builder VM, started by a host timer; first host cycle not recorded yet. Signing and publishing the weekly: planned |
+| Weekly release (every Sunday, 01:00 UTC) | 🚧 unsigned release on an ephemeral runner in the builder VM, started by a host timer; first host cycle not recorded yet. `release sign` and `release upload` (Cloudflare R2) implemented and tested; first public release not recorded yet |
 
 Lint, types and tests run on every pull request. The roadmap is in
 [OVERVIEW.md §17](OVERVIEW.md#17-development-roadmap).
@@ -227,6 +227,7 @@ shidashi vm test bentoo-…-kde-systemd-v3.iso   # boot it and check what it dec
 | `kyomei` | pair a worker (a spare machine booted from the `worker` ISO) | |
 | `worker disk-init` | turn a disk of a paired worker into its work disk | |
 | `release` | build, publish and sign one dated release | ✔ |
+| `release sign` / `upload` | sign an unsigned release; publish a signed one to R2 | |
 
 ### Following a build
 
@@ -571,6 +572,63 @@ prune` moves every release but the `--keep` newest from `<cache>/releases` to
 `<cache>/releases/.pruned/`, in one rename, skipping a directory a running release holds;
 it deletes nothing unless `--purge-pruned` is given, and then only the `.pruned` entries beyond
 its own `--keep` newest. Names that are not a `YYYY.MM.DD` date are left alone.
+
+### Signing and publishing a release to R2
+
+An unsigned release is signed on the host, where the maintainer's key lives, then published to a
+Cloudflare R2 bucket:
+
+```sh
+shidashi release sign <release-dir> --key <FPR>
+shidashi release upload <release-dir> --remote r2:<bucket> --dry-run   # print the plan, send nothing
+shidashi release upload <release-dir> --remote r2:<bucket> [--keep 4] [--yes]
+```
+
+`release sign` takes a directory whose `release.json` says `"signed": false`, signs it exactly as
+`release --key` would have (the public key, every `.DIGESTS.asc`, then `SHA256SUMS.asc` over the
+final `release.json`) and verifies every signature; it exits 0 only once they all verified. A
+directory already signed, or a `release.json` without `signed`, is refused. When signing fails,
+`release.json` is put back to `"signed": false`, so the same command can run again.
+
+`release upload` sends nothing from a directory that does not verify: `release.json` must say
+`"signed": true`, and every signature must check against the directory's own
+`bentoo-release-key.asc`. It then copies to `releases/<YYYY.MM.DD>/` everything `SHA256SUMS`
+lists except the run bundle (`*.build.tar.zst`), and the signatures last, `SHA256SUMS.asc` at the
+very end. Only then does it rewrite `releases/index.json` (format version 1: every release in the
+bucket, newest first) and `releases/latest.json`, each through a temporary object, so a reader
+never sees an index naming files that are not there yet. Last, it deletes from the bucket the
+releases beyond `--keep` (default 4) newest, after the index has stopped naming them; it never
+deletes the release it just sent, and it refuses to delete one the host holds no copy of (under
+`--output-root` or its `.pruned/`) unless `--yes` is given. `--dry-run` prints the upload set,
+the new index and the deletions, and changes nothing.
+
+**Setting up R2, once.** In the Cloudflare dashboard: create the bucket, turn on public access
+(the `r2.dev` URL or a custom domain), and create an R2 API token with *Object Read & Write* on
+that bucket only. Then configure an rclone remote with that token (`rclone config`: storage `s3`,
+provider `Cloudflare`, the access key ID and secret of the token, endpoint
+`https://<account-id>.r2.cloudflarestorage.com`) and make the config readable by you alone:
+
+```sh
+rclone config                         # remote "r2": s3 / Cloudflare / token keys / endpoint
+chmod 600 ~/.config/rclone/rclone.conf
+```
+
+The config is read from `$RCLONE_CONFIG` or `~/.config/rclone/rclone.conf`, and under `sudo` from
+the invoking user's home, never root's. `release upload` refuses a config that is not a regular
+file, not yours, or not mode `0600`, and `--remote` must name a remote from that config
+(`NAME:BUCKET`): a key never goes on the command line. rclone's error output is redacted before
+it is shown or logged. A bucket-scoped token cannot check the bucket itself, so every write
+passes `--s3-no-check-bucket`.
+
+**Checking a published release.** The bucket does not list its objects to the public;
+`releases/index.json` is the way to find a release. From the public URL, download
+`releases/<date>/SHA256SUMS`, `SHA256SUMS.asc`, `bentoo-release-key.asc` and the ISO you want, then:
+
+```sh
+gpg --import bentoo-release-key.asc
+gpg --verify SHA256SUMS.asc SHA256SUMS
+sha256sum -c --ignore-missing SHA256SUMS   # the bucket has no run bundle, and you skipped some ISOs
+```
 
 ### The weekly release on the builder VM
 
