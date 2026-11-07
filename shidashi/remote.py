@@ -350,13 +350,22 @@ def stream(
 
 
 def run(
-    remote: Remote, command: str, *, timeout: float = 10, runner: Runner = subprocess.run
+    remote: Remote,
+    command: str,
+    *,
+    timeout: float = 10,
+    runner: Runner = subprocess.run,
+    input: str | None = None,
 ) -> RemoteResult:
-    """Run ``command`` on the worker; raise :class:`RemoteError` when ssh itself fails."""
+    """Run ``command`` on the worker; raise :class:`RemoteError` when ssh itself fails.
+
+    ``input`` goes to the remote command's stdin: the one way a secret (story 034's JIT
+    config) reaches the worker without being in an argv on either side."""
     argv = ssh_argv(remote, command, timeout=timeout)
     started = time.monotonic()
+    extra = {} if input is None else {"input": input}
     try:
-        proc = runner(argv, capture_output=True, text=True, timeout=timeout, check=False)
+        proc = runner(argv, capture_output=True, text=True, timeout=timeout, check=False, **extra)
     except FileNotFoundError as err:
         raise RemoteError("ssh not found") from err
     except subprocess.TimeoutExpired as err:

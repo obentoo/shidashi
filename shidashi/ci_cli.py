@@ -89,3 +89,9 @@ def dispatch(
     except GitHubApiError as err:
         _die(err)
     _call(request, token_file)
+
+
+# ``ci pool`` (story 034) lives in its own module: this one keeps the two story-032 calls.
+from shidashi import ci_pool_cli  # noqa: E402
+
+app.command("pool")(ci_pool_cli.pool)

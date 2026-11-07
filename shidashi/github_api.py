@@ -103,6 +103,65 @@ def _request(repo: str, path: str, body: Mapping[str, object]) -> ApiRequest:
     )
 
 
+def _get(repo: str, path: str, query: Mapping[str, str | int] | None = None) -> ApiRequest:
+    """A GET of ``/repos/{repo}[/{path}]``; ``repo`` checked before it becomes a path."""
+    if not _REPO.fullmatch(repo):
+        raise GitHubApiError(f"repository {repo!r} is not OWNER/NAME")
+    url = f"{API_ROOT}/repos/{repo}" + (f"/{path}" if path else "")
+    if query:
+        url += "?" + urllib.parse.urlencode(query)
+    return ApiRequest(
+        method="GET",
+        url=url,
+        headers={
+            "Accept": "application/vnd.github+json",
+            "User-Agent": "shidashi",
+            "X-GitHub-Api-Version": API_VERSION,
+        },
+        body=b"",
+    )
+
+
+def runner_labels(label: str) -> list[str]:
+    """The labels a minted JIT runner carries (story 034): what ``config.sh`` would give it,
+    plus ``label``. The pool serves only jobs whose labels all fall in this set."""
+    return ["self-hosted", "linux", "x64", label]
+
+
+def queued_runs_request(repo: str, status: str = "queued") -> ApiRequest:
+    """``GET .../actions/runs?status=<status>`` (story 034). The pool asks ``queued`` and
+    ``in_progress``: a multi-job workflow's later jobs queue inside a run already going."""
+    if status not in ("queued", "in_progress"):
+        raise GitHubApiError(f"run status {status!r} is not queued or in_progress")
+    return _get(repo, "actions/runs", {"status": status, "per_page": 100})
+
+
+def run_jobs_request(repo: str, run_id: int) -> ApiRequest:
+    """``GET .../actions/runs/<run_id>/jobs``: the jobs of one run, with their labels."""
+    return _get(repo, f"actions/runs/{int(run_id)}/jobs", {"per_page": 100})
+
+
+def repo_request(repo: str) -> ApiRequest:
+    """``GET /repos/<repo>``: the pool reads ``private`` before minting (R5.4)."""
+    return _get(repo, "")
+
+
+def repo_jit_config_request(repo: str, label: str, name: str) -> ApiRequest:
+    """``POST .../actions/runners/generate-jitconfig`` for a repository's own runner:
+    group 1 is a repository's Default group (story 034). ``linux``/``x64`` beside
+    ``self-hosted`` and ``label``: what a runner registered by ``config.sh`` would carry."""
+    return _request(
+        repo,
+        "actions/runners/generate-jitconfig",
+        {
+            "name": name,
+            "runner_group_id": 1,
+            "labels": runner_labels(label),
+            "work_folder": "_work",
+        },
+    )
+
+
 def jit_config_request(repo: str, group_id: int, label: str, name: str) -> ApiRequest:
     """``POST .../actions/runners/generate-jitconfig``: one runner, named ``name``, in runner
     group ``group_id``. ``self-hosted`` is sent beside ``label`` so a job's
@@ -153,7 +212,7 @@ def send(request: ApiRequest, token: str, *, timeout: float = DEFAULT_TIMEOUT) -
     """
     call = urllib.request.Request(
         request.url,
-        data=request.body,
+        data=request.body or None,  # a GET carries no body
         method=request.method,
         headers={**request.headers, "Authorization": f"Bearer {token}"},
     )
