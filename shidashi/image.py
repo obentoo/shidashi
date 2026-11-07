@@ -164,6 +164,7 @@ def _grub_cfg(
     title: str,
     text_target: str | None,
     open_nvidia: bool = False,
+    boot_to_ram: bool = False,
     timeout: int = 10,
 ) -> str:
     """The medium's boot menu. Pure.
@@ -174,8 +175,11 @@ def _grub_cfg(
     (``text_target``, systemd's multi-user.target) to repair without a
     desktop; the UEFI firmware settings; reboot and power off. ``open_nvidia``
     adds the nouveau boot for NVIDIA GPUs the proprietary driver dropped
-    (:data:`OPEN_NVIDIA_ARGS`).
+    (:data:`OPEN_NVIDIA_ARGS`). ``boot_to_ram`` puts the copy-to-RAM entry first, so
+    it is the one GRUB boots after its timeout: the worker runs headless, with no GPU
+    and nobody at the menu (variants/worker/system.yaml).
     """
+    ram = (f"{title} (copy to RAM)", _linux(volume, "rd.live.ram=1"))
     entries = [
         (title, _linux(volume)),
         (f"{title} (safe graphics)", _linux(volume, "nomodeset")),
@@ -184,8 +188,11 @@ def _grub_cfg(
             if open_nvidia
             else []
         ),
-        (f"{title} (copy to RAM)", _linux(volume, "rd.live.ram=1")),
+        ram,
     ]
+    if boot_to_ram:
+        entries.remove(ram)
+        entries.insert(0, ram)
     if text_target is not None:
         entries.append((f"{title} (text console)", _linux(volume, f"systemd.unit={text_target}")))
     lines = [f"set timeout={timeout}", "set default=0", ""]
@@ -244,6 +251,7 @@ def _stage_iso_tree(
     text_target: str | None,
     extra: Mapping[str, str | Path],
     open_nvidia: bool = False,
+    boot_to_ram: bool = False,
 ) -> None:
     """Lay the medium out in ``iso_root`` (see the module's docstring). I/O only.
 
@@ -261,7 +269,13 @@ def _stage_iso_tree(
     _copy(kernel, iso_root / _ISO_KERNEL)
     _copy(initramfs, iso_root / _ISO_INITRD)
     (iso_root / "boot" / "grub" / "grub.cfg").write_text(
-        _grub_cfg(volume=volume, title=title, text_target=text_target, open_nvidia=open_nvidia),
+        _grub_cfg(
+            volume=volume,
+            title=title,
+            text_target=text_target,
+            open_nvidia=open_nvidia,
+            boot_to_ram=boot_to_ram,
+        ),
         encoding="utf-8",
     )
     (iso_root / ".disk" / "info").write_text(f"{title} ({build_id})\n", encoding="utf-8")
@@ -297,6 +311,7 @@ def build_iso(
     build_id: str = "",
     text_target: str | None = None,
     open_nvidia: bool = False,
+    boot_to_ram: bool = False,
     extra: Mapping[str, str | Path] | None = None,
 ) -> Path:
     """Make the hybrid live ISO ``output`` with ``tools``' ``grub-mkrescue``; return it.
@@ -318,6 +333,7 @@ def build_iso(
             build_id=build_id,
             text_target=text_target,
             open_nvidia=open_nvidia,
+            boot_to_ram=boot_to_ram,
             extra=extra or {},
         )
         _run(tools, _grub_mkrescue_argv(tools.path(iso_root), tools.path(output), volume_id=volume))

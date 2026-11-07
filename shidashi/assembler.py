@@ -1720,6 +1720,7 @@ class Assembler:
                             build_id=run.run_id or name,
                             text_target="multi-user.target" if recipe.init == "systemd" else None,
                             open_nvidia=ships_nvidia_driver(rootfs),
+                            boot_to_ram=system_cfg.boot_to_ram,
                             extra={
                                 **extra,
                                 "bentoo/version": f"{name}{suffix}\n",

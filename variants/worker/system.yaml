@@ -7,6 +7,13 @@
 # The name the host and the console show (and mDNS answers, once enabled).
 hostname: shidashi-worker
 
+# bentoo-lab runs with no GPU (a Ryzen 7 5700X has no iGPU), so nobody picks a boot
+# entry: the ISO's default boot copies the image to RAM (rd.live.ram=1, ~600 MiB, see
+# `slim.budget_mb`), and the build oven never reads the USB stick again. dracut keeps
+# the medium mounted read-only at /run/initramfs/live, so the identity unit still
+# reads the provisioned identity from it.
+boot_to_ram: true
+
 # The pairing (story 009): the identity unit installs an identity provisioned on the
 # boot medium (story 020), the restore brings a persisted pairing back at boot, the
 # listener opens the pairing window when nothing was restored. resolved (enabled for

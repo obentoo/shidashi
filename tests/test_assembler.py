@@ -562,6 +562,7 @@ def test_assemble_orchestrates_seed_emerge_dracut_squashfs_iso(
     assert build_json["toolbox"] == _FakeTools.VERSIONS
     assert iso_kwargs[0]["volume"] == "BENTOO_KDE"
     assert iso_kwargs[0]["text_target"] == "multi-user.target"
+    assert iso_kwargs[0]["boot_to_ram"] is False  # only the worker boots to RAM
     assert squash_kwargs[0]["compression"] == "zstd"
     exclude_file = Path(str(squash_kwargs[0]["exclude_file"]))
     assert exclude_file.name == "znver5-kde-systemd.squashfs-exclude"

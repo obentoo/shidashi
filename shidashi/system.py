@@ -216,6 +216,8 @@ class SystemConfig(BaseModel):
     live: LiveConfig
     #: What a slimmed image keeps; ``None`` (every image but the worker) takes no slim step.
     slim: SlimConfig | None = None
+    #: The ISO boots copied to RAM by default (image._grub_cfg); only the headless worker.
+    boot_to_ram: bool = False
 
     @field_validator("slim")
     @classmethod
