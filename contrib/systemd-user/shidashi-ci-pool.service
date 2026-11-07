@@ -1,0 +1,28 @@
+# shidashi-ci-pool.service — the host's CI poller (story 034): queued GitHub Actions jobs of
+# the private repositories in ~/.config/shidashi/ci.toml become one JIT runner each on the
+# worker, one ephemeral VM per job. Shipped, not enabled.
+#
+# Enable it for your user (no root):
+#   install -D -m 0644 contrib/systemd-user/shidashi-ci-pool.service \
+#     ~/.config/systemd/user/shidashi-ci-pool.service
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now shidashi-ci-pool.service
+# Try one round first: shidashi ci pool --once
+#
+# Point --project at your checkout: the same one ci.toml's `source` names.
+
+[Unit]
+Description=Shidashi CI pool: GitHub Actions jobs to the worker, one VM per job
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/env uv run --frozen --project %h/Projetos/Pessoais/Bentoo/shidashi shidashi ci pool
+Restart=on-failure
+RestartSec=60
+NoNewPrivileges=yes
+Environment=SHIDASHI_LOG_LEVEL=INFO
+
+[Install]
+WantedBy=default.target

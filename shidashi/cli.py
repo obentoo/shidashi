@@ -3123,8 +3123,10 @@ def _size(nbytes: int) -> str:
     return f"{nbytes / 1024**2:.1f} MiB"
 
 
-def _job_names(units: tuple[str, ...]) -> str:
-    return ", ".join(u.removeprefix("shidashi-job-") for u in units) or "none"
+def _job_names(units: tuple[str, ...], ci: tuple[str, ...] = ()) -> str:
+    names = [u.removeprefix("shidashi-job-") for u in units]
+    names += [f"{u.removeprefix('shidashi-ci-')} (ci)" for u in ci]
+    return ", ".join(names) or "none"
 
 
 def _print_worker_status(st: worker_mod.WorkerStatus, address: str) -> None:
@@ -3143,7 +3145,7 @@ def _print_worker_status(st: worker_mod.WorkerStatus, address: str) -> None:
         ("image", st.image or "unknown (no BUILD_ID)"),
         ("smart", smart),
         ("checkpoints", ", ".join(st.trunks) or "none"),
-        ("jobs", _job_names(st.jobs)),
+        ("jobs", _job_names(st.jobs, st.ci_jobs)),
         ("accepts jobs", "yes" if st.accepts_jobs else "no"),
     ]
     typer.echo(f"{st.name} ({address}): reachable")

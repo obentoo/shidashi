@@ -742,6 +742,7 @@ The reference `make.conf` (already organized into named groups) maps directly:
 - [ ] Spike: does `systemd-nspawn` run inside `podman --privileged` on the worker? *(story 012.)*
 - [ ] Spike: network boot of the worker (UEFI HTTP Boot / PXE). *(story 013.)*
 - [ ] Distribute the builds between the host and the workers. *(story 014.)*
+- [x] The worker as a general CI runner: private repositories' GitHub Actions jobs, one ephemeral Ubuntu KVM VM per job (Docker, nested KVM), JIT runners minted by a poller on the host. *(story 034: `shidashi ci pool`, `shidashi ci-guest`; host proof on bentoo-lab pending.)*
 - [ ] Builder image (OCI) under Kata Containers. Shidashi and its dependencies in a Bentoo image, run per job with `podman run --runtime kata`: each build in a disposable micro-VM with its own kernel, no sudo on the host, on any distribution with Podman and Kata — the packaged form of the builder VM, and an isolated self-hosted CI runner (each job in its own micro-VM). First experiment: the `minimal` rootfs as an OCI image under the kata runtime, checking that `systemd-nspawn` runs inside. Open points: the Kata guest kernel needs overlayfs, namespaces and device support (`sys-kernel/kata-guest-kernel` is in the overlay); Kata shares the rootfs over virtiofs, measured ~25% slower for binpkg installs in the builder VM — a block volume for the build tree; the micro-VM's memory is fixed (2 GB by default) and must be sized for builds.
 
 ### Phase 5 — Operations (optional)

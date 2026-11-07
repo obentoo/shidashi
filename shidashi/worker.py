@@ -155,6 +155,8 @@ class WorkerStatus:
     trunks: tuple[str, ...] = ()
     jobs: tuple[str, ...] = ()
     trunk_keys: tuple[str, ...] = ()
+    #: active ``shidashi-ci-*`` units (story 034): never in ``jobs``
+    ci_jobs: tuple[str, ...] = ()
 
 
 #: ``status``'s whole-command bound for one worker (the listing uses 5 s, R1.4).
@@ -169,6 +171,9 @@ _LIST_JOBS = (
     "systemctl list-units 'shidashi-job-*' --state=active,activating,deactivating,reloading "
     "--plain --no-legend --full"
 )
+#: The CI runner's job units (story 034), listed apart: a CI VM must never read as a
+#: Shidashi job, which ``schedule`` takes for a busy worker (R7.3).
+_LIST_CI_JOBS = _LIST_JOBS.replace("'shidashi-job-*'", "'shidashi-ci-*'")
 #: Prints the claimant keys of every ``install-*.json`` manifest below the working
 #: directory, ``install-partial-*`` excluded; a manifest it cannot parse prints nothing.
 #: Only ``[a-z0-9-]`` keys are printed, so a manifest cannot forge a probe section. No
@@ -210,6 +215,8 @@ if findmnt -no TARGET -M {WORK} >/dev/null 2>&1; then
 fi
 echo @jobs
 {_LIST_JOBS} 2>/dev/null
+echo @cijobs
+{_LIST_CI_JOBS} 2>/dev/null
 echo @smart
 if command -v smartctl >/dev/null 2>&1; then
   echo present
@@ -271,6 +278,7 @@ def status(remote: Remote, *, timeout: float = STATUS_TIMEOUT) -> WorkerStatus:
         # each manifest is <arch>-<init>/<step>-<fp24>.json: the trunk is its name
         trunks=tuple(sorted(m.removesuffix(".json") for m in sections.get("trunks", []) if m)),
         jobs=_active_jobs(sections.get("jobs", [])),
+        ci_jobs=_active_jobs(sections.get("cijobs", []), prefix="shidashi-ci-"),
         trunk_keys=tuple(sorted({k for k in sections.get("claimants", []) if k})),
     )
 
@@ -378,13 +386,13 @@ def _df_avail(lines: list[str]) -> int | None:
     return int(numbers[-1]) if numbers else None
 
 
-def _active_jobs(lines: list[str]) -> tuple[str, ...]:
-    """The ``shidashi-job-*`` unit names of ``systemctl list-units``, without
+def _active_jobs(lines: list[str], *, prefix: str = "shidashi-job-") -> tuple[str, ...]:
+    """The ``<prefix>*`` unit names of ``systemctl list-units``, without
     ``.service``; any other unit (``shidashi-worker-restore``) is not a job."""
     jobs = []
     for line in lines:
         words = line.replace("\u25cf", " ").split()
-        if words and words[0].startswith("shidashi-job-"):
+        if words and words[0].startswith(prefix):
             jobs.append(words[0].removesuffix(".service"))
     return tuple(sorted(jobs))
 

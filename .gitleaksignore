@@ -4,3 +4,7 @@
 3e741a535e8fc0351e80712ba7336eb820c5fb98:tests/test_kyomei_worker_medium_review.py:private-key:260
 3e741a535e8fc0351e80712ba7336eb820c5fb98:tests/test_kyomei_worker_medium_review.py:private-key:266
 3e741a535e8fc0351e80712ba7336eb820c5fb98:tests/test_kyomei_worker_medium.py:private-key:89
+# Synthetic prepared-image keys (story 034): tests/test_ci_guest_sweep.py KEY_A/KEY_B name
+# fake prepare/<key>/ directories; the generic-api-key rule takes any 16-hex string for a key.
+d70a8c3b9efb816ef3f6e6672894d9fd37b6da41:tests/test_ci_guest_sweep.py:generic-api-key:30
+d70a8c3b9efb816ef3f6e6672894d9fd37b6da41:tests/test_ci_guest_sweep.py:generic-api-key:31

@@ -670,6 +670,65 @@ refuses a file of any other mode and never prints the token. The settings on Git
 
 The weekly release is unsigned: sign it on the host, where the key is.
 
+### The worker as a CI runner
+
+The [worker](#using-a-worker) can also run your **private** projects' GitHub Actions jobs —
+each job in its own disposable Ubuntu VM, so nothing a job does reaches the worker or the next
+job. A poller on the host sees a queued job carrying the `bentoo-worker` label, mints a
+just-in-time runner for that repository (the token never leaves the host) and sends its
+configuration to the worker over ssh stdin. The worker boots a copy-on-write overlay of a
+prepared Ubuntu 26.04 image in the toolbox container (QEMU is not on the worker's root), the
+runner takes that one job, the VM powers off and its overlay is deleted. The worker ISO does
+not change.
+
+What a job gets: Ubuntu 26.04 LTS, the real Docker engine with buildx and compose
+(`docker run`, `services:`, `container:`), `/dev/kvm` when the worker's KVM allows nesting,
+and passwordless `sudo`. One CI VM at a time, with half the worker's CPUs, 8 GiB of RAM and a
+fifth of a Shidashi build's CPU weight: Shidashi jobs keep priority. The first job on a fresh
+worker downloads the cloud image and prepares it (about 10 minutes); later jobs boot in under
+a minute. Only private repositories are served: the poller asks GitHub before minting, and the
+guest refuses a job of any repository other than the one its runner was minted for.
+
+1. A fine-grained personal access token for the allowlisted repositories only, with
+   **Administration: read and write** (mints the runner) and **Actions: read** (lists queued
+   jobs), saved mode **0600**.
+2. `~/.config/shidashi/ci.toml` (`$XDG_CONFIG_HOME`; never in a repository — it is your
+   allowlist):
+
+   ```toml
+   worker = "bentoo-lab"
+   token_file = "~/.config/shidashi/github-ci.token"
+   label = "bentoo-worker"
+   repos = ["you/private-app"]
+   # source = "~/src/shidashi"   # the checkout shipped to the worker; default: this one
+
+   [vm]                         # defaults shown
+   memory_gib = 8
+   disk_gib = 64
+   timeout_min = 360
+   min_free_gib = 20
+   poll_s = 30
+   ```
+
+3. In the project's workflow: `runs-on: [self-hosted, bentoo-worker]`. The runner carries
+   `self-hosted`, `linux`, `x64` and your label, and nothing else: a job asking for any other
+   label (`gpu`, `arm64`) is left for another runner.
+4. Push the toolbox to the worker once (`shidashi worker sync push bentoo-lab --arch v3`), try
+   one round, then let the poller run as a user service:
+
+   ```sh
+   shidashi ci pool --once
+   install -D -m 0644 contrib/systemd-user/shidashi-ci-pool.service \
+     ~/.config/systemd/user/shidashi-ci-pool.service
+   systemctl --user enable --now shidashi-ci-pool.service
+   ```
+
+`shidashi worker status bentoo-lab` lists a running CI job marked `(ci)`. The guest's pins —
+the cloud image by SHA-256, the apt snapshot, the packages — are in
+[`seeds/ci-guest.toml`](seeds/ci-guest.toml); the runner is the one pinned in
+[`lab/vm/runner.env`](lab/vm/runner.env). A guest VM reaches the network the worker is on:
+serve only repositories you trust.
+
 ## Contributing
 
 Issues and pull requests are welcome. Before pushing, run the checks above; the CI job can be
