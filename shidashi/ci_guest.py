@@ -11,21 +11,30 @@ QEMU, ``qemu-img`` and ``xorriso`` run in the toolbox container (:mod:`ci_guest_
 Every event is one JSON line on stderr; the JIT config is in none of them.
 """
 
+import contextlib
+import datetime
 import hashlib
 import http.client
+import json
 import os
+import re
 import shutil
+import stat
 import subprocess
 import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from shidashi import config, locks, vmrunner
 from shidashi.ci_guest_seed import (
+    JITCONFIG_CREDENTIAL,
     PREPARED_MARKER,
+    REPO_CREDENTIAL,
+    RESULT_PREFIX,
     GuestPins,
     load_pins,
     meta_data,
@@ -39,18 +48,25 @@ from shidashi.ci_guest_vm import (
     Toolbox,
     console_has,
     console_tail,
+    console_value,
     cpus_for,
     emit,
+    nested_kvm,
     qemu_argv,
+    vm_end_event,
+    vm_start_event,
 )
 
 __all__ = [
     "CiGuestError",
     "GuestSpec",
+    "Limits",
     "cpus_for",
     "fetch",
+    "nested_kvm",
     "prepare",
     "qemu_argv",
+    "run_job",
     "sweep",
 ]
 
@@ -65,6 +81,20 @@ _PREPARED_SIZE = "16G"
 _KEEP_PREPARED = 2
 #: qemu-img on a multi-GiB image: generous, but bounded.
 _TOOL_TIMEOUT_S = 30 * 60
+#: GitHub job ids are numeric; a ``prepare-<key>`` id would collide with a prepare container.
+_JOB = re.compile(r"[0-9]+")
+_REPO = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
+
+
+@dataclass(frozen=True)
+class Limits:
+    """A job VM's bounds (design.md defaults). The vCPUs are not one: the worker derives
+    them from its own CPU count (R7.1)."""
+
+    memory_gib: int = 8
+    disk_gib: int = 64
+    timeout_min: int = 360
+    min_free_gib: int = 20
 
 
 def default_pins() -> GuestPins:
@@ -299,3 +329,144 @@ def prepare(
         _keep_newest(final.parent)
         emit("ci_prepare", key=key, duration_ms=_ms(began), result="ok")
         return final
+
+
+# --- run one job ------------------------------------------------------------------------------
+
+
+def _take_jitconfig(run_dir: Path, job: str) -> str:
+    """Read and remove ``<run_dir>/<job>/jitconfig`` (R5.3): a regular 0600 file of the
+    caller's, never a symlink."""
+    path = run_dir / job / "jitconfig"
+    try:
+        info = path.lstat()
+    except OSError as err:
+        raise CiGuestError(f"no JIT config at {path}: {err}") from err
+    if not stat.S_ISREG(info.st_mode):
+        raise CiGuestError(f"{path} is not a regular file")
+    if stat.S_IMODE(info.st_mode) != 0o600 or info.st_uid != os.geteuid():
+        raise CiGuestError(f"{path} must be mode 0600 and owned by uid {os.geteuid()}")
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        with os.fdopen(fd, encoding="utf-8") as handle:
+            value = handle.read()
+    except OSError as err:
+        raise CiGuestError(f"cannot read {path}: {err}") from err
+    path.unlink()
+    with contextlib.suppress(OSError):
+        path.parent.rmdir()
+    if not value.strip():
+        raise CiGuestError(f"{path} was empty")
+    return value
+
+
+def _secret_file(path: Path, value: str) -> None:
+    fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(value)
+
+
+def _write_result(root: Path, job: str, repo: str, rc: int) -> None:
+    results = root / "results"
+    results.mkdir(parents=True, exist_ok=True)
+    ended = datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds")
+    part = results / f".{job}.json.part"
+    part.write_text(
+        json.dumps({"job": job, "repo": repo, "rc": rc, "ended": ended}),
+        encoding="utf-8",
+    )
+    os.replace(part, results / f"{job}.json")
+
+
+def _validate(job: str, repo: str) -> None:
+    if not _JOB.fullmatch(job):
+        raise CiGuestError(f"job id {job!r} is not a GitHub job id (digits only)")
+    if not _REPO.fullmatch(repo):
+        raise CiGuestError(f"repository {repo!r} is not OWNER/NAME")
+
+
+def run_job(
+    job: str,
+    repo: str,
+    *,
+    root: Path = ROOT,
+    run_dir: Path = RUN_DIR,
+    limits: Limits | None = None,
+    runner: Runner = subprocess.run,
+    clock: Callable[[], float] = time.monotonic,
+    nproc: Callable[[], int | None] = os.cpu_count,
+    sys_module: Path = Path("/sys/module"),
+    pins: GuestPins | None = None,
+) -> int:
+    """One GitHub Actions job in one ephemeral VM: 0 pass, 1 fail, 3 low disk, 4 timeout
+    (R4). Refusals before the job is accepted raise :class:`CiGuestError`. I/O."""
+    limits = Limits() if limits is None else limits
+    _validate(job, repo)
+    _preflight()
+    jitconfig = _take_jitconfig(run_dir, job)  # before the sweep, which would take it
+    root.mkdir(parents=True, exist_ok=True)
+    sweep(root, alive=container_alive(runner), run_dir=run_dir)
+    if shutil.disk_usage(root).free < limits.min_free_gib * 1024**3:
+        _write_result(root, job, repo, 3)
+        return 3
+    work = root / "jobs" / job
+    # ``systemctl stop`` of the unit: SIGTERM unwinds through the ``finally`` instead of
+    # killing the process around it, which left the JIT config on the work disk (review 3.x).
+    with vmrunner.unwinding_sigterm():
+        rc, result, began, started = 1, "error", clock(), False
+        try:
+            prepared = prepare(
+                default_pins() if pins is None else pins, root=root, runner=runner, run_dir=run_dir
+            )
+            work.mkdir(parents=True)
+            toolbox = Toolbox(root, runner)
+            overlay = work / "overlay.qcow2"
+            toolbox.tool(
+                "qemu-img create",
+                ["qemu-img", "create", "-f", "qcow2", "-F", "qcow2", "-b", str(prepared.absolute())]
+                + [str(overlay), f"{limits.disk_gib}G"],
+                name=f"ci-{job}-tool",
+                scratch=work,
+                timeout_s=_TOOL_TIMEOUT_S,
+            )
+            creds = {
+                JITCONFIG_CREDENTIAL: work / "jitconfig.cred",
+                REPO_CREDENTIAL: work / "repo.cred",
+            }
+            _secret_file(creds[JITCONFIG_CREDENTIAL], jitconfig)
+            _secret_file(creds[REPO_CREDENTIAL], repo)
+            del jitconfig
+            code, vars_template, fmt = toolbox.firmware(work)
+            shutil.copyfile(vars_template, work / "OVMF_VARS")
+            spec = GuestSpec(cpus=cpus_for(nproc() or 2), memory_gib=limits.memory_gib)
+            serial, qmp = work / "serial.log", work / "qmp.sock"
+            argv = qemu_argv(
+                spec,
+                disk=overlay,
+                cred_files=creds,
+                ovmf_code=(str(code), fmt),
+                ovmf_vars=work / "OVMF_VARS",
+                serial=serial,
+                qmp=qmp,
+            )
+            nested = nested_kvm(sys_module)
+            vm_start_event(job, repo, cpus=spec.cpus, memory_gib=spec.memory_gib, nested=nested)
+            began, started = clock(), True
+            exit_code = toolbox.boot(
+                argv, name=f"ci-{job}", scratch=work, qmp=qmp, timeout_s=limits.timeout_min * 60
+            )
+            value = console_value(serial, RESULT_PREFIX)
+            if exit_code is None:
+                rc, result = 4, "timeout"
+            elif value == "0":
+                rc, result = 0, "pass"
+            elif value is not None:
+                rc, result = 1, "fail"
+            else:
+                emit("ci_vm_console", job=job, repo=repo, tail=console_tail(serial))
+        finally:
+            shutil.rmtree(work, ignore_errors=True)
+            if started:
+                vm_end_event(job, repo, duration_ms=_ms(began, clock), result=result)
+            _write_result(root, job, repo, rc)
+    return rc

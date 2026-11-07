@@ -110,10 +110,39 @@ def qemu_argv(
     ]
 
 
+def nested_kvm(sys_module: Path = Path("/sys/module")) -> bool:
+    """Whether the loaded KVM module nests (R8.1, R8.2): read, never assumed."""
+    for module in ("kvm_amd", "kvm_intel"):
+        try:
+            value = (sys_module / module / "parameters" / "nested").read_text(encoding="utf-8")
+        except OSError:
+            continue
+        if value.strip() in ("1", "Y", "y"):
+            return True
+    return False
+
+
 def emit(event: str, **fields: Any) -> None:
     """One JSON object on one stderr line (R9.1). Callers never pass a JIT config."""
     sys.stderr.write(json.dumps({"event": event, **fields}) + "\n")
     sys.stderr.flush()
+
+
+def vm_start_event(job: str, repo: str, *, cpus: int, memory_gib: int, nested: bool) -> None:
+    emit(
+        "ci_vm_start",
+        job=job,
+        repo=repo,
+        cpus=cpus,
+        memory_gib=memory_gib,
+        nested_kvm=nested,
+        result="started",
+        duration_ms=0,
+    )
+
+
+def vm_end_event(job: str, repo: str, *, duration_ms: int, result: str) -> None:
+    emit("ci_vm_end", job=job, repo=repo, duration_ms=duration_ms, result=result)
 
 
 # --- the serial console ----------------------------------------------------------------------
@@ -136,6 +165,12 @@ def console_has(serial: Path, marker: str) -> bool:
     """The marker as a line of its own: a line quoting it (cloud-init reporting a failed
     command) is not the guest printing it."""
     return marker in console_lines(serial)
+
+
+def console_value(serial: Path, prefix: str) -> str | None:
+    """The value of the last ``<prefix><value>`` line, or None."""
+    found = [line.removeprefix(prefix) for line in console_lines(serial) if line.startswith(prefix)]
+    return found[-1] if found else None
 
 
 # --- the toolbox container -------------------------------------------------------------------
@@ -249,6 +284,12 @@ class Toolbox:
             return None
         except OSError as err:
             raise CiGuestError(f"the VM {name}: cannot run podman: {err}") from err
+        except BaseException:
+            # SIGTERM (SystemExit) or a crash killed only the podman client: the rootful
+            # container would go on running QEMU with the job's credentials bound
+            _qmp_quit(qmp)
+            self.remove(name, grace_s=STOP_GRACE_S)
+            raise
         # ``--rm`` removes it on a normal exit; an orphan of a killed client goes here
         self.remove(name, grace_s=0)
         return done.returncode

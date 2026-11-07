@@ -609,7 +609,7 @@ def _sigterm_waits() -> Generator[None]:
 
 
 @contextlib.contextmanager
-def _unwinding_sigterm() -> Generator[None]:
+def unwinding_sigterm() -> Generator[None]:
     """For the block, SIGTERM raises on the main thread; the previous handler after.
 
     A stopped worker job unit or serial build then removes the container instead of
@@ -658,7 +658,7 @@ def _run(argv: Sequence[str], *, name: str, runner: Runner) -> subprocess.Comple
     Before: a container already holding the name is the orphan of a SIGKILLed run (the
     caller holds the CID); it is killed at once, nothing waits on it. I/O.
     """
-    with _unwinding_sigterm():
+    with unwinding_sigterm():
         _remove(name, runner, time_s=_ORPHAN_RM_TIME_S)
         try:
             return _podman(argv, runner)
