@@ -12,6 +12,7 @@ console line, the marker is a line of its own. The worker's reading stays strict
 
 import contextlib
 import os
+import re
 import shlex
 import subprocess
 import threading
@@ -82,10 +83,25 @@ def _serial(sandbox: GuestSandbox, serial: Path) -> Iterator[None]:
         serial.write_bytes(b"".join(seen))
 
 
+#: Some of systemd's specifiers (systemd.unit(5), "Specifiers"), as the guest's root sees
+#: them: an Exec line's ``%s`` is the user's shell, never printf's ``%s``.
+_SPECIFIERS = {"s": "/bin/bash", "u": "root", "h": "/root", "n": "shidashi-runner.service"}
+
+
+def _specifiers(text: str) -> str:
+    """What systemd makes of ``%`` in an Exec line: ``%%`` is ``%``, ``%x`` a specifier."""
+
+    def one(match: re.Match[str]) -> str:
+        key = match.group(1)
+        return "%" if key == "%" else _SPECIFIERS.get(key, f"<unknown specifier %{key}>")
+
+    return re.sub(r"%(.)", one, text)
+
+
 def _stop_post(sandbox: GuestSandbox, doc: dict[str, Any], exit_status: str) -> None:
     settings = unit_settings(written_file(doc, UNIT))
     for line in settings["ExecStopPost"]:
-        text = sandbox.sandboxed(line).lstrip("-@:+!")
+        text = _specifiers(sandbox.sandboxed(line)).lstrip("-@:+!")
         words = systemd_expand(shlex.split(text), {})
         env = {**sandbox.env(), "EXIT_STATUS": exit_status}
         subprocess.run(words, env=env, cwd=sandbox.base, timeout=30, check=True)

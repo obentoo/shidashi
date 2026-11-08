@@ -185,7 +185,9 @@ _RUNNER_STOP_POST = (
     + f'{_LISTENER_SUCCEEDED}) rc=0;; ""|0) rc=none;; *) rc="$$EXIT_STATUS";; esac; '
     + 'printf "\\n'
     + RESULT_PREFIX
-    + '%s\\n" "$$rc" > /dev/console; systemctl --no-block poweroff\''
+    # "%%": systemd reads an Exec line's "%s" as a specifier (the user's shell) -- host
+    # proof 6.1 printed SHIDASHI-CI-RESULT=/bin/bash
+    + '%%s\\n" "$$rc" > /dev/console; systemctl --no-block poweroff\''
 )
 _RUNNER_SERVICE = f"""\
 [Unit]
