@@ -26,6 +26,8 @@ _SNAPSHOT = re.compile(r"[0-9]{8}T[0-9]{6}Z")
 _PACKAGE = re.compile(r"[a-z0-9][a-z0-9+.-]*")
 #: The same rules as lab/vm/guest-runner.sh, so both runners refuse the same pin.
 _RUNNER_VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
+#: A GitHub release asset id: a positive integer.
+_ASSET_ID = re.compile(r"[1-9][0-9]*")
 
 #: Names the guest and the worker agree on (tests/test_ci_contract.py checks both sides).
 PREPARED_MARKER = "SHIDASHI-CI-PREPARED"
@@ -42,6 +44,7 @@ HOOK_RUNNER_PATH = HOOK_PATH + ".sh"
 #: turns that into 0 whatever the result (story 034, tech review of 1.2).
 _LISTENER_SUCCEEDED = 100
 CHECK_PATH = "/usr/local/libexec/shidashi-prepare-check"
+FETCH_PATH = "/usr/local/libexec/shidashi-fetch-runner"
 RUNNER_UNIT = "shidashi-runner.service"
 GROWROOT_UNIT = "shidashi-growroot.service"
 HOSTKEYS_UNIT = "shidashi-hostkeys.service"
@@ -79,6 +82,8 @@ class GuestPins:
     apt: AptPin
     runner_version: str
     runner_sha256: str
+    #: The tarball's release asset id, for the API fallback of :func:`_fetch_runner`.
+    runner_asset_id: str
 
 
 def _table(doc: dict[str, Any], name: str, file: Path) -> dict[str, Any]:
@@ -148,6 +153,7 @@ def load_pins(seeds: Path, runner_env: Path) -> GuestPins:
         ),
         runner_version=_string(env, "RUNNER_VERSION", _RUNNER_VERSION, runner_env),
         runner_sha256=_string(env, "RUNNER_SHA256", _SHA256, runner_env),
+        runner_asset_id=_string(env, "RUNNER_ASSET_ID", _ASSET_ID, runner_env),
     )
 
 
@@ -258,6 +264,31 @@ fi
 """
 
 
+def runner_api_url(asset_id: str) -> str:
+    return f"https://api.github.com/repos/actions/runner/releases/assets/{asset_id}"
+
+
+def _fetch_runner(pins: GuestPins) -> str:
+    """The runner tarball into ``$1``, gated by its sha256 whichever source served it.
+
+    The API fallback exists because on 2026-11-08 every ``releases/download`` URL answered
+    504 for hours while the API's asset endpoint served the same bytes (story 034, 6.1).
+    """
+    primary = shlex.quote(runner_url(pins.runner_version))
+    fallback = shlex.quote(runner_api_url(pins.runner_asset_id))
+    return f"""\
+#!/bin/bash
+# shidashi-fetch-runner: the pinned GitHub Actions runner, verified by its sha256 (R3.2).
+set -euo pipefail
+out="$1"
+if ! curl -fsSL --retry 3 -o "$out" {primary}; then
+  echo "shidashi-fetch-runner: the release URL failed; trying the API asset endpoint" >&2
+  curl -fsSL --retry 3 -H 'Accept: application/octet-stream' -o "$out" {fallback}
+fi
+echo {shlex.quote(pins.runner_sha256)}"  $out" | sha256sum -c -
+"""
+
+
 def _prepare_check(packages: tuple[str, ...]) -> str:
     """The proof the prepare boot worked: cloud-init's exit code is not (design.md, gotchas)."""
     names = " ".join(shlex.quote(p) for p in packages)
@@ -310,8 +341,7 @@ def prepare_user_data(pins: GuestPins) -> str:
         [
             # the groups exist only once docker.io is installed, after the users module ran
             "usermod -aG docker,kvm runner",
-            f"curl -fsSL --retry 3 -o {tarball} {shlex.quote(runner_url(pins.runner_version))}",
-            f"echo {shlex.quote(f'{pins.runner_sha256}  {tarball}')} | sha256sum -c -",
+            f"{FETCH_PATH} {tarball}",
             f"install -d -m 0755 {staging}",
             f"tar -xzf {tarball} -C {staging}",
             f"rm -f {tarball}",
@@ -343,6 +373,7 @@ def prepare_user_data(pins: GuestPins) -> str:
             # the same script under the name the runner accepts (it wants a .sh)
             _file(HOOK_RUNNER_PATH, _JOB_STARTED_HOOK, "0755"),
             _file(CHECK_PATH, _prepare_check(packages), "0755"),
+            _file(FETCH_PATH, _fetch_runner(pins), "0755"),
         ],
         "runcmd": [
             install_runner,

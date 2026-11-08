@@ -43,6 +43,7 @@ SNAPSHOT = "20261020T000000Z"
 PACKAGES = ["docker.io", "docker-buildx", "docker-compose-v2", "git", "qemu-system-x86"]
 RUNNER_VERSION = "2.338.0"
 RUNNER_SHA = "b2" * 32
+RUNNER_ASSET_ID = "615677773"
 
 
 def write_pins(
@@ -55,6 +56,7 @@ def write_pins(
     packages: object = PACKAGES,
     runner_version: str | None = RUNNER_VERSION,
     runner_sha: str | None = RUNNER_SHA,
+    runner_asset_id: str | None = RUNNER_ASSET_ID,
     name: str = "ci-guest.toml",
 ) -> tuple[Path, Path]:
     """A ``ci-guest.toml`` and a ``runner.env`` in ``directory``; ``None`` omits a value."""
@@ -71,6 +73,7 @@ def write_pins(
     env_lines = ["# runner.env as story 032 writes it", "RUNNER_GROUP_ID=3"]
     env_lines += [] if runner_version is None else [f"RUNNER_VERSION={runner_version}"]
     env_lines += [] if runner_sha is None else [f"RUNNER_SHA256={runner_sha}"]
+    env_lines += [] if runner_asset_id is None else [f"RUNNER_ASSET_ID={runner_asset_id}"]
     runner_env = directory / "runner.env"
     runner_env.write_text("\n".join(env_lines) + "\n", encoding="utf-8")
     return seeds, runner_env
@@ -92,6 +95,7 @@ def test_pins_load_every_field_from_the_two_files(tmp_path: Path) -> None:
     assert list(pins.apt.packages) == PACKAGES
     assert pins.runner_version == RUNNER_VERSION
     assert pins.runner_sha256 == RUNNER_SHA
+    assert pins.runner_asset_id == RUNNER_ASSET_ID
 
 
 def test_pins_of_the_repository_load_and_carry_docker_buildx_and_compose() -> None:
@@ -107,6 +111,7 @@ def test_pins_of_the_repository_load_and_carry_docker_buildx_and_compose() -> No
     )
     assert pins.runner_version == env["RUNNER_VERSION"]
     assert pins.runner_sha256 == env["RUNNER_SHA256"]
+    assert pins.runner_asset_id == env["RUNNER_ASSET_ID"]
     assert pins.image.url.startswith("https://")
     assert re.fullmatch(r"[0-9a-f]{64}", pins.image.sha256)
     assert {"docker.io", "docker-buildx", "docker-compose-v2"} <= set(pins.apt.packages)
@@ -148,6 +153,9 @@ def test_pins_of_the_repository_load_and_carry_docker_buildx_and_compose() -> No
         pytest.param({"runner_version": None}, "RUNNER_VERSION", "env", id="runner-missing"),
         pytest.param({"runner_sha": "b2" * 31}, "RUNNER_SHA256", "env", id="runner-sha-62"),
         pytest.param({"runner_sha": None}, "RUNNER_SHA256", "env", id="runner-sha-missing"),
+        pytest.param({"runner_asset_id": None}, "RUNNER_ASSET_ID", "env", id="asset-missing"),
+        pytest.param({"runner_asset_id": "61x"}, "RUNNER_ASSET_ID", "env", id="asset-not-digits"),
+        pytest.param({"runner_asset_id": "0"}, "RUNNER_ASSET_ID", "env", id="asset-zero"),
     ],
 )
 def test_pins_a_malformed_or_missing_value_names_the_file_and_the_field(
