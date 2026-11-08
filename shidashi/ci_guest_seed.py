@@ -172,7 +172,9 @@ def runner_url(version: str) -> str:
 # ACTIONS_RUNNER_RETURN_JOB_RESULT_FOR_HOSTED it exits 100 + the job's result, and run.sh
 # maps every such code to 0. ExecStopPost runs with full privileges ("+") to reach the
 # console and power the guest off, printing 0 only for 100 (Succeeded) and "none" when the
-# listener reported no job.
+# listener reported no job. One printf that starts with a newline: the serial getty leaves
+# "shidashi-ci login: " unterminated, and a marker after it is no line of its own (host
+# proof 6.1, 2026-11-08: a passed job was read as no result).
 _RUNNER_START = (
     "/bin/bash -c 'cfg=$$(cat \"$${CREDENTIALS_DIRECTORY}/"
     + JITCONFIG_CREDENTIAL
@@ -181,9 +183,9 @@ _RUNNER_START = (
 _RUNNER_STOP_POST = (
     '+/bin/sh -c \'case "$${EXIT_STATUS:-}" in '
     + f'{_LISTENER_SUCCEEDED}) rc=0;; ""|0) rc=none;; *) rc="$$EXIT_STATUS";; esac; '
-    + 'echo "'
+    + 'printf "\\n'
     + RESULT_PREFIX
-    + "$$rc\" > /dev/console; systemctl --no-block poweroff'"
+    + '%s\\n" "$$rc" > /dev/console; systemctl --no-block poweroff\''
 )
 _RUNNER_SERVICE = f"""\
 [Unit]
@@ -385,7 +387,8 @@ def prepare_user_data(pins: GuestPins) -> str:
             "touch /etc/cloud/cloud-init.disabled",
             "apt-get clean",
             # runcmd is one /bin/sh script without set -e: only the check's exit gates the marker
-            f"{CHECK_PATH} && echo {PREPARED_MARKER} > /dev/console",
+            # one write, newline first: a getty prompt may sit unterminated on the console
+            f"{CHECK_PATH} && printf '\\n%s\\n' {PREPARED_MARKER} > /dev/console",
             "poweroff",
         ],
     }
