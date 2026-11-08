@@ -156,9 +156,11 @@ def test_round_an_idle_worker_forgets_every_served_job_so_a_still_queued_one_is_
     assert served(state) == {"9030"}
     workers.is_busy = False  # the VM ended, the job is still queued
     round_once(cfg, state, github, workers)
+    # GitHub keeps the first attempt's runner registered: the second mint meets its 409,
+    # the dead runner is unregistered and the name minted again (host proof 6.1)
     mints = github.mints()
-    assert len(mints) == 2, github.calls
-    assert [m.body["name"] for m in mints] == ["bentoo-worker-9030"] * 2
+    assert len(github.minted) == 2, github.calls
+    assert {m.body["name"] for m in mints} == {"bentoo-worker-9030"}
     assert [d.job for d in workers.dispatched] == ["9030", "9030"]
     assert workers.dispatched[1].jitconfig == github.minted[1] != github.minted[0]
 

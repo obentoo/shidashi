@@ -337,6 +337,23 @@ def _report_results(worker: Worker) -> None:
             )
 
 
+def _drop_stale(repo: str, name: str, github: GitHub, seen: list[int]) -> bool:
+    """Unregister the dead attempts' runners holding ``name``; ``True`` when one went.
+
+    Called only on a mint's 409 -- a round mints on an idle worker alone, so a runner
+    already named for this job is a failed attempt's (R6.10; host proof 6.1, 2026-11-08).
+    One online or busy is left alone: then the name is not free and the mint fails.
+    """
+    listed = _call(github, github_api.runners_named_request(repo, name), seen)
+    holders = [r for r in listed.get("runners") or [] if r.get("name") == name]
+    if not holders or any(r.get("status") != "offline" or r.get("busy") for r in holders):
+        return False
+    for runner in holders:
+        _call(github, github_api.delete_runner_request(repo, int(runner["id"])), seen)
+        event("WARN", "ci_runner_stale", repo=repo, runner=int(runner["id"]), runner_name=name)
+    return True
+
+
 def _serve(
     cfg: PoolConfig,
     repo: str,
@@ -349,9 +366,15 @@ def _serve(
 ) -> RoundResult:
     """Mint one runner for ``job`` and hand it to the worker; the round ends here."""
     began = time.monotonic()
-    request = github_api.repo_jit_config_request(repo, cfg.label, f"bentoo-worker-{job}")
+    name = f"bentoo-worker-{job}"
+    request = github_api.repo_jit_config_request(repo, cfg.label, name)
     try:
-        answer = _call(github, request, seen)
+        try:
+            answer = _call(github, request, seen)
+        except GitHubApiError as err:
+            if err.status != 409 or not _drop_stale(repo, name, github, seen):
+                raise
+            answer = _call(github, request, seen)
     except GitHubApiError:
         event("ERROR", "ci_mint", job=job, repo=repo, duration_ms=_ms(began), result="failed")
         return RoundResult("mint-failed", job)

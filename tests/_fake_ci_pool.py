@@ -5,7 +5,9 @@
   ``functools.partial(github_api.send, token=...)`` does. It answers from repositories,
   runs and jobs a test declares, honouring ``?status=`` on the runs listing as GitHub
   does, and raises ``github_api.GitHubApiError`` (with ``status``) for a failure a test
-  injects. Every JIT config it mints is new.
+  injects. Every JIT config it mints is new. Each mint registers a runner under its
+  name, as GitHub does: a second mint of a registered name is GitHub's 409 "Already
+  exists"; ``GET .../actions/runners?name=`` lists and ``DELETE .../runners/<id>`` removes.
 - ``FakePoolWorker``: the ``worker`` a round is handed -- ``busy()``,
   ``results()`` (the ``results/<job>.json`` objects ``run_job`` left, read once) and
   ``dispatch(job, repo, jitconfig)``; unreachable on demand, a dispatch error on demand. A
@@ -51,6 +53,8 @@ class FakeRepo:
     name: str
     runs: list[FakeRun] = field(default_factory=list)
     private: bool | None = True
+    #: registered runners: ``{"id", "name", "status", "busy"}``, as GitHub lists them
+    runners: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
@@ -133,12 +137,29 @@ class FakeGitHub:
                 ],
             }
         if request.method == "POST" and rest == ["actions", "runners", "generate-jitconfig"]:
+            runner_name = (body or {}).get("name")
+            if any(r["name"] == runner_name for r in repo.runners):
+                raise GitHubApiError(
+                    "GitHub answered 409: Already exists - A runner with the name *** "
+                    "already exists.",
+                    status=409,
+                )
             encoded = mint_jit_config()
             self.minted.append(encoded)
-            return {
-                "runner": {"id": len(self.minted), "name": (body or {}).get("name")},
-                "encoded_jit_config": encoded,
-            }
+            runner_id = 1000 + len(self.minted)
+            repo.runners.append(
+                {"id": runner_id, "name": runner_name, "status": "offline", "busy": False}
+            )
+            return {"runner": {"id": runner_id, "name": runner_name}, "encoded_jit_config": encoded}
+        if request.method == "GET" and rest == ["actions", "runners"]:
+            wanted = query.get("name", [None])[0]
+            listed = [r for r in repo.runners if wanted is None or r["name"] == wanted]
+            return {"total_count": len(listed), "runners": [dict(r) for r in listed]}
+        if request.method == "DELETE" and rest[:2] == ["actions", "runners"] and len(rest) == 3:
+            if not any(str(r["id"]) == rest[2] for r in repo.runners):
+                raise GitHubApiError("GitHub answered 404: Not Found", status=404)
+            repo.runners[:] = [r for r in repo.runners if str(r["id"]) != rest[2]]
+            return {}
         raise GitHubApiError("GitHub answered 404: Not Found", status=404)
 
     def mints(self) -> list[SeenCall]:

@@ -146,6 +146,17 @@ def repo_request(repo: str) -> ApiRequest:
     return _get(repo, "")
 
 
+def runners_named_request(repo: str, name: str) -> ApiRequest:
+    """``GET .../actions/runners?name=<name>``: the repository's runners holding ``name``."""
+    return _get(repo, "actions/runners", {"name": name})
+
+
+def delete_runner_request(repo: str, runner_id: int) -> ApiRequest:
+    """``DELETE .../actions/runners/<id>``: unregister one runner (GitHub answers 204)."""
+    request = _get(repo, f"actions/runners/{int(runner_id)}")
+    return ApiRequest(method="DELETE", url=request.url, headers=request.headers, body=b"")
+
+
 def repo_jit_config_request(repo: str, label: str, name: str) -> ApiRequest:
     """``POST .../actions/runners/generate-jitconfig`` for a repository's own runner:
     group 1 is a repository's Default group (story 034). ``linux``/``x64`` beside
