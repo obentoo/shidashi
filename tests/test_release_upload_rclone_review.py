@@ -57,13 +57,30 @@ def test_copyto_a_relative_name_with_a_colon_stays_local(
 
 
 #: A wrapper like ``runuser``: forks the real work and waits; the grandchild logs its pid.
+# The grandchild must not inherit rclone's pipes: holding them, it would keep the runner's
+# post-kill communicate() waiting until its own sleep ends, and a grandchild the kill missed
+# would be gone by the check -- the test would pass with os.kill instead of os.killpg.
 _FORKING_RCLONE = r"""
 import subprocess, sys
 from pathlib import Path
-child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+child = subprocess.Popen(
+    [sys.executable, "-c", "import time; time.sleep(60)"],
+    stdout=subprocess.DEVNULL,
+    stderr=subprocess.DEVNULL,
+)
 (Path(__STATE__) / "grandchild.pid").write_text(str(child.pid))
 child.wait()
 """
+
+
+def _is_zombie(pid: int) -> bool:
+    """``Z`` in ``/proc/<pid>/stat``: dead, only waiting to be reaped."""
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
+    except OSError:
+        return False
+    # The comm field is parenthesised and may hold spaces: the state follows its last ")".
+    return stat.rpartition(")")[2].split()[0] == "Z"
 
 
 def test_a_timeout_kills_the_grandchild_too(
@@ -86,6 +103,10 @@ def test_a_timeout_kills_the_grandchild_too(
         try:
             os.kill(pid, 0)
         except ProcessLookupError:
+            return
+        # A killed orphan stays a zombie until PID 1 reaps it, and act's PID 1
+        # (`tail -f /dev/null`) never does: kill(pid, 0) still finds it there.
+        if _is_zombie(pid):
             return
         time.sleep(0.05)
     pytest.fail(f"grandchild {pid} still alive after the timeout")
