@@ -1,0 +1,17 @@
+# ::bentoo's Rust 1.99.1 mirror (d1b669163, 2026-10-19) is invisible to every
+# ::gentoo Rust consumer. Those ebuilds read ::gentoo's rust.eclass, whose slot
+# table stops at 1.99.0; ::bentoo's forked eclass, which adds the 1.99.1 row,
+# shadows only ::bentoo's own ebuilds (its header says so). An unslotted
+# dev-lang/rust-bin (kits/core/portage) then resolves to 1.99.1, and
+# dev-vcs/git-2.56.0-r1 dies in pkg_setup with "No Rust matching requirements
+# (>= 1.90.0) found installed!" -- the pin proof of ::gentoo 20261101 +
+# ::bentoo 1d98e5f on bentoo-lab, 2026-11-09, toolbox stage base, 253/504.
+#
+# Masked here, not in ::bentoo, so the overlay pin stays the last commit of the
+# snapshot's day. ::gentoo 20261101 carries rust, rust-bin and rust-common
+# 1.99.0, so this mask leaves a candidate for each.
+# Remove it once the pinned ::gentoo rust.eclass lists 1.99.1 (or ::bentoo
+# drops the mirror).
+=dev-lang/rust-1.99.1::bentoo
+=dev-lang/rust-bin-1.99.1::bentoo
+=dev-lang/rust-common-1.99.1::bentoo
