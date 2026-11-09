@@ -11,11 +11,13 @@ console line, the marker is a line of its own. The worker's reading stays strict
 """
 
 import contextlib
+import errno
 import os
 import re
 import shlex
 import subprocess
 import threading
+import time
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -77,9 +79,20 @@ def _serial(sandbox: GuestSandbox, serial: Path) -> Iterator[None]:
         yield
     finally:
         stop.set()
-        with fifo.open("wb"):
-            pass  # wakes the reader blocked in open()
-        reader.join(timeout=5)
+        # A blocking open("wb") hangs forever once the reader has seen `stop` and left its
+        # loop: no reader will ever open the FIFO again (hung `act` under load, 2026-11-08).
+        # A non-blocking writer wakes a reader blocked in open() and gets ENXIO when none is
+        # there yet, so it retries until the reader is gone.
+        deadline = time.monotonic() + 5
+        while reader.is_alive() and time.monotonic() < deadline:
+            try:
+                fd = os.open(fifo, os.O_WRONLY | os.O_NONBLOCK)
+            except OSError as err:
+                if err.errno != errno.ENXIO:
+                    raise
+            else:
+                os.close(fd)
+            reader.join(timeout=0.05)
         serial.write_bytes(b"".join(seen))
 
 
