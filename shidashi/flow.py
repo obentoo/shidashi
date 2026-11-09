@@ -125,12 +125,13 @@ class BootstrapFlow(BaseModel):
                 if checked:
                     raise ValueError("bootstrap needs `check-generation` at most once")
                 checked = True
-            elif isinstance(step, EmergeStep) and writes_binpkgs(self.step_env(step)):
-                if not checked:
-                    raise ValueError(
-                        f"bootstrap step {step.name!r} writes binpkgs (FEATURES lacks "
-                        "-buildpkg) before `check-generation`"
-                    )
+            elif (
+                isinstance(step, EmergeStep) and writes_binpkgs(self.step_env(step)) and not checked
+            ):
+                raise ValueError(
+                    f"bootstrap step {step.name!r} writes binpkgs (FEATURES lacks "
+                    "-buildpkg) before `check-generation`"
+                )
         return self
 
 

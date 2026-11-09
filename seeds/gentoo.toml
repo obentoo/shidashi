@@ -15,11 +15,12 @@
 #   sha512sum $F                # -> sha512 below
 # and update date + sha512 together.
 
-# 2026-10-05: gentoo-20260926 rotated off the mirror (404) a day after it was
-# pinned; re-pinned to 20260928, the newest the cooldown allows.
+# 2026-11-08: re-pinned to 20261101, the newest the cooldown allows, for
+# GLSA 202610-01 (ca-certificates >= 20260816.3.125) and GLSA 202610-02
+# (php 8.2.35 / 8.3.36 / 8.4.27 / 8.5.12), both missing from 20260928.
 # GOODSIG + VALIDSIG by E1D6ABB63BFCFB4BA02FDF1CEC590EEAC9189250 (Gentoo ebuild
 # repository signing key) against /usr/share/openpgp-keys/gentoo-release.asc
 # before the hash was copied.
-date = "20260928"
+date = "20261101"
 base_url = "https://distfiles.gentoo.org/snapshots"
-sha512 = "2947bcc8417c8df44993cef8250d5c771d0da7570278446ba86cbdff6372edf56f9ddd05a07cbd5e6caec406c132b1df29254e25ee4ed1e55d0e17fc599ac747"
+sha512 = "5f5cb27fa22b1ac841255c9a6c55551295ab833619de3c89446c5ccd455b700eb2feb881ecb57e36f0d2df48b426dc2e0ea93d83f30d42b269915cc45c5a10c8"
