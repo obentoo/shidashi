@@ -40,6 +40,14 @@ net-misc/networkmanager bluetooth connection-sharing nftables policykit resolvco
 # Hardware
 app-laptop/laptop-mode-tools apm
 
+# Monitoring
+# net-analyzer/netdata::bentoo (@monitoring) links dlib's C++ library only.
+# sci-libs/dlib-20.0.1 in ::gentoo 20261101 defaults `python` on and requires
+# `png` with it (REQUIRED_USE python? ( png )), so the worker's minimal stage
+# could not resolve (pin proof on bentoo-lab, 2026-11-09). The bindings are
+# never used: dropping them also drops dlib's Python dependency.
+sci-libs/dlib -python
+
 # Crypto
 dev-libs/openssl quic
 
