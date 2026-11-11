@@ -48,9 +48,9 @@ media-libs/opencv contrib contribdnn features2d
 # `has no member named 'pix_fmts'` in videoio/cap_ffmpeg_hw.hpp (lab, 2026-11-11). Its own video I/O
 # goes; MLT/kdenlive decode through ffmpeg themselves. Drop this line at the ::bentoo re-pin to 5.1.0.
 media-libs/opencv -ffmpeg
-# frei0r-plugins[opencv] needs opencv[ffmpeg] (mlt[frei0r] pulls it for kdenlive): without opencv it
-# keeps every effect that needs no tracking. Same re-pin note as above.
-media-plugins/frei0r-plugins -opencv
+# frei0r-plugins[facedetect] needs opencv[ffmpeg] (mlt[frei0r] pulls it for kdenlive): without face
+# detection it keeps every other effect. Same re-pin note as above.
+media-plugins/frei0r-plugins -facedetect
 
 # GUI toolkits
 gui-libs/gtk gstreamer
