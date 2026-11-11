@@ -1,0 +1,10 @@
+# Template: `lab/weekly-lab.sh timer-install` writes this to ~/.config/systemd/user with
+# @REPO@ set to the checkout.
+[Unit]
+Description=Shidashi weekly unsigned release, built on the worker
+
+[Service]
+Type=oneshot
+# a release takes hours; the worker keeps building if this host drops the connection
+TimeoutStartSec=infinity
+ExecStart=/usr/bin/env @REPO@/lab/weekly-lab.sh weekly
