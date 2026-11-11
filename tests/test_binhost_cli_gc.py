@@ -652,3 +652,30 @@ def test_an_arch_the_worker_does_not_own_is_collected_on_this_host_not_by_the_wo
     assert result.exit_code == 0, result.output
     assert owned == []
     assert pool_files(pkgdir) == EVERY - PLANNED
+
+
+# --- --also: a CPV named by hand, although its ebuild still exists ---------------------------
+
+
+def test_also_quarantines_a_named_cpv_whose_ebuild_still_exists(lab: Lab) -> None:
+    """A binpkg built from an overlay that has since dropped the ebuild is still "available"
+    by CPV when ::gentoo ships the same one: the assembler then refuses it as outside the
+    pinned tree. ``--also`` sets it aside by name; both instances of the CPV go, nothing else."""
+    result = binhost("gc", "v3", "--also", "dev-libs/foo-2.0")
+    assert result.exit_code == 0, result.output
+    assert pool_files(lab.pkgdir()) == EVERY - PLANNED - {path_of(FOO_20_1), path_of(FOO_20_2)}
+    assert listed(lab.pkgdir()) == PLANNED | {path_of(FOO_20_1), path_of(FOO_20_2)}
+
+
+def test_also_dry_run_lists_the_named_cpv_and_moves_nothing(lab: Lab) -> None:
+    result = binhost("gc", "v3", "--also", "dev-libs/foo-2.0", "--dry-run")
+    assert result.exit_code == 0, result.output
+    assert path_of(FOO_20_1) in result.output and path_of(FOO_20_2) in result.output
+    assert pool_files(lab.pkgdir()) == EVERY
+
+
+def test_also_names_a_cpv_exactly_never_a_prefix(lab: Lab) -> None:
+    """Hostile half: ``foo-2`` is not ``foo-2.0``, and a CPV the pool lacks moves nothing."""
+    result = binhost("gc", "v3", "--also", "dev-libs/foo-2", "--also", "dev-libs/absent-1")
+    assert result.exit_code == 0, result.output
+    assert pool_files(lab.pkgdir()) == EVERY - PLANNED

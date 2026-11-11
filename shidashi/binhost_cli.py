@@ -178,23 +178,33 @@ def gc(
     dry_run: Annotated[
         bool, typer.Option("--dry-run", help="Print the planned PATHs; move and write nothing.")
     ] = False,
+    also: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--also",
+            help="A CPV (cat/pkg-1.0) to quarantine too, whatever its ebuild: for a binpkg "
+            "built from an overlay that dropped it while ::gentoo still ships the CPV.",
+        ),
+    ] = None,
 ) -> None:
     """Quarantine the binpkgs whose ebuild is gone, beyond --keep per package, and reindex."""
     from shidashi import cli  # looked up at call time: the tests patch the owner and PKGDIR
 
     # before any local work: a worker-owned arch has no pool on this host (R3.10)
     if (owner := cli._cache_owner(arch)) is not None:
-        _gc_on_worker(cli, owner, arch, init=init, keep=keep, dry_run=dry_run)
+        _gc_on_worker(cli, owner, arch, init=init, keep=keep, dry_run=dry_run, also=also or [])
         return
     _refuse_if_busy(arch)
     try:
         with ownership.held(arch, cli._host_owner(arch, "binhost-gc")):
-            _collect(arch, init, keep=keep, dry_run=dry_run)
+            _collect(arch, init, keep=keep, dry_run=dry_run, also=also or [])
     except (ownership.OwnedElsewhere, ownership.PullRunning, ownership.LockError) as err:
         _die(err)
 
 
-def _gc_on_worker(cli: Any, owner: str, arch: str, *, init: str, keep: int, dry_run: bool) -> None:
+def _gc_on_worker(
+    cli: Any, owner: str, arch: str, *, init: str, keep: int, dry_run: bool, also: list[str]
+) -> None:
     """Run this gc as a job on ``owner``; ``worker job`` exits with the job's code.
 
     ``worker job`` already turns a job that cannot start into exit 1 with the worker's
@@ -204,6 +214,8 @@ def _gc_on_worker(cli: Any, owner: str, arch: str, *, init: str, keep: int, dry_
     argv = ["binhost", "gc", arch, "--init", init, "--keep", str(keep)]
     if dry_run:
         argv.append("--dry-run")
+    for cpv in also:
+        argv += ["--also", cpv]
     cli.worker_job(
         owner,
         f"binhost-gc-{arch}",
@@ -216,7 +228,7 @@ def _gc_on_worker(cli: Any, owner: str, arch: str, *, init: str, keep: int, dry_
     )
 
 
-def _collect(arch: str, init: str, *, keep: int, dry_run: bool) -> None:
+def _collect(arch: str, init: str, *, keep: int, dry_run: bool, also: list[str]) -> None:
     """The gc proper, under the arch's lock: plan, check, move, record, reindex.
 
     The toolbox rootfs's shared lock is held from before the first move until the reindex
@@ -230,7 +242,9 @@ def _collect(arch: str, init: str, *, keep: int, dry_run: bool) -> None:
                 available=_pinned_availability(arch, init),
                 keep=keep,
             )
-            paths = [ref.path for ref in plan]
+            refs = _read_pool_refs(pkgdir, arch)
+            named = {ref.path for ref in refs if ref.cpv in set(also)}
+            paths = sorted({ref.path for ref in plan} | named)
             for rel in paths:  # the whole plan before the first move (R3.11)
                 binhost.safe_path(pkgdir, rel)
             binhost.load_quarantined(pkgdir)  # a damaged list stops the gc here, not mid-way
