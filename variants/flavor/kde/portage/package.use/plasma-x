@@ -9,6 +9,9 @@
 kde-plasma/plasma-workspace X
 kde-plasma/kdesu-gui X
 kde-plasma/kglobalacceld X
+# kwin 6.8.2-r1 (2026-11-11): plasma-desktop needs kwin[X] (emerge's autounmask asked for
+# it after the ::gentoo re-pin). kwin-x11, the X session, is still not pulled.
+kde-plasma/kwin X
 
 # The cascade of the Plasma pieces above, each asked by its [X] dependency:
 # plasma-workspace -> mesa[X]; kdesu-gui -> dbus[X];

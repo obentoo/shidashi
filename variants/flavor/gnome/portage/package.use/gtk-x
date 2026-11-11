@@ -10,3 +10,8 @@ gui-libs/gtk X
 # gtk -> vulkan-loader[X] (gtk[vulkan]) and mesa[X].
 media-libs/vulkan-loader X
 media-libs/mesa X
+
+# Sushi (2026-11-11): built with X11 disabled by the base's -X, yet its libsushi still
+# calls XSetTransientForHint, and gtk[X] above makes GDK expose the X11 backend --
+# `undefined reference to XSetTransientForHint` at link time. Same XWayland-only X.
+gnome-extra/sushi X
