@@ -15,3 +15,6 @@ media-libs/mesa X
 # calls XSetTransientForHint, and gtk[X] above makes GDK expose the X11 backend --
 # `undefined reference to XSetTransientForHint` at link time. Same XWayland-only X.
 gnome-extra/sushi X
+# sushi[X] -> gst-plugins-gtk[X] -> gst-plugins-base[X] (emerge's autounmask, 2026-11-11).
+media-plugins/gst-plugins-gtk X
+media-libs/gst-plugins-base X
