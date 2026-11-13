@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`shidashi vm start --dev`: a disposable VM to build ebuilds in, for bentoolkit.** It
+  boots the newest minimal ISO with the trees that ISO was built from, a fresh work disk,
+  an empty `/var/db/repos/staged` repository and the available binhosts, and prints one
+  JSON line (exit 3: no ISO to boot).
+- **`shidashi vm run --stream`** passes the guest's output through as it is written;
+  **`--timeout 0`** waits however long the command takes. stdin reaches the guest command
+  in both modes.
+- **ISOs record their pins.** `bentoo/build.json` gains a `pins` block (the `::gentoo`
+  snapshot and the overlay commits); older ISOs are read through the commit that built
+  them.
+
 ### Security
 
 - **`::gentoo` re-pinned to 20261101, `::bentoo` to the same day.** 20260928 lacks the

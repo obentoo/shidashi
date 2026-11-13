@@ -128,7 +128,7 @@ class _FakeSession(vm.Session):
     def start(self, *, cid_lock: Path | None = None) -> None:
         pass
 
-    def run_command(self, command: str, *, timeout: int = 600) -> vm.GuestResult:
+    def run_command(self, command: str, *, timeout: float | None = 600) -> vm.GuestResult:
         out = next((v for k, v in self.answers.items() if k in command), "")
         return vm.GuestResult(command, 0, out, "", 0.1)
 

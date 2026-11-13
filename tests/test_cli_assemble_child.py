@@ -187,7 +187,7 @@ class _Session(vm.Session):
     def start(self, *, cid_lock: Path | None = None) -> None:
         _Session.directories.append(self.directory)
 
-    def run_command(self, command: str, *, timeout: int = 600) -> vm.GuestResult:
+    def run_command(self, command: str, *, timeout: float | None = 600) -> vm.GuestResult:
         return vm.GuestResult(command, 0, "", "", 0.1)
 
     def wait_ssh(self, *, timeout: float = 300, interval: float = 5) -> float:

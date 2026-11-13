@@ -552,8 +552,10 @@ class Session:
             self._kill([int(p) for p in pids_file.read_text().split()])
             pids_file.unlink()
 
-    def run_command(self, command: str, *, timeout: int = 600) -> GuestResult:
-        """Run ``command`` as root in the guest's shell; recorded in the audit trail."""
+    def run_command(self, command: str, *, timeout: float | None = 600) -> GuestResult:
+        """Run ``command`` as root in the guest's shell; recorded in the audit trail.
+
+        ``timeout`` None waits for the command however long it takes."""
         start = time.monotonic()
         try:
             done = self.runner(
@@ -639,6 +641,14 @@ class Session:
 
 def session_dir(name: str) -> Path:
     return config.scratch_dir() / "vm" / name
+
+
+def user_session_dir(name: str) -> Path:
+    """Where ``vm start --dev`` keeps a session when no scratch is named: the user's own
+    state directory. The default scratch (``/var/tmp/shidashi``) is root's on a host that
+    builds as root, and a dev VM is started by the user."""
+    state = os.environ.get("XDG_STATE_HOME") or str(Path.home() / ".local" / "state")
+    return Path(state) / "shidashi" / "vm" / name
 
 
 def boot_session_name(firmware: str, cid: int) -> str:
@@ -811,8 +821,13 @@ def allocate_cid(base: int) -> Generator[int]:
 
 
 def load_session(name: str) -> Session:
-    """The session ``vm start`` left (for ``vm run``/``stop``/``screenshot``)."""
+    """The session ``vm start`` left (for ``vm run``/``stop``/``screenshot``): in the
+    scratch, else in :func:`user_session_dir` (a dev VM's)."""
     directory = session_dir(name)
+    if not (directory / "session.json").is_file():
+        user = user_session_dir(name)
+        if (user / "session.json").is_file():
+            directory = user
     try:
         data = json.loads((directory / "session.json").read_text())
     except (OSError, json.JSONDecodeError) as err:

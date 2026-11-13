@@ -198,6 +198,33 @@ PYTHONPATH="$PWD:$PWD/.venv/lib/python3.14/site-packages" SHIDASHI_CACHE=/work/c
   --basetemp=/mnt/work/scratch/pytest tests/test_factory.py
 ```
 
+### A VM to build ebuilds (bentoolkit)
+
+`shidashi vm start --dev` boots the newest `minimal` ISO (or `--iso`) as a disposable build
+host for one ebuild at a time — what bentoolkit uses to build and fix overlay ebuilds
+without touching the developer's machine. It mounts, read-only, the `::gentoo` snapshot
+and overlay commits the ISO itself was built from (the ISO ships `/var/db/repos` empty),
+formats a fresh work disk for `/var/tmp`, `DISTDIR` and `PKGDIR` (the live root is a
+small tmpfs), makes an empty `/var/db/repos/staged` repository above the pinned ones,
+and configures binhosts: the host's pool for the ISO's generation, then the ISO's own
+when it answers, else none. It prints one JSON line; exit 3 means there is no ISO to boot.
+
+```sh
+shidashi vm start --dev --name dev          # {"name": "dev", "cid": 42, ..., "ready": true}
+tar -C ~/overlay -c dev-libs/foo | shidashi vm run --name dev -- tar -x -C /var/db/repos/staged
+shidashi vm run --name dev --timeout 0 -- \
+  emerge -1 --onlydeps --with-bdeps=y --getbinpkg =dev-libs/foo-1.0::bentoo-staged
+shidashi vm run --name dev --stream --timeout 0 -- \
+  'cd /var/db/repos/staged && ebuild dev-libs/foo/foo-1.0.ebuild clean compile'
+shidashi vm stop --name dev                 # the next start begins from a clean disk
+```
+
+`--stream` passes the output through as the guest writes it (a command stopped by
+`--timeout` exits 124); stdin always reaches the guest command. Without `--work-dir` the
+session lives in `$XDG_STATE_HOME/shidashi/vm/<name>` and the trees come from the shared
+cache. Packages installed as dependencies land in the live root, a tmpfs sized from
+`--memory`: a dependency set larger than that needs more memory.
+
 ## Usage
 
 ```sh

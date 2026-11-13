@@ -2502,10 +2502,14 @@ def _forwards(value: list[str] | None) -> list[str] | None:
 
 @vm_app.command("start")
 def vm_start(
-    iso: Path,
+    iso: Annotated[
+        Path | None, typer.Argument(help="The ISO to boot (optional with --dev).")
+    ] = None,
     uefi: Annotated[bool, typer.Option("--uefi", help="Boot with OVMF instead of BIOS.")] = False,
     name: Annotated[str, typer.Option("--name", help="Session name.")] = "bentoo",
-    cid: Annotated[int, typer.Option("--cid", min=3, help="The guest's vsock CID.")] = 42,
+    cid: Annotated[
+        int | None, typer.Option("--cid", min=3, help="The guest's vsock CID (default 42).")
+    ] = None,
     memory: Annotated[str, typer.Option("--memory")] = "8G",
     cpus: Annotated[int, typer.Option("--cpus", min=1)] = 8,
     display: Annotated[
@@ -2539,11 +2543,51 @@ def vm_start(
         ),
     ] = None,
     work_dir: Annotated[Path | None, typer.Option("--work-dir")] = None,
+    dev: Annotated[
+        bool,
+        typer.Option(
+            "--dev",
+            help="A VM ready to build ebuilds (bentoolkit): the ISO's pinned trees, a fresh "
+            "work disk, /var/db/repos/staged, a binhost; prints one JSON line. Exit 3: no ISO.",
+        ),
+    ] = False,
+    dev_iso: Annotated[
+        Path | None, typer.Option("--iso", help="--dev: this ISO, not the newest minimal.")
+    ] = None,
+    init: Annotated[str, typer.Option("--init", help="--dev: the ISO's init.")] = "systemd",
+    arch: Annotated[str, typer.Option("--arch", help="--dev: the ISO's arch.")] = "v3",
 ) -> None:
     """Start ``iso`` in a VM reachable with `shidashi vm run`."""
     from shidashi import vm
 
     _apply_work_dir(work_dir)
+    if dev:
+        from shidashi import vm_dev_cli
+
+        vm_dev_cli.start(
+            iso=dev_iso or iso,
+            name=name,
+            init=init,
+            arch=arch,
+            memory=memory,
+            cpus=cpus,
+            display=display,
+            disk_size=disk_size,
+            work_dir=work_dir,
+            managed={
+                "--uefi": uefi,
+                "--cid": cid is not None,
+                "--disk": bool(disk),
+                "--share": bool(share),
+                "--forward": bool(forward),
+                "--no-wait": not wait,
+            },
+        )
+        return
+    if iso is None or dev_iso is not None:
+        _err_console.print("[bold red]error:[/bold red] give the ISO to boot (or use --dev)")
+        raise typer.Exit(2)
+    cid = vm.DEFAULT_CID if cid is None else cid
     try:
         shares = tuple(vm.parse_share(s) for s in share or ())
         disks = tuple(vm.ensure_disk(d.resolve(), disk_size) for d in disk or ())
@@ -2576,16 +2620,32 @@ def vm_run(
     command: Annotated[list[str], typer.Argument(help="The command, run by the guest's shell.")],
     name: Annotated[str, typer.Option("--name")] = "bentoo",
     timeout: Annotated[
-        int, typer.Option("--timeout", min=1, help="Seconds before giving up on the command.")
+        int,
+        typer.Option(
+            "--timeout", min=0, help="Seconds before giving up on the command; 0: no limit."
+        ),
     ] = 600,
+    stream: Annotated[
+        bool,
+        typer.Option(
+            "--stream",
+            help="Pass the output through line by line as the guest writes it, "
+            "instead of when the command ends (a stopped one exits 124).",
+        ),
+    ] = False,
     work_dir: Annotated[Path | None, typer.Option("--work-dir")] = None,
 ) -> None:
-    """Run a command as root in the VM; its exit code becomes ours."""
-    from shidashi import vm
+    """Run a command as root in the VM; its exit code becomes ours. Our stdin is the
+    command's (``tar -c … | shidashi vm run -- tar -x``)."""
+    from shidashi import vm, vm_exec
 
     _apply_work_dir(work_dir)
+    limit = timeout or None
     try:
-        result = vm.load_session(name).run_command(" ".join(command), timeout=timeout)
+        session = vm.load_session(name)
+        if stream:
+            raise typer.Exit(vm_exec.stream(session, " ".join(command), timeout=limit))
+        result = session.run_command(" ".join(command), timeout=limit)
     except vm.VmError as err:
         raise _vm_error(err) from err
     sys.stdout.write(result.stdout)
