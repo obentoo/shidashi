@@ -21,6 +21,11 @@
 # GOODSIG + VALIDSIG by E1D6ABB63BFCFB4BA02FDF1CEC590EEAC9189250 (Gentoo ebuild
 # repository signing key) against /usr/share/openpgp-keys/gentoo-release.asc
 # before the hash was copied.
-date = "20261101"
+# 2026-11-13: re-pinned to 20261106, the newest the cooldown allows (7 days), together with
+# ::bentoo e44fa30 of the same day, which ships opencv 5.1.0 and frei0r-plugins 3.7.0 -- the
+# lab's kde build could not compile opencv 5.0.0 against the current ffmpeg. GOODSIG + VALIDSIG
+# by E1D6ABB63BFCFB4BA02FDF1CEC590EEAC9189250 (Gentoo ebuild repository signing key) before the
+# hash was copied.
+date = "20261106"
 base_url = "https://distfiles.gentoo.org/snapshots"
-sha512 = "5f5cb27fa22b1ac841255c9a6c55551295ab833619de3c89446c5ccd455b700eb2feb881ecb57e36f0d2df48b426dc2e0ea93d83f30d42b269915cc45c5a10c8"
+sha512 = "c411a65e2e58f6b0cffc9a96db9e0ff66b9d6440466f2f7c9336283fc0553891d398bcca83e7f19788f332e2bdb382e2b49652c6b6e96c43571a2039676adf65"

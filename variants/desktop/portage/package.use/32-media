@@ -44,15 +44,6 @@ media-gfx/qrencode png
 # Image
 media-libs/freeimage jpeg jpeg2k png webp
 media-libs/opencv contrib contribdnn features2d
-# opencv 5.0.0 (::bentoo pin 1d98e5f) reads AVCodec::pix_fmts, which the current ffmpeg removed:
-# `has no member named 'pix_fmts'` in videoio/cap_ffmpeg_hw.hpp (lab, 2026-11-11). Its own video I/O
-# goes; MLT/kdenlive decode through ffmpeg themselves. Drop this line at the ::bentoo re-pin to 5.1.0.
-media-libs/opencv -ffmpeg
-# frei0r-plugins[facedetect] needs opencv[ffmpeg] (mlt[frei0r] pulls it for kdenlive): without face
-# detection it keeps every other effect. Same re-pin note as above.
-media-plugins/frei0r-plugins -facedetect
-# mlt[opencv] (base sets it) needs opencv[ffmpeg] too; kdenlive keeps MLT's other filters.
-media-libs/mlt -opencv
 
 # GUI toolkits
 gui-libs/gtk gstreamer
