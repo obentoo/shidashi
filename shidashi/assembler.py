@@ -48,6 +48,7 @@ from shidashi import (
     world,
 )
 from shidashi.container import CommandResult, Container
+from shidashi.iso_pins import pins_record
 from shidashi.phases import (
     ISO_EMERGE_OPTIONS,
     ISO_SETTLE_OPTIONS,
@@ -650,6 +651,7 @@ def build_info(
     world_atoms: int,
     stage3: Mapping[str, object],
     tools: Mapping[str, str],
+    pins: Mapping[str, object],
 ) -> dict[str, object]:
     """``bentoo/build.json`` on the medium: what this image is and what made it. Pure."""
     return {
@@ -667,6 +669,8 @@ def build_info(
         "stage3": dict(stage3),
         # the versions of what made the squashfs and the ISO (the toolbox's)
         "toolbox": dict(tools),
+        # the trees its packages came from: the ISO ships /var/db/repos empty (iso_pins)
+        "pins": dict(pins),
         "repository": audit.repo_state(),
     }
 
@@ -1707,6 +1711,7 @@ class Assembler:
                         world_atoms=len(atoms),
                         stage3=pointer.model_dump(mode="json"),
                         tools=tool_versions,
+                        pins=pins_record(config.seeds_dir()),
                     )
                     with run.step(f"iso:{profile}") as step:
                         image.build_iso(

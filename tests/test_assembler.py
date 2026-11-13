@@ -560,6 +560,10 @@ def test_assemble_orchestrates_seed_emerge_dracut_squashfs_iso(
     assert tools.rw == {"scratch": tmp_path / "scratch" / "assemble", "out": out_dir}
     build_json = json.loads(str(extra["bentoo/build.json"]))  # type: ignore[index]
     assert build_json["toolbox"] == _FakeTools.VERSIONS
+    # which trees made it, so a dev VM mounts the same ones (iso_pins)
+    from shidashi import config, iso_pins
+
+    assert build_json["pins"] == iso_pins.pins_record(config.seeds_dir())
     assert iso_kwargs[0]["volume"] == "BENTOO_KDE"
     assert iso_kwargs[0]["text_target"] == "multi-user.target"
     assert iso_kwargs[0]["boot_to_ram"] is False  # only the worker boots to RAM
