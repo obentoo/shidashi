@@ -16,6 +16,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`shidashi vm run --stream`** passes the guest's output through as it is written;
   **`--timeout 0`** waits however long the command takes. stdin reaches the guest command
   in both modes.
+
+### Fixed
+
+- **`vm run` stopped by its timeout or Ctrl+C now stops the command in the guest too.**
+  ssh runs no terminal there, so killing it left the guest command -- a whole build --
+  running; the shell sshd starts now records its process group, and a second ssh kills it.
+  A command past its timeout exits 124 in both modes (it was -1 without `--stream`).
 - **ISOs record their pins.** `bentoo/build.json` gains a `pins` block (the `::gentoo`
   snapshot and the overlay commits); older ISOs are read through the commit that built
   them.

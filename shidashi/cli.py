@@ -2630,13 +2630,15 @@ def vm_run(
         typer.Option(
             "--stream",
             help="Pass the output through line by line as the guest writes it, "
-            "instead of when the command ends (a stopped one exits 124).",
+            "instead of when the command ends.",
         ),
     ] = False,
     work_dir: Annotated[Path | None, typer.Option("--work-dir")] = None,
 ) -> None:
     """Run a command as root in the VM; its exit code becomes ours. Our stdin is the
-    command's (``tar -c … | shidashi vm run -- tar -x``)."""
+    command's (``tar -c … | shidashi vm run -- tar -x``). A command stopped by
+    ``--timeout`` or Ctrl+C is stopped in the guest too, with all it started; past its
+    timeout it exits 124."""
     from shidashi import vm, vm_exec
 
     _apply_work_dir(work_dir)
@@ -2645,7 +2647,7 @@ def vm_run(
         session = vm.load_session(name)
         if stream:
             raise typer.Exit(vm_exec.stream(session, " ".join(command), timeout=limit))
-        result = session.run_command(" ".join(command), timeout=limit)
+        result = vm_exec.run_captured(session, " ".join(command), timeout=limit)
     except vm.VmError as err:
         raise _vm_error(err) from err
     sys.stdout.write(result.stdout)

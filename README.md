@@ -219,8 +219,9 @@ shidashi vm run --name dev --stream --timeout 0 -- \
 shidashi vm stop --name dev                 # the next start begins from a clean disk
 ```
 
-`--stream` passes the output through as the guest writes it (a command stopped by
-`--timeout` exits 124); stdin always reaches the guest command. Without `--work-dir` the
+`--stream` passes the output through as the guest writes it; stdin always reaches the
+guest command. A command stopped by `--timeout` (exit 124) or Ctrl+C is stopped in the
+guest too, with everything it started. Without `--work-dir` the
 session lives in `$XDG_STATE_HOME/shidashi/vm/<name>` and the trees come from the shared
 cache. Packages installed as dependencies land in the live root, a tmpfs sized from
 `--memory`: a dependency set larger than that needs more memory.
