@@ -8,6 +8,7 @@ a copy of the checkout's ``lab/``, the way ``tests/_fake_builder_guest.py`` stan
 
 import json
 import os
+import pwd
 import shutil
 import subprocess
 import sys
@@ -126,7 +127,10 @@ def test_a_green_cycle_checks_the_worker_builds_unsigned_reports_then_prunes(
 def test_the_scratch_is_the_users_not_the_root_owned_default(lab: WeeklyLab) -> None:
     lab.run("weekly", SHIDASHI_SCRATCH="")
     scratch = [json.loads(x)["scratch"] for x in lab.log.read_text().splitlines()]
-    assert scratch and all(s == f"/var/tmp/shidashi-{os.getlogin()}" for s in scratch), scratch
+    # the script's `id -un`: the effective user's name, not the terminal's owner that
+    # os.getlogin() reads (and that a CI container, with no terminal, does not have)
+    user = pwd.getpwuid(os.geteuid()).pw_name
+    assert scratch and all(s == f"/var/tmp/shidashi-{user}" for s in scratch), scratch
 
 
 def test_a_failed_release_still_reports_but_prunes_nothing_and_fails(lab: WeeklyLab) -> None:
