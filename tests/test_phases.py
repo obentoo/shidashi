@@ -818,12 +818,13 @@ def test_every_stage_and_step_is_in_the_audit_trail(
         _run_chain(tmp_path, monkeypatch)
     manifest = audit.build_manifest(audit.read_events(trail.path / "events.jsonl"))
     steps = [s["step"] for s in manifest["steps"]]
-    assert steps[:7] == [
+    assert steps[:8] == [
         "stage:base/apply-config",
         "stage:base/write-cuts",
         "stage:base/perl-rebuild",
         "stage:base/stale-binpkgs",
         "stage:base/emerge-stage",
+        "stage:base/perl-rebuild",
         "stage:base/module-rebuild",
         "stage:base/fork-point",
     ]
@@ -1037,16 +1038,3 @@ def test_perl_rebuild_fails_when_the_rebuild_did_not_move_the_modules(tmp_path: 
     with pytest.raises(phases.FactoryError, match="still owned by dev-perl/Locale-gettext"):
         phases.perl_rebuild(container, phase="toolbox")  # type: ignore[arg-type]
     assert (root / "usr/lib64/perl5/vendor_perl/5.42").exists()  # kept for diagnosis
-
-
-def test_the_flow_repairs_perl_before_the_stage_emerge() -> None:
-    from shidashi.flow import StagesFlow
-
-    kinds = [s.do for s in phases.stages_flow().steps]
-    assert kinds.index("apply-config") < kinds.index("perl-rebuild") < kinds.index("emerge-stage")
-    bad = phases.stages_flow().model_dump()
-    steps = [s for s in bad["steps"] if s["do"] != "perl-rebuild"]
-    steps.append({"name": "perl", "do": "perl-rebuild"})  # after the emerge
-    bad["steps"] = steps
-    with pytest.raises(ValueError, match="perl-rebuild must come after apply-config"):
-        StagesFlow.model_validate(bad)

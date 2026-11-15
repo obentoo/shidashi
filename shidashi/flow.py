@@ -24,9 +24,13 @@ by :mod:`shidashi.phases` in the declared order:
 
 - ``apply-config``: the layers in force up to this stage (portage/ + quirks);
 - ``write-cuts``: the cycle cuts pending at this stage (``use_break``);
-- ``perl-rebuild`` (optional): before the emerge, rebuild what still has
-  modules for a perl that is not installed (the base's perl upgrade leaves the
-  stage3's build-only modules behind);
+- ``perl-rebuild`` (optional, up to twice): rebuild what still has modules for
+  a perl that is not installed. Once before the emerge, for a stage restored
+  from a fork point saved with such modules, whose own emerge may load them
+  (grub → help2man → Locale::gettext); once after the emerge and before the
+  ``snapshot``, for the stage whose emerge upgrades perl (the base: the
+  stage3's build-only modules stay behind), so its fork point is saved clean
+  and no later stage repeats the repair;
 - ``stale-binpkgs`` (optional): right before the emerge, find the binpkgs built
   against a library the stage no longer installs -- a stale subslot or soname
   (story 019) -- keep the emerge from merging them, and move them aside once a
@@ -189,14 +193,25 @@ class StagesFlow(BaseModel):
         at = kinds.index("emerge-stage")
         if kinds.index("apply-config") > at or kinds.index("write-cuts") > at:
             raise ValueError("apply-config and write-cuts must come before emerge-stage")
-        if kinds.count("perl-rebuild") > 1:
-            raise ValueError("stages.steps needs `perl-rebuild` at most once")
-        if "perl-rebuild" in kinds and not (
-            kinds.index("apply-config") < kinds.index("perl-rebuild") < at
-        ):
+        perl = [i for i, kind in enumerate(kinds) if kind == "perl-rebuild"]
+        perl_before = [i for i in perl if i < at]
+        perl_after = [i for i in perl if i > at]
+        if len(perl_before) > 1 or len(perl_after) > 1:
             raise ValueError(
-                "perl-rebuild must come after apply-config and before emerge-stage: "
-                "the stage's emerge may load the modules it repairs"
+                "stages.steps needs `perl-rebuild` at most once before emerge-stage and at "
+                f"most once after it, has {len(perl_before)} before and {len(perl_after)} "
+                "after: a second repair on the same side finds nothing the first one left"
+            )
+        if perl_before and perl_before[0] < kinds.index("apply-config"):
+            raise ValueError(
+                "a perl-rebuild before emerge-stage must come after apply-config: it "
+                "repairs, under the stage's configuration, the modules the stage's emerge "
+                "may load"
+            )
+        if perl_after and perl_after[0] > kinds.index("snapshot"):
+            raise ValueError(
+                "a perl-rebuild after emerge-stage must come before snapshot: "
+                "the fork point must not keep modules for a perl that is gone"
             )
         if kinds.count("stale-binpkgs") > 1:
             raise ValueError("stages.steps needs `stale-binpkgs` at most once")

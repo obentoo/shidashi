@@ -1074,7 +1074,11 @@ def perl_rebuild(container: Container, *, phase: str) -> dict[str, object]:
 
     Runs BEFORE the stage's emerge: a stage that builds something whose build
     loads such a module (grub → help2man → Locale::gettext) would fail before
-    any later step could repair it. Built WITH buildpkg, like module-rebuild.
+    any later step could repair it. Runs again AFTER it, before the fork point:
+    the stage whose emerge upgrades perl (the base) makes the directories stale
+    only then, and a fork point saved with them made every later stage repeat
+    the rebuild on every run (2026-11-15). Built WITH buildpkg, like
+    module-rebuild.
     """
     rootfs = container.rootfs
     stale = stale_perl_dirs(rootfs)
@@ -1710,9 +1714,10 @@ def run_phases(
             pending += phase.use_break
             # the steps after the emerge, in the order variants/flow.yaml declares them
             for kind in after:
-                if kind == "module-rebuild":
-                    with audit.current().step("module-rebuild") as step:
-                        step.add(**module_rebuild(container, phase=phase.name))
+                if kind in ("perl-rebuild", "module-rebuild"):
+                    repair = perl_rebuild if kind == "perl-rebuild" else module_rebuild
+                    with audit.current().step(kind) as step:
+                        step.add(**repair(container, phase=phase.name))
                 elif kind == "settle" and phase.ships:
                     results.append(_audited_settle(container, recipe, pending, phase.stage))
                     _audited_record_pool(container, stage=phase.stage, cuts=pending)
@@ -1927,9 +1932,10 @@ def run_phases_stepwise(
 
         # the steps after the emerge, in the order variants/flow.yaml declares them
         for kind in after:
-            if kind == "module-rebuild":
-                with audit.current().step("module-rebuild") as step:
-                    step.add(**module_rebuild(container, phase=phase.name))
+            if kind in ("perl-rebuild", "module-rebuild"):
+                repair = perl_rebuild if kind == "perl-rebuild" else module_rebuild
+                with audit.current().step(kind) as step:
+                    step.add(**repair(container, phase=phase.name))
             elif kind == "settle" and phase.ships:
                 results.append(
                     _audited_settle(container, recipe, run.accumulated_breaks, phase.stage)
