@@ -13,13 +13,12 @@ rest of the index. Planned instances are matched to index entries by cpv AND bui
 
 Same harness as ``tests/test_assembler_stale.py`` (task 4.2): the module's autouse
 fixtures and fakes are imported; the ``--pretend`` plan is canned; the provider
-resolver's script runs here under bash against a fake ``portageq``.
+resolver runs here, in one interpreter, over tests/_fake_portageq.py.
 """
 
 import json
 import os
 import subprocess
-import sys
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +27,7 @@ import pytest
 import shidashi.assembler as asm
 from shidashi.assembler import Assembler, AssemblerError, iso_emerge_argv
 from shidashi.container import CommandResult
+from tests._fake_portageq import install_fake_portageq, with_stage_portageq
 from tests.test_assembler import (  # noqa: F401 -- autouse fixtures of the module
     _FakeContainer,
     _no_tree_download,
@@ -110,22 +110,6 @@ VTE_LINE = "x11-libs/vte-0.84.1 (build 1): needs libsimdutf.so.34 — offered li
 #: the image of tests/test_assembler.py's _recipe()
 REBUILD = "shidashi factory znver5 kde systemd"
 
-_FAKE_PORTAGEQ = """
-import json, os, sys
-answers = json.loads(os.environ["FAKE_PORTAGEQ"])
-args = sys.argv[1:]
-if args[:1] == ["best_visible"]:
-    hit = answers.get(args[-1])
-    print(hit[0] if hit else "")
-    sys.exit(0 if hit else 1)
-if args[:1] == ["metadata"] and args[-1] == "SLOT":
-    slots = {cpv: slot for cpv, slot in answers.values()}
-    if args[-2] in slots:
-        print(slots[args[-2]])
-        sys.exit(0)
-sys.exit(1)
-"""
-
 
 class _Installed(Exception):
     """The install emerge was reached."""
@@ -150,9 +134,7 @@ def _wire(tmp: Path, monkeypatch: pytest.MonkeyPatch, index: str, *plan: str) ->
     monkeypatch.setattr(asm, "apply_rootfs", lambda *_a, **_k: ())
     monkeypatch.setattr(asm, "bind_repos", lambda d, **_k: [])
     bindir = tmp / "bin"
-    bindir.mkdir()
-    (bindir / "portageq").write_text(f"#!{sys.executable}\n{_FAKE_PORTAGEQ}")
-    (bindir / "portageq").chmod(0o755)
+    portageq = install_fake_portageq(bindir)
     cwd = tmp / "cwd"
     cwd.mkdir()
     printed = "".join(f"{line}\n" for line in plan)
@@ -160,7 +142,7 @@ def _wire(tmp: Path, monkeypatch: pytest.MonkeyPatch, index: str, *plan: str) ->
 
     class _Image(_FakeContainer):
         def run(self, argv: list[str], **kw: Any) -> object:
-            argv = list(argv)
+            argv = with_stage_portageq(argv, portageq)
             runs.append(argv)
             if argv[0] == "emerge":
                 if "--pretend" in argv:

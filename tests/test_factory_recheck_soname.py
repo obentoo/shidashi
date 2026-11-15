@@ -11,14 +11,13 @@ The check runs with ``--emptytree``: the plan is the whole root, so the pool is 
 instances are matched to index entries by cpv AND build id.
 
 Same harness as ``tests/test_factory_recheck_stale.py`` (task 4.1): the ``--pretend``
-plan is canned; the resolver's script runs here under bash against a fake
-``portageq``; the PKGDIR is the host directory bound RW over ``/var/cache/binpkgs``.
+plan is canned; the resolver runs here, in one interpreter, over
+tests/_fake_portageq.py; the PKGDIR is the host directory bound RW over ``/var/cache/binpkgs``.
 """
 
 import json
 import os
 import subprocess
-import sys
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +26,7 @@ import pytest
 from shidashi import phases
 from shidashi.container import CommandResult
 from shidashi.recipe import Phase, ResolvedRecipe
+from tests._fake_portageq import install_fake_portageq, with_stage_portageq
 
 pytestmark = pytest.mark.usefixtures("no_stage3_vdb")
 
@@ -100,22 +100,6 @@ P_NEEDS_GONE = "[binary   N    ] app-misc/needs-1-1::gentoo  0 KiB"
 VTE_LINE = "x11-libs/vte-0.84.1 (build 1): needs libsimdutf.so.34 — offered libsimdutf.so.36"
 REBUILD = "shidashi factory v3 gnome systemd"
 
-_FAKE_PORTAGEQ = """
-import json, os, sys
-answers = json.loads(os.environ["FAKE_PORTAGEQ"])
-args = sys.argv[1:]
-if args[:1] == ["best_visible"]:
-    hit = answers.get(args[-1])
-    print(hit[0] if hit else "")
-    sys.exit(0 if hit else 1)
-if args[:1] == ["metadata"] and args[-1] == "SLOT":
-    slots = {cpv: slot for cpv, slot in answers.values()}
-    if args[-2] in slots:
-        print(slots[args[-2]])
-        sys.exit(0)
-sys.exit(1)
-"""
-
 
 class _Stage:
     """The shipped stage's container: the plan canned, the resolver run here."""
@@ -128,13 +112,10 @@ class _Stage:
         self.binds_rw = ((pkgdir, Path("/var/cache/binpkgs")),)
         self.plan = plan
         self.bindir = tmp / "bin"
-        self.bindir.mkdir()
-        tool = self.bindir / "portageq"
-        tool.write_text(f"#!{sys.executable}\n{_FAKE_PORTAGEQ}")
-        tool.chmod(0o755)
+        self.portageq = install_fake_portageq(self.bindir)
 
     def run(self, argv: Any, *, env: Any = None, check: bool = True) -> CommandResult:
-        argv = list(argv)
+        argv = with_stage_portageq(argv, self.portageq)
         if argv[0] == "emerge":
             return CommandResult(0, "" if "--nodeps" in argv else self.plan, "")
         if any("portageq" in a for a in argv):

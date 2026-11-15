@@ -13,8 +13,9 @@ soname is the truth when an ebuild keeps its subslot across a soname change (the
 pinned overlay's ``simdutf-9.2.1``: ``SLOT 0/34``, ``libsimdutf.so.36``). This
 module reads both from the ``Packages`` index and judges them. Everything here is
 PURE, except :func:`resolve_providers`, which is PRIVILEGED: one run in the stage's
-container. It imports nothing from :mod:`shidashi.phases` or
-:mod:`shidashi.assembler`; each caller wraps :class:`BinpkgError` in its own error.
+container (two when its portageq does not load in one interpreter). It imports nothing
+from :mod:`shidashi.phases` or :mod:`shidashi.assembler`; each caller wraps
+:class:`BinpkgError` in its own error.
 """
 
 from __future__ import annotations
@@ -24,8 +25,10 @@ import shlex
 import subprocess
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Protocol
 
+from shidashi import audit, portageq_batch
 from shidashi.container import CommandResult
 
 #: ``[op]cat/pkg[-version]:SLOT[/SUBSLOT]=[use]`` -- a built slot operator.
@@ -368,11 +371,41 @@ def resolve_script(queries: Sequence[str]) -> str:
     )
 
 
-def resolve_providers(container: Runner, queries: Sequence[str]) -> dict[str, str]:
+def resolve_argv(queries: Sequence[str], *, portageq: str = "") -> list[str]:
+    """The command that answers every query with ONE interpreter in the stage: the source
+    of :mod:`shidashi.portageq_batch` under ``python3 -X utf8 -c``, then ``portageq`` (the
+    script it loads, empty for the stage's own) and one argument per query. Reads that
+    module's source.
+
+    ``-X utf8``: portageq re-execs any other interpreter, which under ``-c`` would lose
+    the program. One argument per query: no single argument nears the kernel's 128 KiB cap.
+    """
+    source = Path(portageq_batch.__file__).read_text(encoding="utf-8")
+    return ["python3", "-X", "utf8", "-c", source, portageq, *queries]
+
+
+def _resolve_run(container: Runner, queries: Sequence[str], *, portageq: str) -> CommandResult:
+    """:func:`resolve_argv` in the container; :func:`resolve_script`'s per-query loop only
+    when that interpreter can load no portageq (an audit event says so: ~90 times slower)."""
+    try:
+        return container.run(resolve_argv(queries, portageq=portageq), check=True)
+    except subprocess.CalledProcessError as err:
+        if err.returncode != portageq_batch.PORTAGEQ_UNLOADABLE:
+            raise
+        cause = " ".join((err.stderr or "").split())
+    audit.current().event("binpkgs.portageq_per_query", queries=len(queries), cause=cause)
+    return container.run(["bash", "-c", resolve_script(queries)], check=True)
+
+
+def resolve_providers(
+    container: Runner, queries: Sequence[str], *, portageq: str = ""
+) -> dict[str, str]:
     """The full SLOT the stage's tree would install for each query. PRIVILEGED.
 
-    ONE container run of :func:`resolve_script`, in the stage's own rootfs: the
-    answer is the pinned tree under that stage's configuration. A query with no
+    ONE interpreter in the stage's own rootfs answers them all (:func:`resolve_argv`;
+    ``portageq``, the script it loads, is only ever given by tests): the answer is the
+    pinned tree under that stage's configuration, as one ``portageq`` per query gives it
+    (:func:`resolve_script`, still the way when no portageq loads). A query with no
     line, or an unparsable line, answers ``""`` (unresolved). A failed run raises
     :class:`BinpkgError` with its output -- and so does a run in which NO query
     resolves: a broken Portage configuration exits 1 like "nothing visible", and
@@ -383,7 +416,7 @@ def resolve_providers(container: Runner, queries: Sequence[str]) -> dict[str, st
         return answers
     what = f"the providers of {len(queries)} slot deps"
     try:
-        result = container.run(["bash", "-c", resolve_script(queries)], check=True)
+        result = _resolve_run(container, queries, portageq=portageq)
     except subprocess.CalledProcessError as err:
         output = (err.output or "") + (err.stderr or "")
         raise BinpkgError(f"portageq could not resolve {what}", output=output) from err

@@ -15,7 +15,9 @@ from typing import Any
 
 import pytest
 
+from shidashi import audit, portageq_batch
 from shidashi.container import CommandResult
+from tests._fake_portageq import install_fake_portageq
 from tests._pending import try_import
 
 parse_index: Any = try_import("shidashi.binpkgs", "parse_index")
@@ -26,6 +28,7 @@ describe: Any = try_import("shidashi.binpkgs", "describe")
 BinpkgError: Any = try_import("shidashi.binpkgs", "BinpkgError")
 resolve_script: Any = try_import("shidashi.binpkgs", "resolve_script")
 resolve_providers: Any = try_import("shidashi.binpkgs", "resolve_providers")
+resolve_argv: Any = try_import("shidashi.binpkgs", "resolve_argv")
 
 SIMDUTF = ">=dev-cpp/simdutf-6.2.0:0"
 
@@ -191,32 +194,14 @@ def test_rule_provider_queries_are_deduplicated_sorted_and_operator_free() -> No
 
 # --- 2.3 the resolver ----------------------------------------------------------------------
 
-_FAKE_PORTAGEQ = """
-import json, os, sys
-answers = json.loads(os.environ["FAKE_PORTAGEQ"])
-args = sys.argv[1:]
-if args[:1] == ["best_visible"]:
-    hit = answers.get(args[-1])
-    print(hit[0] if hit else "")  # the real one prints an empty line and exits 1
-    sys.exit(0 if hit else 1)
-if args[:1] == ["metadata"] and args[-1] == "SLOT":
-    slots = {cpv: slot for cpv, slot in answers.values()}
-    if args[-2] in slots:
-        print(slots[args[-2]])
-        sys.exit(0)
-sys.exit(1)
-"""
-
 
 class _LocalContainer:
     """Runs the command here, with a fake portageq first on PATH, in ``cwd``."""
 
     def __init__(self, tmp: Path, answers: dict[str, tuple[str, str]], fail: bool = False):
         self.bindir = tmp / "bin"
-        self.bindir.mkdir()
-        tool = self.bindir / "portageq"
-        tool.write_text(f"#!{sys.executable}\n{_FAKE_PORTAGEQ}")
-        tool.chmod(0o755)
+        #: the same fake, for the one interpreter to load
+        self.portageq = str(install_fake_portageq(self.bindir))
         self.cwd = tmp / "cwd"
         self.cwd.mkdir()
         self.answers, self.fail = answers, fail
@@ -243,24 +228,155 @@ class _LocalContainer:
         return CommandResult(done.returncode, done.stdout, done.stderr)
 
 
-def test_resolver_answers_every_query_in_one_container_run(tmp_path: Path) -> None:
-    """`>=` and `<` reach portageq as atoms, never as shell redirections; nothing
-    visible is an empty answer, not an error."""
-    container = _LocalContainer(
-        tmp_path,
-        {
-            SIMDUTF: ("dev-cpp/simdutf-9.2.1", "0/36"),
-            "<dev-libs/foo-2:1": ("dev-libs/foo-1.5", "1/5"),
-        },
-    )
-    queries = [SIMDUTF, "<dev-libs/foo-2:1", "dev-libs/gone:0"]
-    assert all(q in resolve_script(queries) or repr(q) in resolve_script(queries) for q in queries)
-    got = resolve_providers(container, queries)
+_ANSWERS = {
+    SIMDUTF: ("dev-cpp/simdutf-9.2.1", "0/36"),
+    "<dev-libs/foo-2:1": ("dev-libs/foo-1.5", "1/5"),
+}
+_QUERIES = [SIMDUTF, "<dev-libs/foo-2:1", "dev-libs/gone:0"]
+_EXPECTED = {SIMDUTF: "0/36", "<dev-libs/foo-2:1": "1/5", "dev-libs/gone:0": ""}
+
+
+class _ResolverEvents(audit.Recorder):
+    """Stands in for the run in force: keeps the events, nothing else."""
+
+    def __init__(self) -> None:
+        self.events: list[tuple[str, dict[str, Any]]] = []
+
+    def event(self, kind: str, **fields: Any) -> None:
+        self.events.append((kind, fields))
+
+
+def test_resolver_answers_every_query_in_one_interpreter(tmp_path: Path) -> None:
+    """One container run, each query its own argument: `>=` and `<` never meet a shell;
+    nothing visible is an empty answer, not an error."""
+    container = _LocalContainer(tmp_path, _ANSWERS)
+    got = resolve_providers(container, _QUERIES, portageq=container.portageq)
     assert len(container.calls) == 1
-    assert got[SIMDUTF] == "0/36"
-    assert got["<dev-libs/foo-2:1"] == "1/5"
-    assert got.get("dev-libs/gone:0", "") == ""
+    argv = container.calls[0]
+    assert argv[:4] == ["python3", "-X", "utf8", "-c"] and argv[-3:] == _QUERIES
+    assert got == _EXPECTED
     assert list(container.cwd.iterdir()) == []  # no redirection created a file
+
+
+def test_resolver_without_a_portageq_to_load_asks_one_per_query_and_says_so(
+    tmp_path: Path,
+) -> None:
+    """Same answers, the slow way (~4 minutes for the v3 index): an audit event names why."""
+    container = _LocalContainer(tmp_path, _ANSWERS)
+    # the loop quotes each query: `>=` and `<` reach portageq as atoms
+    assert all(
+        q in resolve_script(_QUERIES) or repr(q) in resolve_script(_QUERIES) for q in _QUERIES
+    )
+    trail = _ResolverEvents()
+    with audit.recording(trail):
+        got = resolve_providers(container, _QUERIES, portageq=str(tmp_path / "no-portageq"))
+    assert [call[0] for call in container.calls] == ["python3", "bash"]
+    assert got == _EXPECTED
+    assert list(container.cwd.iterdir()) == []
+    [(kind, fields)] = trail.events
+    assert kind == "binpkgs.portageq_per_query" and fields["queries"] == 3
+    assert "no-portageq" in fields["cause"]
+
+
+def test_resolver_in_one_interpreter_prints_what_the_per_query_loop_prints(
+    tmp_path: Path,
+) -> None:
+    """The contract with the step: the very same ``query<TAB>slot`` lines."""
+    one = _LocalContainer(tmp_path / "one", _ANSWERS)
+    loop = _LocalContainer(tmp_path / "loop", _ANSWERS)
+    batch = one.run(resolve_argv(_QUERIES, portageq=one.portageq))
+    per_query = loop.run(["bash", "-c", resolve_script(_QUERIES)])
+    assert batch.stdout == per_query.stdout
+    assert batch.stdout.count("\n") == len(_QUERIES)
+
+
+def test_resolver_an_invalid_atom_ends_the_run_with_portageqs_code_and_no_fallback(
+    tmp_path: Path,
+) -> None:
+    container = _LocalContainer(tmp_path, _ANSWERS)
+    with pytest.raises(BinpkgError) as err:
+        resolve_providers(container, [SIMDUTF, "!!broken"], portageq=container.portageq)
+    assert len(container.calls) == 1
+    assert "Invalid atom: '!!broken'" in err.value.output
+
+
+def _batch(
+    *args: str,
+    python: str = sys.executable,
+    flags: tuple[str, ...] = ("-X", "utf8"),
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    """``shidashi.portageq_batch`` as a stage runs it: its source under ``-c``."""
+    source = Path(portageq_batch.__file__).read_text(encoding="utf-8")
+    return subprocess.run(
+        [python, *flags, "-c", source, *args],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={**os.environ, **(env or {})},
+    )
+
+
+def test_resolver_batch_without_the_commands_it_needs_gives_no_answer_and_says_why(
+    tmp_path: Path,
+) -> None:
+    """Exit 75, the fallback's cue: a Portage whose portageq changed shape."""
+    script = tmp_path / "portageq"
+    script.write_text("non_commands = frozenset()\ncommands = []\ndef main(argv):\n    pass\n")
+    done = _batch(str(script), SIMDUTF)
+    assert done.returncode == portageq_batch.PORTAGEQ_UNLOADABLE, done.stderr
+    assert done.stdout == "" and "best_visible" in done.stderr
+
+
+def test_resolver_batch_outside_utf8_mode_refuses_before_portageq_can_re_exec_it(
+    tmp_path: Path,
+) -> None:
+    """portageq re-execs a non-UTF-8 interpreter with sys.argv, which under ``-c`` holds a
+    query where the program was: refused, so the query never runs as code."""
+    marker = tmp_path / "ran"
+    query = f"open({str(marker)!r}, 'w')"
+    done = _batch(
+        str(tmp_path / "portageq"),
+        query,
+        flags=("-X", "utf8=0"),
+        env={"LC_ALL": "C", "PYTHONCOERCECLOCALE": "0", "PYTHONUTF8": "0"},
+    )
+    assert done.returncode == portageq_batch.PORTAGEQ_UNLOADABLE, done.stderr
+    assert "UTF-8" in done.stderr and not marker.exists()
+
+
+def _host_portageq_python() -> str | None:
+    """``/usr/bin/python3`` when it imports Portage and python-exec has its portageq."""
+    python = "/usr/bin/python3"
+    probe = "import portage, sys; print('%d.%d' % sys.version_info[:2])"
+    try:
+        done = subprocess.run([python, "-c", probe], capture_output=True, text=True, check=False)
+    except OSError:
+        return None
+    version = done.stdout.strip()
+    if done.returncode != 0 or not Path(f"/usr/lib/python-exec/python{version}/portageq").is_file():
+        return None
+    return python
+
+
+@pytest.mark.skipif(_host_portageq_python() is None, reason="no Portage on this host")
+def test_resolver_batch_answers_like_this_hosts_portageq_one_query_at_a_time() -> None:
+    """The real thing, where there is one: this host's Portage, its tree and configuration,
+    one portageq per query against one interpreter for all -- the same bytes."""
+    queries = [
+        ">=app-arch/bzip2-1.0.5:0",
+        "sys-apps/portage:0",
+        "<sys-apps/portage-2:0",
+        "dev-libs/no-such-package:0",
+    ]
+    python = _host_portageq_python()
+    assert python is not None
+    batch = _batch("", *queries, python=python)
+    per_query = subprocess.run(
+        ["bash", "-c", resolve_script(queries)], capture_output=True, text=True, check=False
+    )
+    assert (batch.returncode, batch.stdout) == (per_query.returncode, per_query.stdout)
+    assert batch.returncode == 0 and batch.stdout.count("\n") == len(queries)
 
 
 def test_resolver_a_failed_run_is_a_binpkg_error_carrying_its_output(tmp_path: Path) -> None:

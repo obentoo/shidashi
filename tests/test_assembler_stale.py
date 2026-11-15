@@ -3,13 +3,12 @@ assemble refuses a plan holding a stale-subslot binpkg before installing anythin
 
 Runs alone by importing the module's fixtures (autouse) and fakes; when merged into
 tests/test_assembler.py, drop that import. The ``--pretend`` plan is canned; the
-provider resolver's script runs here under bash against a fake ``portageq``.
+provider resolver runs here, in one interpreter, over tests/_fake_portageq.py.
 """
 
 import json
 import os
 import subprocess
-import sys
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +17,7 @@ import pytest
 import shidashi.assembler as asm
 from shidashi.assembler import Assembler, AssemblerError
 from shidashi.container import CommandResult
+from tests._fake_portageq import install_fake_portageq, with_stage_portageq
 from tests.test_assembler import (  # noqa: F401 -- autouse fixtures of the module
     _FakeContainer,
     _no_tree_download,
@@ -40,21 +40,6 @@ BUILD_ID: 1
 CPV: net-misc/curl-8.16.0
 PATH: net-misc/curl/curl-8.16.0-1.gpkg.tar
 RDEPEND: {SIMDUTF}/36=
-"""
-_FAKE_PORTAGEQ = """
-import json, os, sys
-answers = json.loads(os.environ["FAKE_PORTAGEQ"])
-args = sys.argv[1:]
-if args[:1] == ["best_visible"]:
-    hit = answers.get(args[-1])
-    print(hit[0] if hit else "")
-    sys.exit(0 if hit else 1)
-if args[:1] == ["metadata"] and args[-1] == "SLOT":
-    slots = {cpv: slot for cpv, slot in answers.values()}
-    if args[-2] in slots:
-        print(slots[args[-2]])
-        sys.exit(0)
-sys.exit(1)
 """
 
 
@@ -86,16 +71,14 @@ def _wire(
     monkeypatch.setattr(asm, "apply_rootfs", lambda *_a, **_k: ())
     monkeypatch.setattr(asm, "bind_repos", lambda d, **_k: [])
     bindir = tmp / "bin"
-    bindir.mkdir()
-    (bindir / "portageq").write_text(f"#!{sys.executable}\n{_FAKE_PORTAGEQ}")
-    (bindir / "portageq").chmod(0o755)
+    portageq = install_fake_portageq(bindir)
     cwd = tmp / "cwd"
     cwd.mkdir()
     runs: list[list[str]] = []
 
     class _Image(_FakeContainer):
         def run(self, argv: list[str], **kw: Any) -> object:
-            argv = list(argv)
+            argv = with_stage_portageq(argv, portageq)
             runs.append(argv)
             if argv[0] == "emerge":
                 if "--pretend" in argv:

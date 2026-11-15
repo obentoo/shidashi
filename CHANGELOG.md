@@ -26,6 +26,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   **`--timeout 0`** waits however long the command takes. stdin reaches the guest command
   in both modes.
 
+### Changed
+
+- **The stale-binpkgs check asks Portage in one interpreter, not one `portageq` per
+  question.** Each `portageq` loaded the configuration and the repositories again: the v3
+  index's 677 slot-dep queries cost ~4 minutes in every stage of every build. The stage's
+  own `portageq` script is now loaded once and its `main()` called per query, so the
+  answers are still the installed Portage's -- byte for byte the same over the 677 real
+  queries, in 2.2 s instead of 203 s. A stage whose `portageq` cannot be loaded that way
+  is asked one query at a time, as before, and the audit trail records
+  `binpkgs.portageq_per_query`.
+
 ### Fixed
 
 - **A dev VM no longer leaves its work disk behind.** bentoolkit names every build VM
