@@ -23,7 +23,7 @@ from typing import Any
 import pytest
 from typer.testing import CliRunner
 
-from shidashi import config
+from shidashi import config, workers
 from shidashi.cli import app
 
 runner = CliRunner()
@@ -277,3 +277,22 @@ def test_replace_through_the_cli_is_refused_without_the_flag_and_rekeys_with_it(
     assert new != old
     assert _fingerprint(new[0]) in _flat(_out(replaced))
     assert _fingerprint(old[0]) not in _flat(_out(replaced))
+
+
+@needs_tools
+def test_replace_through_the_cli_keeps_the_arch_caches_the_worker_owns(
+    xdg: Path, worker_iso: Path
+) -> None:
+    """A replaced worker went on owning nothing: the host built its archs again."""
+    path = config.workers_dir() / "workers.json"
+    assert _invoke(NAME, "--iso", str(worker_iso)).exit_code == 0
+    registry = workers.load_registry(path)
+    assert registry[NAME].cache_archs == ()
+    registry[NAME] = registry[NAME].model_copy(update={"cache_archs": ("v3",)})
+    workers.save_registry(path, registry)
+
+    replaced = _invoke(NAME, "--iso", str(worker_iso), "--replace")
+    assert replaced.exit_code == 0, _out(replaced)
+    owned = runner.invoke(app, ["worker", "cache-owner", NAME])
+    assert owned.exit_code == 0, _out(owned)
+    assert f"{NAME} owns the cache of: v3" in _out(owned)

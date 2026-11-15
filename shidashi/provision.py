@@ -238,8 +238,9 @@ def provision(
     Refusals come first and write nothing (R1.5, R4.3, R1.6). Everything is then built
     in a 0700 temp directory under ``workers_dir`` and verified before it is moved onto
     ``workers_dir/name/``; ``name`` is pinned in ``known_hosts`` and recorded in
-    ``workers.json``, the last write. Any failure undoes what was done (R1.8). Nothing
-    is written outside ``workers_dir`` (R4.2).
+    ``workers.json``, the last write; the record of a name it replaces keeps the arch
+    caches that name owned. Any failure undoes what was done (R1.8). Nothing is written
+    outside ``workers_dir`` (R4.2).
 
     ``wifi`` -- ``(ssid, passphrase)`` -- adds the Wi-Fi connection the worker installs
     at boot, as :data:`WIFI_FILE` of the identity; without it the identity has none.
@@ -324,6 +325,7 @@ def provision(
         step = "registry"
         # Re-read: another command may have recorded a worker during the slow copy.
         registry = workers.load_registry(registry_path)
+        replaced = registry.get(name)
         entry = workers.WorkerEntry(
             name=name,
             address=None,
@@ -331,6 +333,12 @@ def provision(
             host_key_fingerprint=fingerprint,
             paired_at=now.isoformat(timespec="seconds"),
             provisioned=True,
+            # The one field that outlives the medium: which arch caches sit on the
+            # worker's work disk is the host's decision (`worker cache-owner`), not a
+            # fact of the identity. Address, CPU flags and image are the new medium's,
+            # filled in at first contact (R3.5) -- a carried image would never be
+            # refreshed. Read from the re-read: the owner may have changed meanwhile.
+            cache_archs=replaced.cache_archs if replaced is not None else (),
         )
         workers.save_registry(registry_path, {**registry, name: entry})
     except BaseException as err:
