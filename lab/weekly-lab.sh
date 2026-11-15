@@ -58,8 +58,9 @@ weekly() {
   fi
 
   # every re-pin writes a new set of fork points and nothing else deletes the old ones: on
-  # 2026-11-15 two superseded pins held ~130 GiB of the worker's disk, then at 90%. The gc
-  # keeps the current pin's and the newest other pins'; a failure only warns.
+  # 2026-11-15 the worker's disk was at 90% with two superseded pins' tarballs on it, and
+  # deleting the older pin's freed 33 GiB. The gc keeps the current pin's and the newest
+  # other pins'; a failure only warns.
   if [ -n "$FORK_POINTS_KEEP" ]; then
     shidashi fork-points gc "$ARCH" --keep "$FORK_POINTS_KEEP" \
       || say "cannot delete $ARCH's old fork points: the build may run out of disk"

@@ -3,8 +3,10 @@
 Every restore point's name carries the pin id it was built from -- the stage fork points,
 the bootstrap checkpoint, the per-phase snapshots and the update's images alike
 (``<arch>-...-<pin id>-<build key>-<what>.tar``, OVERVIEW §6) -- and a build under a new
-pin never restores one of another pin (D7). Nothing else ever deleted them: on the v3
-worker, 19 tarballs of two superseded pins held ~130 GiB, its disk at 90% (2026-11-15).
+pin never restores one of another pin (D7). Nothing else ever deleted them: on 2026-11-15
+the v3 worker's disk was at 90% with the 19 tarballs of two superseded pins on it, ~140 GiB
+apparent; deleting the older pin's 11 (79.8 GiB apparent) freed 33 GiB of its
+zstd-compressed btrfs.
 
 The gc keeps the current pin's and those of the ``keep`` newest other pins: the update
 restores the newest older pin's image (:func:`shidashi.factory.update_source`), and a
@@ -26,7 +28,8 @@ _FORK_POINT_TAIL = r"-(?P<pin>p(?P<date>\d{8})\.[0-9a-f]{8})-b[0-9a-f]{8}-[^/]+\
 
 @dataclass(frozen=True)
 class ForkPointFile:
-    """One restore point of an arch: its path, the pin it was built from and its size."""
+    """One restore point of an arch: its path, the pin it was built from and its apparent
+    size (``st_size``: a compressed filesystem holds less)."""
 
     path: Path
     pin: str

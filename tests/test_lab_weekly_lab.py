@@ -211,8 +211,8 @@ def test_a_worker_without_the_swapfile_does_not_stop_the_cycle(lab: WeeklyLab) -
 
 def test_the_cycle_deletes_the_old_pins_fork_points_before_it_builds(lab: WeeklyLab) -> None:
     """Every re-pin writes a new set of fork points and nothing else deletes the old ones:
-    two superseded pins held ~130 GiB of the worker's disk on 2026-11-15. The gc runs ahead
-    of the release and keeps the newest other pin's."""
+    on 2026-11-15 the worker's disk was at 90% with two superseded pins' tarballs on it. The
+    gc runs ahead of the release and keeps the newest other pin's."""
     done = lab.run("weekly")
     assert done.returncode == 0, done.stdout + done.stderr
     gc = lab.index("fork-points", "gc", "v3")

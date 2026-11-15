@@ -18,6 +18,10 @@ app = typer.Typer(
     no_args_is_help=True, help="The restore points: tarballs of finished build stages."
 )
 
+#: After every total: the sizes are ``st_size``, and on the v3 worker's zstd btrfs 79.8 GiB
+#: of tarballs freed 33 GiB (2026-11-15) -- a total read as space to win misleads.
+_APPARENT_SIZES_NOTE = "apparent sizes: a compressed filesystem frees less"
+
 
 def _fork_points_exit(message: object) -> NoReturn:
     """Print ``message`` on stderr and exit 1: every failure of this sub-app."""
@@ -90,7 +94,7 @@ def gc_fork_points(
         typer.echo(
             f"{len(plan.delete)} fork points of {arch} would be deleted "
             f"({_fork_points_size(plan.delete)}); {len(plan.keep)} kept "
-            f"({_fork_points_size(plan.keep)})"
+            f"({_fork_points_size(plan.keep)}) -- {_APPARENT_SIZES_NOTE}"
         )
         return
     try:
@@ -110,7 +114,7 @@ def gc_fork_points(
     typer.echo(_kept_pins_line(plan))
     typer.echo(
         f"deleted {len(deleted)} fork points of {arch} ({_fork_points_size(deleted)}); "
-        f"kept {len(plan.keep)} ({_fork_points_size(plan.keep)})"
+        f"kept {len(plan.keep)} ({_fork_points_size(plan.keep)}) -- {_APPARENT_SIZES_NOTE}"
     )
     if failures:
         _fork_points_exit("\n".join(failures))

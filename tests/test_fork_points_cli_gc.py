@@ -90,6 +90,8 @@ def test_dry_run_prints_the_plan_and_deletes_nothing(fork_lab: ForkLab) -> None:
     assert planned == fork_lab.of(OLDEST)
     assert f"kept pins: {fork_lab.current} (current), {PREVIOUS}" in result.output
     assert "3 fork points of v3 would be deleted" in result.output
+    # 79.8 GiB of tarballs freed 33 GiB of the worker's zstd btrfs (2026-11-15)
+    assert "apparent sizes" in result.output
     assert fork_lab.names() == fork_lab.every()
 
 
@@ -114,6 +116,7 @@ def test_gc_deletes_the_older_pins_and_keeps_the_current_and_the_newest_other(
     }
     assert fork_lab.of(OLDEST) <= deleted
     assert "deleted 3 fork points of v3" in result.output
+    assert "apparent sizes" in result.output
     assert ownership.current("v3") is None, "the lock outlived the gc"
 
 
