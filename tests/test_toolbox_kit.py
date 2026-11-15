@@ -54,9 +54,19 @@ def _toolbox_atoms(init: str) -> set[str]:
 def test_the_boot_test_tools_never_reach_an_image_through_the_toolbox(
     image: str, init: str
 ) -> None:
-    """The worker hosts the boot test, it does not carry it: adding QEMU to the toolbox
-    kit must not put QEMU in the worker (or minimal) image's world."""
-    atoms = set(world_atoms(config.load_recipe("v3", image, init)))
+    """Adding a tool to the toolbox kit must not put it in an image's world: no image
+    composes the toolbox set, and none asks for the ISO tools only the toolbox needs."""
+    recipe = config.load_recipe("v3", image, init)
+    assert "toolbox" not in set_closure(recipe)
+    atoms = set(world_atoms(recipe))
+    assert not atoms & {"sys-boot/grub", "sys-fs/mtools"}
+
+
+@pytest.mark.parametrize("init", _INITS)
+def test_minimal_carries_no_vm_tools(init: str) -> None:
+    """QEMU and virtiofsd are the worker's own choice (kits/system/worker, 2026-11-15:
+    it hosts bentoolkit's build VMs); the minimal image a user installs asks for neither."""
+    atoms = set(world_atoms(config.load_recipe("v3", "minimal", init)))
     assert "app-emulation/qemu" not in atoms
     assert "app-emulation/virtiofsd" not in atoms
 
