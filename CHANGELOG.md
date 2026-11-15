@@ -38,7 +38,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   GLSA 202610-02 (php); every image built from it shipped both.
 - **Toolchain bumped ahead of the 7-day cooldown, at the author's request.** pydantic
   2.14.3, pydantic-core 2.50.4, ruff 0.17.4, typer 0.28.0, typing-inspection 0.4.5 and
-  mypy-extensions 1.2.0 through per-package waivers in `pyproject.toml`; uv 0.13.7 in
+  mypy-extensions 1.2.0 through per-package waivers in `pyproject.toml`, dropped on
+  2026-11-15 once every waived release was 7 days old (no version changed); uv 0.13.7 in
   CI; the CI guest's GitHub Actions runner to 2.338.2.
 
 ## [0.3.0] - 2026-10-22

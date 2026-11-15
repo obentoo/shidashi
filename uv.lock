@@ -10,17 +10,6 @@ resolution-markers = [
 exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for backwards compatibility when using relative exclude-newer values.
 exclude-newer-span = "P7D"
 
-[options.exclude-newer-package]
-mypy = "2026-11-03T13:00:00Z"
-mypy-extensions = "2026-11-08T14:00:00Z"
-pydantic = "2026-11-08T14:00:00Z"
-pydantic-core = "2026-11-08T14:00:00Z"
-pytest = "2026-11-03T13:00:00Z"
-ruff = "2026-11-08T14:00:00Z"
-typer = "2026-11-08T14:00:00Z"
-types-pyyaml = "2026-11-03T13:00:00Z"
-typing-inspection = "2026-11-08T14:00:00Z"
-
 [[package]]
 name = "annotated-doc"
 version = "0.0.5"
