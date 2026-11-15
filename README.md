@@ -216,14 +216,16 @@ shidashi vm run --name dev --timeout 0 -- \
   emerge -1 --onlydeps --with-bdeps=y --getbinpkg =dev-libs/foo-1.0::bentoo-staged
 shidashi vm run --name dev --stream --timeout 0 -- \
   'cd /var/db/repos/staged && ebuild dev-libs/foo/foo-1.0.ebuild clean compile'
-shidashi vm stop --name dev                 # the next start begins from a clean disk
+shidashi vm stop --name dev                 # removes the session, work disk included
 ```
 
 `--stream` passes the output through as the guest writes it; stdin always reaches the
 guest command. A command stopped by `--timeout` (exit 124) or Ctrl+C is stopped in the
 guest too, with everything it started. Without `--work-dir` the
 session lives in `$XDG_STATE_HOME/shidashi/vm/<name>` and the trees come from the shared
-cache. Packages installed as dependencies land in the live root, a tmpfs sized from
+cache. A dev session leaves nothing behind: `vm stop` removes its directory, and a start
+removes the dev sessions whose VM died without a stop; a session started without
+`--dev` keeps its disks. Packages installed as dependencies land in the live root, a tmpfs sized from
 `--memory`: a dependency set larger than that needs more memory.
 
 ## Usage

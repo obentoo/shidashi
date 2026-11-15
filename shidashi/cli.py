@@ -2676,12 +2676,14 @@ def vm_stop(
     name: Annotated[str, typer.Option("--name")] = "bentoo",
     work_dir: Annotated[Path | None, typer.Option("--work-dir")] = None,
 ) -> None:
-    """Power the VM off."""
-    from shidashi import vm
+    """Power the VM off; a ``--dev`` session's directory, work disk included, goes too."""
+    from shidashi import vm, vm_dev
 
     _apply_work_dir(work_dir)
     try:
-        vm.load_session(name).stop()
+        session = vm.load_session(name)
+        session.stop()
+        vm_dev.discard_dev_session(session)
     except vm.VmError as err:
         raise _vm_error(err) from err
 

@@ -16,9 +16,20 @@ host side of that contract (the guest side is :mod:`shidashi.vm_dev_guest`):
 - the result: :class:`DevVm`, printed by the CLI as one JSON line.
 
 One session per name: a name whose QEMU still runs is refused, never restarted under it.
+
+Nothing is left behind (2026-11-14: bentoolkit names every build VM afresh, and each stopped
+session kept a work disk full of builds): ``vm stop`` removes a dev session's directory
+(:func:`discard_dev_session`), and a start removes the dev sessions whose QEMU died
+without a stop -- a ``kill -9``, a power cut (:func:`sweep_dead_dev_sessions`). Only a
+session marked dev (``VmSpec.dev``) is ever removed: a plain session's ``--disk`` is the
+user's.
 """
 
+import contextlib
 import os
+import shutil
+import signal
+import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -31,6 +42,8 @@ NO_ISO_EXIT = 3
 DEFAULT_DISK_SIZE = "40G"
 #: Seconds the guest setup may take: it formats a disk and probes one binhost.
 _SETUP_TIMEOUT = 600
+#: Seconds QEMU gets to exit after ``vm stop`` before it is killed.
+_QEMU_EXIT_TIMEOUT = 30.0
 
 SessionFactory = Callable[[vm.VmSpec, Path], vm.Session]
 
@@ -120,6 +133,7 @@ def start_dev(
     ``repo`` is the Shidashi checkout, where an older ISO's pins are read with git.
     A setup that fails powers the VM off before the error is raised.
     """
+    sweep_dead_dev_sessions(directory.parent, keep=directory.name)
     iso = (iso or find_dev_iso(releases_dir(), init=init, arch=arch)).resolve()
     info = vm.read_build_info(iso)
     try:
@@ -142,6 +156,7 @@ def start_dev(
             display=display,
             disks=(disk,),
             shares=dev_shares(trees, pool),
+            dev=True,
         )
         session = session_factory(spec, directory)
         # the same file allocate_cid holds: QEMU inherits it and keeps the CID taken
@@ -174,18 +189,80 @@ def _trees(pins: iso_pins.IsoPins, *, download: bool) -> dict[str, Path]:
     return trees
 
 
+def discard_dev_session(session: vm.Session) -> None:
+    """Remove a stopped dev session's directory, work disk included.
+
+    Waits for QEMU to exit (killing it after :data:`_QEMU_EXIT_TIMEOUT`): a disk removed
+    under a running QEMU frees nothing. A QEMU that will not end keeps the directory,
+    as :class:`vm.VmError`. A session without the dev mark is left as it is.
+    """
+    if not session.spec.dev:
+        return
+    pid = session.qemu_pid()
+    if pid is not None and not _wait_gone(pid, _QEMU_EXIT_TIMEOUT):
+        with contextlib.suppress(ProcessLookupError):
+            os.kill(pid, signal.SIGKILL)
+        if not _wait_gone(pid, 5.0):
+            raise vm.VmError(f"QEMU (pid {pid}) is still running: {session.directory} was kept")
+    shutil.rmtree(session.directory)
+
+
+def sweep_dead_dev_sessions(root: Path, *, keep: str) -> list[str]:
+    """Remove the dev sessions under ``root`` whose QEMU no longer runs; their names.
+
+    ``keep`` (the session being started) is never touched, nor anything that is not a
+    readable session marked dev.
+    """
+    removed: list[str] = []
+    try:
+        entries = sorted(root.iterdir())
+    except OSError:
+        return removed
+    for directory in entries:
+        if directory.name == keep or not directory.is_dir() or directory.is_symlink():
+            continue
+        try:
+            session = vm.load_session_at(directory)
+        except vm.VmError:
+            continue
+        pid = session.qemu_pid()
+        if not session.spec.dev or (pid is not None and _alive(pid)):
+            continue
+        shutil.rmtree(directory, ignore_errors=True)
+        removed.append(directory.name)
+    if removed:
+        audit.current().event("vm.dev.swept", root=str(root), sessions=removed)
+    return removed
+
+
+def _alive(pid: int) -> bool:
+    """Whether process ``pid`` exists (another user's included)."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _wait_gone(pid: int, timeout: float) -> bool:
+    deadline = time.monotonic() + timeout
+    while _alive(pid):
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.1)
+    return True
+
+
 def _refuse_running(directory: Path, name: str) -> None:
     """:class:`vm.VmError` when the session in ``directory`` still has a live QEMU."""
     try:
         pid = int((directory / "qemu.pid").read_text().strip())
     except OSError, ValueError:
         return
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
+    if not _alive(pid):
         return
-    except PermissionError:
-        pass  # alive, another user's
     raise vm.VmError(
         f"VM session {name!r} is already running (QEMU pid {pid}): "
         f"stop it with `shidashi vm stop --name {name}`"

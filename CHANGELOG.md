@@ -19,6 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A dev VM no longer leaves its work disk behind.** bentoolkit names every build VM
+  afresh, so each stopped session kept a disk full of builds. `vm stop` now removes a
+  `--dev` session's directory, and `vm start --dev` removes the dev sessions whose VM died
+  without a stop. Only sessions marked dev are touched: a plain session's `--disk` is kept.
 - **`vm run` stopped by its timeout or Ctrl+C now stops the command in the guest too.**
   ssh runs no terminal there, so killing it left the guest command -- a whole build --
   running; the shell sshd starts now records its process group, and a second ssh kills it.

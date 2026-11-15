@@ -122,6 +122,10 @@ class VmSpec:
     shares: tuple[Share, ...] = ()
     #: TCP forwards ``(host port, guest port)``; the host side listens on 127.0.0.1 only.
     forwards: tuple[tuple[int, int], ...] = ()
+    #: A ``vm start --dev`` session: everything in its directory, disk included, is
+    #: disposable (:func:`shidashi.vm_dev.discard_dev_session`). Never set for a session
+    #: whose ``--disk`` the user gave.
+    dev: bool = False
 
 
 def _credential(name: str, value: str) -> list[str]:
@@ -495,6 +499,7 @@ class Session:
                         for s in self.spec.shares
                     ],
                     "forwards": forwards,
+                    "dev": self.spec.dev,
                 }
             )
         )
@@ -829,9 +834,27 @@ def load_session(name: str) -> Session:
         if (user / "session.json").is_file():
             directory = user
     try:
+        return load_session_at(directory)
+    except VmError as err:
+        raise VmError(f"no VM session named {name!r}: run `shidashi vm start` first") from err
+
+
+def load_session_at(directory: Path) -> Session:
+    """The session whose ``session.json`` is in ``directory``; :class:`VmError` when it
+    is missing or does not read."""
+    try:
         data = json.loads((directory / "session.json").read_text())
     except (OSError, json.JSONDecodeError) as err:
-        raise VmError(f"no VM session named {name!r}: run `shidashi vm start` first") from err
+        raise VmError(f"{directory} holds no readable session.json: {err}") from err
+    if not isinstance(data, dict):
+        raise VmError(f"{directory}/session.json is not a table")
+    try:
+        return _session_from(data, directory)
+    except (KeyError, TypeError, ValueError) as err:
+        raise VmError(f"{directory}/session.json is malformed: {err}") from err
+
+
+def _session_from(data: dict[str, Any], directory: Path) -> Session:
     spec = VmSpec(
         iso=Path(data["iso"]),
         uefi=data["uefi"],
@@ -843,6 +866,8 @@ def load_session(name: str) -> Session:
             Share(s["tag"], Path(s["path"]), s["readonly"]) for s in data.get("shares", ())
         ),
         forwards=tuple((int(host), int(guest)) for host, guest in data.get("forwards", [])),
+        # absent in a session written before the mark: never taken for a dev one
+        dev=data.get("dev") is True,
     )
     return Session(spec, directory)
 
