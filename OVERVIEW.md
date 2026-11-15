@@ -183,10 +183,15 @@ binhost/
 
 > **Where to read and edit the process** (2026-09-28): `variants/flow.yaml` describes the
 > flow — the **bootstrap** steps and the steps of **each stage** (config →
-> cuts → emerge → settle → fork-point), with the emerge and settle options. The
+> cuts → emerge → repairs → settle → fork-point), with the emerge and settle options. The
 > code in `shidashi/` executes the step *types* (`shidashi/flow.py` lists them).
 > The stages and each one's sets/cuts are in the YAMLs under `variants/` (base,
 > minimal, desktop, flavor), and per-package exceptions in `variants/base/quirks.yaml`.
+> A stale-soname finding that no rebuild can clear (a package shipping a prebuilt
+> binary) is waived in `variants/soname-waivers.yaml`: one exact package and one exact
+> soname per entry, each with its exit condition; the factory's `stale-binpkgs` and
+> `check-binpkgs` and the assemble all honour it, and record what they waived and which
+> waivers matched nothing.
 
 An image is a **chain of stages**; each stage declares what comes before it
 (`after:`) and becomes an `emerge` phase, with the **configuration accumulated up to it**:
@@ -233,7 +238,10 @@ seed ─ bootstrap ─ base ─ minimal ──┬── (minimal image)
 ```
 
 Each stage writes a snapshot keyed **without the target** —
-`<arch>-<init>-<stage3>-<stage>.tar` — after the settle when it is shipped. A
+`<arch>-<init>-<stage3>-<stage>.tar` — after the settle when it is shipped, and
+after the repairs that follow its emerge (`perl-rebuild`, `module-rebuild`): a fork
+point never keeps modules for a Perl or a kernel that is gone, so no later stage
+repeats the repair. A
 build resumes from the **deepest one that exists before the target**: kde built
 after gnome starts from the `desktop` that gnome left behind. The target's own stage
 is always rebuilt. With no stage written, the checkpoint

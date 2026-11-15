@@ -22,6 +22,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   boots the newest minimal ISO with the trees that ISO was built from, a fresh work disk,
   an empty `/var/db/repos/staged` repository and the available binhosts, and prints one
   JSON line (exit 3: no ISO to boot).
+- **`shidashi vm start --dev` also finds ISOs kept outside the releases.** Besides
+  `<cache>/releases/<date>/` it reads a stash, `/var/tmp/shidashi-isos`
+  (`SHIDASHI_DEV_ISO_DIR`), flat or one directory down, so releases can be pruned without
+  naming `--iso` every time. The newest by the date in the file name is booted; a release
+  wins a tie. The stash is searched only when it is the invoking user's alone (a real
+  directory, not a symbolic link, not writable by group or others): anyone can create a
+  directory under `/var/tmp`. One that is not is skipped, with a warning on stderr and the
+  reason in the exit-3 error.
 - **`shidashi vm run --stream`** passes the guest's output through as it is written;
   **`--timeout 0`** waits however long the command takes. stdin reaches the guest command
   in both modes.
@@ -39,6 +47,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A soname no rebuild can clear no longer fails the weekly release.** The release of
+  2026.11.13 stopped at `sys-kernel/gentoo-kernel-bin-7.3.3 (build 1): needs
+  libcrypto.so.3 — offered libcrypto.so.4`: the package ships `certs/extract-cert`
+  prebuilt against OpenSSL 3 and its ebuild does not rebuild it, so the rebuild the
+  refusal asked for wrote the same binpkg again. `variants/soname-waivers.yaml` now
+  lists such findings -- one exact package and one exact soname per entry, with the
+  reason, the evidence and the exit condition, all required. A waived finding is not
+  stale in the factory's `stale-binpkgs` step, in `check-binpkgs` or in the assemble;
+  the subslot rule, the unresolved sonames and any other soname of the same package
+  are judged as before. Each judgement records what it waived and the waivers that
+  matched nothing (`soname_waived`, `soname_waivers_unused`: in the `stale-binpkgs`
+  step data, and in a `binpkgs.soname_waivers` event for the other two), so a waiver
+  whose exit condition is met shows up as unused and can be deleted. Not yet run
+  against the real binhost.
+- **Every stage built from the base recompiled ~20 Perl modules, on every run.** The
+  base upgrades Perl inside its own emerge, and `perl-rebuild` ran only before it: the
+  stage3's build-only modules stayed in the old Perl's directory and the base's fork
+  point was saved that way, so each stage restored from it rebuilt their owners from
+  source (2m34 per toolbox run, 53 identical builds of each module in the binpkg pool).
+  The flow now takes `perl-rebuild` twice -- before the stage's emerge, as before, and
+  right after it, before the fork point -- and refuses any other placement. A base fork
+  point already on disk keeps the stale modules until the base is built again; until
+  then the step before the emerge repairs each stage, as it did.
+- **`worker provision --replace` keeps the arch caches the worker owns.** The replaced
+  entry's `cache_archs` was dropped, so the host went back to building those archs itself
+  and to syncing a cache that lives on the worker only. The address, CPU flags and image
+  still start over: they are the new medium's.
 - **A dev VM no longer leaves its work disk behind.** bentoolkit names every build VM
   afresh, so each stopped session kept a disk full of builds. `vm stop` now removes a
   `--dev` session's directory, and `vm start --dev` removes the dev sessions whose VM died
