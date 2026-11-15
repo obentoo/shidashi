@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`shidashi fork-points gc <arch>` deletes the fork points of old pins.** Every re-pin
+  writes a new set and nothing deleted the old ones: on the v3 worker two superseded pins
+  held ~130 GiB, its disk at 90%. The gc keeps the current pin's and those of the
+  `--keep` newest other pins (default 1, the pin the update and a reverted re-pin
+  restore); `--dry-run` prints the plan and takes no lock. A worker-owned arch is
+  collected on that worker, and the weekly lab cycle runs the gc before each build
+  (`WEEKLY_FORK_POINTS_KEEP`; empty turns it off).
 - **`shidashi vm start --dev`: a disposable VM to build ebuilds in, for bentoolkit.** It
   boots the newest minimal ISO with the trees that ISO was built from, a fresh work disk,
   an empty `/var/db/repos/staged` repository and the available binhosts, and prints one

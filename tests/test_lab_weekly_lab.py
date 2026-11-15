@@ -28,6 +28,8 @@ if args[:2] == ["worker", "status"] or args == ["worker", "status"]:
     print(os.environ.get("FAKE_STATUS", "bentoo-lab  reachable  max v3  16 threads"))
 elif args[:2] == ["worker", "cache-owner"]:
     print(os.environ.get("FAKE_OWNS", "bentoo-lab owns the cache of: v3"))
+elif args[:2] == ["fork-points", "gc"]:
+    sys.exit(int(os.environ.get("FAKE_GC_RC", "0")))
 elif args[:1] == ["release"] and args[1:2] not in (["report"], ["prune"]):
     print("v3/systemd: ok")
     print("release: " + os.environ["FAKE_RELEASE_DIR"])
@@ -157,6 +159,7 @@ def test_it_stops_before_any_build_when_the_worker_cannot_build_the_arch(
     done = lab.run("weekly", **env)
     assert done.returncode == 1, done.stdout + done.stderr
     assert lab.no_call("release")
+    assert lab.no_call("fork-points"), "deleted fork points for a build that never ran"
 
 
 def test_poweroff_is_opt_in_and_only_after_a_green_run(tmp_path: Path) -> None:
@@ -204,3 +207,30 @@ def test_a_worker_without_the_swapfile_does_not_stop_the_cycle(lab: WeeklyLab) -
     done = lab.run("weekly", WEEKLY_SWAPFILE="")
     assert done.returncode == 0, done.stdout + done.stderr
     assert not any(c[:2] == ["worker", "run"] for c in lab.calls())
+
+
+def test_the_cycle_deletes_the_old_pins_fork_points_before_it_builds(lab: WeeklyLab) -> None:
+    """Every re-pin writes a new set of fork points and nothing else deletes the old ones:
+    two superseded pins held ~130 GiB of the worker's disk on 2026-11-15. The gc runs ahead
+    of the release and keeps the newest other pin's."""
+    done = lab.run("weekly")
+    assert done.returncode == 0, done.stdout + done.stderr
+    gc = lab.index("fork-points", "gc", "v3")
+    assert gc < lab.index("release", "v3")
+    call = lab.calls()[gc]
+    assert option(call, "--keep") == "1" and "--dry-run" not in call
+
+
+def test_an_empty_keep_turns_the_fork_point_gc_off(lab: WeeklyLab) -> None:
+    done = lab.run("weekly", WEEKLY_FORK_POINTS_KEEP="")
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert lab.no_call("fork-points")
+    assert not lab.no_call("release", "v3")
+
+
+def test_a_failed_fork_point_gc_only_warns_and_the_cycle_still_builds(lab: WeeklyLab) -> None:
+    done = lab.run("weekly", FAKE_GC_RC="1", WEEKLY_FORK_POINTS_KEEP="2")
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert option(lab.calls()[lab.index("fork-points", "gc", "v3")], "--keep") == "2"
+    assert "old fork points" in done.stdout
+    assert not lab.no_call("release", "v3")

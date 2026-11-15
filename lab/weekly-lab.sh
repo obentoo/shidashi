@@ -19,6 +19,8 @@
 #   WEEKLY_POWEROFF  0                               1: power the worker off after a green run
 #   WEEKLY_ALLOW_DIRTY 0                             1: build HEAD although the tree has changes
 #   WEEKLY_SWAPFILE  /mnt/work/swapfile              swapped on before the build (empty: never)
+#   WEEKLY_FORK_POINTS_KEEP 1                        other pins whose fork points survive the
+#                                                    gc before the build (empty: no gc)
 #   SHIDASHI_SCRATCH /var/tmp/shidashi-<user>        job results; /var/tmp/shidashi is root's
 set -euo pipefail
 
@@ -30,6 +32,7 @@ IMAGES=${WEEKLY_IMAGES:-minimal,kde,gnome}
 OUT=${WEEKLY_OUT:-/var/cache/shidashi/releases}
 KEEP=${WEEKLY_KEEP:-4}
 SWAPFILE=${WEEKLY_SWAPFILE-/mnt/work/swapfile}
+FORK_POINTS_KEEP=${WEEKLY_FORK_POINTS_KEEP-1}
 export SHIDASHI_SCRATCH=${SHIDASHI_SCRATCH:-/var/tmp/shidashi-$(id -un)}
 
 shidashi() { "$REPO/.venv/bin/python" -c 'from shidashi.cli import app; app()' "$@"; }
@@ -52,6 +55,14 @@ weekly() {
     shidashi worker run "$WORKER" -- bash -c \
       "swapon --show | grep -q '$SWAPFILE' || swapon '$SWAPFILE'" \
       || say "cannot switch $SWAPFILE on at $WORKER: a desktop build may run out of memory"
+  fi
+
+  # every re-pin writes a new set of fork points and nothing else deletes the old ones: on
+  # 2026-11-15 two superseded pins held ~130 GiB of the worker's disk, then at 90%. The gc
+  # keeps the current pin's and the newest other pins'; a failure only warns.
+  if [ -n "$FORK_POINTS_KEEP" ]; then
+    shidashi fork-points gc "$ARCH" --keep "$FORK_POINTS_KEEP" \
+      || say "cannot delete $ARCH's old fork points: the build may run out of disk"
   fi
 
   say "building $ARCH/$INIT --images $IMAGES on $WORKER"

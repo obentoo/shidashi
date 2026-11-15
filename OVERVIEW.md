@@ -272,7 +272,9 @@ commit): `<arch>-<init>-<stage3>-<pin id>-<stage>.tar`. A build under a new pin 
 restores a tree built from an older one; the stepwise state saved under another pin
 id is stale. Only the update crosses pins: with no image of the current pin, it
 restores the newest older one and writes the result under the current key. Older
-restore points stay on disk untouched.
+restore points stay on disk until `shidashi fork-points gc <arch>` deletes them: it
+keeps the current pin's and those of the `--keep` newest other pins (default 1, the
+pin the update restores), and the weekly lab cycle runs it before each build.
 
 ---
 

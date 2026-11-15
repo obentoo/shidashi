@@ -43,6 +43,7 @@ from shidashi import (
     ci_guest_cli,
     config,
     doctor,
+    fork_points_cli,
     ownership,
     parallel,
     progress,
@@ -93,6 +94,7 @@ app.add_typer(kits_app, name="kits")
 worker_app = typer.Typer(no_args_is_help=True, help="Drive a paired worker (shidashi kyomei).")
 app.add_typer(worker_app, name="worker")
 app.add_typer(binhost_cli.app, name="binhost")
+app.add_typer(fork_points_cli.app, name="fork-points")
 app.add_typer(ci_cli.app, name="ci")
 app.add_typer(ci_guest_cli.app, name="ci-guest")
 sync_app = typer.Typer(
