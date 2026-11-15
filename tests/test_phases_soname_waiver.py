@@ -43,7 +43,10 @@ from tests.test_phases_soname import (
     _today,
 )
 
-EXCLUDE_KERNEL = f"--usepkg-exclude={KERNEL_PACKAGE}"
+#: the slot atom the step excludes; the tree picks the release's kernel in it
+KERNEL_SLOT = f"{KERNEL_PACKAGE}:7.3.3"
+EXCLUDE_KERNEL = f"--usepkg-exclude={KERNEL_SLOT}"
+PICKS = {**TREE, KERNEL_SLOT: [KERNEL_CPV, "7.3.3"]}
 OPENSSL_DEP = ">=dev-libs/openssl-3:0"
 
 
@@ -52,7 +55,7 @@ def test_a_waived_finding_excludes_and_quarantines_nothing(
 ) -> None:
     variants_with_waivers(tmp_path, monkeypatch, waiver_yaml())
     pkgdir = _binhost(tmp_path, monkeypatch, OPENSSL, KERNEL)
-    container = _Factory(tmp_path, pkgdir, plan=[P_OPENSSL, P_KERNEL])
+    container = _Factory(tmp_path, pkgdir, plan=[P_OPENSSL, P_KERNEL], tree=PICKS)
     step = _run(tmp_path, container)
 
     assert container.stage_emerges() == [_today()]  # the kernel merges from its binpkg
@@ -71,14 +74,14 @@ def test_without_a_waiver_the_same_plan_excludes_the_kernel(
     """The defect itself, so the test above is known to waive something."""
     variants_with_waivers(tmp_path, monkeypatch, None)
     pkgdir = _binhost(tmp_path, monkeypatch, OPENSSL, KERNEL)
-    container = _Factory(tmp_path, pkgdir, plan=[P_OPENSSL, P_KERNEL])
+    container = _Factory(tmp_path, pkgdir, plan=[P_OPENSSL, P_KERNEL], tree=PICKS)
     step = _run(tmp_path, container)
 
     (stage,) = container.stage_emerges()
     assert EXCLUDE_KERNEL in stage
     (entry,) = step["soname"]
     assert entry["cpv"] == KERNEL_CPV and entry["needs"] == "libcrypto.so.3"
-    assert step["excluded"] == [KERNEL_PACKAGE]
+    assert step["excluded"] == [KERNEL_SLOT]
     assert step["soname_waived"] == [] and step["soname_waivers_unused"] == []
 
 
@@ -90,7 +93,7 @@ def test_a_waived_instance_beside_a_fresh_one_is_not_moved_aside(
     build 1 moves to the quarantine before the emerge; waived, it stays where it is."""
     variants_with_waivers(tmp_path, monkeypatch, waiver_yaml() if waived else None)
     pkgdir = _binhost(tmp_path, monkeypatch, OPENSSL, KERNEL, KERNEL_FIXED)
-    container = _Factory(tmp_path, pkgdir, plan=[P_OPENSSL, P_KERNEL])
+    container = _Factory(tmp_path, pkgdir, plan=[P_OPENSSL, P_KERNEL], tree=PICKS)
     step = _run(tmp_path, container)
 
     stale_file = pkgdir / "sys-kernel/gentoo-kernel-bin/gentoo-kernel-bin-7.3.3-1.gpkg.tar"
@@ -108,12 +111,12 @@ def test_a_package_with_a_waived_and_an_unwaived_soname_stays_stale(
 ) -> None:
     variants_with_waivers(tmp_path, monkeypatch, waiver_yaml())
     pkgdir = _binhost(tmp_path, monkeypatch, OPENSSL, ELFUTILS, KERNEL_MIXED)
-    container = _Factory(tmp_path, pkgdir, plan=[P_OPENSSL, P_ELFUTILS, P_KERNEL])
+    container = _Factory(tmp_path, pkgdir, plan=[P_OPENSSL, P_ELFUTILS, P_KERNEL], tree=PICKS)
     step = _run(tmp_path, container)
 
     (stage,) = container.stage_emerges()
     assert EXCLUDE_KERNEL in stage
-    assert step["excluded"] == [KERNEL_PACKAGE]
+    assert step["excluded"] == [KERNEL_SLOT]
     # the unwaived soname is the finding; the waived one is recorded as waived
     (entry,) = step["soname"]
     assert entry["cpv"] == KERNEL_CPV and entry["needs"] == "libelf.so.1"
@@ -134,12 +137,12 @@ def test_hostile_a_waiver_of_another_package_or_soname_waives_nothing(
 ) -> None:
     variants_with_waivers(tmp_path, monkeypatch, waiver)
     pkgdir = _binhost(tmp_path, monkeypatch, OPENSSL, KERNEL)
-    container = _Factory(tmp_path, pkgdir, plan=[P_OPENSSL, P_KERNEL])
+    container = _Factory(tmp_path, pkgdir, plan=[P_OPENSSL, P_KERNEL], tree=PICKS)
     step = _run(tmp_path, container)
 
     (stage,) = container.stage_emerges()
     assert EXCLUDE_KERNEL in stage
-    assert step["excluded"] == [KERNEL_PACKAGE]
+    assert step["excluded"] == [KERNEL_SLOT]
     assert step["soname_waived"] == []
     assert len(step["soname_waivers_unused"]) == 1  # the dead waiver is in the trail
 
@@ -151,7 +154,7 @@ def test_a_waiver_that_matched_nothing_is_recorded_unused(
     variants_with_waivers(tmp_path, monkeypatch, waiver_yaml())
     fixed = KERNEL_FIXED.replace("BUILD_ID: 2", "BUILD_ID: 1").replace("-2.gpkg", "-1.gpkg")
     pkgdir = _binhost(tmp_path, monkeypatch, OPENSSL, fixed)
-    container = _Factory(tmp_path, pkgdir, plan=[P_OPENSSL, P_KERNEL])
+    container = _Factory(tmp_path, pkgdir, plan=[P_OPENSSL, P_KERNEL], tree=PICKS)
     step = _run(tmp_path, container)
 
     assert container.stage_emerges() == [_today()]
@@ -167,7 +170,7 @@ def test_hostile_the_siblings_of_a_waived_instance_are_not_judged(
     unwaived (the control below) both are stale and the kernel is excluded."""
     variants_with_waivers(tmp_path, monkeypatch, waiver_yaml())
     pkgdir = _binhost(tmp_path, monkeypatch, OPENSSL, ELFUTILS, KERNEL, KERNEL_SIBLING)
-    container = _Factory(tmp_path, pkgdir, plan=[P_OPENSSL, P_ELFUTILS, P_KERNEL])
+    container = _Factory(tmp_path, pkgdir, plan=[P_OPENSSL, P_ELFUTILS, P_KERNEL], tree=PICKS)
     step = _run(tmp_path, container)
 
     assert container.stage_emerges() == [_today()]
@@ -181,11 +184,11 @@ def test_unwaived_the_stale_sibling_is_judged_with_the_planned_instance(
 ) -> None:
     variants_with_waivers(tmp_path, monkeypatch, None)
     pkgdir = _binhost(tmp_path, monkeypatch, OPENSSL, ELFUTILS, KERNEL, KERNEL_SIBLING)
-    container = _Factory(tmp_path, pkgdir, plan=[P_OPENSSL, P_ELFUTILS, P_KERNEL])
+    container = _Factory(tmp_path, pkgdir, plan=[P_OPENSSL, P_ELFUTILS, P_KERNEL], tree=PICKS)
     step = _run(tmp_path, container)
 
     assert sorted(e["build_id"] for e in step["soname"]) == [1, 3]
-    assert step["excluded"] == [KERNEL_PACKAGE]
+    assert step["excluded"] == [KERNEL_SLOT]
 
 
 def test_an_unresolved_soname_is_recorded_as_always_and_is_not_a_waived_finding(
@@ -195,7 +198,7 @@ def test_an_unresolved_soname_is_recorded_as_always_and_is_not_a_waived_finding(
     waiver has nothing to waive and the record of the unresolved soname is untouched."""
     variants_with_waivers(tmp_path, monkeypatch, waiver_yaml())
     pkgdir = _binhost(tmp_path, monkeypatch, KERNEL)
-    container = _Factory(tmp_path, pkgdir, plan=[P_KERNEL])
+    container = _Factory(tmp_path, pkgdir, plan=[P_KERNEL], tree=PICKS)
     step = _run(tmp_path, container)
 
     assert step["unresolved_sonames"] == [
@@ -219,7 +222,7 @@ def test_the_subslot_rule_still_condemns_a_package_whose_soname_is_waived(
         requires="x86_64: libc.so.6 libcrypto.so.3",
     )
     pkgdir = _binhost(tmp_path, monkeypatch, OPENSSL, kernel)
-    tree = {**TREE, OPENSSL_DEP: ["dev-libs/openssl-4.0.1", "0/4"]}
+    tree = {**PICKS, OPENSSL_DEP: ["dev-libs/openssl-4.0.1", "0/4"]}
     container = _Factory(tmp_path, pkgdir, plan=[P_OPENSSL, P_KERNEL], tree=tree)
     step = _run(tmp_path, container)
 
@@ -227,7 +230,7 @@ def test_the_subslot_rule_still_condemns_a_package_whose_soname_is_waived(
     assert EXCLUDE_KERNEL in stage
     (entry,) = step["stale"]
     assert entry["cpv"] == KERNEL_CPV and entry["built"] == "0/3" and entry["tree"] == "0/4"
-    assert step["excluded"] == [KERNEL_PACKAGE]
+    assert step["excluded"] == [KERNEL_SLOT]
     assert step["soname"] == [] and step["soname_waived"] == [WAIVED]
 
 
@@ -237,7 +240,7 @@ def test_a_waivers_file_that_does_not_validate_fails_the_step_before_it_moves_an
     broken = waiver_yaml().replace("  until:", "  untill:")
     root = variants_with_waivers(tmp_path, monkeypatch, broken)
     pkgdir = _binhost(tmp_path, monkeypatch, OPENSSL, KERNEL, KERNEL_FIXED)
-    container = _Factory(tmp_path, pkgdir, plan=[P_OPENSSL, P_KERNEL])
+    container = _Factory(tmp_path, pkgdir, plan=[P_OPENSSL, P_KERNEL], tree=PICKS)
     with pytest.raises(phases.FactoryError) as err:
         phases.run_phase(container, _recipe(), GNOME, emptytree=False)  # type: ignore[arg-type]
 

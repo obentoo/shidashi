@@ -12,8 +12,11 @@ from shidashi import phases
 from shidashi.recipe import Phase
 from tests.test_phases_soname import (
     CURL,
+    EXCLUDE_VTE,
     GEN,
     ICU,
+    NODEJS_CPV,
+    NODEJS_SLOT,
     P_SIMDUTF_BIN,
     P_SIMDUTF_EBUILD,
     P_VTE_1,
@@ -72,7 +75,7 @@ def test_an_installed_provider_the_plan_replaces_no_longer_offers_its_soname(
     (entry,) = step["soname"]
     assert entry["cpv"] == "x11-libs/vte-0.84.1" and entry["needs"] == "libsimdutf.so.34"
     (stage,) = container.stage_emerges()
-    assert "--usepkg-exclude=x11-libs/vte" in stage
+    assert EXCLUDE_VTE in stage
 
 
 def test_an_installed_provider_upgraded_from_its_ebuild_is_compiled_first(
@@ -102,7 +105,7 @@ def test_a_stale_sibling_of_a_stale_planned_instance_is_judged_too(
     step = _run(tmp_path, container)
     assert sorted(e["build_id"] for e in step["soname"]) == [1, 3]
     (stage,) = container.stage_emerges()
-    assert "--usepkg-exclude=x11-libs/vte" in stage
+    assert EXCLUDE_VTE in stage
     assert sorted(p.name for p in _quarantined(tmp_path)) == [
         "vte-0.84.1-1.gpkg.tar",
         "vte-0.84.1-3.gpkg.tar",
@@ -113,10 +116,10 @@ def test_a_stale_sibling_of_a_stale_planned_instance_is_judged_too(
 def test_the_providers_first_emerge_keeps_the_subslot_exclusions(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """nodejs is excluded by the subslot rule: the oneshot must not merge its binpkg."""
-    nodejs = _entry("net-libs/nodejs-26.9.0", 1, rdepend=f"{ICU}/77=")
+    """nodejs's slot is excluded by the subslot rule: the oneshot must not merge its binpkg."""
+    nodejs = _entry(NODEJS_CPV, 1, rdepend=f"{ICU}/77=")
     pkgdir = _binhost(tmp_path, monkeypatch, SIMDUTF_OLD, VTE_STALE, nodejs, CURL)
-    tree = {**TREE, ICU: ["dev-libs/icu-78.1", "0/78"]}
+    tree = {**TREE, ICU: ["dev-libs/icu-78.1", "0/78"], NODEJS_SLOT: [NODEJS_CPV, "0"]}
     container = _Factory(
         tmp_path,
         pkgdir,
@@ -126,8 +129,9 @@ def test_the_providers_first_emerge_keeps_the_subslot_exclusions(
     )
     _run(tmp_path, container)
     (oneshot,) = container.oneshots()
-    assert "--usepkg-exclude=net-libs/nodejs" in oneshot
-    assert oneshot.index("--usepkg-exclude=net-libs/nodejs") < oneshot.index("--oneshot")
+    exclusion = f"--usepkg-exclude={NODEJS_SLOT}"  # the slot atom, as in the stage emerge
+    assert [a for a in oneshot if a.startswith("--usepkg-exclude")] == [exclusion]
+    assert oneshot.index(exclusion) < oneshot.index("--oneshot")
 
 
 def test_the_base_is_planned_in_the_mode_it_emerges_with(

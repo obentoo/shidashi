@@ -20,6 +20,7 @@ import pytest
 from shidashi import audit, ownership, phases, worker
 from shidashi.container import CommandResult
 from shidashi.recipe import Phase, ResolvedRecipe, UseBreak
+from shidashi.stale_plan import StalePlan
 from tests._fake_worker import FakeWorker, option_values
 from tests._pending import try_import
 from tests.test_binhost_cli_gc import install_fake_toolbox, path_of
@@ -101,7 +102,7 @@ def test_the_factorys_record_is_what_show_classifies_and_publish_plans(
     monkeypatch.setattr(
         phases,
         "stale_binpkgs",
-        lambda *_a, **_k: phases.StaleOutcome(None, phases.StalePlan(), {}, {"index": "x"}),
+        lambda *_a, **_k: phases.StaleOutcome(None, StalePlan(), {}, {"index": "x"}),
     )
     monkeypatch.setattr(phases, "check_binpkgs", lambda *_a, **_k: {"index": "absent"})
     monkeypatch.setattr(phases, "snapshot_fork_point", lambda _root, dest: dest)

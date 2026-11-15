@@ -84,8 +84,10 @@ stages:
                                            # with them: this stage's emerge may load
                                            # one (grub's help2man)
     - {name: stale, do: stale-binpkgs}     # binpkgs built against a subslot or soname
-                                           # the stage no longer installs: compiled
-                                           # instead of merged, then quarantined (019)
+                                           # the stage no longer installs: their slot
+                                           # is compiled instead of merged, then they
+                                           # are quarantined; at once when the tree no
+                                           # longer picks their version (019)
     - {name: emerge, do: emerge-stage}
     # after the emerge
     - {name: perl-after, do: perl-rebuild} # the same repair, once the emerge has

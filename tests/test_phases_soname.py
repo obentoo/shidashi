@@ -11,7 +11,7 @@ local container; the resolver's script and ``emaint`` run here under bash with a
 ``portageq`` and ``emaint``; ``emerge`` is intercepted. Its three shapes are told
 apart by their options: ``--pretend`` answers the plan the test sets, ``--oneshot``
 (providers first) installs its ``=cpv`` targets into the rootfs's vdb, and the stage
-emerge rebuilds vte when vte's binpkg is excluded.
+emerge rebuilds vte when vte's slot is excluded.
 """
 
 import json
@@ -26,13 +26,23 @@ import pytest
 from shidashi import audit, phases
 from shidashi.container import CommandResult
 from shidashi.recipe import Phase, ResolvedRecipe
+from tests.test_phases_stale import FAKE_PORTAGEQ_AND_EMAINT
 
 GEN = "20260823T153057Z"
 SIMDUTF = ">=dev-cpp/simdutf-6.2.0:0"
 ICU = ">=dev-libs/icu-76:0"
 HEADER = "ARCH: amd64\nVERSION: 0\n"
-#: what the pinned tree answers: simdutf-9.2.1 is SLOT 0/34 (the overlay's bug)
-TREE = {SIMDUTF: ["dev-cpp/simdutf-9.2.1", "0/34"]}
+NODEJS_CPV = "net-libs/nodejs-26.9.0"
+NODEJS_SLOT = "net-libs/nodejs:0"
+#: the slot atom the step excludes and asks the tree about (``shidashi.stale_plan``)
+VTE_SLOT = "x11-libs/vte:2.91"
+EXCLUDE_VTE = f"--usepkg-exclude={VTE_SLOT}"
+#: what the pinned tree answers: simdutf-9.2.1 is SLOT 0/34 (the overlay's bug), and
+#: vte-0.84.1 is the version it picks in vte's slot
+TREE = {
+    SIMDUTF: ["dev-cpp/simdutf-9.2.1", "0/34"],
+    VTE_SLOT: ["x11-libs/vte-0.84.1", "2.91"],
+}
 
 
 def _entry(
@@ -88,36 +98,6 @@ P_VTE_2 = '[binary   N    ] x11-libs/vte-0.84.1-2:2.91::gentoo  USE="-vala" 0 Ki
 #: what installing simdutf-9.2.1 leaves in the vdb
 SIMDUTF_INSTALLED = {"dev-cpp/simdutf-9.2.1": "x86_64: libsimdutf.so.36"}
 
-_FAKE_TOOL = """
-import json, os, sys
-from pathlib import Path
-name, args = Path(sys.argv[0]).name, sys.argv[1:]
-with open(os.environ["FAKE_LOG"], "a") as log:
-    log.write(json.dumps({"tool": name, "argv": args, "pkgdir": os.environ.get("PKGDIR")}) + "\\n")
-if name == "portageq":
-    answers = json.loads(os.environ["FAKE_PORTAGEQ"])
-    if args[:1] == ["best_visible"]:
-        hit = answers.get(args[-1])
-        print(hit[0] if hit else "")
-        sys.exit(0 if hit else 1)
-    if args[:1] == ["metadata"] and args[-1] == "SLOT":
-        slots = {cpv: slot for cpv, slot in answers.values()}
-        if args[-2] in slots:
-            print(slots[args[-2]])
-            sys.exit(0)
-    sys.exit(1)
-if name == "emaint" and "binhost" in args:
-    inside = os.environ.get("PKGDIR") or "/var/cache/binpkgs"
-    root = Path(os.environ["FAKE_PKGDIR"] if inside == "/var/cache/binpkgs" else inside)
-    kept = []
-    for block in (root / "Packages").read_text().split("\\n\\n"):
-        fields = dict(l.split(": ", 1) for l in block.splitlines() if ": " in l)
-        if "PATH" not in fields or (root / fields["PATH"]).is_file():
-            kept.append(block.strip("\\n"))
-    (root / "Packages").write_text("\\n\\n".join(kept) + "\\n")
-sys.exit(0)
-"""
-
 
 def _vdb_install(rootfs: Path, cpv: str, provides: str = "", requires: str = "") -> None:
     entry = rootfs / "var" / "db" / "pkg" / cpv
@@ -155,7 +135,7 @@ class _Factory:
         self.bindir = tmp / "bin"
         self.bindir.mkdir()
         tool = self.bindir / "fake-tool"
-        tool.write_text(f"#!{sys.executable}\n{_FAKE_TOOL}")
+        tool.write_text(f"#!{sys.executable}\n{FAKE_PORTAGEQ_AND_EMAINT}")
         tool.chmod(0o755)
         for name in ("portageq", "emaint"):
             (self.bindir / name).symlink_to(tool)
@@ -211,7 +191,7 @@ class _Factory:
         )
         for cpv, provides in self.installs.items():  # the stage installs the providers too
             _vdb_install(self.rootfs, cpv, provides=provides)
-        if "--usepkg-exclude=x11-libs/vte" not in argv:
+        if EXCLUDE_VTE not in argv:
             return CommandResult(0, self._pretend(), "")
         # vte compiled from its ebuild: buildpkg writes its new instance into the PKGDIR
         fresh = self.pkgdir / "x11-libs/vte/vte-0.84.1-2.gpkg.tar"
@@ -367,7 +347,7 @@ def test_the_soname_rule_alone_excludes_vte_when_the_subslot_rule_sees_it_fresh(
     # planned with today's argv (no subslot exclusion), then one stage emerge excluding vte
     assert container.pretends() and container.pretends()[0] == [*_today(), "--pretend"]
     (stage,) = container.stage_emerges()
-    assert "--usepkg-exclude=x11-libs/vte" in stage
+    assert EXCLUDE_VTE in stage
     assert not any(a.startswith("--usepkg-exclude=dev-cpp") for a in stage)
     assert not any(a.startswith("--usepkg-exclude=net-misc") for a in stage)
     assert container.oneshots() == []  # simdutf is a binary in the plan: no providers first
@@ -384,7 +364,7 @@ def test_the_soname_rule_alone_excludes_vte_when_the_subslot_rule_sees_it_fresh(
     assert "libsimdutf.so.34" in str(entry["needs"])
     assert "libsimdutf.so.36" in str(entry["offered"])
     assert "libsimdutf.so.34" not in str(entry["offered"])
-    assert "x11-libs/vte" in step["excluded"]
+    assert step["excluded"] == [VTE_SLOT]
     assert any("vte-0.84.1-1.gpkg.tar" in str(q) for q in step["quarantined"])
     assert step.get("providers_first", []) == []
     assert step.get("unresolved_sonames", []) == []
@@ -414,7 +394,7 @@ def test_a_provider_compiled_from_its_ebuild_is_installed_first_then_vte_is_judg
     # before the stage emerge, and the stage emerge then excludes vte
     (stage,) = container.stage_emerges()
     assert container.emerges.index(oneshot) < container.emerges.index(stage)
-    assert "--usepkg-exclude=x11-libs/vte" in stage
+    assert EXCLUDE_VTE in stage
     # judged against the vdb as re-read after the providers: needs .so.34, offered .so.36
     (entry,) = step["soname"]
     assert entry["cpv"] == "x11-libs/vte-0.84.1" and str(entry["build_id"]) == "1"
@@ -480,14 +460,14 @@ def test_the_stage_is_planned_with_the_subslot_exclusions(
 ) -> None:
     """nodejs was built against icu 0/77, the tree ships 0/78: excluded by the subslot
     rule, so the plan the soname rule judges already compiles nodejs."""
-    nodejs = _entry("net-libs/nodejs-26.9.0", 1, rdepend=f"{ICU}/77=")
+    nodejs = _entry(NODEJS_CPV, 1, rdepend=f"{ICU}/77=")
     pkgdir = _binhost(tmp_path, monkeypatch, SIMDUTF_BIN, VTE_FRESH, nodejs, CURL)
-    tree = {**TREE, ICU: ["dev-libs/icu-78.1", "0/78"]}
+    tree = {**TREE, ICU: ["dev-libs/icu-78.1", "0/78"], NODEJS_SLOT: [NODEJS_CPV, "0"]}
     container = _Factory(tmp_path, pkgdir, plan=[P_SIMDUTF_BIN, P_VTE_2], tree=tree)
     _run(tmp_path, container)
 
     excluded = phases.phase_emerge_argv(
-        GNOME, _recipe(), emptytree=False, usepkg_exclude=["net-libs/nodejs"]
+        GNOME, _recipe(), emptytree=False, usepkg_exclude=[NODEJS_SLOT]
     )
     assert container.pretends()[0] == [*excluded, "--pretend"]
     assert container.stage_emerges() == [excluded]

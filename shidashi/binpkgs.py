@@ -12,10 +12,10 @@ The subslot is what Portage compares, and only over an installed provider; the
 soname is the truth when an ebuild keeps its subslot across a soname change (the
 pinned overlay's ``simdutf-9.2.1``: ``SLOT 0/34``, ``libsimdutf.so.36``). This
 module reads both from the ``Packages`` index and judges them. Everything here is
-PURE, except :func:`resolve_providers`, which is PRIVILEGED: one run in the stage's
-container (two when its portageq does not load in one interpreter). It imports nothing
-from :mod:`shidashi.phases` or :mod:`shidashi.assembler`; each caller wraps
-:class:`BinpkgError` in its own error.
+PURE, except :func:`resolve_providers` and :func:`resolve_tree_picks`, which are
+PRIVILEGED: one run each in the stage's container (two when its portageq does not load in
+one interpreter). It imports nothing from :mod:`shidashi.phases` or
+:mod:`shidashi.assembler`; each caller wraps :class:`BinpkgError` in its own error.
 """
 
 from __future__ import annotations
@@ -68,7 +68,11 @@ class Soname:
 
 @dataclass(frozen=True)
 class Instance:
-    """One entry of the index: one binpkg file (``binpkg-multi-instance``)."""
+    """One entry of the index: one binpkg file (``binpkg-multi-instance``).
+
+    ``slot`` is the entry's ``SLOT`` without its subslot, ``0`` when the entry has none:
+    Portage leaves out of the index a field that holds its default.
+    """
 
     cpv: str
     build_id: int
@@ -76,6 +80,7 @@ class Instance:
     slot_deps: tuple[SlotDep, ...] = ()
     requires: frozenset[Soname] = field(default_factory=frozenset)
     provides: frozenset[Soname] = field(default_factory=frozenset)
+    slot: str = "0"
 
 
 def _cp(head: str) -> str:
@@ -84,7 +89,7 @@ def _cp(head: str) -> str:
 
 
 def package_of(cpv: str) -> str:
-    """``cat/pkg`` of a ``cat/pkg-version``: what ``--usepkg-exclude`` takes. Pure."""
+    """``cat/pkg`` of a ``cat/pkg-version``. Pure."""
     return _cp(cpv)
 
 
@@ -166,6 +171,7 @@ def parse_index(text: str) -> list[Instance]:
                 slot_deps=unique,
                 requires=parse_sonames(entry.get("REQUIRES", "")),
                 provides=parse_sonames(entry.get("PROVIDES", "")),
+                slot=(entry.get("SLOT") or "0").split("/", 1)[0],
             )
         )
     return instances
@@ -349,7 +355,8 @@ class Runner(Protocol):
 
 
 def resolve_script(queries: Sequence[str]) -> str:
-    """The bash script that answers every query in one run, ``query<TAB>slot``. Pure.
+    """The bash script that answers every query in one run, ``query<TAB>slot<TAB>cpv``:
+    the ``best_visible`` version and its full SLOT, both empty when nothing is visible. Pure.
 
     Each query is single-quoted, so ``>=`` and ``<`` reach ``portageq`` as atoms,
     never as redirections. ``best_visible`` exits 1 when nothing is visible: that,
@@ -366,7 +373,7 @@ def resolve_script(queries: Sequence[str]) -> str:
         '  if [ -n "$cpv" ]; then\n'
         '    slot=$(portageq metadata / ebuild "$cpv" SLOT) || exit "$?"\n'
         "  fi\n"
-        '  printf \'%s\\t%s\\n\' "$q" "$slot"\n'
+        '  printf \'%s\\t%s\\t%s\\n\' "$q" "$slot" "$cpv"\n'
         "done\n"
     )
 
@@ -397,6 +404,27 @@ def _resolve_run(container: Runner, queries: Sequence[str], *, portageq: str) ->
     return container.run(["bash", "-c", resolve_script(queries)], check=True)
 
 
+def _ask_tree(
+    container: Runner, queries: Sequence[str], *, portageq: str, what: str
+) -> tuple[dict[str, tuple[str, str]], str]:
+    """One resolver run: ``query → (full SLOT, cpv)``, both ``""`` for a query with no line
+    or an unparsable one, and the run's output. A failed run raises :class:`BinpkgError`."""
+    answers = dict.fromkeys(queries, ("", ""))
+    try:
+        result = _resolve_run(container, queries, portageq=portageq)
+    except subprocess.CalledProcessError as err:
+        output = (err.output or "") + (err.stderr or "")
+        raise BinpkgError(f"portageq could not resolve {what}", output=output) from err
+    except OSError as err:  # past the kernel's 128 KiB cap on one argument
+        raise BinpkgError(f"the script resolving {what} could not start: {err}") from err
+    for line in result.stdout.splitlines():
+        query, tab, answer = line.partition("\t")
+        if tab and query in answers:
+            slot, _tab, cpv = answer.partition("\t")
+            answers[query] = (slot.strip(), cpv.strip())
+    return answers, result.stdout + result.stderr
+
+
 def resolve_providers(
     container: Runner, queries: Sequence[str], *, portageq: str = ""
 ) -> dict[str, str]:
@@ -411,24 +439,42 @@ def resolve_providers(
     resolves: a broken Portage configuration exits 1 like "nothing visible", and
     taken at its word it would judge every binpkg fresh.
     """
-    answers = dict.fromkeys(queries, "")
     if not queries:
-        return answers
+        return {}
     what = f"the providers of {len(queries)} slot deps"
-    try:
-        result = _resolve_run(container, queries, portageq=portageq)
-    except subprocess.CalledProcessError as err:
-        output = (err.output or "") + (err.stderr or "")
-        raise BinpkgError(f"portageq could not resolve {what}", output=output) from err
-    except OSError as err:  # past the kernel's 128 KiB cap on one argument
-        raise BinpkgError(f"the script resolving {what} could not start: {err}") from err
-    for line in result.stdout.splitlines():
-        query, tab, slot = line.partition("\t")
-        if tab and query in answers:
-            answers[query] = slot.strip()
-    if not any(answers.values()):
+    answers, output = _ask_tree(container, queries, portageq=portageq, what=what)
+    if not any(slot for slot, _cpv in answers.values()):
         raise BinpkgError(
             f"portageq resolved none of {what}: the stage's Portage configuration is likely broken",
-            output=result.stdout + result.stderr,
+            output=output,
         )
-    return answers
+    return {query: slot for query, (slot, _cpv) in answers.items()}
+
+
+def resolve_tree_picks(
+    container: Runner, slot_atoms: Sequence[str], *, known_visible: str = "", portageq: str = ""
+) -> dict[str, str]:
+    """The version the stage's tree picks in each slot: ``cat/pkg:SLOT`` → its
+    ``best_visible`` cpv, ``""`` when nothing is visible there. PRIVILEGED: one more run
+    of the resolver of :func:`resolve_providers`.
+
+    A slot with nothing visible is an ordinary answer here (a removed or masked package),
+    and every slot asked may be one: an all-empty run is NOT refused. What keeps a broken
+    Portage configuration from reading as "nothing visible anywhere" -- which would move
+    every binpkg asked about aside -- is ``known_visible``: a query this stage already
+    answered (a provider), asked again in the same run and refused when IT comes back
+    empty. Without one the answers are taken at their word. A failed run raises
+    :class:`BinpkgError` either way.
+    """
+    if not slot_atoms:
+        return {}
+    what = f"the versions the tree picks in {len(slot_atoms)} slots"
+    asked = list(dict.fromkeys([*slot_atoms, *([known_visible] if known_visible else [])]))
+    answers, output = _ask_tree(container, asked, portageq=portageq, what=what)
+    if known_visible and not answers[known_visible][1]:
+        raise BinpkgError(
+            f"portageq no longer resolves {known_visible} while asked {what}: the stage's "
+            "Portage configuration is likely broken",
+            output=output,
+        )
+    return {atom: answers[atom][1] for atom in slot_atoms}

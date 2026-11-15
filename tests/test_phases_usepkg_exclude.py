@@ -27,12 +27,23 @@ def _recipe() -> ResolvedRecipe:
 GNOME = Phase(name="gnome", stage="gnome", sets=("gnome",))
 
 
-def test_an_exclusion_is_one_usepkg_exclude_per_package_before_the_targets() -> None:
-    argv = phase_emerge_argv(
-        GNOME, _recipe(), emptytree=False, usepkg_exclude=("x11-libs/vte", "net-libs/nodejs")
+def test_an_exclusion_is_one_usepkg_exclude_per_slot_atom_before_the_targets() -> None:
+    """Slot atoms (``shidashi.stale_plan``), two slots of one package among them: each is
+    its own option, sorted, passed through as given -- never cut down to the package."""
+    slots = (
+        "x11-libs/vte:2.91",
+        "net-libs/nodejs:0",
+        "dev-lang/python:3.15",
+        "dev-lang/python:3.14",
     )
+    argv = phase_emerge_argv(GNOME, _recipe(), emptytree=False, usepkg_exclude=slots)
     options = [a for a in argv if a.startswith("--usepkg-exclude")]
-    assert options == ["--usepkg-exclude=net-libs/nodejs", "--usepkg-exclude=x11-libs/vte"]
+    assert options == [
+        "--usepkg-exclude=dev-lang/python:3.14",
+        "--usepkg-exclude=dev-lang/python:3.15",
+        "--usepkg-exclude=net-libs/nodejs:0",
+        "--usepkg-exclude=x11-libs/vte:2.91",
+    ]
     assert argv.index("--usepkg") < argv.index(options[0])
     assert argv.index(options[-1]) < argv.index("@world")  # options before the targets
 

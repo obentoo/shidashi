@@ -35,7 +35,17 @@ from pathlib import Path
 
 import pydantic
 
-from shidashi import audit, binhost, binpkgs, checkpoint, config, progress, soname_waivers, state
+from shidashi import (
+    audit,
+    binhost,
+    binpkgs,
+    checkpoint,
+    config,
+    progress,
+    soname_waivers,
+    stale_plan,
+    state,
+)
 from shidashi.container import Container
 from shidashi.flow import StagesFlow, active_flow
 from shidashi.recipe import Phase, ResolvedRecipe, UseBreak
@@ -363,9 +373,10 @@ def phase_emerge_argv(
     and again after every phase's emerge (story 016), since Portage itself
     never compares CFLAGS or the toolchain (D26).
 
-    ``usepkg_exclude``: one ``--usepkg-exclude=<cat/pkg>`` per package, sorted,
-    after the options and before the targets -- the packages whose binpkgs are
-    all stale (story 019). Empty, the argv is byte-identical to before.
+    ``usepkg_exclude``: one ``--usepkg-exclude=<cat/pkg:SLOT>`` per slot atom, sorted,
+    after the options and before the targets -- the slots whose picked version has
+    only stale binpkgs (story 019, :mod:`shidashi.stale_plan`). Empty, the argv is
+    byte-identical to before.
     """
     emerge = (flow or stages_flow()).emerge
     if phase.emptytree and emptytree:
@@ -377,9 +388,11 @@ def phase_emerge_argv(
     target = phase_target(phase, recipe)
     if phase.stage and not phase.emptytree and not emerge.world:
         target = tuple(t for t in target if t != "@world")
-    # GOTCHA: --usepkg-exclude drops EVERY instance of the package; the caller passes
-    # only packages with no fresh instance (story 019, D2).
-    excluded = tuple(f"--usepkg-exclude={cp}" for cp in sorted(set(usepkg_exclude)))
+    # GOTCHA: --usepkg-exclude drops EVERY binpkg its atom matches -- of a slot atom,
+    # every version and instance in that slot, of a bare cat/pkg every slot too (which
+    # kept the current python compiled in every build, 2026-11-15). The caller passes
+    # only slots whose picked version has no fresh instance (story 019, D2).
+    excluded = tuple(f"--usepkg-exclude={atom}" for atom in sorted(set(usepkg_exclude)))
     return ["emerge", *emerge.options, *mode, *excluded, *target]
 
 
@@ -1108,53 +1121,11 @@ _PKGDIR_INSIDE = Path("/var/cache/binpkgs")
 
 
 @dataclasses.dataclass(frozen=True)
-class StalePlan:
-    """What the stage does with its stale binpkgs (design D2).
-
-    ``exclude``: packages with no fresh instance of the stale version -- kept from
-    the emerge with ``--usepkg-exclude``, so they are compiled. ``quarantine_now``:
-    stale instances beside a fresh one, moved aside BEFORE the emerge.
-    ``quarantine_after``: the excluded ones' stale instances, moved once the
-    rebuild wrote a fresh one.
-    """
-
-    exclude: tuple[str, ...] = ()
-    quarantine_now: tuple[binpkgs.Instance, ...] = ()
-    quarantine_after: tuple[binpkgs.Instance, ...] = ()
-
-
-def plan_stale(
-    found: Sequence[binpkgs.Stale | binpkgs.SonameStale],
-    instances: Sequence[binpkgs.Instance],
-) -> StalePlan:
-    """Split the stale instances by whether their VERSION has a fresh one. Pure.
-
-    A fresh instance of another version does not rescue a stale one: the emerge
-    picks the version, ``--usepkg-exclude`` only decides binpkg or source. GOTCHA:
-    the exclusion drops every instance of the package, so a version that still
-    has a fresh instance is never excluded -- its stale ones just move aside.
-    """
-    bad = {(f.instance.cpv, f.instance.build_id) for f in found}
-    now: list[binpkgs.Instance] = []
-    after: list[binpkgs.Instance] = []
-    exclude: set[str] = set()
-    for cpv in sorted({cpv for cpv, _build in bad}):
-        mine = [i for i in instances if i.cpv == cpv]
-        stale_ones = [i for i in mine if (i.cpv, i.build_id) in bad]
-        if len(stale_ones) < len(mine):
-            now.extend(stale_ones)
-        else:
-            exclude.add(binpkgs.package_of(cpv))
-            after.extend(stale_ones)
-    return StalePlan(tuple(sorted(exclude)), tuple(now), tuple(after))
-
-
-@dataclasses.dataclass(frozen=True)
 class StaleOutcome:
     """The ``stale-binpkgs`` step's decision, carried to the emerge and past it."""
 
     pkgdir: Path | None
-    plan: StalePlan
+    plan: stale_plan.StalePlan
     providers: Mapping[str, str]
     data: dict[str, object]
 
@@ -1371,25 +1342,28 @@ def stale_binpkgs(
 ) -> StaleOutcome:
     """The ``stale-binpkgs`` step, before the stage's emerge (R1.1-R1.5). PRIVILEGED.
 
-    Reads the stage's index, asks the stage's tree for each slot dep's provider,
-    moves aside the stale instances that have a fresh sibling, and returns the
-    packages the emerge must compile. No index → nothing judged (``index:
-    absent``), today's emerge; no PKGDIR bind at all → ``index: unbound``.
+    Reads the stage's index, asks the stage's tree for each slot dep's provider and,
+    for each version left with no fresh binpkg, the version it picks in that slot;
+    moves aside the stale instances that have a fresh sibling or that nothing will
+    rebuild, and returns the SLOTS the emerge must compile
+    (:mod:`shidashi.stale_plan`). No index → nothing judged (``index: absent``),
+    today's emerge; no PKGDIR bind at all → ``index: unbound``.
     """
     label = f"{phase.name}:stale-binpkgs"
     pkgdir = _host_pkgdir(container)
     if pkgdir is None:
-        return StaleOutcome(None, StalePlan(), {}, {"index": "unbound"})
+        return StaleOutcome(None, stale_plan.StalePlan(), {}, {"index": "unbound"})
     instances = _read_index(pkgdir, phase=label)
     if instances is None:
-        return StaleOutcome(None, StalePlan(), {}, {"index": "absent"})
+        return StaleOutcome(None, stale_plan.StalePlan(), {}, {"index": "absent"})
     waivers = soname_waivers_in_force(label)  # read before anything is moved aside
     try:
         providers = binpkgs.resolve_providers(container, binpkgs.provider_queries(instances))
+        found = binpkgs.stale(instances, providers)
+        picks = stale_plan.ask_tree_picks(container, found, instances, providers)
     except binpkgs.BinpkgError as err:
         raise FactoryError(str(err), phase=label, output=err.output) from err
-    found = binpkgs.stale(instances, providers)
-    by_subslot = plan_stale(found, instances)
+    by_subslot = stale_plan.plan_stale(found, instances, picks)
     # moved BEFORE the plan, so the plan never picks an instance that is going away
     moved = quarantine_binpkgs(
         container, pkgdir, by_subslot.quarantine_now, arch=recipe.arch, phase=label
@@ -1399,7 +1373,7 @@ def stale_binpkgs(
     # the soname pass (R1.6-R1.8): the stage's own plan -- same mode as its emerge,
     # its subslot exclusions in it
     flow = stages_flow()
-    exclusions = tuple(f"--usepkg-exclude={cp}" for cp in by_subslot.exclude)
+    exclusions = tuple(f"--usepkg-exclude={atom}" for atom in by_subslot.exclude)
     argv = phase_emerge_argv(
         phase, recipe, emptytree=emptytree, flow=flow, usepkg_exclude=by_subslot.exclude
     )
@@ -1431,7 +1405,12 @@ def stale_binpkgs(
     judged += binpkgs.soname_stale(siblings, pool)
     waived = soname_waivers.apply_soname_waivers(judged, waivers)
     by_soname = list(waived.stale)
-    plan = plan_stale([*found, *by_soname], instances)
+    every: list[binpkgs.Stale | binpkgs.SonameStale] = [*found, *by_soname]
+    try:  # only the slots the soname findings add: the subslot pass's answers are kept
+        picks = stale_plan.ask_tree_picks(container, every, instances, providers, known=picks)
+    except binpkgs.BinpkgError as err:
+        raise FactoryError(str(err), phase=label, output=err.output) from err
+    plan = stale_plan.plan_stale(every, instances, picks)
     moved += quarantine_binpkgs(
         container, pkgdir, plan.quarantine_now, arch=recipe.arch, phase=label
     )
@@ -1448,6 +1427,7 @@ def stale_binpkgs(
         ],
         "excluded": list(plan.exclude),
         "quarantined": moved,
+        "superseded": stale_plan.superseded_audit([*by_subslot.superseded, *plan.superseded]),
         "unresolved": sorted({d.atom for d in binpkgs.unresolved(instances, providers)}),
         "soname": [
             {
@@ -1471,7 +1451,7 @@ def stale_binpkgs(
 def settle_stale(
     container: Container, recipe: ResolvedRecipe, phase: Phase, outcome: StaleOutcome
 ) -> list[str]:
-    """After the emerge: move aside the excluded packages' stale instances whose
+    """After the emerge: move aside the excluded slots' stale instances whose
     version now has a fresh one (R1.5). PRIVILEGED."""
     if outcome.pkgdir is None or not outcome.plan.quarantine_after:
         return []

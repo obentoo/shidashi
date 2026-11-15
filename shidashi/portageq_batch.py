@@ -2,8 +2,10 @@
 
 The stale-binpkgs step asks the stage's tree, for every slot dep of the binhost index, the
 SLOT it would install (``portageq best_visible``, then ``portageq metadata ... SLOT``; story
-019). One ``portageq`` per question loads Portage's configuration and repositories each
-time: the v3 index's 677 queries took ~4 minutes, in every stage of every build (2026-11-15).
+019) -- and, for each slot left with no fresh binpkg, the version it picks there (the same
+``best_visible``). One ``portageq`` per question loads Portage's configuration and
+repositories each time: the v3 index's 677 queries took ~4 minutes, in every stage of every
+build (2026-11-15).
 
 This program loads the stage's own ``portageq`` script ONCE and calls its ``main()`` with
 each question's command line, so every answer -- visibility, masks, exit codes -- is still
@@ -14,8 +16,9 @@ It runs alone, under the stage's ``python3``: it imports nothing from :mod:`shid
 :func:`shidashi.binpkgs.resolve_argv` sends its source with ``python3 -X utf8 -c``. Its
 arguments: the portageq script to load (empty: the stage's own, in python-exec's layout for
 this interpreter), then the queries. Its stdout: what :func:`shidashi.binpkgs.resolve_script`
-prints, one ``query<TAB>slot`` line per query, the slot empty when nothing is visible. Any
-other portageq failure ends the run with portageq's own exit code, as that script does.
+prints, one ``query<TAB>slot<TAB>cpv`` line per query, slot and cpv empty when nothing is
+visible. Any other portageq failure ends the run with portageq's own exit code, as that
+script does.
 :data:`PORTAGEQ_UNLOADABLE` means no answer at all: the caller asks one portageq per query.
 """
 
@@ -77,7 +80,8 @@ def _ask(main: Callable[[list[str]], Any], argv: list[str]) -> tuple[int, str]:
 
 
 def answer_portageq_queries(argv: Sequence[str]) -> int:
-    """Print ``query<TAB>slot`` for each query of ``argv[1:]``; the exit code. See the module."""
+    """Print ``query<TAB>slot<TAB>cpv`` for each query of ``argv[1:]``; the exit code. See
+    the module."""
     utf8 = sys.getfilesystemencoding().lower() == "utf-8"
     if not utf8 or locale.getpreferredencoding(False).lower() != "utf-8":
         # portageq re-execs a non-UTF-8 interpreter with sys.argv, which under ``-c`` no
@@ -103,7 +107,7 @@ def answer_portageq_queries(argv: Sequence[str]) -> int:
             if code != 0:
                 return code
             slot = out.rstrip("\n")
-        print(f"{query}\t{slot}")
+        print(f"{query}\t{slot}\t{cpv}")
     return 0
 
 

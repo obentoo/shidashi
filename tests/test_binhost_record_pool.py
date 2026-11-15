@@ -26,6 +26,7 @@ import pytest
 from shidashi import audit, phases
 from shidashi.container import CommandResult
 from shidashi.recipe import Phase, ResolvedRecipe, UseBreak
+from shidashi.stale_plan import StalePlan
 from tests._pending import try_import
 from tests.test_binhost_refs import entry, index
 
@@ -132,7 +133,7 @@ def factory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     monkeypatch.setattr(
         phases,
         "stale_binpkgs",
-        lambda *_a, **_k: phases.StaleOutcome(None, phases.StalePlan(), {}, {"index": "x"}),
+        lambda *_a, **_k: phases.StaleOutcome(None, StalePlan(), {}, {"index": "x"}),
     )
     monkeypatch.setattr(phases, "check_binpkgs", lambda *_a, **_k: {"index": "absent"})
     at_snapshot: dict[str, Any] = {}

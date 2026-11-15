@@ -47,6 +47,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A package with a fresh binpkg is no longer compiled again in every build because an
+  old version of it has a stale one.** The `stale-binpkgs` step excluded the whole
+  package (`--usepkg-exclude=cat/pkg`) until a fresh binpkg of the stale *version*
+  appeared. A version the tree no longer picks is never rebuilt, so it never got one and
+  never left the pool: `dev-lang/python-3.14.10` and `-3.15.2`, built against OpenSSL's
+  old subslot, kept `dev-lang/python` excluded in every stage of every build, and the
+  current `python-3.15.2_p1` was compiled each time (six identical builds in the pool, one
+  per run). In one toolbox run 148 packages were excluded and 76 of them had a fresh
+  binpkg of some version (qtbase, spidermonkey, gnome-shell, ruby, git…). The rule is now
+  per slot: the step asks the stage's tree which version it picks in the slot of each
+  version left with no fresh binpkg. If it is that version, only the slot atom
+  (`cat/pkg:SLOT`) is excluded and its stale binpkgs move aside after the rebuild, as
+  before. If it is another version, or nothing is visible there, nothing will ever rebuild
+  it: its stale binpkgs move to the quarantine at once and nothing is excluded. The
+  exception is a version the stage's own plan merges while the tree picks another (found
+  by the soname rule): its stale binpkgs move at once *and* its slot is compiled that one
+  time. In the step's audit data `excluded` now lists slot atoms, and `superseded` lists
+  what was moved aside for this reason, with the version the tree picks instead (`null`:
+  nothing visible). The resolver's answer lines gained the version as a third field, in
+  both the one-interpreter and the per-query form. Proven against this host's Portage
+  3.0.83 (a slot atom leaves the other slot's binpkg merged); not yet run against the
+  real binhost.
 - **A soname no rebuild can clear no longer fails the weekly release.** The release of
   2026.11.13 stopped at `sys-kernel/gentoo-kernel-bin-7.3.3 (build 1): needs
   libcrypto.so.3 — offered libcrypto.so.4`: the package ships `certs/extract-cert`

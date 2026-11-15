@@ -33,8 +33,11 @@ by :mod:`shidashi.phases` in the declared order:
   and no later stage repeats the repair;
 - ``stale-binpkgs`` (optional): right before the emerge, find the binpkgs built
   against a library the stage no longer installs -- a stale subslot or soname
-  (story 019) -- keep the emerge from merging them, and move them aside once a
-  fresh instance exists;
+  (story 019). A version with no fresh binpkg that the tree still picks in its
+  slot has that SLOT kept from the emerge's binpkgs, so it is compiled, and its
+  stale binpkgs move aside once a fresh one exists; stale binpkgs beside a fresh
+  one, or of a version the tree no longer picks, move aside at once
+  (:mod:`shidashi.stale_plan`);
 - ``emerge-stage``: the stage's emerge -- ``--emptytree`` for the stage whose
   ``update`` is ``emptytree`` (the base), the ``update`` options otherwise, with
   ``@world`` and the stage's sets; its options are in ``stages.emerge``;

@@ -1,10 +1,12 @@
 """The factory's ``stale-binpkgs`` step (story 019, task 3.3; R1.2-R1.5).
 
-``plan_stale`` is pure. ``run_phase`` runs for real against a local container: the
-resolver's script and ``emaint`` run here under bash with a fake ``portageq`` and
-``emaint`` first on PATH; ``emerge`` is intercepted, and "rebuilds" vte by writing
-its fresh instance into the PKGDIR, as a real build with buildpkg does. The PKGDIR
-is the factory's own wiring: a host directory bound RW over ``/var/cache/binpkgs``.
+``run_phase`` runs for real against a local container: the resolver's script and
+``emaint`` run here under bash with a fake ``portageq`` and ``emaint`` first on PATH;
+``emerge`` is intercepted, and "rebuilds" vte when vte's slot is excluded by writing its
+fresh instance into the PKGDIR, as a real build with buildpkg does. The PKGDIR is the
+factory's own wiring: a host directory bound RW over ``/var/cache/binpkgs``. The plan
+itself is pure and has its own tests (``tests/test_stale_plan.py``); the slot rule
+through the step is in ``tests/test_phases_stale_slots.py``.
 """
 
 import json
@@ -19,58 +21,38 @@ import pytest
 from shidashi import audit, phases
 from shidashi.container import CommandResult
 from shidashi.recipe import Phase, ResolvedRecipe
-from tests._pending import try_import
-
-parse_index: Any = try_import("shidashi.binpkgs", "parse_index")
-stale: Any = try_import("shidashi.binpkgs", "stale")
-plan_stale: Any = try_import("shidashi.phases", "plan_stale")
 
 GEN = "20260823T153057Z"
 SIMDUTF = ">=dev-cpp/simdutf-6.2.0:0"
 HEADER = "ARCH: amd64\nVERSION: 0\n"
+#: the slot atom the step excludes and asks the tree about (``shidashi.stale_plan``)
+VTE_SLOT = "x11-libs/vte:2.91"
+EXCLUDE_VTE = f"--usepkg-exclude={VTE_SLOT}"
+#: what the pinned tree answers: simdutf's provider, and the version it picks in vte's slot
+TREE = {
+    SIMDUTF: ["dev-cpp/simdutf-9.2.1", "0/36"],
+    VTE_SLOT: ["x11-libs/vte-0.84.1", "2.91"],
+}
 
 
-def _entry(cpv: str, build: int, rdepend: str = "") -> str:
+def _entry(cpv: str, build: int, rdepend: str = "", slot: str = "") -> str:
+    """One index entry; ``SLOT`` only when given (Portage leaves the default, 0, out)."""
     category, name = cpv.split("/")
     path = f"{category}/{name.rsplit('-', 1)[0]}/{name}-{build}.gpkg.tar"
-    return f"BUILD_ID: {build}\nCPV: {cpv}\nPATH: {path}\nRDEPEND: {rdepend}\n"
+    entry = f"BUILD_ID: {build}\nCPV: {cpv}\nPATH: {path}\nRDEPEND: {rdepend}\n"
+    return entry + (f"SLOT: {slot}\n" if slot else "")
 
 
-VTE_STALE = _entry("x11-libs/vte-0.84.1", 1, f"{SIMDUTF}/34=")
-VTE_FRESH = _entry("x11-libs/vte-0.84.1", 2, f"{SIMDUTF}/36=")
+VTE_STALE = _entry("x11-libs/vte-0.84.1", 1, f"{SIMDUTF}/34=", slot="2.91")
+VTE_FRESH = _entry("x11-libs/vte-0.84.1", 2, f"{SIMDUTF}/36=", slot="2.91")
 CURL = _entry("net-misc/curl-8.16.0", 1)
-
-
-# --- plan_stale (pure) ----------------------------------------------------------------
-
-
-def test_plan_hostile_a_fresh_instance_rescues_only_its_own_version() -> None:
-    """vte-0.84.1 has a fresh instance: quarantine its stale one now, no exclusion.
-    foo-1.0 is stale and only foo-2.0 is fresh: another VERSION does not rescue it.
-    nodejs has no fresh instance: excluded, quarantined after its rebuild."""
-    index = "\n".join(
-        [
-            HEADER,
-            VTE_STALE,
-            VTE_FRESH,
-            _entry("dev-libs/foo-1.0", 1, f"{SIMDUTF}/34="),
-            _entry("dev-libs/foo-2.0", 1, f"{SIMDUTF}/36="),
-            _entry("net-libs/nodejs-26.9.0", 1, f"{SIMDUTF}/34="),
-        ]
-    )
-    instances = parse_index(index)
-    plan = plan_stale(stale(instances, {SIMDUTF: "0/36"}), instances)
-    assert set(plan.exclude) == {"dev-libs/foo", "net-libs/nodejs"}
-    assert {i.path for i in plan.quarantine_now} == {"x11-libs/vte/vte-0.84.1-1.gpkg.tar"}
-    assert {i.path for i in plan.quarantine_after} == {
-        "dev-libs/foo/foo-1.0-1.gpkg.tar",
-        "net-libs/nodejs/nodejs-26.9.0-1.gpkg.tar",
-    }
 
 
 # --- run_phase with the step ----------------------------------------------------------
 
-_FAKE_TOOL = """
+#: ``portageq`` and ``emaint`` as one script, told apart by the name it is run under;
+#: shared with ``tests/test_phases_soname.py``
+FAKE_PORTAGEQ_AND_EMAINT = """
 import json, os, sys
 from pathlib import Path
 name, args = Path(sys.argv[0]).name, sys.argv[1:]
@@ -104,24 +86,38 @@ sys.exit(0)
 class _Factory:
     """The stage container: emerge intercepted, everything else run here."""
 
-    def __init__(self, tmp: Path, pkgdir: Path, *, resolver_fails: bool = False) -> None:
+    def __init__(
+        self,
+        tmp: Path,
+        pkgdir: Path,
+        *,
+        resolver_fails: bool = False,
+        tree: dict[str, list[str]] | None = None,
+        later_trees: tuple[dict[str, list[str]], ...] = (),
+    ) -> None:
         self.resolver_fails = resolver_fails
+        #: what portageq answers in each resolver run, the last one for every run after it
+        self.trees = (TREE if tree is None else tree, *later_trees)
+        self.resolver_runs = 0
         self.rootfs = tmp / "rootfs"
-        self.rootfs.mkdir()
+        self.rootfs.mkdir(parents=True)
         self.pkgdir = pkgdir
         self.binds: tuple[tuple[Path, Path], ...] = ()
         self.binds_rw = ((pkgdir, Path("/var/cache/binpkgs")),)
         self.bindir = tmp / "bin"
         self.bindir.mkdir()
         tool = self.bindir / "fake-tool"
-        tool.write_text(f"#!{sys.executable}\n{_FAKE_TOOL}")
+        tool.write_text(f"#!{sys.executable}\n{FAKE_PORTAGEQ_AND_EMAINT}")
         tool.chmod(0o755)
         for name in ("portageq", "emaint"):
             (self.bindir / name).symlink_to(tool)
         self.log = tmp / "tools.jsonl"
         self.log.touch()
         self.emerges: list[list[str]] = []
+        self.pretends: list[list[str]] = []
         self.stale_file_at_emerge: list[bool] = []
+        #: the binpkg file names in the PKGDIR when each stage emerge starts
+        self.pool_at_emerge: list[set[str]] = []
 
     def tools(self, name: str) -> list[dict[str, Any]]:
         lines = self.log.read_text().splitlines()
@@ -138,23 +134,29 @@ class _Factory:
         argv = list(argv)
         if argv[0] == "emerge" and "--pretend" in argv:
             # the soname pass's plan (3.4): nothing planned, not a stage emerge
+            self.pretends.append(argv)
             return CommandResult(0, "", "")
         if argv[0] == "emerge":
             self.emerges.append(argv)
             self.stale_file_at_emerge.append(
                 (self.pkgdir / "x11-libs/vte/vte-0.84.1-1.gpkg.tar").exists()
             )
-            self._rebuild_vte()
+            self.pool_at_emerge.append({p.name for p in self.pkgdir.rglob("*.gpkg.tar")})
+            if EXCLUDE_VTE in argv:  # compiled only when its slot's binpkgs are excluded
+                self._rebuild_vte()
             return CommandResult(0, "[ebuild   R    ] x11-libs/vte-0.84.1\n", "")
         if self.resolver_fails and any("portageq" in a for a in argv):
             raise subprocess.CalledProcessError(1, argv, output="", stderr="portageq: boom\n")
+        tree = self.trees[min(self.resolver_runs, len(self.trees) - 1)]
+        if argv[0] == "bash" and "portageq best_visible" in argv[-1]:
+            self.resolver_runs += 1  # the per-query loop: this python loads no portageq
         full = {
             **os.environ,
             **(env or {}),
             "PATH": f"{self.bindir}{os.pathsep}{os.environ['PATH']}",
             "FAKE_LOG": str(self.log),
             "FAKE_PKGDIR": str(self.pkgdir),
-            "FAKE_PORTAGEQ": json.dumps({SIMDUTF: ["dev-cpp/simdutf-9.2.1", "0/36"]}),
+            "FAKE_PORTAGEQ": json.dumps(tree),
         }
         done = subprocess.run(
             argv, cwd=self.rootfs, env=full, capture_output=True, text=True, check=False
@@ -221,8 +223,9 @@ def test_a_version_with_only_a_stale_binpkg_is_compiled_then_its_old_binpkg_move
     step = _run(tmp_path, container)
 
     (emerge,) = container.emerges
-    assert "--usepkg-exclude=x11-libs/vte" in emerge
-    assert not any(a.startswith("--usepkg-exclude=net-misc") for a in emerge)
+    # the SLOT is excluded, not the package: vte's other slots keep their binpkgs
+    assert [a for a in emerge if a.startswith("--usepkg-exclude")] == [EXCLUDE_VTE]
+    assert container.stale_file_at_emerge == [True]  # still there: nothing fresh yet
     # after the rebuild: the stale instance is in the quarantine, by PATH; the fresh stays
     (moved,) = _quarantined(tmp_path)
     assert moved.name == "vte-0.84.1-1.gpkg.tar" and moved.parent.name == "x11-libs"
@@ -237,17 +240,21 @@ def test_a_version_with_only_a_stale_binpkg_is_compiled_then_its_old_binpkg_move
     assert entry["cpv"] == "x11-libs/vte-0.84.1" and str(entry["build_id"]) == "1"
     assert entry["dep"] == ">=dev-cpp/simdutf-6.2.0:0/34="  # serialized as dep.atom
     assert (entry["built"], entry["tree"]) == ("0/34", "0/36")
-    assert "x11-libs/vte" in step["excluded"]
+    assert step["excluded"] == [VTE_SLOT] and step["superseded"] == []
     assert any("vte-0.84.1-1.gpkg.tar" in str(q) for q in step["quarantined"])
 
 
 def test_a_stale_binpkg_with_a_fresh_instance_moves_aside_before_the_emerge(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """--usepkg-exclude would drop the FRESH instance too (GOTCHA): no exclusion."""
+    """--usepkg-exclude would drop the FRESH instance too (GOTCHA): no exclusion, and
+    the tree is not asked what it picks -- a fresh instance settles it."""
     pkgdir = _binhost(tmp_path, monkeypatch, VTE_STALE, VTE_FRESH)
     container = _Factory(tmp_path, pkgdir)
-    _run(tmp_path, container)
+    step = _run(tmp_path, container)
+    assert step["excluded"] == [] and step["superseded"] == []
+    asked = [r["argv"][-1] for r in container.tools("portageq") if r["argv"][0] == "best_visible"]
+    assert asked == [SIMDUTF]
 
     (emerge,) = container.emerges
     assert emerge == phases.phase_emerge_argv(GNOME, _recipe(), emptytree=False)

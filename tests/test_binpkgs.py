@@ -119,6 +119,15 @@ def test_index_splits_slot_and_subslot_and_strips_the_operator_for_the_query() -
     assert "net-libs/webkit-gtk" in webkit and webkit["net-libs/webkit-gtk"].subslot == "4"
 
 
+def test_index_an_instance_carries_its_own_slot_without_the_subslot() -> None:
+    """What the slot rule excludes and asks the tree about (``shidashi.stale_plan``).
+    Portage leaves a field holding its default out of the index: no ``SLOT`` is slot 0."""
+    instances = parse_index(INDEX + "\n" + _entry("dev-cpp/simdutf-9.2.1", 1, "") + "SLOT: 0/36\n")
+    assert _by(instances, "x11-libs/vte-0.84.1", 1).slot == "2.91"
+    assert _by(instances, "net-libs/nodejs-26.9.0", 1).slot == "0"  # no SLOT line
+    assert _by(instances, "dev-cpp/simdutf-9.2.1", 1).slot == "0"  # 0/36: the subslot is cut
+
+
 # --- 2.2 the rule ------------------------------------------------------------------------
 
 
@@ -281,7 +290,7 @@ def test_resolver_without_a_portageq_to_load_asks_one_per_query_and_says_so(
 def test_resolver_in_one_interpreter_prints_what_the_per_query_loop_prints(
     tmp_path: Path,
 ) -> None:
-    """The contract with the step: the very same ``query<TAB>slot`` lines."""
+    """The contract with the step: the very same ``query<TAB>slot<TAB>cpv`` lines."""
     one = _LocalContainer(tmp_path / "one", _ANSWERS)
     loop = _LocalContainer(tmp_path / "loop", _ANSWERS)
     batch = one.run(resolve_argv(_QUERIES, portageq=one.portageq))
