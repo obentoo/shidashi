@@ -44,6 +44,7 @@ from shidashi import (
     publish,
     release_sign,
     slim,
+    soname_waivers,
     toolbox,
     world,
 )
@@ -911,15 +912,19 @@ class Assembler:
 
         ``plan_text`` is one resolution's own output, judged by the subslot and the
         soname rules against ``index_text``. The refusal names ``image`` (with
-        ``recipe`` as its trunk) or, without it, ``recipe``.
+        ``recipe`` as its trunk) or, without it, ``recipe``. The soname waivers of
+        ``variants/soname-waivers.yaml`` are read here, once per judgement.
         """
         shown = image or recipe
         try:
+            waivers = soname_waivers.load_soname_waivers(config.variants_dir())
             by_subslot, by_soname = judge_plan(
-                container, binpkgs.parse_index(index_text), plan_text
+                container, binpkgs.parse_index(index_text), plan_text, waivers=waivers
             )
         except binpkgs.BinpkgError as err:
             raise AssemblerError(f"{err}:\n{err.output.strip()}") from err
+        except soname_waivers.SonameWaiverError as err:
+            raise AssemblerError(str(err)) from err
         if by_subslot or by_soname:
             detail = binpkgs.describe(
                 by_subslot, by_soname, arch=shown.arch, image=shown.flavor, init=shown.init

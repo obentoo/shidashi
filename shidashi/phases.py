@@ -35,7 +35,7 @@ from pathlib import Path
 
 import pydantic
 
-from shidashi import audit, binhost, binpkgs, checkpoint, config, progress, state
+from shidashi import audit, binhost, binpkgs, checkpoint, config, progress, soname_waivers, state
 from shidashi.container import Container
 from shidashi.flow import StagesFlow, active_flow
 from shidashi.recipe import Phase, ResolvedRecipe, UseBreak
@@ -314,7 +314,8 @@ def check_binpkgs(container: Container, recipe: ResolvedRecipe, stage: str) -> d
         try:
             # the install and the settle: the cut packages' final binpkgs too
             plan_text = planned.stdout + planned.stderr + "\n" + settled
-            by_subslot, by_soname = judge_plan(container, instances, plan_text)
+            waivers = soname_waivers_in_force(phase)
+            by_subslot, by_soname = judge_plan(container, instances, plan_text, waivers=waivers)
         except binpkgs.BinpkgError as err:
             raise FactoryError(str(err), phase=phase, output=err.output) from err
         if by_subslot or by_soname:
@@ -1326,8 +1327,21 @@ def providers_first(
     return sorted(f"={cpv}" for cpv in ebuilds if binpkgs.package_of(cpv) in wanted)
 
 
+def soname_waivers_in_force(phase: str) -> tuple[soname_waivers.SonameWaiver, ...]:
+    """The waivers of ``variants/soname-waivers.yaml``; a file that does not validate
+    fails ``phase``. I/O."""
+    try:
+        return soname_waivers.load_soname_waivers(config.variants_dir())
+    except soname_waivers.SonameWaiverError as err:
+        raise FactoryError(str(err), phase=phase) from err
+
+
 def judge_plan(
-    container: Container, instances: Sequence[binpkgs.Instance], plan_text: str
+    container: Container,
+    instances: Sequence[binpkgs.Instance],
+    plan_text: str,
+    *,
+    waivers: Sequence[soname_waivers.SonameWaiver],
 ) -> tuple[list[binpkgs.Stale], list[binpkgs.SonameStale]]:
     """The planned binpkgs of an ``--emptytree`` plan that are stale, by both rules.
     PRIVILEGED: one resolver run in ``container``.
@@ -1337,11 +1351,19 @@ def judge_plan(
     with ``--emptytree`` the plan is the whole root. Shared by the factory's
     ``check-binpkgs`` and the assemble (D3), so the two cannot disagree. Raises
     :class:`~shidashi.binpkgs.BinpkgError`; each caller wraps it.
+
+    A soname finding ``waivers`` covers is not returned (:mod:`shidashi.soname_waivers`);
+    with waivers in force, what they covered and which covered nothing goes to the
+    audit trail as a ``binpkgs.soname_waivers`` event of the step that judges --
+    before a refusal can be raised, so a refused run keeps it too.
     """
     planned = list(dict.fromkeys(planned_instances(checkpoint.plan_tokens(plan_text), instances)))
     providers = binpkgs.resolve_providers(container, binpkgs.provider_queries(planned))
     pool = {s for i in planned for s in i.provides}
-    return binpkgs.stale(planned, providers), binpkgs.soname_stale(planned, pool)
+    waived = soname_waivers.apply_soname_waivers(binpkgs.soname_stale(planned, pool), waivers)
+    if waivers:
+        audit.current().event("binpkgs.soname_waivers", **waived.audit_fields())
+    return binpkgs.stale(planned, providers), list(waived.stale)
 
 
 def stale_binpkgs(
@@ -1361,6 +1383,7 @@ def stale_binpkgs(
     instances = _read_index(pkgdir, phase=label)
     if instances is None:
         return StaleOutcome(None, StalePlan(), {}, {"index": "absent"})
+    waivers = soname_waivers_in_force(label)  # read before anything is moved aside
     try:
         providers = binpkgs.resolve_providers(container, binpkgs.provider_queries(instances))
     except binpkgs.BinpkgError as err:
@@ -1400,11 +1423,14 @@ def stale_binpkgs(
         oneshot = ["emerge", *flow.emerge.options, *exclusions, "--oneshot", *first]
         _run_emerge(container, oneshot, phase=label)
         pool = _vdb_provides(container.rootfs, replaced) | offered
-    by_soname = binpkgs.soname_stale(planned, pool)
+    judged = binpkgs.soname_stale(planned, pool)
     # a planned instance that goes away lets the emerge pick a sibling: judge those too
-    displaced = {s.instance.cpv for s in by_soname}
+    # (a waived instance stays, so its siblings are none of this plan's business)
+    displaced = {s.instance.cpv for s in soname_waivers.apply_soname_waivers(judged, waivers).stale}
     siblings = [i for i in instances if i.cpv in displaced and i not in planned]
-    by_soname += binpkgs.soname_stale(siblings, pool)
+    judged += binpkgs.soname_stale(siblings, pool)
+    waived = soname_waivers.apply_soname_waivers(judged, waivers)
+    by_soname = list(waived.stale)
     plan = plan_stale([*found, *by_soname], instances)
     moved += quarantine_binpkgs(
         container, pkgdir, plan.quarantine_now, arch=recipe.arch, phase=label
@@ -1437,6 +1463,7 @@ def stale_binpkgs(
             {"cpv": i.cpv, "build_id": i.build_id, "needs": n.name}
             for i, n in binpkgs.unresolved_sonames(planned, pool)
         ],
+        **waived.audit_fields(),
     }
     return StaleOutcome(pkgdir, plan, providers, data)
 

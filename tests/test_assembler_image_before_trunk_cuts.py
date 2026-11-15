@@ -187,7 +187,7 @@ def _wire(
             return super().run(argv, **kw)
 
     def judge(
-        container: object, instances: object, plan_text: str
+        container: object, instances: object, plan_text: str, *, waivers: object
     ) -> tuple[list[binpkgs.Stale], list[binpkgs.SonameStale]]:
         judged.append((Path(container.rootfs).name, plan_text))  # type: ignore[attr-defined]
         if stale_shipped and "x/c-3-7" in plan_text:

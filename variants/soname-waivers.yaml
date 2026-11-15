@@ -1,0 +1,43 @@
+# variants/soname-waivers.yaml — soname-stale findings that no rebuild can clear.
+#
+# The soname rule (story 019) calls a binpkg stale when it needs a library version
+# its image no longer offers, and answers with a rebuild. A package that SHIPS a
+# prebuilt binary linked to the old library needs it again after every rebuild: the
+# finding never clears, and the factory's stale-binpkgs step, its check-binpkgs and
+# the assemble refuse the image for ever. A waiver lets ONE package keep needing ONE
+# soname: for it nothing is excluded, moved aside or refused.
+#
+#   package:  category/name, exact -- no version, no wildcard, no operator
+#   soname:   the exact soname waived, e.g. libcrypto.so.3
+#   why:      the root cause, in words someone else can check
+#   found:    the run or date that proves it
+#   until:    the EXIT CONDITION: what must happen for this entry to be deleted
+#
+# Only the soname-stale verdict is waived. The subslot rule, the unresolved sonames
+# and every other soname of the same package are judged as always.
+#
+# A waiver cannot name a file: the binhost index records what a PACKAGE needs
+# (REQUIRES), not which of its files needs it. So an entry also hides any other file
+# of that package that comes to need the same soname -- keep this list short, and
+# never add an entry without an exit condition.
+#
+# Each judgement records what it waived and the waivers that matched nothing
+# (soname_waived, soname_waivers_unused in the run's audit trail). A waiver unused
+# by an image that installs its package has met its exit condition: delete it.
+# Edit here; shidashi/soname_waivers.py validates the file and refuses unknown keys.
+
+- package: sys-kernel/gentoo-kernel-bin
+  soname: libcrypto.so.3
+  why: |
+    gentoo-kernel-bin ships /usr/src/linux-*/certs/extract-cert PREBUILT by Gentoo
+    (its ebuild sets QA_PREBUILT='*'), linked to OpenSSL 3, while the pinned tree
+    has OpenSSL 4 (libcrypto.so.4). The ebuild's modules_prepare rebuilds
+    scripts/sign-file (already on libcrypto.so.4) but not certs/, so rebuilding the
+    binpkg cannot clear the finding and the rebuild the refusal asks for loops for
+    ever. extract-cert only runs when a kernel is built; out-of-tree modules are
+    signed with sign-file. Read on the build host from the NEEDED.ELF.2 of the
+    binpkg of gentoo-kernel-bin-7.3.3 (build 1).
+  found: weekly release 2026.11.13, 2026-11-15
+  until: |
+    Gentoo ships a gentoo-kernel-bin whose certs/extract-cert links libcrypto.so.4.
+    This entry is then reported unused and must be deleted.

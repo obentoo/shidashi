@@ -72,7 +72,7 @@ class _Pretend:
 
 
 def _judge(
-    container: object, instances: object, plan_text: str
+    container: object, instances: object, plan_text: str, *, waivers: object
 ) -> tuple[list[binpkgs.Stale], list[binpkgs.SonameStale]]:
     if "x11-libs/vte-0.84.1" not in plan_text:
         return [], []
