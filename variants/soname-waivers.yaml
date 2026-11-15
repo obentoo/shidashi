@@ -23,7 +23,11 @@
 #
 # Each judgement records what it waived and the waivers that matched nothing
 # (soname_waived, soname_waivers_unused in the run's audit trail). A waiver unused
-# by an image that installs its package has met its exit condition: delete it.
+# by EVERY image that installs its package has met its exit condition: delete it.
+# One image is not enough: another package of that image may offer the old soname
+# (2026-11-15: gnome installs dev-libs/openssl-compat:3, which offers
+# libcrypto.so.3, so its check reports the kernel's waiver unused while minimal,
+# without that package, still needs it).
 # Edit here; shidashi/soname_waivers.py validates the file and refuses unknown keys.
 
 - package: sys-kernel/gentoo-kernel-bin
@@ -40,4 +44,4 @@
   found: weekly release 2026.11.13, 2026-11-15
   until: |
     Gentoo ships a gentoo-kernel-bin whose certs/extract-cert links libcrypto.so.4.
-    This entry is then reported unused and must be deleted.
+    This entry is then reported unused by the minimal image too and must be deleted.
