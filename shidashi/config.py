@@ -22,6 +22,7 @@ _SCRATCH_ENV = "SHIDASHI_SCRATCH"
 _CACHE_ENV = "SHIDASHI_CACHE"
 _SEEDS_ENV = "SHIDASHI_SEEDS_DIR"
 _RUNS_ENV = "SHIDASHI_RUNS"
+_DEV_ISO_ENV = "SHIDASHI_DEV_ISO_DIR"
 
 #: Where a system install (the app-misc/shidashi ebuild) puts the recipes and the
 #: pins: ``<share>/variants`` and ``<share>/seeds``. A module attribute so tests can
@@ -229,6 +230,21 @@ def runs_dir() -> Path:
     if override:
         return Path(override)
     return Path("/var/log/shidashi/runs")
+
+
+def dev_iso_dir() -> Path:
+    """Where ISOs are stashed outside the cache, for ``vm start --dev`` to find.
+
+    Honors ``SHIDASHI_DEV_ISO_DIR`` (read on every call); default
+    ``/var/tmp/shidashi-isos``. A copy kept here outlives a pruned
+    ``<cache>/releases``. The directory may be absent, and under ``/var/tmp`` anyone
+    can create it first: :mod:`shidashi.vm_dev` searches it only when it is the
+    invoking user's alone.
+    """
+    override = os.environ.get(_DEV_ISO_ENV)
+    if override:
+        return Path(override)
+    return Path("/var/tmp/shidashi-isos")
 
 
 def workers_dir() -> Path:

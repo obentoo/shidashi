@@ -209,6 +209,13 @@ small tmpfs), makes an empty `/var/db/repos/staged` repository above the pinned 
 and configures binhosts: the host's pool for the ISO's generation, then the ISO's own
 when it answers, else none. It prints one JSON line; exit 3 means there is no ISO to boot.
 
+Without `--iso`, the ISO is the newest by the date in its file name among the releases
+(`/var/cache/shidashi/releases/<date>/`) and a stash kept outside the cache, so that
+releases can be pruned: `/var/tmp/shidashi-isos` (`SHIDASHI_DEV_ISO_DIR`), ISOs flat or one
+directory down; a release wins a tie. Anyone can create a directory under `/var/tmp`, so
+the stash is searched only when it is yours alone — a real directory you own, that neither
+group nor others can write to. Otherwise it is skipped, with a warning on stderr saying why.
+
 ```sh
 shidashi vm start --dev --name dev          # {"name": "dev", "cid": 42, ..., "ready": true}
 tar -C ~/overlay -c dev-libs/foo | shidashi vm run --name dev -- tar -x -C /var/db/repos/staged

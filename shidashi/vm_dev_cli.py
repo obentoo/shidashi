@@ -56,6 +56,7 @@ def start(
             cpus=cpus,
             display=display,
             disk_size=disk_size or vm_dev.DEFAULT_DISK_SIZE,
+            warn=lambda message: typer.echo(f"warning: {message}", err=True),
         )
     except vm_dev.NoDevIsoError as err:
         typer.echo(f"error: {err}", err=True)

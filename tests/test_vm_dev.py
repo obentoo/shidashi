@@ -3,7 +3,7 @@
 QEMU, the trees and the ISO's build.json are stood in for: a ``FakeDevSession`` records
 start/run/stop instead of booting, ``read_build_info`` returns a build.json, and the
 trees come from a ``FakeTrees``. What is checked is the plan the host makes and the
-JSON bentoolkit reads.
+JSON bentoolkit reads. Which ISO a lookup chooses is tests/test_vm_dev_iso.py's.
 """
 
 import json
@@ -46,29 +46,6 @@ def _iso(releases: Path, date: str, init: str = "systemd", arch: str = "v3") -> 
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(b"iso")
     return path
-
-
-# --- choosing the ISO --------------------------------------------------------------------
-
-
-def test_the_newest_minimal_iso_of_the_init_and_arch_is_chosen(tmp_path: Path) -> None:
-    _iso(tmp_path, "2026.11.10")
-    newest = _iso(tmp_path, "2026.11.12")
-    _iso(tmp_path, "2026.11.13", init="openrc")
-    _iso(tmp_path, "2026.11.14", arch="znver5")
-    (tmp_path / "2026.11.15").mkdir()
-    (tmp_path / "2026.11.15" / "bentoo-2026.11.15-kde-systemd-v3.iso").write_bytes(b"")
-    assert vm_dev.find_dev_iso(tmp_path, init="systemd", arch="v3") == newest
-
-
-@pytest.mark.parametrize("make", [False, True], ids=["no-releases-dir", "no-match"])
-def test_no_minimal_iso_raises_and_says_how_to_make_one(tmp_path: Path, make: bool) -> None:
-    if make:
-        _iso(tmp_path, "2026.11.12", init="openrc")
-    with pytest.raises(vm_dev.NoDevIsoError) as caught:
-        vm_dev.find_dev_iso(tmp_path, init="systemd", arch="v3")
-    assert str(tmp_path) in str(caught.value)
-    assert "shidashi build v3 minimal systemd" in str(caught.value)
 
 
 # --- the local pool ----------------------------------------------------------------------
@@ -190,6 +167,53 @@ def test_start_boots_the_iso_with_its_own_trees_and_reports_the_vm(
     }
 
 
+def _stash(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, date: str, mode: int) -> Path:
+    """An ISO stash of mode ``mode`` holding one ISO of ``date``; the ISO."""
+    stash = tmp_path / "isos"
+    stash.mkdir()
+    stash.chmod(mode)
+    monkeypatch.setenv("SHIDASHI_DEV_ISO_DIR", str(stash))
+    iso = stash / f"bentoo-{date}-minimal-systemd-v3.iso"
+    iso.write_bytes(b"iso")
+    return iso
+
+
+def test_start_without_an_iso_boots_the_newest_of_the_releases_and_the_stash(
+    tmp_path: Path, host: FakeTrees, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stashed = _stash(tmp_path, monkeypatch, "2026.11.14", 0o755)
+    warnings: list[str] = []
+    dev = _start(tmp_path, iso=None, warn=warnings.append)  # _start releases 2026.11.12
+    assert dev.iso == stashed
+    assert FakeDevSession.instances[0].spec.iso == stashed
+    assert warnings == []
+
+
+def test_start_warns_of_a_stash_it_would_not_search_and_boots_a_release(
+    tmp_path: Path, host: FakeTrees, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Hostile: a stash anyone can write to holds the newest ISO."""
+    stashed = _stash(tmp_path, monkeypatch, "2026.11.14", 0o777)
+    warnings: list[str] = []
+    dev = _start(tmp_path, iso=None, warn=warnings.append)
+    assert (
+        dev.iso == tmp_path / "cache/releases/2026.11.12/bentoo-2026.11.12-minimal-systemd-v3.iso"
+    )
+    assert warnings == [
+        f"{stashed.parent} was not searched for an ISO: group or others can write to it (mode 0777)"
+    ]
+
+
+def test_start_with_a_named_iso_never_looks_at_the_stash(
+    tmp_path: Path, host: FakeTrees, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _stash(tmp_path, monkeypatch, "2026.11.14", 0o777)
+    warnings: list[str] = []
+    dev = _start(tmp_path, warn=warnings.append)
+    assert dev.iso.parent.name == "2026.11.12"
+    assert warnings == []
+
+
 def test_the_work_disk_is_new_on_every_start(tmp_path: Path, host: FakeTrees) -> None:
     disk = tmp_path / "session" / "work.qcow2"
     disk.parent.mkdir(parents=True)
@@ -255,6 +279,44 @@ def test_cli_without_a_minimal_iso_exits_with_its_own_code(
     result = CliRunner().invoke(app, ["vm", "start", "--dev"])
     assert result.exit_code == vm_dev.NO_ISO_EXIT == 3
     assert "no minimal ISO" in result.output
+
+
+def test_cli_without_an_iso_names_both_places_and_the_stash_it_skipped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("SHIDASHI_CACHE", str(tmp_path / "cache"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    stash = tmp_path / "isos"
+    monkeypatch.setenv("SHIDASHI_DEV_ISO_DIR", str(stash))
+    absent = CliRunner().invoke(app, ["vm", "start", "--dev"])
+    assert absent.exit_code == 3
+    assert f"under {tmp_path / 'cache' / 'releases'} or {stash}: " in absent.stderr
+
+    _stash(tmp_path, monkeypatch, "2026.11.14", 0o775)
+    skipped = CliRunner().invoke(app, ["vm", "start", "--dev"])
+    assert skipped.exit_code == 3
+    assert skipped.stdout == ""  # bentoolkit reads stdout: no line but the VM's
+    (line,) = skipped.stderr.splitlines()
+    assert line.startswith("error: no minimal ISO for v3/systemd under ")
+    assert f"{stash} was not searched for an ISO: group or others can write to it" in line
+
+
+def test_cli_says_a_warning_on_stderr_and_still_prints_one_json_line(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fake_start(**kw: Any) -> vm_dev.DevVm:
+        kw["warn"]("/var/tmp/isos was not searched for an ISO: it is a symbolic link")
+        return vm_dev.DevVm("dev", 43, Path("/i.iso"), "p1", [], Path("/s"))
+
+    monkeypatch.setattr(vm_dev, "start_dev", fake_start)
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    result = CliRunner().invoke(app, ["vm", "start", "--dev"])
+    assert result.exit_code == 0, result.output
+    (line,) = result.stdout.splitlines()
+    assert json.loads(line)["ready"] is True
+    assert result.stderr.splitlines() == [
+        "warning: /var/tmp/isos was not searched for an ISO: it is a symbolic link"
+    ]
 
 
 def test_cli_prints_the_vm_as_one_json_line(

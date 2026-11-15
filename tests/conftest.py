@@ -31,6 +31,16 @@ def _registry_in_tmp(
 
 
 @pytest.fixture(autouse=True)
+def _no_iso_stash(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No test reads the invoking user's ISO stash (/var/tmp/shidashi-isos): with an ISO
+    there, a ``vm start --dev`` meant to find none would boot it. A test of the stash
+    sets its own."""
+    monkeypatch.setenv("SHIDASHI_DEV_ISO_DIR", str(tmp_path_factory.mktemp("isos") / "absent"))
+
+
+@pytest.fixture(autouse=True)
 def _checkpoints_off(monkeypatch: pytest.MonkeyPatch) -> None:
     """The assemble's checkpoints stay off unless a test hands in a backend: on a
     btrfs /tmp the real ``btrfs`` command would otherwise run, without root."""

@@ -4,8 +4,12 @@ bentoolkit builds a staged ebuild in a disposable VM instead of on the developer
 real isolation, Bentoo's own ``make.conf`` and profile, and root without sudo. This is the
 host side of that contract (the guest side is :mod:`shidashi.vm_dev_guest`):
 
-- the ISO: the one named, else the newest minimal of the init and arch under the
-  releases directory; none is :class:`NoDevIsoError`, exit :data:`NO_ISO_EXIT`;
+- the ISO: the one named, else the newest minimal of the init and arch -- by the date
+  in its file name -- among the releases directory and the ISO stash
+  (:func:`shidashi.config.dev_iso_dir`: copies kept so that releases can be pruned),
+  the releases directory winning a tie. The stash is searched only when it is the
+  invoking user's alone (:func:`stash_distrust`); one that is not is skipped and said
+  so. None found is :class:`NoDevIsoError`, exit :data:`NO_ISO_EXIT`;
 - the trees: the ::gentoo snapshot and overlay commits the ISO's packages came from
   (:mod:`shidashi.iso_pins`), from the shared cache, each shared read-only -- no
   cooldown check, the build that made the ISO already passed it;
@@ -27,8 +31,10 @@ user's.
 
 import contextlib
 import os
+import re
 import shutil
 import signal
+import stat
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -80,18 +86,150 @@ def releases_dir() -> Path:
     return config.cache_dir() / "releases"
 
 
-def find_dev_iso(releases: Path, *, init: str, arch: str) -> Path:
-    """The newest ``bentoo-<date>-minimal-<init>-<arch>.iso`` under ``releases``. I/O."""
-    found = sorted(
-        releases.glob(f"*/bentoo-*-minimal-{init}-{arch}.iso"),
-        key=lambda p: (p.parent.name, p.name),
+@dataclass(frozen=True)
+class StashSkip:
+    """A directory of the ISO stash that was not searched, and why."""
+
+    directory: Path
+    reason: str
+
+    def __str__(self) -> str:
+        return f"{self.directory} was not searched for an ISO: {self.reason}"
+
+
+@dataclass(frozen=True)
+class FoundDevIso:
+    """The ISO a lookup chose, and the stash directories it would not search."""
+
+    iso: Path
+    skipped: tuple[StashSkip, ...] = ()
+
+
+def stash_distrust(directory: Path, *, uid: int) -> str | None:
+    """Why ``directory`` is not user ``uid``'s alone; ``None`` when it is. I/O.
+
+    The stash's default is under /var/tmp, where any local user can create it first
+    and leave an ISO in it -- one the dev VM would boot, with the host's trees and
+    binhost shared. Only its owner can put a file in a directory nobody else may write
+    to. A symbolic link is refused whatever it points at: the target is the choice of
+    whoever made the link. One that cannot be examined is not trusted either;
+    ``FileNotFoundError`` when there is none.
+    """
+    try:
+        status = directory.lstat()
+    except FileNotFoundError:
+        raise
+    except OSError as err:
+        return f"it cannot be examined ({err.strerror or err})"
+    if stat.S_ISLNK(status.st_mode):
+        return "it is a symbolic link"
+    if not stat.S_ISDIR(status.st_mode):
+        return "it is not a directory"
+    if status.st_uid != uid:
+        return f"it belongs to uid {status.st_uid}, not to uid {uid}"
+    if status.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+        return f"group or others can write to it (mode {stat.S_IMODE(status.st_mode):04o})"
+    return None
+
+
+def _dated_isos(directory: Path, named: re.Pattern[str]) -> list[tuple[str, Path]]:
+    """``(date, path)`` of each file right inside ``directory`` whose whole name
+    ``named`` matches, its first group the date; none when it cannot be listed. I/O."""
+    try:
+        entries = sorted(directory.iterdir())
+    except OSError:
+        return []
+    return [(m[1], p) for p in entries if (m := named.fullmatch(p.name)) and p.is_file()]
+
+
+def _subdirectories(directory: Path) -> list[Path]:
+    try:
+        return sorted(p for p in directory.iterdir() if p.is_dir())
+    except OSError:
+        return []
+
+
+def _stashed_isos(
+    stash: Path, named: re.Pattern[str], *, uid: int
+) -> tuple[list[tuple[str, Path]], list[StashSkip]]:
+    """The ISOs ``named`` matches in ``stash`` -- flat, or one directory down -- and
+    the directories left unsearched; neither when there is no stash. I/O.
+
+    A sub-directory answers to the same rule as the stash: an ISO is taken from no
+    directory someone else can write to. One holding no ISO is passed over in silence.
+    """
+    try:
+        reason = stash_distrust(stash, uid=uid)
+    except FileNotFoundError:
+        return [], []
+    if reason is not None:
+        return [], [StashSkip(stash, reason)]
+    found = _dated_isos(stash, named)
+    skipped: list[StashSkip] = []
+    for directory in _subdirectories(stash):
+        inside = _dated_isos(directory, named)
+        if not inside:
+            continue
+        try:
+            reason = stash_distrust(directory, uid=uid)
+        except FileNotFoundError:
+            continue  # gone since it was listed
+        if reason is None:
+            found += inside
+        else:
+            skipped.append(StashSkip(directory, reason))
+    return found, skipped
+
+
+def find_dev_iso(
+    releases: Path,
+    stash: Path | None = None,
+    *,
+    init: str,
+    arch: str,
+    uid: int | None = None,
+) -> FoundDevIso:
+    """The newest ``bentoo-<date>-minimal-<init>-<arch>.iso`` of ``releases`` and ``stash``. I/O.
+
+    ``releases`` holds one directory per release; ``stash`` holds ISOs flat, or one
+    directory down. Newest is by the date in the file NAME (``YYYY.MM.DD``, as
+    :func:`shidashi.publish.release_name` writes it; a file named otherwise is no
+    candidate): a stashed ISO has no dated parent to go by. On the same date the one
+    under ``releases`` wins: it is the tool's own output.
+
+    A stash directory that is not user ``uid``'s alone (:func:`stash_distrust`; the
+    process's user by default) is left unsearched, returned in ``skipped`` and recorded
+    as ``vm.dev.stash_skipped``; an absent stash is nothing to report. None found is
+    :class:`NoDevIsoError`, naming every directory searched and every one skipped.
+    """
+    named = re.compile(
+        rf"bentoo-(\d{{4}}\.\d{{2}}\.\d{{2}})-minimal-{re.escape(init)}-{re.escape(arch)}\.iso"
     )
-    if not found:
+    # (date, 1 for a release / 0 for a stashed copy, path): the greatest is the choice
+    candidates = [
+        (date, 1, str(path))
+        for release in _subdirectories(releases)
+        for date, path in _dated_isos(release, named)
+    ]
+    searched = [releases]
+    skipped: list[StashSkip] = []
+    if stash is not None:
+        stashed, skipped = _stashed_isos(stash, named, uid=os.getuid() if uid is None else uid)
+        candidates += [(date, 0, str(path)) for date, path in stashed]
+        if stash not in [skip.directory for skip in skipped]:
+            searched.append(stash)
+    for skip in skipped:
+        audit.current().event(
+            "vm.dev.stash_skipped", directory=str(skip.directory), reason=skip.reason
+        )
+    if not candidates:
+        where = " or ".join(str(directory) for directory in searched)
+        notes = "".join(f"; {skip}" for skip in skipped)
         raise NoDevIsoError(
-            f"no minimal ISO for {arch}/{init} under {releases}: build one with "
+            f"no minimal ISO for {arch}/{init} under {where}{notes}: build one with "
             f"`shidashi build {arch} minimal {init}`, or name one with --iso"
         )
-    return found[-1]
+    return FoundDevIso(Path(max(candidates)[2]), tuple(skipped))
 
 
 def local_pool(info: Mapping[str, object]) -> Path | None:
@@ -127,14 +265,22 @@ def start_dev(
     disk_size: str = DEFAULT_DISK_SIZE,
     download: bool = True,
     session_factory: SessionFactory = vm.Session,
+    warn: Callable[[str], None] = lambda _message: None,
 ) -> DevVm:
     """Boot a dev VM and ready it; :class:`vm.VmError` naming the step that failed.
 
     ``repo`` is the Shidashi checkout, where an older ISO's pins are read with git.
-    A setup that fails powers the VM off before the error is raised.
+    A setup that fails powers the VM off before the error is raised. ``warn`` is told
+    of each stash directory the ISO lookup would not search: the VM then boots an
+    older ISO than the user expects, which must not pass in silence.
     """
     sweep_dead_dev_sessions(directory.parent, keep=directory.name)
-    iso = (iso or find_dev_iso(releases_dir(), init=init, arch=arch)).resolve()
+    if iso is None:
+        found = find_dev_iso(releases_dir(), config.dev_iso_dir(), init=init, arch=arch)
+        for skip in found.skipped:
+            warn(str(skip))
+        iso = found.iso
+    iso = iso.resolve()
     info = vm.read_build_info(iso)
     try:
         pins = iso_pins.read_iso_pins(info, repo=repo)
