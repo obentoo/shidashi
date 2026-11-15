@@ -180,3 +180,27 @@ def test_timer_install_installs_the_user_units_with_systemctl_user_only(lab: Wee
     assert calls and all(c.startswith("--user") for c in calls), calls
     assert any("enable --now shidashi-weekly-lab.timer" in c for c in calls)
     assert not (lab.root / "sudo.log").exists()
+
+
+def test_the_cycle_switches_the_workers_swapfile_on_before_it_builds(lab: WeeklyLab) -> None:
+    """The worker's root is in RAM, so its ``swapon`` is gone after every reboot -- and a
+    desktop build (webkit-gtk, -j32) is killed by the OOM killer without it. The cycle
+    asks for it, idempotently, ahead of the release."""
+    done = lab.run("weekly")
+    assert done.returncode == 0, done.stdout + done.stderr
+    swap = [
+        i
+        for i, c in enumerate(lab.calls())
+        if c[:3] == ["worker", "run", "bentoo-lab"] and any("swapon" in a for a in c)
+    ]
+    assert swap, lab.calls()
+    assert swap[0] < lab.index("release", "v3")
+    command = " ".join(lab.calls()[swap[0]])
+    assert "/mnt/work/swapfile" in command
+    assert "swapon --show" in command, "must be a no-op when the swap is already on"
+
+
+def test_a_worker_without_the_swapfile_does_not_stop_the_cycle(lab: WeeklyLab) -> None:
+    done = lab.run("weekly", WEEKLY_SWAPFILE="")
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert not any(c[:2] == ["worker", "run"] for c in lab.calls())

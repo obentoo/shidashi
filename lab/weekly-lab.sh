@@ -18,6 +18,7 @@
 #   WEEKLY_KEEP      4                               releases kept here, and in .pruned/
 #   WEEKLY_POWEROFF  0                               1: power the worker off after a green run
 #   WEEKLY_ALLOW_DIRTY 0                             1: build HEAD although the tree has changes
+#   WEEKLY_SWAPFILE  /mnt/work/swapfile              swapped on before the build (empty: never)
 #   SHIDASHI_SCRATCH /var/tmp/shidashi-<user>        job results; /var/tmp/shidashi is root's
 set -euo pipefail
 
@@ -28,6 +29,7 @@ INIT=${WEEKLY_INIT:-systemd}
 IMAGES=${WEEKLY_IMAGES:-minimal,kde,gnome}
 OUT=${WEEKLY_OUT:-/var/cache/shidashi/releases}
 KEEP=${WEEKLY_KEEP:-4}
+SWAPFILE=${WEEKLY_SWAPFILE-/mnt/work/swapfile}
 export SHIDASHI_SCRATCH=${SHIDASHI_SCRATCH:-/var/tmp/shidashi-$(id -un)}
 
 shidashi() { "$REPO/.venv/bin/python" -c 'from shidashi.cli import app; app()' "$@"; }
@@ -43,6 +45,14 @@ weekly() {
   out=$(shidashi worker cache-owner "$WORKER" 2>&1) || die "cannot read what $WORKER owns: $out"
   grep -qE "(:|,) *$ARCH( |,|$)" <<<"$out" \
     || die "$WORKER does not own $ARCH's cache ($out); run: shidashi worker cache-owner $WORKER --arch $ARCH"
+
+  # the worker's root is in RAM: its swap is gone after every reboot, and webkit-gtk (-j32) is
+  # killed by the OOM killer without it. Idempotent; a missing file only warns.
+  if [ -n "$SWAPFILE" ]; then
+    shidashi worker run "$WORKER" -- bash -c \
+      "swapon --show | grep -q '$SWAPFILE' || swapon '$SWAPFILE'" \
+      || say "cannot switch $SWAPFILE on at $WORKER: a desktop build may run out of memory"
+  fi
 
   say "building $ARCH/$INIT --images $IMAGES on $WORKER"
   local extra=()
