@@ -39,6 +39,7 @@ from shidashi.recipe import (
     load_stage,
 )
 from shidashi.resolve import apply_portage, catalog_entry, kit_index, world_atoms
+from shidashi.system import load_system_config
 
 # the binpkg check of a shipped stage extracts the stage3's vdb: stubbed here
 pytestmark = pytest.mark.usefixtures("no_stage3_vdb")
@@ -172,21 +173,39 @@ def test_the_worker_is_a_core_stage_on_minimal_not_a_flavor() -> None:
 
 
 def test_the_worker_is_a_thin_container_and_vm_host() -> None:
-    """core + podman + KVM (2026-10-06): the pipeline's tools run in containers.
+    """core + podman + KVM (2026-10-06), plus what a build VM needs (2026-11-15).
 
     smartmontools is the one operator tool in the image -- it reads the machine's
-    own disks with no network and no container. QEMU, OVMF, virtiofsd and syft
-    must never creep back in: the worker hosts the boot test, it does not carry it.
+    own disks with no network and no container. The worker hosts bentoolkit's build
+    VMs, so it carries QEMU and virtiofsd; they cannot be added to a running worker
+    (the pool's binpkgs want the current pin's glibc and OpenSSL). xorriso comes WITH
+    QEMU: a node that has qemu-system-x86_64 runs its boot test natively, and that
+    path reads the ISO with it. The firmware stays a dependency, never asked for, and
+    syft stays out: the pipeline's other tools still run in containers.
     """
     atoms = set(world_atoms(_recipe("worker")))
     assert {"app-containers/podman", "sys-apps/smartmontools"} <= atoms
-    pipeline_tools = {
-        "app-emulation/qemu",
-        "app-emulation/virtiofsd",
-        "app-containers/syft",
-    }
-    assert not atoms & pipeline_tools
+    build_vm = {"app-emulation/qemu", "app-emulation/virtiofsd", "dev-libs/libisoburn"}
+    assert build_vm <= atoms
+    assert "app-containers/syft" not in atoms
     assert not any(a.startswith("sys-firmware/edk2") for a in atoms)
+
+
+def test_the_slimmed_worker_keeps_what_a_build_vm_runs() -> None:
+    """The slim step depcleans everything outside ``keep`` and proves ``commands``:
+    a build VM's packages asked for but not kept would be built and then removed."""
+    slim = load_system_config(_recipe("worker"), variants_dir=config.variants_dir()).slim
+    assert slim is not None
+    assert {"app-emulation/qemu", "app-emulation/virtiofsd", "dev-libs/libisoburn"} <= set(
+        slim.keep
+    )
+    assert {
+        "/usr/bin/qemu-system-x86_64",
+        "/usr/bin/qemu-img",
+        "/usr/libexec/virtiofsd",
+        "/usr/bin/xorriso",
+        "/usr/lib/systemd/systemd-ssh-proxy",
+    } <= set(slim.commands)
 
 
 def test_minimal_is_the_base_plus_the_console_kits() -> None:

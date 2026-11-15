@@ -38,6 +38,12 @@ slim:
     - net-misc/openssh             # sshd, ssh-keygen
     - dev-lang/python:3.14         # kyomei_worker.py; the job venv's pyvenv.cfg home
     - app-containers/podman        # the @worker set's container engine
+    # bentoolkit's build VMs (`vm start --dev`, 2026-11-15) and the native boot test.
+    # Measured on the v3 toolbox: qemu's files, its firmware and xorriso add ~34 MiB
+    # to the squashfs (the 297 MiB of other architectures' firmware compress to 7.6).
+    - app-emulation/qemu
+    - app-emulation/virtiofsd
+    - dev-libs/libisoburn          # xorriso: a node with qemu reads the ISO itself
     - dev-vcs/git                  # a job's required tools (shidashi doctor)
     - app-crypt/gnupg
     - app-arch/tar
@@ -109,6 +115,12 @@ slim:
     - /usr/bin/nproc
     - /usr/bin/grep
     - /usr/bin/podman
+    # the build VM (shidashi/vm.py) and the boot test it makes native
+    - /usr/bin/qemu-system-x86_64
+    - /usr/bin/qemu-img
+    - /usr/libexec/virtiofsd
+    - /usr/bin/xorriso
+    - /usr/lib/systemd/systemd-ssh-proxy       # ssh to the guest over vsock
     # network and kernel modules
     - /usr/bin/nmcli
     - /usr/bin/wpa_supplicant

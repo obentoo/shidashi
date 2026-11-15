@@ -156,7 +156,7 @@ session (SSH key, QMP socket) in the scratch too: when that directory cannot be 
 `/var/tmp/shidashi` left by a root build, say — it stops before booting and names
 `--work-dir` and `SHIDASHI_SCRATCH` as the way out.
 
-On a node without QEMU — the slim worker image ships none — `vm test`, `assemble --boot-test`
+On a node without QEMU — a worker image from before 2026-11-15 ships none — `vm test`, `assemble --boot-test`
 and `build --boot-test` run the whole boot test in a podman container made from the
 v3-systemd toolbox, imported as `localhost/shidashi-vm-runner` on first use and reused until
 the toolbox changes. It needs root, podman, `/dev/kvm`, `/dev/vhost-vsock` and the toolbox

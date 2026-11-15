@@ -1,7 +1,9 @@
 """Boot tests on a node without QEMU, in the toolbox container (story 024).
 
-The slim worker (story 021) has podman and ``/dev/kvm`` but no QEMU, OVMF or
-xorriso. When ``qemu-system-x86_64`` is missing, the WHOLE boot test runs inside
+The slim worker (story 021) had podman and ``/dev/kvm`` but no QEMU, OVMF or
+xorriso; since 2026-11-15 its image ships all three (``variants/kits/system/worker``,
+for bentoolkit's build VMs), and a worker booted from an older image still has none.
+When ``qemu-system-x86_64`` is missing, the WHOLE boot test runs inside
 a podman container made from the v3-systemd toolbox -- the stage Shidashi already
 builds -- with the node's own venv and source tree bound at the same paths. The
 host, which has QEMU, keeps the native path.

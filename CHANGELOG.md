@@ -36,6 +36,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The worker image ships QEMU, virtiofsd and xorriso.** The worker is to host
+  bentoolkit's build VMs (`vm start --dev`), next to the binpkg pool and with its 16
+  threads. They cannot be added to a worker that is running: the pool's binpkgs belong
+  to the current pin, and on an image of an older one the install wants a new glibc and
+  OpenSSL under a live sshd. xorriso comes with QEMU because a node that has
+  `qemu-system-x86_64` runs its boot test natively, and that path reads the ISO with it;
+  the toolbox container stays the way on a worker booted from an older image. The slim
+  step keeps the three packages and proves their commands; measured on the v3 toolbox,
+  they add about 34 MiB to a 533 MiB squashfs, inside the 600 MiB budget.
 - **The stale-binpkgs check asks Portage in one interpreter, not one `portageq` per
   question.** Each `portageq` loaded the configuration and the repositories again: the v3
   index's 677 slot-dep queries cost ~4 minutes in every stage of every build. The stage's

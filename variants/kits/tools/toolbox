@@ -4,7 +4,8 @@
 # grub-mkrescue drives xorriso (libisoburn) and builds the EFI image with mtools.
 # mksquashfs and unsquashfs come with @base (kits/core/fs: sys-fs/squashfs-tools).
 #
-# The boot test too (story 024): on a node without QEMU (the slim worker) the whole boot
+# The boot test too (story 024): on a node without QEMU (a worker image from before
+# 2026-11-15; the worker ships its own since, kits/system/worker) the whole boot
 # test runs in a podman container imported from the v3-systemd toolbox
 # (shidashi/vmrunner.py). qemu brings qemu-system-x86_64 and its OVMF; openssh brings
 # ssh and ssh-keygen; systemd-ssh-proxy comes with the stage3's systemd. No virtiofsd:

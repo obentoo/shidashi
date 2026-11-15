@@ -6,6 +6,18 @@
 # the venv the host ships, and only the builds run in `systemd-nspawn`; podman is
 # the container engine kept for container builds. KVM needs no package (the dist
 # kernel carries kvm_amd/kvm_intel). smartmontools reads the machine's own disks.
+#
+# The worker also hosts bentoolkit's build VMs (`shidashi vm start --dev`, 2026-11-15):
+# qemu brings qemu-system-x86_64, qemu-img and, as a dependency, the OVMF firmware;
+# virtiofsd shares the pinned trees and the binpkg pool with the guest. They cannot be
+# added to a running worker instead: the pool's binpkgs belong to the current pin, and
+# on an image of an older one the install wants a new glibc and OpenSSL under a live sshd.
+# libisoburn (xorriso) comes WITH qemu, never without: a node that has
+# qemu-system-x86_64 runs its boot test natively (shidashi/vmrunner.py: native), and
+# that path reads the ISO's bentoo/build.json with xorriso.
 
 app-containers/podman
+app-emulation/qemu
+app-emulation/virtiofsd
+dev-libs/libisoburn
 sys-apps/smartmontools
