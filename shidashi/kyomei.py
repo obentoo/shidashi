@@ -306,6 +306,8 @@ def complete(
     known_hosts = base / "known_hosts"
     host_key = paired.welcome.host_key
     fingerprint = _keygen_fingerprint(host_key, runner)
+    registry = workers.load_registry(registry_path)
+    replaced = registry.get(paired.name)
     entry = workers.WorkerEntry(
         name=paired.name,
         address=paired.address,
@@ -314,9 +316,15 @@ def complete(
         paired_at=dt.datetime.now(dt.UTC).isoformat(timespec="seconds"),
         cpu_flags=tuple(paired.welcome.cpu_flags),
         image=paired.welcome.image,
+        # The one field that outlives a pairing: which arch caches sit on the
+        # worker's work disk is the host's decision (`worker cache-owner`), as in
+        # provision --replace (0e0797d). Re-pairing a name dropped it, and the host
+        # went back to building those archs itself. `provisioned` is NOT carried:
+        # this welcome already brings the address, CPU flags and image that a
+        # provisioned entry waits for.
+        cache_archs=replaced.cache_archs if replaced is not None else (),
     )
     workers.pin(known_hosts, paired.name, host_key)
-    registry = workers.load_registry(registry_path)
     registry[paired.name] = entry
     workers.save_registry(registry_path, registry)
 

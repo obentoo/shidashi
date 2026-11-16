@@ -3044,6 +3044,14 @@ def kyomei_command(
                         "installed this host's key: reboot it to open a new pairing window)"
                     )
         entry = kyomei.complete(paired, registry)
+        if before is not None and before.host_key != entry.host_key and entry.cache_archs:
+            # another key may be another machine, whose work disk holds none of them
+            archs = ", ".join(entry.cache_archs)
+            _err_console.print(
+                f"[bold yellow]warning:[/bold yellow] {escape(entry.name)} still owns the "
+                f"cache of {escape(archs)}; if this is not the machine that holds it, give "
+                f"it back: shidashi worker cache-owner {escape(entry.name)} --arch ARCH --off"
+            )
     except (
         kyomei.PairingError,
         kyomei_protocol.ProtocolError,
