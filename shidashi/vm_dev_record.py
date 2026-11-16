@@ -38,6 +38,12 @@ from pathlib import Path
 from shidashi import kyomei_protocol, vm
 
 _WORKER_RECORD = "worker.json"
+#: The client key ``vm ssh-config`` makes on this host for a session on a worker.
+CLIENT_KEY = "client_ed25519"
+#: The ``Host`` ``vm ssh-config`` writes for the session.
+SSH_CONFIG = "ssh_config"
+#: What ``vm ssh-config`` leaves beside the record, gone with it (:func:`remove_record`).
+ACCESS_FILES = (SSH_CONFIG, CLIENT_KEY, f"{CLIENT_KEY}.pub")
 _NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
 #: A worker's name as pairing accepts it: nothing else can be in the registry.
 _WORKER_RE = re.compile(kyomei_protocol.HOSTNAME_RE)
@@ -140,10 +146,12 @@ def write_record(session: WorkerSession) -> Path:
 
 
 def remove_record(name: str) -> None:
-    """Forget session ``name``: the record goes, and its directory when nothing else is
-    in it (a local session of the same name keeps its own files). I/O."""
+    """Forget session ``name``: the record goes, with the ssh access ``vm ssh-config``
+    made for it (:data:`ACCESS_FILES`), and its directory when nothing else is in it (a
+    local session of the same name keeps its own files). I/O."""
     path = record_path(name)
-    with contextlib.suppress(OSError):
-        path.unlink(missing_ok=True)
+    for leftover in (path, *(path.parent / access for access in ACCESS_FILES)):
+        with contextlib.suppress(OSError):
+            leftover.unlink(missing_ok=True)
     with contextlib.suppress(OSError):
         path.parent.rmdir()

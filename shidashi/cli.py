@@ -51,6 +51,7 @@ from shidashi import (
     release_cli,
     schedule,
     stop_signals,
+    vm_access_cli,
 )
 from shidashi import remote as remote_mod
 from shidashi import worker as worker_mod
@@ -90,6 +91,7 @@ vm_app = typer.Typer(
     help="Boot an ISO in a VM and drive it over SSH on vsock (no network, no screen).",
 )
 app.add_typer(vm_app, name="vm")
+vm_access_cli.register(vm_app)
 kits_app = typer.Typer(no_args_is_help=True, help="The kit library: every package Bentoo builds.")
 app.add_typer(kits_app, name="kits")
 worker_app = typer.Typer(no_args_is_help=True, help="Drive a paired worker (shidashi kyomei).")

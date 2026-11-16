@@ -325,3 +325,10 @@ def test_a_group_left_with_only_unreaped_ended_processes_is_gone(tmp_path: Path)
     finally:
         child.kill()
         child.wait()
+
+
+def test_the_ssh_relay_line_runs_the_sessions_tree_as_the_end_of_the_chain() -> None:
+    # `vm ssh-config`'s ProxyCommand: the worker's own relay, from the tree shipped for
+    # the session, never relaying again (SHIDASHI_DEV_RELAYED)
+    line = shell.relayed_ssh_relay_command(_COMMIT, "dev")
+    assert line == f"{_RELAYED} vm ssh-relay --name dev"

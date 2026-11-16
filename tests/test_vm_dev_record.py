@@ -173,6 +173,16 @@ def test_removing_the_record_keeps_what_else_is_in_the_directory(state: Path) ->
     assert sorted(p.name for p in (state / "dev").iterdir()) == ["session.json"]
 
 
+def test_removing_the_record_takes_the_ssh_access_it_made_along(state: Path) -> None:
+    # `vm ssh-config` leaves a client key and a Host beside the record: an Include of
+    # every session's ssh_config must not keep reaching a session that is gone
+    vm_dev_record.write_record(_session())
+    for name in vm_dev_record.ACCESS_FILES:
+        (state / "dev" / name).write_text("x")
+    vm_dev_record.remove_record("dev")
+    assert not (state / "dev").exists()
+
+
 def test_a_second_write_replaces_the_first_whole(state: Path) -> None:
     vm_dev_record.write_record(_session())
     vm_dev_record.write_record(_session(commit="6" * 40, worker="other-lab"))

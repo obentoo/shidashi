@@ -299,7 +299,9 @@ def qemu_argv(
         spec.display,
         "-device",
         f"vhost-vsock-pci,guest-cid={spec.cid}",
-        *_credential("ssh.authorized_keys.root", pubkey),
+        # ended by a newline: systemd writes it as authorized_keys byte for byte, and a
+        # key `vm ssh-config` adds after an unended line would join it and break both
+        *_credential("ssh.authorized_keys.root", pubkey.rstrip("\n") + "\n"),
         *_credential("systemd.unit-dropin.sshd@.service", _KEYGEN_DROPIN),
         "-qmp",
         f"unix:{qmp},server,nowait",

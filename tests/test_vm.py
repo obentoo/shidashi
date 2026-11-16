@@ -44,7 +44,9 @@ def test_qemu_argv_boots_headless_with_vsock_and_the_key_as_a_credential(tmp_pat
     assert "vhost-vsock-pci,guest-cid=7" in argv
     assert argv[argv.index("-display") : argv.index("-display") + 2] == ["-display", "none"]
     creds = [argv[i + 1] for i, a in enumerate(argv) if a == "-smbios"]
-    key = base64.b64encode(b"ssh-ed25519 AAAA k").decode()
+    # one line, ended: systemd writes the credential as authorized_keys byte for byte, and
+    # a key added after one with no newline joins its line and breaks both (2026-11-16)
+    key = base64.b64encode(b"ssh-ed25519 AAAA k\n").decode()
     assert f"type=11,value=io.systemd.credential.binary:ssh.authorized_keys.root={key}" in creds
     assert any("systemd.unit-dropin.sshd@.service=" in c for c in creds)
     assert "pflash" not in " ".join(argv)

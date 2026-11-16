@@ -181,6 +181,16 @@ def relayed_run_command(
     )
 
 
+def relayed_ssh_relay_command(commit: str, name: str) -> str:
+    """The shell line that joins its ssh channel to session ``name``'s guest sshd. Pure.
+
+    It is the ``ProxyCommand`` ``vm ssh-config`` writes (:mod:`shidashi.vm_access`):
+    ``systemd-ssh-proxy`` passes a file descriptor, which cannot cross the hop to the
+    worker, so the worker's own Shidashi relays the bytes instead.
+    """
+    return worker.shipped_shell(commit, ["vm", "ssh-relay", "--name", name], also=_RELAYED)
+
+
 def relayed_stop_command(commit: str, name: str) -> str:
     """The shell line that ends session ``name`` on the worker. Pure.
 
