@@ -122,7 +122,8 @@ def recording(path: Path | None, *, arch: str, init: str, output_dir: Path) -> G
         _record_failure(path, _from_exit(err, arch=arch, init=init))
         raise
     except BaseException as err:
-        # Ctrl-C, or SIGTERM/SIGHUP that cli._stopped turned into SystemExit(128 + sig)
+        # Ctrl-C, or SIGTERM/SIGHUP that stop_signals.exit_on_stop turned into
+        # SystemExit(128 + sig)
         _record_failure(path, _outcome(arch, init, "error", _exit_code_of(err), str(err)))
         raise
     isos = _variant_isos(output_dir, arch=arch, init=init)

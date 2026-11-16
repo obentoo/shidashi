@@ -33,9 +33,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`shidashi vm run --stream`** passes the guest's output through as it is written;
   **`--timeout 0`** waits however long the command takes. stdin reaches the guest command
   in both modes.
+- **`shidashi vm start --dev --max-life HOURS`: a dev session that ends itself.** A
+  session whose caller died kept a VM and a work disk of up to 40 GB alive, and nothing
+  stopped it: the sweep of a later start only removes sessions whose QEMU is already
+  dead. With `--max-life` (a positive number, fractions allowed; without `--dev` a usage
+  error) the session gets a deadline, counted from the moment the VM is ready, and a small
+  detached watchdog that then does what `vm stop` does — VM off, directory removed. No
+  systemd is involved: it works for a user on the host and for root on a worker alike.
+  The JSON line gains `"expires"`, the deadline in ISO 8601 UTC, `null` without the
+  option. `vm stop`, the sweep and a start under the same name end the watchdog of the
+  session they remove. Each expiry appends one JSON line to `expiry.jsonl` beside the
+  session directories (`$XDG_STATE_HOME/shidashi/vm/`, or `$SHIDASHI_SCRATCH/vm/`); a
+  session that cannot be ended is logged as `failed` and tried again every minute.
+- **`shidashi vm start --dev --pins-json` (hidden) takes the ISO's pins from the caller.**
+  An ISO assembled before build.json named its pins has them read with git from the
+  Shidashi checkout, and a build worker runs a shipped source tree with no `.git`. The
+  host resolves them and hands them over as the same block build.json carries
+  (`iso_pins.pins_block` writes it). git is then never asked; an ISO that does name its
+  pins must agree with the ones handed in, or the start fails saying how they differ. A
+  block that does not parse, has the wrong shape or carries an id that is not its own is
+  a usage error (exit 2) before anything boots.
 
 ### Changed
 
+- **`shidashi vm start --memory` tells "not given" from `8G`.** The option has no default
+  at the command line any more; the VM still gets 8G (`vm.DEFAULT_MEMORY`) where it is
+  made, and the help still says so. A caller that starts the VM elsewhere -- a build
+  worker with more RAM -- can now pick its own default without overriding a choice.
 - **The worker image ships QEMU, virtiofsd and xorriso.** The worker is to host
   bentoolkit's build VMs (`vm start --dev`), next to the binpkg pool and with its 16
   threads. They cannot be added to a worker that is running: the pool's binpkgs belong
@@ -56,6 +80,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A `vm run` ended by SIGTERM or SIGHUP no longer leaves its command running in the
+  guest.** The command was stopped in the guest on its timeout and on Ctrl+C only: the
+  default action of the two signals ended `vm run` where it stood, and a build went on in
+  the VM. That is how a `vm run` ends when it is driven over ssh and the connection goes,
+  or when its process group is killed. While a guest command runs, both signals now
+  unwind as Ctrl+C does -- the guest's process group is killed, the local ssh is reaped --
+  and the process exits with 128 + the signal (143, 129). Once the stop is under way a
+  second signal is ignored, the one that kills the guest command included; a SIGHUP
+  ignored on purpose (`nohup`) stays ignored.
 - **A package with a fresh binpkg is no longer compiled again in every build because an
   old version of it has a stale one.** The `stale-binpkgs` step excluded the whole
   package (`--usepkg-exclude=cat/pkg`) until a fresh binpkg of the stale *version*

@@ -6,12 +6,18 @@ bentoolkit follows a build as it happens, so here ssh inherits our stdin, stdout
 stderr: each line reaches the caller as the guest writes it, and whatever is piped into
 ``vm run`` (``tar | shidashi vm run -- tar -x``) reaches the guest command unchanged.
 
-Stopping it (the timeout, Ctrl+C) stops it IN THE GUEST too. ssh runs no terminal here, so
-killing the local ssh leaves the remote command running: a build would go on writing
-``/var/tmp/portage`` while bentoolkit starts the next attempt (caught by the CI run of
-2026-11-13, where ``sleep`` outlived its timeout). sshd starts the command's shell in a
-new session, so that shell leads a process group holding everything the command starts;
-it writes its pid to a file first, and a second ssh kills the whole group.
+Stopping it (the timeout, Ctrl+C, SIGTERM, SIGHUP) stops it IN THE GUEST too. ssh runs no
+terminal here, so killing the local ssh leaves the remote command running: a build would
+go on writing ``/var/tmp/portage`` while bentoolkit starts the next attempt (caught by the
+CI run of 2026-11-13, where ``sleep`` outlived its timeout). sshd starts the command's
+shell in a new session, so that shell leads a process group holding everything the
+command starts; it writes its pid to a file first, and a second ssh kills the whole group.
+
+SIGTERM and SIGHUP are how a ``vm run`` on a build worker ends when the host's relay
+goes: its ssh session closes, or its process group is killed. Their default action runs
+no ``except``, so while a guest command runs both unwind as Ctrl+C does
+(:func:`shidashi.stop_signals.unwinding_on_stop`) and the process ends with 128 + signum;
+one ignored on purpose (``nohup``) stays ignored.
 
 Nothing is captured, so the audit trail records the command, its exit code and its
 duration -- not its output, which went to the caller.
@@ -24,7 +30,7 @@ import sys
 import time
 from typing import IO
 
-from shidashi import audit, vm
+from shidashi import audit, stop_signals, vm
 
 #: The exit code of a command stopped at its timeout -- coreutils ``timeout``'s.
 TIMEOUT_EXIT = 124
@@ -50,34 +56,36 @@ def stream(
     ``stdin``/``stdout``/``stderr`` default to ours (inherited). ``timeout`` None is no
     limit; past it ssh is stopped (SIGTERM, then SIGKILL after a grace), a line on
     stderr says so and the result is :data:`TIMEOUT_EXIT`. ssh's own failure to reach
-    the guest is its 255, passed through.
+    the guest is its 255, passed through. Ctrl+C, SIGTERM and SIGHUP stop the guest
+    command and are raised on: ``KeyboardInterrupt``, ``SystemExit(128 + signum)``.
     """
     began = time.monotonic()
     pidfile = _pidfile()
-    child = subprocess.Popen(
-        vm.ssh_argv(session.key, session.spec.cid, guarded(command, pidfile)),
-        stdin=stdin,
-        stdout=stdout,
-        stderr=stderr,
-    )
-    try:
-        code = child.wait(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        _stop_guest(session, pidfile)
-        child.terminate()
-        try:
-            child.wait(timeout=_TERM_GRACE)
-        except subprocess.TimeoutExpired:
-            child.kill()
-            child.wait()
-        print(f"shidashi vm run: timed out after {timeout:g} s", file=sys.stderr, flush=True)
-        code = TIMEOUT_EXIT
-    except BaseException:
-        # Ctrl+C or a signal: never leave an ssh (and the guest command) behind
-        _stop_guest(session, pidfile)
-        child.kill()
-        child.wait()
-        raise
+    with stop_signals.unwinding_on_stop(keep_ignored=True):
+        child = subprocess.Popen(
+            vm.ssh_argv(session.key, session.spec.cid, guarded(command, pidfile)),
+            stdin=stdin,
+            stdout=stdout,
+            stderr=stderr,
+        )
+        try:  # the outer one: a stop landing while the timeout is carried out counts too
+            try:
+                code = child.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                _stop_guest(session, pidfile)
+                child.terminate()
+                try:
+                    child.wait(timeout=_TERM_GRACE)
+                except subprocess.TimeoutExpired:
+                    child.kill()
+                    child.wait()
+                print(
+                    f"shidashi vm run: timed out after {timeout:g} s", file=sys.stderr, flush=True
+                )
+                code = TIMEOUT_EXIT
+        except BaseException:
+            _abandon(session, pidfile, child)
+            raise
     audit.current().event(
         "vm.command",
         command=command,
@@ -97,25 +105,25 @@ def run_captured(session: vm.Session, command: str, *, timeout: float | None) ->
     """
     began = time.monotonic()
     pidfile = _pidfile()
-    child = subprocess.Popen(
-        vm.ssh_argv(session.key, session.spec.cid, guarded(command, pidfile)),
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
-    try:
-        out, err = child.communicate(timeout=timeout)
-        code = child.returncode
-    except subprocess.TimeoutExpired:
-        _stop_guest(session, pidfile)
-        child.kill()
-        out, err = child.communicate()
-        err += f"shidashi vm run: timed out after {timeout:g} s\n".encode()
-        code = TIMEOUT_EXIT
-    except BaseException:
-        _stop_guest(session, pidfile)
-        child.kill()
-        child.wait()
-        raise
+    with stop_signals.unwinding_on_stop(keep_ignored=True):
+        child = subprocess.Popen(
+            vm.ssh_argv(session.key, session.spec.cid, guarded(command, pidfile)),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        try:  # as in stream: the timeout's own stop can be interrupted too
+            try:
+                out, err = child.communicate(timeout=timeout)
+                code = child.returncode
+            except subprocess.TimeoutExpired:
+                _stop_guest(session, pidfile)
+                child.kill()
+                out, err = child.communicate()
+                err += f"shidashi vm run: timed out after {timeout:g} s\n".encode()
+                code = TIMEOUT_EXIT
+        except BaseException:
+            _abandon(session, pidfile, child)
+            raise
     result = vm.GuestResult(
         command,
         code,
@@ -147,6 +155,20 @@ def guarded(command: str, pidfile: str) -> str:
     when the command ends.
     """
     return f"echo $$ > {pidfile}; sh -c {shlex.quote(command)}; rc=$?; rm -f {pidfile}; exit $rc"
+
+
+def _abandon(session: vm.Session, pidfile: str, child: subprocess.Popen[bytes]) -> None:
+    """Ctrl+C, SIGTERM or SIGHUP: never leave an ssh, nor the guest command, behind.
+
+    A stop is rarely one signal: Ctrl+C through ``ssh -t`` is followed by the hangup of
+    the session it ends, and a relay may signal the process group twice. From here on
+    SIGTERM and SIGHUP are ignored, so neither cuts this short -- nor kills the second
+    ssh, which inherits them ignored (OpenSSH leaves an ignored signal ignored).
+    """
+    stop_signals.stop_under_way()
+    _stop_guest(session, pidfile)
+    child.kill()
+    child.wait()
 
 
 def _stop_guest(session: vm.Session, pidfile: str) -> None:

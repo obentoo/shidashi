@@ -50,6 +50,7 @@ from shidashi import (
     publish,
     release_cli,
     schedule,
+    stop_signals,
 )
 from shidashi import remote as remote_mod
 from shidashi import worker as worker_mod
@@ -1105,52 +1106,6 @@ def _terminated(signum: int, frame: object) -> None:
     raise SystemExit(128 + signum)
 
 
-def _stopped(signum: int, frame: object) -> None:
-    """SIGTERM or SIGHUP as an exit that unwinds, like :func:`_terminated`: every
-    ``finally`` still runs and the audit run records its end. Fires once: both signals
-    are ignored from here on, so a second one cannot cut the unwinding short."""
-    del frame
-    signal.signal(signal.SIGTERM, signal.SIG_IGN)
-    signal.signal(signal.SIGHUP, signal.SIG_IGN)
-    raise SystemExit(128 + signum)
-
-
-@contextlib.contextmanager
-def _unwinding_on_stop(*, keep_ignored: bool = False) -> Generator[None]:
-    """The block with SIGTERM and SIGHUP routed to :func:`_stopped`, the previous
-    handlers restored on the way out. Handlers install on the main thread only.
-
-    ``keep_ignored``: a signal ignored on purpose (``nohup``) stays ignored, as
-    :func:`parallel.run_children` leaves it."""
-    if threading.current_thread() is not threading.main_thread():
-        yield
-        return
-    wanted = [
-        sig
-        for sig in (signal.SIGTERM, signal.SIGHUP)
-        if not (keep_ignored and signal.getsignal(sig) is signal.SIG_IGN)
-    ]
-    previous = {sig: signal.signal(sig, _stopped) for sig in wanted}
-    try:
-        yield
-    finally:
-        for sig, handler in previous.items():
-            signal.signal(sig, handler)
-
-
-def _stop_under_way() -> None:
-    """Ignore SIGTERM and SIGHUP from here on: a stop is being reported.
-
-    A hangup is rarely one signal -- ``sudo`` relays the terminal's SIGHUP, then the
-    hung-up pty sends its own (2026-10-17). :func:`parallel.run_children` caught the
-    first and restored the previous handler as it returned; the next one must not end
-    the build before its audit run records what stopped and how to resume it (R4.10).
-    The caller's :func:`_unwinding_on_stop` restores the handlers on the way out."""
-    if threading.current_thread() is threading.main_thread():
-        signal.signal(signal.SIGTERM, signal.SIG_IGN)
-        signal.signal(signal.SIGHUP, signal.SIG_IGN)
-
-
 @contextlib.contextmanager
 def _child_result(
     path: Path | None, image: str, *, status_file: Path | None = None
@@ -1554,7 +1509,7 @@ def _run_image_children(
         ):
             results = parallel.run_children(argvs, logs=logs)
     except parallel.Interrupted as err:
-        _stop_under_way()  # before the first write to a terminal that may be gone
+        stop_signals.stop_under_way()  # before the first write to a terminal that may be gone
         ended = _as_ended(err.results, resultless)
         _echo_ended(ended)
         try:
@@ -1944,7 +1899,7 @@ def _build_planned(
     summary: list[str] = []
     # a stop outside run_children unwinds (the run records its end) instead of killing
     # the build; a nohup'd SIGHUP stays ignored (R4.10)
-    with _unwinding_on_stop(keep_ignored=True), _build_errors():
+    with stop_signals.unwinding_on_stop(keep_ignored=True), _build_errors():
         try:
             with _build_run(
                 options,
@@ -1977,7 +1932,7 @@ def _build_planned(
                             host=host,
                         )
                     except schedule.Interrupted as err:
-                        _stop_under_way()
+                        stop_signals.stop_under_way()
                         # in the run, before any write: the terminal may be gone (R4.10)
                         _record_interrupted(trail, options.arch, err)
                         raise
@@ -2512,7 +2467,9 @@ def vm_start(
     cid: Annotated[
         int | None, typer.Option("--cid", min=3, help="The guest's vsock CID (default 42).")
     ] = None,
-    memory: Annotated[str, typer.Option("--memory")] = "8G",
+    memory: Annotated[
+        str | None, typer.Option("--memory", help="The guest's memory (default 8G).")
+    ] = None,
     cpus: Annotated[int, typer.Option("--cpus", min=1)] = 8,
     display: Annotated[
         str, typer.Option("--display", help="none (headless) or sdl to watch it.")
@@ -2558,15 +2515,26 @@ def vm_start(
     ] = None,
     init: Annotated[str, typer.Option("--init", help="--dev: the ISO's init.")] = "systemd",
     arch: Annotated[str, typer.Option("--arch", help="--dev: the ISO's arch.")] = "v3",
+    max_life: Annotated[
+        float | None,
+        typer.Option(
+            "--max-life",
+            metavar="HOURS",
+            help="--dev: after HOURS (fractions allowed) the session powers itself off and "
+            "is removed, as `vm stop` does; without it, never.",
+        ),
+    ] = None,
+    # how a relay hands a worker the ISO's pins (vm_dev_cli): not for a person to type
+    pins_json: Annotated[str | None, typer.Option("--pins-json", hidden=True)] = None,
 ) -> None:
     """Start ``iso`` in a VM reachable with `shidashi vm run`."""
-    from shidashi import vm
+    from shidashi import vm, vm_dev_cli
 
     _apply_work_dir(work_dir)
     if dev:
-        from shidashi import vm_dev_cli
-
         vm_dev_cli.start(
+            max_life=max_life,
+            pins_json=pins_json,
             iso=dev_iso or iso,
             name=name,
             init=init,
@@ -2586,6 +2554,9 @@ def vm_start(
             },
         )
         return
+    vm_dev_cli.refuse_dev_only(
+        {"--max-life": max_life is not None, "--pins-json": pins_json is not None}
+    )
     if iso is None or dev_iso is not None:
         _err_console.print("[bold red]error:[/bold red] give the ISO to boot (or use --dev)")
         raise typer.Exit(2)
@@ -2599,7 +2570,7 @@ def vm_start(
         iso=iso.resolve(),
         uefi=uefi,
         cid=cid,
-        memory=memory,
+        memory=memory or vm.DEFAULT_MEMORY,
         cpus=cpus,
         display=display,
         disks=disks,
@@ -2639,8 +2610,8 @@ def vm_run(
 ) -> None:
     """Run a command as root in the VM; its exit code becomes ours. Our stdin is the
     command's (``tar -c … | shidashi vm run -- tar -x``). A command stopped by
-    ``--timeout`` or Ctrl+C is stopped in the guest too, with all it started; past its
-    timeout it exits 124."""
+    ``--timeout``, Ctrl+C, SIGTERM or SIGHUP is stopped in the guest too, with all it
+    started; past its timeout it exits 124, on a signal 128 + its number."""
     from shidashi import vm, vm_exec
 
     _apply_work_dir(work_dir)
@@ -3781,7 +3752,7 @@ def worker_job(
         # a stop (build's SIGTERM, a closed terminal's SIGHUP) ends the audit run with
         # 128 + signum and sends nothing: the job keeps running on the worker (R4.11)
         with (
-            _unwinding_on_stop(),
+            stop_signals.unwinding_on_stop(),
             _worker_audit("worker-job", worker=worker, job=job, args=list(args)),
         ):
             result, _entry = _on_worker(

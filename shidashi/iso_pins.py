@@ -10,6 +10,11 @@ ISOs assembled before the block existed (2026-11-13) name only the Shidashi comm
 built them: their pins are that commit's ``seeds/``, read with git -- unless the build
 ran with edited seeds, when the commit is not what the build used and nothing is
 guessed.
+
+A build worker runs a shipped source tree with no ``.git``, so there the pins of such an
+ISO are resolved on the host and handed in (``vm start --dev --pins-json``), as the same
+block: :func:`pins_block` writes it, :func:`handed_pins` reads it. An ISO that names its
+own pins must agree with the ones handed in -- neither is silently preferred.
 """
 
 import subprocess
@@ -43,7 +48,7 @@ class IsoPins:
 
     tree: TreePin
     overlays: tuple[OverlayPin, ...]
-    source: Literal["build.json", "git"]
+    source: Literal["build.json", "git", "handed in"]
 
     @property
     def id(self) -> str:
@@ -52,8 +57,18 @@ class IsoPins:
 
 def pins_record(seeds_dir: Path) -> dict[str, object]:
     """The ``pins`` block of build.json for the pins in ``seeds_dir``. Reads the files only."""
-    tree_pin = load_tree_pin(seeds_dir)
-    overlays = load_overlay_pins(seeds_dir)
+    return _block(load_tree_pin(seeds_dir), load_overlay_pins(seeds_dir))
+
+
+def pins_block(pins: IsoPins) -> dict[str, object]:
+    """``pins`` as the ``pins`` block of build.json -- what :func:`handed_pins` reads back.
+
+    The host resolves an ISO's pins and hands this to the worker that boots it. Pure.
+    """
+    return _block(pins.tree, pins.overlays)
+
+
+def _block(tree_pin: TreePin, overlays: Sequence[OverlayPin]) -> dict[str, object]:
     return {
         "id": pin_id(tree_pin, overlays),
         "gentoo": {"date": tree_pin.date, "base_url": tree_pin.base_url, "sha512": tree_pin.sha512},
@@ -61,19 +76,66 @@ def pins_record(seeds_dir: Path) -> dict[str, object]:
     }
 
 
-def read_iso_pins(info: Mapping[str, object], *, repo: Path) -> IsoPins:
+def handed_pins(block: object) -> IsoPins:
+    """The pins a caller hands in, as the block :func:`pins_block` writes. Pure.
+
+    :class:`IsoPinsError` when the shape is wrong, or when the block carries an ``id``
+    that is not the id of its own pins: it crossed a command line, and an edited or
+    truncated block must not pass for another set of trees.
+    """
+    pins = _from_block(block, "handed in", "the pins handed in are unreadable")
+    named = block.get("id") if isinstance(block, Mapping) else None
+    if named is not None and named != pins.id:
+        raise IsoPinsError(f"the pins handed in are named {named!r} but are {pins.id}")
+    return pins
+
+
+def read_iso_pins(
+    info: Mapping[str, object], *, repo: Path, handed: IsoPins | None = None
+) -> IsoPins:
     """The pins of the ISO whose build.json is ``info``; :class:`IsoPinsError` when unknown.
 
     The ``pins`` block when present; otherwise ``seeds/`` at the build's commit in the
-    Shidashi repository ``repo``.
+    Shidashi repository ``repo``. With ``handed`` (:func:`handed_pins`) git is never
+    asked: those are the pins, and an ISO with a block of its own must name the same
+    trees or the error says how they differ.
     """
     block = info.get("pins")
+    if handed is not None:
+        if block is not None:
+            _refuse_disagreement(handed, _from_block(block))
+        return handed
     if block is not None:
         return _from_block(block)
     return _from_commit(info.get("repository"), repo)
 
 
-def _from_block(block: object) -> IsoPins:
+def _refuse_disagreement(handed: IsoPins, own: IsoPins) -> None:
+    """:class:`IsoPinsError` unless ``handed`` names the trees of the ISO's ``own`` block.
+
+    Every field counts, an overlay's URL and the overlays' order too: the block handed in
+    is made from this ISO's, so any difference means it belongs to another ISO.
+    """
+    differing = [
+        part
+        for part, theirs, ours in (
+            ("gentoo", handed.tree, own.tree),
+            ("overlays", handed.overlays, own.overlays),
+        )
+        if theirs != ours
+    ]
+    if differing:
+        raise IsoPinsError(
+            f"the pins handed in ({handed.id}) are not the ISO's own ({own.id}): "
+            f"they differ in {' and '.join(differing)}"
+        )
+
+
+def _from_block(
+    block: object,
+    source: Literal["build.json", "handed in"] = "build.json",
+    unreadable: str = "the ISO's build.json has an unreadable pins block",
+) -> IsoPins:
     try:
         if not isinstance(block, Mapping):
             raise TypeError(f"expected a table, got {type(block).__name__}")
@@ -88,8 +150,8 @@ def _from_block(block: object) -> IsoPins:
             for name, pin in block["overlays"].items()
         )
     except (KeyError, TypeError, AttributeError, pydantic.ValidationError) as err:
-        raise IsoPinsError(f"the ISO's build.json has an unreadable pins block: {err}") from err
-    return IsoPins(tree_pin, overlays, "build.json")
+        raise IsoPinsError(f"{unreadable}: {err}") from err
+    return IsoPins(tree_pin, overlays, source)
 
 
 def _from_commit(repository: object, repo: Path) -> IsoPins:

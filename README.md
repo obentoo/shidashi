@@ -227,13 +227,33 @@ shidashi vm stop --name dev                 # removes the session, work disk inc
 ```
 
 `--stream` passes the output through as the guest writes it; stdin always reaches the
-guest command. A command stopped by `--timeout` (exit 124) or Ctrl+C is stopped in the
-guest too, with everything it started. Without `--work-dir` the
+guest command. A command stopped by `--timeout` (exit 124), Ctrl+C, SIGTERM or SIGHUP
+(exit 143, 129: 128 + the signal) is stopped in the guest too, with everything it
+started — so a `vm run` whose terminal or ssh session goes away does not leave a build
+running in the VM. A SIGHUP ignored on purpose (`nohup`) stays ignored. Without `--work-dir` the
 session lives in `$XDG_STATE_HOME/shidashi/vm/<name>` and the trees come from the shared
 cache. A dev session leaves nothing behind: `vm stop` removes its directory, and a start
 removes the dev sessions whose VM died without a stop; a session started without
 `--dev` keeps its disks. Packages installed as dependencies land in the live root, a tmpfs sized from
-`--memory`: a dependency set larger than that needs more memory.
+`--memory` (8G when not given): a dependency set larger than that needs more memory.
+
+A session whose caller died while its VM runs is removed by neither. `--max-life HOURS`
+(a positive number, fractions allowed; `--dev` only) gives the session a deadline, counted
+from the moment the VM is ready and printed in the JSON line as `"expires"` (ISO 8601,
+UTC; `null` without the option). A small detached process waits for it, then does what
+`vm stop` does: the VM is powered off and the session's directory removed. `vm stop`
+before the deadline ends that process too.
+
+```sh
+shidashi vm start --dev --name dev --max-life 6   # {..., "ready": true, "expires": "2026-11-15T18:30:00Z"}
+```
+
+The directory goes, so each expiry leaves one JSON line in `expiry.jsonl` beside the
+session directories — `$XDG_STATE_HOME/shidashi/vm/expiry.jsonl`, or
+`$SHIDASHI_SCRATCH/vm/expiry.jsonl` when a scratch is named — with the session, its
+deadline and the `outcome`: `removed`, or `failed` with the error when the VM could not be
+powered off or the directory not removed; the stop is then tried again every minute for
+as long as the session is there.
 
 ## Usage
 

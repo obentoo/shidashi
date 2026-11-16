@@ -3,9 +3,9 @@ written (story 030, task 8.1; R3.4, R3.5).
 
 Characterization tests: task 2.1 checked these paths with a throwaway script only, and
 ``tests/test_build_outcome_recording.py`` stays frozen. A stop is a ``KeyboardInterrupt``
-(Ctrl-C) or the ``SystemExit(128 + signal)`` that ``cli._stopped`` turns SIGTERM/SIGHUP
-into. A write fails for real: the outcome file's directory does not exist, so the
-temporary file beside it cannot be created -- no monkeypatched ``write``.
+(Ctrl-C) or the ``SystemExit(128 + signal)`` that ``stop_signals.exit_on_stop`` turns
+SIGTERM/SIGHUP into. A write fails for real: the outcome file's directory does not exist,
+so the temporary file beside it cannot be created -- no monkeypatched ``write``.
 """
 
 import json
@@ -131,8 +131,8 @@ def test_ctrl_c_records_an_error_with_exit_code_130_and_is_re_raised(tmp_path: P
 def test_a_signal_turned_into_system_exit_keeps_its_own_code(
     tmp_path: Path, sig: signal.Signals
 ) -> None:
-    """``cli._stopped`` raises ``SystemExit(128 + sig)``: that code is recorded, and the
-    same ``SystemExit`` leaves ``recording`` -- the process exits with it."""
+    """``stop_signals.exit_on_stop`` raises ``SystemExit(128 + sig)``: that code is recorded,
+    and the same ``SystemExit`` leaves ``recording`` -- the process exits with it."""
     path = tmp_path / "v3-systemd.json"
     stop = SystemExit(128 + sig)
     with (

@@ -164,7 +164,9 @@ def test_start_boots_the_iso_with_its_own_trees_and_reports_the_vm(
         "binhost": [{"name": "none", "uri": "file:///mnt/work/empty-pool"}],
         "staged": {"repo": vm_dev_guest.STAGED_REPO, "path": vm_dev_guest.STAGED_DIR},
         "ready": True,
+        "expires": None,  # no --max-life: tests/test_vm_dev_expiry.py has the other case
     }
+    assert session.spec.memory == vm.DEFAULT_MEMORY == "8G"
 
 
 def _stash(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, date: str, mode: int) -> Path:

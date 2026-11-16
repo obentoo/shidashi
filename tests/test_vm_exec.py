@@ -1,4 +1,5 @@
-"""Tests of `shidashi vm run` as bentoolkit drives it: --stream, stdin, --timeout 0.
+"""Tests of `shidashi vm run` as bentoolkit drives it: --stream, stdin, --timeout 0, and
+every way it is stopped -- its timeout, Ctrl+C, SIGTERM and SIGHUP.
 
 bentoolkit ships a package with ``tar | shidashi vm run -- tar -x`` and follows a build
 with ``vm run --stream``, so these run the real CLI in a child process: stdin, stdout and
@@ -9,6 +10,7 @@ the guest -- it runs the remote command (ssh's last argument) with the local she
 import io
 import json
 import os
+import signal
 import subprocess
 import sys
 import tarfile
@@ -23,6 +25,9 @@ _REPO = Path(__file__).resolve().parents[1]
 # sshd runs the remote command in a new session, so its shell leads its process group:
 # setsid gives the stand-in the same shape (-w: wait, never fork into the background)
 _FAKE_SSH = '#!/bin/sh\nfor last; do :; done\nexec setsid -w /bin/sh -c "$last"\n'
+# The same guest behind a client that is a process of its own, as the real ssh is: a
+# signal sent to the process group of `vm run` ends this client, never the guest's shell
+_FAKE_SSH_CLIENT = '#!/bin/sh\nfor last; do :; done\nsetsid -w /bin/sh -c "$last" <&0 &\nwait $!\n'
 
 
 @pytest.fixture
@@ -138,9 +143,10 @@ def test_a_negative_timeout_is_refused(guest: Path) -> None:
     assert done.returncode == 2  # click's usage error
 
 
-@pytest.mark.parametrize("mode", [[], ["--stream"]], ids=["buffered", "stream"])
-def test_ctrl_c_ends_the_guest_command_too(guest: Path, mode: list[str]) -> None:
-    # a build followed with --stream and interrupted must not keep running behind us
+def _guest_command_running(
+    guest: Path, mode: list[str], *, own_group: bool = False
+) -> tuple[subprocess.Popen[bytes], int]:
+    """A ``vm run --timeout 0`` whose guest command sleeps: it, and the pid of that sleep."""
     pidfile = guest.parent / "guest.pid"
     env = dict(os.environ)
     env["PATH"] = f"{guest.parent / 'bin'}:{env['PATH']}"
@@ -153,15 +159,74 @@ def test_ctrl_c_ends_the_guest_command_too(guest: Path, mode: list[str]) -> None
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         env=env,
+        start_new_session=own_group,
     )
     try:
         deadline = time.monotonic() + 20
         while not (pidfile.is_file() and pidfile.read_text().strip()):
             assert time.monotonic() < deadline, "the guest command never started"
             time.sleep(0.1)
-        guest_pid = int(pidfile.read_text())
-        child.send_signal(2)  # SIGINT: what Ctrl+C sends to the foreground process
+        return child, int(pidfile.read_text())
+    except BaseException:
+        child.kill()
+        child.wait()
+        raise
+
+
+@pytest.mark.parametrize("mode", [[], ["--stream"]], ids=["buffered", "stream"])
+def test_ctrl_c_ends_the_guest_command_too(guest: Path, mode: list[str]) -> None:
+    # a build followed with --stream and interrupted must not keep running behind us
+    child, guest_pid = _guest_command_running(guest, mode)
+    try:
+        child.send_signal(signal.SIGINT)  # what Ctrl+C sends to the foreground process
         assert child.wait(timeout=10) != 0
+        _gone(guest_pid)
+    finally:
+        child.kill()
+        child.wait()
+
+
+_STOPS = [(signal.SIGTERM, 143), (signal.SIGHUP, 129)]
+
+
+def _skip_when_ignored_here(signum: signal.Signals) -> None:
+    """A child inherits an ignored signal, and ``vm run`` keeps it ignored (``nohup``):
+    under a test run that ignores ``signum`` there is no stop to observe."""
+    if signal.getsignal(signum) is signal.SIG_IGN:
+        pytest.skip(f"{signum.name} is ignored here; vm run keeps it ignored")
+
+
+@pytest.mark.parametrize("mode", [[], ["--stream"]], ids=["buffered", "stream"])
+@pytest.mark.parametrize(("signum", "status"), _STOPS, ids=["SIGTERM", "SIGHUP"])
+def test_sigterm_and_sighup_end_the_guest_command_and_exit_128_plus_the_signal(
+    guest: Path, mode: list[str], signum: signal.Signals, status: int
+) -> None:
+    # how a `vm run` on a worker ends when the relay's ssh goes: the default action of
+    # both signals would end us where we stand, and the build would run on in the guest
+    _skip_when_ignored_here(signum)
+    child, guest_pid = _guest_command_running(guest, mode)
+    try:
+        child.send_signal(signum)
+        assert child.wait(timeout=10) == status == 128 + signum
+        _gone(guest_pid)
+    finally:
+        child.kill()
+        child.wait()
+
+
+@pytest.mark.parametrize("mode", [[], ["--stream"]], ids=["buffered", "stream"])
+@pytest.mark.parametrize(("signum", "status"), _STOPS, ids=["SIGTERM", "SIGHUP"])
+def test_a_signal_to_the_whole_process_group_still_ends_the_guest_command(
+    guest: Path, mode: list[str], signum: signal.Signals, status: int
+) -> None:
+    """Hostile: the relay kills the group -- the local ssh dies with us, twice signalled."""
+    _skip_when_ignored_here(signum)
+    (guest.parent / "bin" / "ssh").write_text(_FAKE_SSH_CLIENT)
+    child, guest_pid = _guest_command_running(guest, mode, own_group=True)
+    try:
+        os.killpg(child.pid, signum)
+        os.killpg(child.pid, signum)  # a hangup is rarely one signal
+        assert child.wait(timeout=10) == status
         _gone(guest_pid)
     finally:
         child.kill()

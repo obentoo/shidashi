@@ -11,8 +11,9 @@ host side of that contract (the guest side is :mod:`shidashi.vm_dev_guest`):
   invoking user's alone (:func:`stash_distrust`); one that is not is skipped and said
   so. None found is :class:`NoDevIsoError`, exit :data:`NO_ISO_EXIT`;
 - the trees: the ::gentoo snapshot and overlay commits the ISO's packages came from
-  (:mod:`shidashi.iso_pins`), from the shared cache, each shared read-only -- no
-  cooldown check, the build that made the ISO already passed it;
+  (:mod:`shidashi.iso_pins`; handed in by the caller where there is no git to ask, a
+  build worker), from the shared cache, each shared read-only -- no cooldown check,
+  the build that made the ISO already passed it;
 - the binhost: the host's pool for the ISO's generation when it has an index;
 - the work disk: removed and created again on every start, so a fresh start is a clean
   machine -- bentoolkit's verdict build relies on it;
@@ -26,7 +27,9 @@ session kept a work disk full of builds): ``vm stop`` removes a dev session's di
 (:func:`discard_dev_session`), and a start removes the dev sessions whose QEMU died
 without a stop -- a ``kill -9``, a power cut (:func:`sweep_dead_dev_sessions`). Only a
 session marked dev (``VmSpec.dev``) is ever removed: a plain session's ``--disk`` is the
-user's.
+user's. A session whose caller died while its QEMU runs is neither: ``--max-life`` gives
+it a deadline and a watchdog that stops it (:mod:`shidashi.vm_dev_expiry`), and whatever
+removes a session here ends that watchdog first.
 """
 
 import contextlib
@@ -38,9 +41,10 @@ import stat
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
-from shidashi import audit, config, iso_pins, tree, vm, vm_dev_guest
+from shidashi import audit, config, iso_pins, tree, vm, vm_dev_expiry, vm_dev_guest
 
 #: The exit code of ``vm start --dev`` when no ISO is there to boot.
 NO_ISO_EXIT = 3
@@ -68,8 +72,11 @@ class DevVm:
     pin: str
     binhost: list[dict[str, str]]
     directory: Path
+    #: When the session powers itself off (``--max-life``); None: it never does.
+    expires: datetime | None = None
 
     def as_json(self) -> dict[str, object]:
+        expires = None if self.expires is None else vm_dev_expiry.utc_stamp(self.expires)
         return {
             "name": self.name,
             "cid": self.cid,
@@ -78,6 +85,7 @@ class DevVm:
             "binhost": self.binhost,
             "staged": {"repo": vm_dev_guest.STAGED_REPO, "path": vm_dev_guest.STAGED_DIR},
             "ready": True,
+            "expires": expires,
         }
 
 
@@ -259,20 +267,27 @@ def start_dev(
     arch: str,
     directory: Path,
     repo: Path,
-    memory: str = "8G",
+    memory: str = vm.DEFAULT_MEMORY,
     cpus: int = 8,
     display: str = "none",
     disk_size: str = DEFAULT_DISK_SIZE,
     download: bool = True,
     session_factory: SessionFactory = vm.Session,
     warn: Callable[[str], None] = lambda _message: None,
+    pins: iso_pins.IsoPins | None = None,
+    max_life: float | None = None,
+    clock: vm_dev_expiry.Clock = vm_dev_expiry.utc_now,
+    launch_watchdog: vm_dev_expiry.WatchdogLauncher = vm_dev_expiry.launch_watchdog,
 ) -> DevVm:
     """Boot a dev VM and ready it; :class:`vm.VmError` naming the step that failed.
 
-    ``repo`` is the Shidashi checkout, where an older ISO's pins are read with git.
+    ``repo`` is the Shidashi checkout, where an older ISO's pins are read with git --
+    unless ``pins`` hands them in, which an ISO naming its own must agree with.
     A setup that fails powers the VM off before the error is raised. ``warn`` is told
     of each stash directory the ISO lookup would not search: the VM then boots an
-    older ISO than the user expects, which must not pass in silence.
+    older ISO than the user expects, which must not pass in silence. ``max_life``, in
+    hours from the moment the VM is ready, is enforced by the watchdog
+    ``launch_watchdog`` starts; one that does not start fails the start like the setup.
     """
     sweep_dead_dev_sessions(directory.parent, keep=directory.name)
     if iso is None:
@@ -283,11 +298,13 @@ def start_dev(
     iso = iso.resolve()
     info = vm.read_build_info(iso)
     try:
-        pins = iso_pins.read_iso_pins(info, repo=repo)
+        pins = iso_pins.read_iso_pins(info, repo=repo, handed=pins)
     except iso_pins.IsoPinsError as err:
         raise vm.VmError(f"{iso.name}: {err}") from err
     trees = _trees(pins, download=download)
     _refuse_running(directory, name)
+    # a session of this name whose QEMU died left its watchdog: not this session's
+    vm_dev_expiry.disarm(directory)
     disk = directory / "work.qcow2"
     directory.mkdir(parents=True, exist_ok=True)
     disk.unlink(missing_ok=True)
@@ -315,10 +332,16 @@ def start_dev(
                 raise vm.VmError(
                     f"the guest setup failed (exit {setup.exit_code}): {setup.stderr.strip()}"
                 )
+            expires = None
+            if max_life is not None:
+                expires = vm_dev_expiry.arm(
+                    directory, name=name, hours=max_life, clock=clock, launch=launch_watchdog
+                )
         except BaseException:
             session.stop()
             raise
-    dev = DevVm(name, cid, iso, pins.id, vm_dev_guest.parse_binhosts(setup.stdout), directory)
+    binhosts = vm_dev_guest.parse_binhosts(setup.stdout)
+    dev = DevVm(name, cid, iso, pins.id, binhosts, directory, expires)
     audit.current().event("vm.dev", **dev.as_json())
     return dev
 
@@ -340,10 +363,13 @@ def discard_dev_session(session: vm.Session) -> None:
 
     Waits for QEMU to exit (killing it after :data:`_QEMU_EXIT_TIMEOUT`): a disk removed
     under a running QEMU frees nothing. A QEMU that will not end keeps the directory,
-    as :class:`vm.VmError`. A session without the dev mark is left as it is.
+    as :class:`vm.VmError`. A session without the dev mark is left as it is. The
+    session's watchdog is ended first: from here on its stop is ours, and a deadline
+    falling while QEMU exits must not start a second removal under this one.
     """
     if not session.spec.dev:
         return
+    vm_dev_expiry.disarm(session.directory)
     pid = session.qemu_pid()
     if pid is not None and not _wait_gone(pid, _QEMU_EXIT_TIMEOUT):
         with contextlib.suppress(ProcessLookupError):
@@ -357,7 +383,7 @@ def sweep_dead_dev_sessions(root: Path, *, keep: str) -> list[str]:
     """Remove the dev sessions under ``root`` whose QEMU no longer runs; their names.
 
     ``keep`` (the session being started) is never touched, nor anything that is not a
-    readable session marked dev.
+    readable session marked dev. A removed session's watchdog is ended with it.
     """
     removed: list[str] = []
     try:
@@ -374,6 +400,7 @@ def sweep_dead_dev_sessions(root: Path, *, keep: str) -> list[str]:
         pid = session.qemu_pid()
         if not session.spec.dev or (pid is not None and _alive(pid)):
             continue
+        vm_dev_expiry.disarm(directory)
         shutil.rmtree(directory, ignore_errors=True)
         removed.append(directory.name)
     if removed:
