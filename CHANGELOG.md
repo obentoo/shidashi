@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`shidashi vm ssh-config`: open a dev VM in an editor.** It writes a `Host`
+  (`shidashi-NAME`) beside the session that lands as root in the guest, so an editor's
+  remote project (Zeo, Zed, VS Code) or a plain `ssh` reaches it; one `Include` of
+  `~/.local/state/shidashi/vm/*/ssh_config` covers every session. A VM on this host is
+  reached through `systemd-ssh-proxy`; a VM on a build worker through the pinned worker,
+  whose hidden `vm ssh-relay` joins the channel to the guest's sshd on vsock (the file
+  descriptor `systemd-ssh-proxy` passes cannot cross that hop). A client key made on the
+  host is authorized in the guest; it and the `Host` go when the session is stopped.
+  Proven on bentoo-lab with Zeo's agent running in the guest (2026-11-16).
+- **`shidashi vm env NAME`: a variable for the guest's login shells, from stdin.** The
+  value is never a command-line word: it is kept in the guest's RAM
+  (`/run/shidashi-env/NAME`, 0600) and exported by `/etc/profile.d/shidashi-env.sh` --
+  the environment an editor's remote server and its agents start from. A value typed at a
+  terminal is refused, since it would be echoed.
+
+### Fixed
+
+- **The session key reaches the guest's `authorized_keys` ended by a newline.** systemd
+  writes the `ssh.authorized_keys.root` credential byte for byte, and it was sent without
+  one: a key added after it joined its line, and neither key worked.
+
 ## [0.4.0] - 2026-11-16
 
 The worker becomes a shared build machine: bentoolkit proves ebuild bumps in disposable

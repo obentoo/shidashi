@@ -305,6 +305,38 @@ it began.
 A `shidashi worker job` has priority: it stops the dev sessions on its worker before it
 starts (its audit trail names them), and no dev VM is started while a job runs there.
 
+#### Opening the VM in an editor
+
+An editor that opens a remote project over ssh (Zeo, Zed, VS Code) needs a plain
+`ssh <host>` that lands in the guest. `vm ssh-config` writes one, for a VM on this host or
+on a worker, and `vm env` gives the guest a variable -- a token, say -- without it ever
+being a command-line word:
+
+```sh
+shidashi vm start --dev --worker bentoo-lab --name agent --cpus 4 --memory 8G
+shidashi vm ssh-config --name agent        # prints `Host shidashi-agent` and keeps it
+secret-tool lookup service anthropic purpose X | shidashi vm env --name agent CLAUDE_CODE_OAUTH_TOKEN
+ssh shidashi-agent                          # or open ssh://shidashi-agent/root in the editor
+```
+
+Once, `~/.ssh/config` needs `Include ~/.local/state/shidashi/vm/*/ssh_config`: each
+session's `Host` is kept beside it, and goes when the session is stopped.
+
+- **On this host** the `Host` is `root@vsock/<cid>` through `systemd-ssh-proxy`, with the
+  session's own key -- what `vm run` uses.
+- **On a worker** it is the pinned ssh to the worker, which runs `vm ssh-relay` there: a
+  relay from its ssh channel to the guest's sshd on vsock (`systemd-ssh-proxy` hands ssh a
+  file descriptor, and one cannot cross the hop). A client key is made on this host and
+  added to the guest's `authorized_keys`; the session's own key never leaves the worker.
+- The guest's host key changes with every boot of a live ISO and is not checked; the hop
+  to the worker is pinned.
+- `vm env NAME` reads the value from stdin (refused from a terminal, where it would be
+  echoed) and keeps it in the guest's RAM, `/run/shidashi-env/NAME`, mode 0600;
+  `/etc/profile.d/shidashi-env.sh` exports it in every login shell -- the environment an
+  editor's remote server and its agents start from. It goes with the VM.
+- A VM for an editor's agent rarely needs the worker whole: size it with `--cpus` and
+  `--memory`.
+
 ## Usage
 
 ```sh
