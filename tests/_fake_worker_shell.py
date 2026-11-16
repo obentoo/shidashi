@@ -76,8 +76,12 @@ root@vsock/*) mapped=$last ;;
   ;;
 esac
 # the client waits for a shell that is a process of its own, as sshd's is: reaped when
-# it ends, and left running when only the client is signalled
-setsid -w /bin/sh -c "$mapped" <&0 &
+# it ends, and left running when only the client is signalled. Its stdin goes through
+# fd 3: POSIX gives a background job /dev/null as stdin BEFORE its own redirections, so
+# `<&0` would hand it /dev/null -- dash, the CI's /bin/sh, does just that (2026-11-16)
+exec 3<&0
+setsid -w /bin/sh -c "$mapped" <&3 3<&- &
+exec 3<&-
 wait $!
 """
 

@@ -22,7 +22,7 @@ from pathlib import Path
 
 import pytest
 
-from shidashi import vm_dev_record
+from shidashi import process_state, vm_dev_record
 from tests._fake_worker_shell import SHIPPED, FakeWorkerShell
 
 _REPO = Path(__file__).resolve().parents[1]
@@ -307,8 +307,7 @@ def test_a_signal_to_the_hosts_vm_run_stops_the_command_in_the_guest(
     assert took < 30
     # all of it already over when the host's vm run returned: nothing to wait for
     _gone(guest_command, timeout=1.0)
-    with pytest.raises(ProcessLookupError):
-        os.killpg(worker_group, 0)
+    assert not process_state.group_running(worker_group)
     assert not pidfile.exists()
 
 

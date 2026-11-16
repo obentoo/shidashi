@@ -44,7 +44,16 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from shidashi import audit, config, iso_pins, tree, vm, vm_dev_expiry, vm_dev_guest
+from shidashi import (
+    audit,
+    config,
+    iso_pins,
+    process_state,
+    tree,
+    vm,
+    vm_dev_expiry,
+    vm_dev_guest,
+)
 
 #: The exit code of ``vm start --dev`` when no ISO is there to boot.
 NO_ISO_EXIT = 3
@@ -409,14 +418,9 @@ def sweep_dead_dev_sessions(root: Path, *, keep: str) -> list[str]:
 
 
 def _alive(pid: int) -> bool:
-    """Whether process ``pid`` exists (another user's included)."""
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True
+    """Whether process ``pid`` is still running; an ended, unreaped one is not
+    (:mod:`shidashi.process_state`)."""
+    return process_state.process_running(pid)
 
 
 def _wait_gone(pid: int, timeout: float) -> bool:

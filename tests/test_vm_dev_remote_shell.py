@@ -17,8 +17,8 @@ from pathlib import Path
 
 import pytest
 
+from shidashi import process_state, vm_exec, worker
 from shidashi import vm_dev_remote_shell as shell
-from shidashi import vm_exec, worker
 
 _COMMIT = "5" * 40
 _PINS = {"id": "p1", "gentoo": {"date": "20261101"}, "overlays": {}}
@@ -229,11 +229,7 @@ def _guarded(pidfile: Path, command: str) -> subprocess.Popen[bytes]:
 
 
 def _group_gone(pgid: int) -> bool:
-    try:
-        os.killpg(pgid, 0)
-    except ProcessLookupError:
-        return True
-    return False
+    return not process_state.group_running(pgid)
 
 
 def test_stopping_a_group_ends_everything_in_it_and_waits(tmp_path: Path) -> None:
@@ -300,3 +296,32 @@ def test_the_probe_sees_a_start_under_way_and_not_a_stale_one(
         child.wait()
     starter.write_text(f"{os.getpid()}\n")  # a live process that is no start
     assert not shell.read_probe(_sh(shell.probe_script("dev")).stdout).starting
+
+
+def test_a_group_left_with_only_unreaped_ended_processes_is_gone(tmp_path: Path) -> None:
+    """Hostile: under an init that does not reap (PID 1 of the container ``act`` starts)
+    a group's ended processes stay as zombies, and ``kill -0`` still answers for them;
+    the stop must not wait for them until its timeout (2026-11-16)."""
+    pidfile = tmp_path / "run.pid"
+    # its parent is this test, which reaps it only at the end: the leader stays a zombie
+    child = subprocess.Popen(
+        ["/bin/sh", "-c", vm_exec.guarded("sleep 60", str(pidfile))], start_new_session=True
+    )
+    deadline = time.monotonic() + 20
+    while not (pidfile.is_file() and pidfile.read_text().strip()):
+        assert time.monotonic() < deadline, "the guarded shell never started"
+        time.sleep(0.02)
+    pgid = int(pidfile.read_text())
+    try:
+        began = time.monotonic()
+        done = _sh(shell.stop_group_script(str(pidfile), wait_s=20))
+        took = time.monotonic() - began
+        assert done.returncode == 0, done.stderr
+        stat = Path(f"/proc/{child.pid}/stat").read_text()
+        assert stat.rpartition(") ")[2].startswith("Z"), "the leader was meant to be a zombie"
+        assert _group_gone(pgid)
+        assert took < 5, f"the stop waited {took:.1f} s for processes that had ended"
+        assert not pidfile.exists()
+    finally:
+        child.kill()
+        child.wait()

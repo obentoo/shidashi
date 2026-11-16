@@ -7,7 +7,6 @@ while the worker is still starting the VM ends that start, so no VM comes up aft
 The stand-ins are tests/test_vm_dev_remote.py's.
 """
 
-import os
 import shutil
 import subprocess
 import time
@@ -16,7 +15,15 @@ from pathlib import Path
 
 import pytest
 
-from shidashi import audit, remote, vm_dev_record, vm_dev_remote, vm_dev_remote_shell, worker
+from shidashi import (
+    audit,
+    process_state,
+    remote,
+    vm_dev_record,
+    vm_dev_remote,
+    vm_dev_remote_shell,
+    worker,
+)
 from tests._dev_relay import (
     FakeShipHead,
     InMemoryTrail,
@@ -66,8 +73,7 @@ def test_a_stop_ends_the_session_on_the_worker_and_forgets_it(
     qemu = int((lab.sessions / "dev" / "qemu.pid").read_text())
     assert vm_dev_remote.stop_on_worker(lab.remote(), _recorded()) is True
     assert not (lab.sessions / "dev").exists()
-    with pytest.raises(ProcessLookupError):
-        os.kill(qemu, 0)
+    assert not process_state.process_running(qemu)
     assert vm_dev_record.read_record("dev") is None
     assert not vm_dev_record.record_path("dev").parent.exists()
     (stopped,) = trail.of("vm.dev.worker.stop")

@@ -73,11 +73,23 @@ def stop_group_script(pidfile: str, *, wait_s: int) -> str:
     is signalled -- the shell :func:`shidashi.vm_exec.guarded` started: the work disk
     outlives a reboot, and a number left there by a shell that died with the worker
     names whatever has it now. POSIX ``kill`` forms: a worker's ``sh`` may be dash.
+
+    "Left" means a member that has not ended: ``kill -0`` also answers for a zombie,
+    and under an init that does not reap (PID 1 of the container ``act`` starts) the
+    group's ended processes would hold the wait to its end (2026-11-16). The state
+    and the group are read from ``/proc/<pid>/stat``, past the last ``) `` that closes
+    the command name, with ``read`` -- a builtin, no process per look.
     """
+    left = (
+        "left() { for s in /proc/[0-9]*/stat; do "
+        'read -r r 2>/dev/null < "$s" || continue; r=${r##*) }; set -- $r; '
+        '[ "$1" != Z ] && [ "$3" = "$p" ] && return 0; done; return 1; }; '
+    )
     return (
+        f"{left}"
         f"p=$(cat {pidfile} 2>/dev/null) && grep -aqsF -- {pidfile} /proc/$p/cmdline && "
         f'{{ kill -s TERM -- "-$p"; i=0; '
-        f'while kill -s 0 -- "-$p" 2>/dev/null && [ $i -lt {wait_s * 5} ]; '
+        f"while left && [ $i -lt {wait_s * 5} ]; "
         f"do sleep 0.2; i=$((i+1)); done; }}; rm -f {pidfile}"
     )
 

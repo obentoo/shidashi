@@ -122,6 +122,24 @@ def test_a_dev_session_whose_qemu_will_not_end_is_kept(
     assert (directory / "work.qcow2").is_file()
 
 
+def test_a_qemu_that_ended_unreaped_is_gone_and_its_session_removed(
+    state: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Hostile: under an init that never reaps (PID 1 of the container ``act`` starts),
+    an ended QEMU stays a zombie and ``kill -0`` still answers for it. It has ended:
+    the stop must remove the session, not wait for it and refuse (2026-11-16)."""
+    qemu = subprocess.Popen(["true"])  # not waited for until the end: it stays a zombie
+    try:
+        while not Path(f"/proc/{qemu.pid}/stat").read_text().rpartition(") ")[2].startswith("Z"):
+            pass
+        directory = _session(state, "dev", dev=True, pid=qemu.pid)
+        monkeypatch.setattr(vm_dev, "_QEMU_EXIT_TIMEOUT", 0.5)
+        vm_dev.discard_dev_session(vm.load_session("dev"))
+        assert not directory.exists()
+    finally:
+        qemu.wait()
+
+
 def test_discard_refuses_a_session_without_the_dev_mark(state: Path) -> None:
     directory = _session(state, "builder", dev=None, pid=None)
     vm_dev.discard_dev_session(vm.load_session("builder"))

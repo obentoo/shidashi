@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from shidashi import vm, vm_dev_expiry, vm_dev_watchdog
+from shidashi import process_state, vm, vm_dev_expiry, vm_dev_watchdog
 from tests.test_vm_dev_cleanup import _dead_pid, _session
 
 _REPO = Path(__file__).resolve().parents[1]
@@ -275,7 +275,7 @@ def _two_hours_ago() -> datetime:
 
 def _gone_within(pid: int, seconds: float) -> bool:
     deadline = time.monotonic() + seconds
-    while Path(f"/proc/{pid}").exists():
+    while process_state.process_running(pid):
         if time.monotonic() > deadline:
             return False
         time.sleep(0.05)
