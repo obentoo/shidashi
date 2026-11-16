@@ -53,9 +53,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pins must agree with the ones handed in, or the start fails saying how they differ. A
   block that does not parse, has the wrong shape or carries an id that is not its own is
   a usage error (exit 2) before anything boots.
+- **`shidashi vm start --dev --worker NAME` runs the build VM on a paired worker.** A
+  worker has what a developer's machine lacks -- bentoo-lab: 46 GB, 16 threads, the binpkg
+  pool on its own disk -- and bentoolkit must not change to use it. So the host does not
+  grow a second way to run a VM: it ships its checkout's `HEAD` and runs the SAME
+  `vm start --dev` there over ssh, then prints that command's JSON line with
+  `"worker": "NAME"` added. `SHIDASHI_DEV_WORKER` names the worker when `--worker` does
+  not; `--local` runs the VM on the host whatever the variable says (both options
+  together, or either without `--dev`: exit 2). `vm run` and `vm stop` take no new
+  option: the start leaves `worker.json` -- the worker and the commit it shipped -- in the
+  session's directory under `$XDG_STATE_HOME/shidashi/vm/<name>/`, and a session recorded
+  there is reached on its worker, with that commit's tree, whatever `HEAD` has become.
+  - Refused before anything is shipped, exit 1 and one line: a worker that does not
+    answer, **a job running there** (it is named), no work disk, a session of that name
+    alive there, alive on the host, or recorded on another worker. No ISO to boot is
+    still exit 3.
+  - The ISO is chosen on the host by the rule of a local start and kept on the worker
+    under `/mnt/work/cache/dev-isos/`: rsync sends it once (2.1 GB in 18 s to bentoo-lab)
+    and a later start finds it there by size and time. Its pins are resolved on the host
+    and handed over (`--pins-json`): the shipped tree has no `.git`.
+  - On a worker the VM gets **24G** unless `--memory` says otherwise (the guest's RAM root
+    is 4.7 GB then, 1.6 GB at 8G), the worker's own thread count unless `--cpus` does (the
+    guest builds with a fixed `-j32`: its processors are the limit), and a **maximum
+    life of 12 hours** unless `--max-life` does -- a session nobody stops does not hold a
+    worker's memory for ever.
+  - `vm run` passes stdin, stdout and stderr straight through (no terminal) and exits
+    with the command's code, 124 past its `--timeout` -- enforced on the worker -- and
+    ssh's own 255 when the worker cannot be reached. Stopped by Ctrl+C, SIGTERM or
+    SIGHUP it ends the worker's `vm run` by its process group, which stops the command
+    in the guest, before it exits 128 + the signal (measured: 0.4 s).
+  - `vm stop` stops the session there and forgets it; a session the worker no longer has
+    (its life ended, the worker restarted) is said on stderr and forgotten, exit 0; a
+    worker that does not answer is exit 1 and the record stays.
+  - A start that fails, or is stopped, undoes what it began on the worker and leaves no
+    record. One killed outright -- bentoolkit cancels with SIGKILL -- leaves the record,
+    written before the VM is started, so the `vm stop` that follows ends the start still
+    under way.
+  - A start and a stop on a worker are audited runs on the host (`vm-dev-worker`,
+    `vm-dev-worker-stop`): the probe, the commit shipped, the ISO `sent` or `reused` with
+    its bytes, the line sent, the durations.
+
+  Measured on bentoo-lab (2026-11-16): the first start, ISO included, 45 s; the next one
+  25 s (23 s of it the boot); a `vm run` round trip 0.9 s; a stop 0.8 s.
+- **A `worker job` stops the dev VMs on its worker first.** A job is what the worker is
+  for, so it neither waits for a dev session nor runs beside one holding 24G: its opening
+  probe lists the dev sessions there and, once the job's tree is shipped, that tree's
+  `vm stop --every-dev` (hidden) ends them -- VM off, directory and work disk removed. The
+  job's audit trail names them (`worker.job.dev_sessions_stopped`); a session that will
+  not stop refuses the job. The host that started such a session learns it at its next
+  `vm run` (exit 1, in words) or `vm stop` (exit 0, forgotten).
 
 ### Changed
 
+- **`shidashi vm start --cpus` tells "not given" from `8`,** as `--memory` does: the VM
+  still gets 8 processors on the host (`vm.DEFAULT_CPUS`), and a worker gives it its own
+  thread count.
 - **`shidashi vm start --memory` tells "not given" from `8G`.** The option has no default
   at the command line any more; the VM still gets 8G (`vm.DEFAULT_MEMORY`) where it is
   made, and the help still says so. A caller that starts the VM elsewhere -- a build

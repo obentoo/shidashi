@@ -255,6 +255,56 @@ deadline and the `outcome`: `removed`, or `failed` with the error when the VM co
 powered off or the directory not removed; the stop is then tried again every minute for
 as long as the session is there.
 
+#### The same VM on a build worker
+
+A [paired worker](#using-a-worker) can run the VM instead of the developer's machine: it
+has the memory and the threads, and the binpkg pool on its own disk. Nothing changes for
+whoever calls the three commands -- the host relays each one, over ssh, to the same
+command on the worker:
+
+```sh
+shidashi vm start --dev --worker bentoo-lab --name dev   # {..., "ready": true, "worker": "bentoo-lab"}
+shidashi vm run --name dev --stream --timeout 0 -- emerge -1 =dev-libs/foo-1.0::bentoo-staged
+shidashi vm stop --name dev
+
+export SHIDASHI_DEV_WORKER=bentoo-lab      # every `vm start --dev` goes there...
+shidashi vm start --dev --local --name here   # ...unless it says --local
+```
+
+`--worker` and `--local` together, or either without `--dev`, are a usage error (exit 2).
+`vm run` and `vm stop` take no option: the start leaves a record on the host,
+`$XDG_STATE_HOME/shidashi/vm/<name>/worker.json`, naming the worker and the Shidashi
+commit it shipped there, and a session with a record is reached on its worker with that
+commit's tree. A name recorded on a worker cannot be started on the host until it is
+stopped.
+
+The start ships this checkout's committed `HEAD` (uncommitted changes do not go; a
+warning says so) and the runtime environment, as a job does, and runs `vm start --dev`
+there. Before anything is shipped it is refused, with exit 1 and one line, when the worker
+does not answer, **when a job is running there**, when its work disk is not mounted, or
+when a session of that name is alive -- there, on the host, or recorded on another worker.
+The ISO is chosen on the host as above and copied once to `/mnt/work/cache/dev-isos/` on
+the worker (about 2 GB; a later start finds it there by size and time); its pins are
+resolved on the host. The session lives in `/mnt/work/scratch/vm/<name>/`.
+
+Three defaults differ on a worker: the VM gets **24G** of memory (a 4.7 GB RAM root for
+dependencies, against 1.6 GB at 8G), **the worker's own thread count**, and a **maximum
+life of 12 hours** -- `--memory`, `--cpus` and `--max-life` change them. The JSON line's
+`"expires"` is therefore never `null` there.
+
+`vm run` passes stdin, stdout and stderr straight through and exits with the command's
+code; `--timeout` is enforced on the worker (exit 124), and ssh's own 255 means the worker
+could not be reached. Ctrl+C, SIGTERM and SIGHUP stop the command in the guest before
+`vm run` exits, as on the host. `vm stop` stops the session on the worker and forgets it;
+a session the worker no longer has -- its life ended, the worker restarted, a job took its
+place -- is said on stderr and forgotten, exit 0, while a worker that does not answer is
+exit 1 and the record stays. A start that fails or is interrupted leaves nothing on
+either machine; one that is killed outright leaves its record, so `vm stop` can end what
+it began.
+
+A `shidashi worker job` has priority: it stops the dev sessions on its worker before it
+starts (its audit trail names them), and no dev VM is started while a job runs there.
+
 ## Usage
 
 ```sh
