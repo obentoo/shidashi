@@ -7,7 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-16
+
+The worker becomes a shared build machine: bentoolkit proves ebuild bumps in disposable
+VMs there, and private repositories' GitHub Actions jobs run on it, one VM per job.
+
 ### Added
+
+- **The worker runs private repositories' GitHub Actions jobs, one disposable VM per
+  job** (`shidashi ci pool`, story 034). A poller on the host mints a just-in-time runner
+  for each queued job carrying the configured label (the token never leaves the host); the
+  worker boots a copy-on-write overlay of a pinned Ubuntu image (`seeds/ci-guest.toml`)
+  with Docker and, when the worker's KVM allows nesting, `/dev/kvm`; the VM takes that one
+  job, powers off and its overlay is deleted. Only private repositories are served. The
+  poller ships as a user unit, `contrib/systemd-user/shidashi-ci-pool.service`, not enabled.
 
 - **`shidashi fork-points gc <arch>` deletes the fork points of old pins.** Every re-pin
   writes a new set and nothing deleted the old ones: the v3 worker's disk was at 90% with
@@ -606,7 +619,8 @@ stage by stage.
   overlays are pinned; a generation fingerprint keeps binpkgs of two toolchains apart;
   every run leaves an audit trail.
 
-[Unreleased]: https://github.com/obentoo/shidashi/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/obentoo/shidashi/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/obentoo/shidashi/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/obentoo/shidashi/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/obentoo/shidashi/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/obentoo/shidashi/compare/v0.1.0...v0.1.1
