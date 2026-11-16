@@ -23,7 +23,10 @@ API_ROOT = "https://api.github.com"
 API_VERSION = "2022-11-28"
 #: The seconds :func:`send` waits for GitHub before it gives up (R5.4).
 DEFAULT_TIMEOUT = 30
-_TOKEN_MODE = 0o600
+#: The bits a token file must not have: any for group or others, and the special ones.
+#: Its owner's bits are the owner's business -- 0400 is stricter than 0600, and was
+#: refused until 2026-11-16 (story 034, deviation 22).
+_TOKEN_FORBIDDEN_BITS = 0o7077
 #: A token is a few hundred bytes; a file past this is not one.
 _TOKEN_LIMIT = 4096
 #: An answer past this is not GitHub's; the calls here return a few hundred bytes.
@@ -56,8 +59,9 @@ class ApiRequest:
 
 
 def read_token(path: Path) -> str:
-    """The token in ``path``: a regular file of the caller's, mode 0600, opened without
-    following a symlink. Raises :class:`GitHubApiError` naming ``path`` -- never the content."""
+    """The token in ``path``: a regular file of the caller's that only its owner may
+    touch (0600, 0400...), opened without following a symlink. Raises
+    :class:`GitHubApiError` naming ``path`` -- never the content."""
     try:
         fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
     except OSError as err:
@@ -67,10 +71,11 @@ def read_token(path: Path) -> str:
         if (
             not stat.S_ISREG(info.st_mode)
             or info.st_uid != os.getuid()
-            or stat.S_IMODE(info.st_mode) != _TOKEN_MODE
+            or stat.S_IMODE(info.st_mode) & _TOKEN_FORBIDDEN_BITS
         ):
             raise GitHubApiError(
-                f"the token file {path} must be a regular file of yours with mode 0600 "
+                f"the token file {path} must be a regular file of yours that group and "
+                f"others cannot read or write, mode 0600 or 0400 "
                 f"(found mode {stat.S_IMODE(info.st_mode):04o}, owner uid {info.st_uid})"
             )
         raw = os.read(fd, _TOKEN_LIMIT + 1)

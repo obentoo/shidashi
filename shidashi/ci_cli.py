@@ -20,7 +20,7 @@ app = typer.Typer(no_args_is_help=True, help="GitHub calls from the host: runner
 
 _REPO = Annotated[str, typer.Option("--repo", help="OWNER/NAME of the repository.")]
 _TOKEN_FILE = Annotated[
-    Path, typer.Option("--token-file", help="File holding the token: yours, mode 0600.")
+    Path, typer.Option("--token-file", help="File holding the token: yours, mode 0600 or 0400.")
 ]
 
 

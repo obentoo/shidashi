@@ -3,8 +3,9 @@ task 6.1; R5.3, R5.5).
 
 Contract (story.md R5.3, R5.5; design.md "shidashi ci jit-config and shidashi ci
 dispatch"): ``read_token(path) -> str`` returns the token of a regular file owned by the
-caller with mode 0600 (its trailing newline dropped). A missing file, one that is not a
-regular file, one owned by someone else or of any other mode raises ``GitHubApiError``
+caller that group and others cannot touch -- 0600, 0400 (its trailing newline dropped).
+A missing file, one that is not a regular file, one owned by someone else, one group or
+others may read or write, or one with a special bit raises ``GitHubApiError``
 naming the file -- and never the token, in the message, its cause, or a log line.
 """
 
@@ -57,6 +58,16 @@ def test_read_token_returns_the_token_of_a_0600_file_owned_by_the_caller(
     assert read_token(path) == token
 
 
+@pytest.mark.parametrize("mode", [0o400, 0o700, 0o500], ids=["0400", "0700", "0500"])
+def test_read_token_accepts_any_mode_that_keeps_group_and_others_out(
+    tmp_path: Path, mode: int
+) -> None:
+    """0400 is stricter than 0600: refusing it (story 034, deviation 22) asked the author to
+    loosen a file to make it acceptable. The owner's own bits are the owner's business."""
+    path, token = token_file(tmp_path, mode=mode)
+    assert read_token(path) == token
+
+
 @pytest.mark.parametrize(
     "mode",
     [
@@ -64,13 +75,14 @@ def test_read_token_returns_the_token_of_a_0600_file_owned_by_the_caller(
         pytest.param(0o640, id="0640"),
         pytest.param(0o604, id="0604"),
         pytest.param(0o660, id="0660"),
-        # Hostile halves: modes that differ from 0600 by one bit the owner might not mind.
-        pytest.param(0o700, id="0700"),
-        pytest.param(0o400, id="0400"),
+        # Hostile halves: one bit for others, or a special bit, on an otherwise private file.
+        pytest.param(0o602, id="0602"),
         pytest.param(0o4600, id="setuid-0600"),
+        pytest.param(0o2600, id="setgid-0600"),
+        pytest.param(0o1600, id="sticky-0600"),
     ],
 )
-def test_read_token_refuses_a_mode_other_than_0600_naming_the_file_never_the_token(
+def test_read_token_refuses_a_mode_group_or_others_reach_naming_the_file_never_the_token(
     tmp_path: Path, mode: int, caplog: pytest.LogCaptureFixture
 ) -> None:
     path, token = token_file(tmp_path, mode=mode)
