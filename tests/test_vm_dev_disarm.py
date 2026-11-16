@@ -19,7 +19,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from shidashi import vm, vm_dev, vm_dev_expiry
+from shidashi import process_state, vm, vm_dev, vm_dev_expiry
 from shidashi.cli import app
 from tests.test_vm_dev_cleanup import _dead_pid, _session
 from tests.test_vm_dev_expiry import FakeWatchdogLauncher
@@ -201,9 +201,13 @@ def _parent_of(pid: int) -> int:
     return int(Path(f"/proc/{pid}/stat").read_text().rsplit(") ", 1)[1].split()[1])
 
 
-def _ended(pid: int) -> bool:
-    """Whether ``pid`` is gone, or a zombie whoever adopted it has not collected yet."""
-    try:
-        return Path(f"/proc/{pid}/stat").read_text().rsplit(") ", 1)[1][0] == "Z"
-    except OSError:
-        return True
+def _ended(pid: int, within: float = 10.0) -> bool:
+    """Whether ``pid`` ends -- gone, or a zombie nobody collected yet -- within ``within``
+    seconds. ``disarm`` sends SIGTERM and returns: the watchdog still has to exit, and a
+    look taken at once failed 1 run in 5 (2026-11-16)."""
+    deadline = time.monotonic() + within
+    while process_state.process_running(pid):
+        if time.monotonic() > deadline:
+            return False
+        time.sleep(0.02)
+    return True
