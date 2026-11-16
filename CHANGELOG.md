@@ -190,6 +190,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   entry's `cache_archs` was dropped, so the host went back to building those archs itself
   and to syncing a cache that lives on the worker only. The address, CPU flags and image
   still start over: they are the new medium's.
+- **Re-pairing a worker with `shidashi kyomei` keeps the arch caches it owns.** It had
+  the same defect: the new entry dropped `cache_archs`. When the worker answers with
+  another host key (`--replace`), which may be another machine, the command says how to
+  hand those archs back to the host (`worker cache-owner NAME --arch ARCH --off`).
+- **A GitHub token file of mode 0400 is accepted.** `shidashi ci` required exactly 0600
+  and refused a file stricter than that. It now takes any file of yours that group and
+  others cannot read or write; one with a setuid, setgid or sticky bit is still refused.
+- **A failed weekly release on the lab's builder VM is reported as failed.** The guest's
+  runner was started through actions/runner's `run.sh`, which turns the listener's
+  `100 + the job's result` into 0, so `builder.sh weekly` read every job as passed. The
+  listener now starts directly, as the CI guests of `shidashi ci` already did. The tests'
+  stand-in runner had passed the code through `run.sh`, which is how this went unseen.
 - **A dev VM no longer leaves its work disk behind.** bentoolkit names every build VM
   afresh, so each stopped session kept a disk full of builds. `vm stop` now removes a
   `--dev` session's directory, and `vm start --dev` removes the dev sessions whose VM died

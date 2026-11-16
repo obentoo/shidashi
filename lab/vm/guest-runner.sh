@@ -45,4 +45,8 @@ export RUNNER_ALLOW_RUNASROOT=1
 # without it the runner exits 0 whatever the job's result (actions/runner Runner.cs)
 export ACTIONS_RUNNER_RETURN_JOB_RESULT_FOR_HOSTED=true
 export ACTIONS_RUNNER_HOOK_JOB_STARTED="$REPO/lab/vm/runner-hook.sh"
-exec ./run.sh --jitconfig "$cfg"
+# The listener, not run.sh: with the variable above it exits 100 + the job's result, the
+# code `builder.sh weekly` reads (100 passed, 102 failed), and run.sh maps every such code
+# to 0 -- a failed weekly release was reported as passed (story 034, deviation 11; the
+# CI guest of story 034 starts the listener the same way, shidashi/ci_guest_seed.py).
+exec ./bin/Runner.Listener run --jitconfig "$cfg"

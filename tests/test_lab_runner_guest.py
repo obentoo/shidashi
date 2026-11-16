@@ -6,7 +6,8 @@ runner.env", "Implementation Gotchas"): ``lab/vm/runner.env`` pins ``RUNNER_VERS
 ``RUNNER_SHA256`` of ``actions-runner-linux-x64``; the guest downloads that tarball and
 refuses -- exit 1 (the script, or the guest unit it starts), before running anything --
 one whose SHA-256 is not the pinned one. The
-runner starts with ``./run.sh --jitconfig <the config>`` read from ``/run/shidashi/jitconfig``
+runner starts with ``./bin/Runner.Listener run --jitconfig <the config>`` -- never ``run.sh``,
+which reports every job as passed -- read from ``/run/shidashi/jitconfig``
 (tmpfs, 0600, written by the host over ssh stdin), never through ``config.sh``, as root
 (``RUNNER_ALLOW_RUNASROOT`` set), with ``ACTIONS_RUNNER_HOOK_JOB_STARTED`` naming the
 job-started hook. The config never lands under a shared directory (``/mnt``).
@@ -160,3 +161,18 @@ def test_guest_runner_refuses_a_tarball_whose_sha256_is_not_the_pinned_one(
     assert guest_run.runner.runs() == [], "the runner ran from an unverified tarball"
     assert guest_run.runner.config_calls() == []
     assert "sha256" in output.lower() or real in output, output
+
+
+@needs_guest
+def test_guest_runner_hands_the_jobs_result_on_never_through_run_sh(
+    guest_run: GuestRun,
+) -> None:
+    """A failed job must reach ``builder.sh weekly`` as failed: the listener exits 100 + the
+    job's result, and ``run.sh`` turns every such code into 0 -- a failed weekly release was
+    reported as passed (story 034, deviation 11)."""
+    guest_run.pin(guest_run.runner.sha256)
+    guest_run.runner.exit_with(102)
+    code, output = guest_run.start()
+    assert code == 102, output
+    assert guest_run.runner.run_sh_calls() == [], "the runner was started through run.sh"
+    assert len(guest_run.runner.runs()) == 1, output

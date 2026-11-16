@@ -1,9 +1,11 @@
 """Stand-ins for the builder VM, its guest and the actions runner (story 032, tasks 7.1, 7.3).
 
 - :class:`FakeActionsRunner` stands in for actions/runner's ``actions-runner-linux-x64``
-  tarball: its ``run.sh`` records each start (argv, environment, directory, the ``.env``
-  beside it, ``/run/shidashi/jitconfig`` as it then was) and exits with the status the test
-  chose; its ``config.sh`` records that it ran -- a JIT runner never runs it.
+  tarball: its ``bin/Runner.Listener`` records each start (argv, environment, directory,
+  the ``.env`` beside it, ``/run/shidashi/jitconfig`` as it then was) and exits with the
+  status the test chose; its ``run.sh`` records a start too but, like the real one, exits
+  0 whatever the job's result; its ``config.sh`` records that it ran -- a JIT runner never
+  runs it.
 - :class:`FakeBuilderGuest` stands in for the guest: a command runs as root (uid 0 in a user
   namespace, ``bwrap``) in a root of its own where ``/run``, ``/mnt``, ``/work``, ``/root``,
   ``/opt`` and ``/srv`` are directories of the test, ``/mnt/out`` is the host's ``out/``
@@ -131,12 +133,16 @@ class FakeActionsRunner:
         recorder = _python_script(self.records / "recorder.py", _RECORDER % {"jit": JITCONFIG})
         self.tarball = root / f"actions-runner-linux-x64-{version}.tar.gz"
         files = {
+            # As the real one: it runs the listener and exits 0 whatever the job's result
+            # (actions/runner run-helper.sh), so a start through it is recorded, and lost.
             "run.sh": f'#!/bin/bash\nhere=$(cd "$(dirname "$0")" && pwd)\n'
-            f'exec {sys.executable} {recorder} {self.records} run "$here" "$@"\n',
+            f'{sys.executable} {recorder} {self.records} run-sh "$here" "$@"\nexit 0\n',
             "config.sh": f'#!/bin/bash\nhere=$(cd "$(dirname "$0")" && pwd)\n'
             f'exec {sys.executable} {recorder} {self.records} config "$here" "$@"\n',
             "env.sh": "#!/bin/bash\n",
-            "bin/Runner.Listener": "#!/bin/bash\nexit 0\n",
+            # the listener exits with the status a test asked for (100 + the job's result)
+            "bin/Runner.Listener": f'#!/bin/bash\nhere=$(cd "$(dirname "$0")/.." && pwd)\n'
+            f'exec {sys.executable} {recorder} {self.records} run "$here" "$@"\n',
         }
         with tarfile.open(self.tarball, "w:gz") as archive:
             for name, text in files.items():
@@ -155,6 +161,10 @@ class FakeActionsRunner:
 
     def config_calls(self) -> list[dict[str, Any]]:
         return _jsonl(self.records / "config.jsonl")
+
+    def run_sh_calls(self) -> list[dict[str, Any]]:
+        """Starts through ``run.sh``, which reports every job as passed."""
+        return _jsonl(self.records / "run-sh.jsonl")
 
 
 # --- the guest --------------------------------------------------------------------------------
