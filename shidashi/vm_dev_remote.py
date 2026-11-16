@@ -26,12 +26,15 @@ worker's memory for ever. The session lives in ``/mnt/work/scratch/vm/<name>/``.
 The VM is never a job: QEMU and virtiofsd outlive the ssh command that started them,
 and would not outlive a ``systemd-run`` unit.
 
-A start records its shell's process group in ``<sessions>/<name>.start.pid`` on the
-worker (:func:`shidashi.vm_exec.guarded`); whatever undoes a start -- its own failure,
-Ctrl+C, a ``vm stop`` after the host's start was killed outright -- ends that group
-first, then runs the worker's ``vm stop`` (:func:`relayed_stop_command`). A group is signalled
-only while the process the file names still shows the file's path in its command line:
-the work disk outlives a reboot, a pid does not.
+The lines sent to the worker are :mod:`shidashi.vm_dev_remote_shell`'s, all pure; a
+relayed ``vm run`` is :mod:`shidashi.vm_dev_remote_run`'s. A start records its shell's
+process group in ``<sessions>/<name>.start.pid`` on the worker
+(:func:`shidashi.vm_exec.guarded`); whatever undoes a start -- its own failure, Ctrl+C,
+a ``vm stop`` after the host's start was killed outright -- ends that group first, then
+runs the worker's ``vm stop``
+(:func:`shidashi.vm_dev_remote_shell.relayed_stop_command`). A group is signalled only
+while the process the file names still shows the file's path in its command line: the
+work disk outlives a reboot, a pid does not.
 
 The audit trail in force gets ``vm.dev.worker.probe``, the steps ``vm.dev.worker.ship``
 and ``vm.dev.worker.iso`` (``sent`` or ``reused``, with the bytes), the step
@@ -294,6 +297,9 @@ def start_on_worker(
     rec = audit.current()
     began = time.monotonic()
     name = request.name
+    unusable = vm_dev_record.session_name_error(name)
+    if unusable is not None:  # the name reaches the worker's shell unquoted
+        raise DevWorkerError(unusable)
     _refuse_taken_here(request, remote.name)
     probe = refuse_busy(remote, name)
 

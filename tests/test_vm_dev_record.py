@@ -132,6 +132,23 @@ def test_a_record_naming_what_no_start_wrote_is_an_error(
     assert said in str(refused.value) and str(path) in str(refused.value)
 
 
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"name": "a b"},
+        {"name": "../x"},
+        {"worker": "lab; reboot"},
+        {"commit": "$(id)"},
+        {"commit": "HEAD"},
+    ],
+    ids=["name-space", "name-path", "worker", "commit-shell", "commit-ref"],
+)
+def test_a_session_that_could_not_cross_a_shell_cannot_be_made(fields: dict[str, str]) -> None:
+    # whoever holds a WorkerSession splices it into command lines: it is safe by construction
+    with pytest.raises(ValueError):
+        _session(**{"name": "dev", **fields})
+
+
 @pytest.mark.parametrize("text", ["", "{", "[]", '"dev"', '{"name": "dev"'])
 def test_a_record_cut_short_is_an_error_never_no_record(state: Path, text: str) -> None:
     # a session on a worker must not turn into a local one because a file was truncated

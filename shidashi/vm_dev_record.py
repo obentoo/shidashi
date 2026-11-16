@@ -54,6 +54,23 @@ class WorkerSession:
     started: str
     expires: str | None = None
 
+    def __post_init__(self) -> None:
+        """``ValueError`` (``TypeError`` for a field that is no text) unless every field
+        is what a start writes: whoever holds a :class:`WorkerSession` may splice its
+        name, worker and commit into a command line."""
+        texts = (self.name, self.worker, self.commit, self.started)
+        if not all(isinstance(value, str) for value in texts):
+            raise TypeError("name, worker, commit and started are strings")
+        if not (self.expires is None or isinstance(self.expires, str)):
+            raise TypeError("expires is a string or null")
+        reason = session_name_error(self.name)
+        if reason is not None:
+            raise ValueError(reason)
+        if not _WORKER_RE.fullmatch(self.worker):
+            raise ValueError(f"{self.worker!r} is no worker name")
+        if not _COMMIT_RE.fullmatch(self.commit):
+            raise ValueError(f"{self.commit!r} is no commit")
+
     def ready(self, expires: str | None) -> WorkerSession:
         """This record once the VM is up, with the worker's deadline. Pure."""
         return replace(self, expires=expires)
@@ -78,7 +95,8 @@ def read_record(name: str) -> WorkerSession | None:
     start accepts there is never one. I/O.
 
     :class:`vm.VmError` for a record that does not read, or that names another
-    session, no worker or no commit: nothing in it reaches a command line unchecked.
+    session, no worker or no commit (:class:`WorkerSession` checks every field): nothing
+    in it reaches a command line unchecked.
     """
     if session_name_error(name) is not None:
         return None  # no start ever wrote a record under such a name
@@ -98,17 +116,8 @@ def read_record(name: str) -> WorkerSession | None:
             started=data["started"],
             expires=data.get("expires"),
         )
-        texts = (session.name, session.worker, session.commit, session.started)
-        if not all(isinstance(value, str) for value in texts):
-            raise TypeError("name, worker, commit and started are strings")
-        if not (session.expires is None or isinstance(session.expires, str)):
-            raise TypeError("expires is a string or null")
         if session.name != name:
             raise ValueError(f"it is the record of {session.name!r}")
-        if not _WORKER_RE.fullmatch(session.worker):
-            raise ValueError(f"{session.worker!r} is no worker name")
-        if not _COMMIT_RE.fullmatch(session.commit):
-            raise ValueError(f"{session.commit!r} is no commit")
     except (ValueError, KeyError, TypeError) as err:  # JSONDecodeError is a ValueError
         raise vm.VmError(
             f"{path} does not read as the record of a session on a worker ({err}): "

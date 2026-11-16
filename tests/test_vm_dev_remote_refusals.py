@@ -160,6 +160,15 @@ def test_a_name_alive_on_this_host_is_refused_before_any_contact(
     assert _start(lab, iso)["ready"] is True
 
 
+@pytest.mark.parametrize("name", ["a b", "x;reboot", "../x", "-x", ""])
+def test_a_name_that_cannot_cross_a_shell_is_refused_before_any_contact(
+    lab: FakeWorkerShell, ship: FakeShipHead, iso: Path, name: str
+) -> None:
+    with pytest.raises(vm_dev_remote.DevWorkerError, match="cannot name a session on a worker"):
+        _start(lab, iso, name=name)
+    assert lab.ssh_calls() == [] and ship.calls == 0
+
+
 def test_a_stale_record_of_the_same_worker_does_not_block_a_new_start(
     lab: FakeWorkerShell, ship: FakeShipHead, iso: Path
 ) -> None:
