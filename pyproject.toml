@@ -16,7 +16,13 @@ dependencies = [
 # NB: Portage is not a dependency: emerge runs inside the build containers.
 
 [project.optional-dependencies]
-dev = ["ruff>=0.5", "mypy>=1.10", "types-PyYAML", "pytest>=8"]
+dev = [
+    "ruff>=0.5",
+    "mypy>=1.10",
+    "types-PyYAML",
+    "pytest>=8",
+    "pytest-xdist>=3.8",
+]
 
 [project.scripts]
 shidashi = "shidashi.cli:app"
@@ -44,3 +50,10 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 python_version = "3.14"
 strict = true
 warn_unused_ignores = true
+
+[tool.pytest.ini_options]
+# One run of the suite makes ~250k inodes of temporary directories (several autouse
+# mktemp per test), and pytest keeps the last three runs: on a tmpfs /tmp of 1M inodes,
+# back-to-back runs ran out ("could not create numbered dir", 2026-11-16). Keep only what
+# a failure needs to be looked at.
+tmp_path_retention_policy = "failed"

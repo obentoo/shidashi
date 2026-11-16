@@ -28,7 +28,8 @@ QUALITY_GATES = (
     "uv run --frozen ruff check .",
     "uv run --frozen ruff format --check .",
     "uv run --frozen mypy .",
-    "uv run --frozen pytest",
+    # the whole suite, one pytest-xdist worker per core of the runner
+    "uv run --frozen pytest -n auto",
 )
 FORK_TRIGGERS = {"pull_request", "pull_request_target", "push", "workflow_run", "issue_comment"}
 

@@ -13,6 +13,15 @@ import pytest
 for _var in ("GITHUB_ACTIONS", "FORCE_COLOR", "PY_COLORS"):
     os.environ.pop(_var, None)
 
+# Rich wraps at 80 columns off a terminal, and a message naming a temporary path wraps
+# INSIDE the path once the path is long enough. Under pytest-xdist every path gains a
+# ``popen-gwN/`` and three tests broke on it (2026-11-16): an assertion on a path or a
+# command line in the output must not depend on how long ``tmp_path`` is. Set here, at
+# import, because the CLI's error console (``cli._err_console``) reads COLUMNS when it is
+# created, at import too; a test that needs another width for a console it creates
+# itself still sets its own.
+os.environ["COLUMNS"] = "500"
+
 
 @pytest.fixture(autouse=True)
 def _runs_in_tmp(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -67,4 +67,5 @@ jobs:
         run: uv run --frozen mypy .
 
       - name: Pytest
-        run: uv run --frozen pytest
+        # pytest-xdist: one worker per core of the runner
+        run: uv run --frozen pytest -n auto
