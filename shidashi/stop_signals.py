@@ -67,3 +67,20 @@ def stop_under_way() -> None:
     if threading.current_thread() is threading.main_thread():
         for sig in STOP_SIGNALS:
             signal.signal(sig, signal.SIG_IGN)
+
+
+@contextlib.contextmanager
+def deaf_to_stop() -> Generator[None]:
+    """The block with SIGTERM and SIGHUP ignored (:func:`stop_under_way`), and whatever
+    handled them before back in place afterwards -- for a stop carried out by code that
+    cannot know whether its caller installed :func:`unwinding_on_stop` (a library
+    function undoing what it began). Handlers change on the main thread only."""
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+    previous = {sig: signal.signal(sig, signal.SIG_IGN) for sig in STOP_SIGNALS}
+    try:
+        yield
+    finally:
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)

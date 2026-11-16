@@ -22,14 +22,14 @@ import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import Callable, Collection, Generator, Sequence
+from collections.abc import Callable, Collection, Generator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 import yaml
 
 import shidashi
-from shidashi import audit, binhost, config, isaguard, ownership, phases, workers
+from shidashi import audit, binhost, config, isaguard, ownership, phases, vm_dev_evict, workers
 from shidashi.recipe import RecipeChainError, RecipeSourceError
 from shidashi.remote import (
     Remote,
@@ -612,32 +612,61 @@ def job_unit_argv(job: str, commit: str, args: Sequence[str]) -> list[str]:
         f'[ -z "$new" ] || printf "%s\\n" "$new" > "{jobs}.runs"; '
         f'echo $rc > "{jobs}.rc.tmp" && mv -f "{jobs}.rc.tmp" "{jobs}.rc"'
     )
-    exec_start = [
-        "/bin/bash",
-        "-c",
-        script,
-        "bash",
-        f"{WORKER_VENV}/bin/python",
-        "-c",
-        "from shidashi.cli import app; app()",
-        *command,
-    ]
+    exec_start = ["/bin/bash", "-c", script, "bash", *_SHIPPED_APP, *command]
     return [
         "systemd-run",
         f"--unit=shidashi-job-{job}",
         "--collect",
         "--service-type=exec",
         f"--working-directory={src}",
-        f"--setenv=SHIDASHI_CACHE={WORKER_CACHE}",
-        f"--setenv=SHIDASHI_SCRATCH={WORK}/scratch",
-        f"--setenv=SHIDASHI_RUNS={out}/runs",
-        f"--setenv=PYTHONPATH={src}",
-        # the shipped tree has no .git: audit.repo_state records this commit instead
-        f"--setenv={audit.SOURCE_COMMIT_VARIABLE}={commit}",
+        *(f"--setenv={key}={value}" for key, value in shipped_environment(commit).items()),
         # systemd un-doubles $$ when it executes the command: what bash and shidashi
         # get is exactly ``exec_start``
         *(word.replace("$", "$$") for word in exec_start),
     ]
+
+
+#: The shipped venv's interpreter running the shipped tree's CLI: installed nowhere.
+_SHIPPED_APP = (f"{WORKER_VENV}/bin/python", "-c", "from shidashi.cli import app; app()")
+
+
+def shipped_environment(commit: str) -> dict[str, str]:
+    """What a Shidashi shipped as ``commit`` runs under on the worker: every path it
+    writes on the work disk, the shipped tree as its package. Pure."""
+    return {
+        "SHIDASHI_CACHE": WORKER_CACHE,
+        "SHIDASHI_SCRATCH": f"{WORK}/scratch",
+        "SHIDASHI_RUNS": f"{WORK}/out/runs",
+        "PYTHONPATH": f"{WORK}/src/{commit}",
+        # the shipped tree has no .git: audit.repo_state records this commit instead
+        audit.SOURCE_COMMIT_VARIABLE: commit,
+    }
+
+
+def shipped_shell(
+    commit: str, args: Sequence[str], *, also: Mapping[str, str] | None = None
+) -> str:
+    """One shell line running ``shidashi ARGS…`` from ``commit``'s shipped tree in the
+    caller's own ssh session -- what a job's unit runs, without the unit -- with the
+    variables of ``also`` added to its environment. Pure."""
+    env = {**shipped_environment(commit), **(also or {})}
+    setting = " ".join(f"{key}={shlex.quote(value)}" for key, value in env.items())
+    return f"cd {shlex.quote(env['PYTHONPATH'])} && {setting} {shlex.join([*_SHIPPED_APP, *args])}"
+
+
+def ship_head(remote: Remote, *, bwlimit: int | None = None) -> tuple[str, int]:
+    """Ship the checkout's HEAD and the runtime venv, as an archless :func:`job` does
+    with ``--allow-dirty``: the commit shipped and the bytes the venv took. HEAD ships;
+    a warning on stderr names the uncommitted changes that do not.
+
+    :class:`JobRefused` when the checkout has no commit to ship; :class:`SyncError` for
+    a worker without its work disk or the venv's interpreter, and for a failed transfer.
+    """
+    repo = _host_repo()
+    commit = _checkout_head(repo, allow_dirty=True, said_by="warning")
+    sent = _push_runtime(remote, bwlimit=bwlimit)
+    put_tree(remote, commit, f"{WORK}/src/{commit}", repo=repo)
+    return commit, sent
 
 
 def _has_output_dir(options: Sequence[str]) -> bool:
@@ -1282,7 +1311,8 @@ def job(
     if problem is not None:
         reason, fix = problem
         raise JobRefused(reason, fix or "make the directory readable and writable by this user")
-    _require_idle(name, opening if opening is not None else _probe_for_job(remote, name))
+    probed = opening if opening is not None else _probe_for_job(remote, name)
+    _require_idle(name, probed)
 
     unit = f"shidashi-job-{job}"
     rec.event(
@@ -1335,6 +1365,9 @@ def job(
         rec.metric("bytes_pushed", sent, "B", worker=name)
         with rec.step("worker.ship", worker=name, commit=commit):
             put_tree(remote, commit, f"{WORK}/src/{commit}", repo=repo)
+        if vm_dev_evict.listed_dev_sessions(probed):
+            # only now: the tree just shipped is the code on the worker that can stop them
+            vm_dev_evict.evict(remote, shipped_shell(commit, vm_dev_evict.STOP_ARGS), rec)
         unit_argv = job_unit_argv(job, commit, args)
         rec.command(unit_argv, worker=name, unit=unit)
     except BaseException:
@@ -1455,11 +1488,12 @@ def _git(repo: Path, *args: str) -> str:
     return done.stdout
 
 
-def _checkout_head(repo: Path, *, allow_dirty: bool) -> str:
+def _checkout_head(repo: Path, *, allow_dirty: bool, said_by: str = "--allow-dirty") -> str:
     """The checkout's HEAD commit; refuse uncommitted changes to tracked files.
 
     Untracked files never count (``git archive`` never ships them). With
-    ``allow_dirty`` HEAD ships and a line says the changes do not.
+    ``allow_dirty`` HEAD ships and a line, opened with ``said_by``, says the changes
+    do not.
     """
     status = _git(repo, "status", "--porcelain", "--untracked-files=no")
     changed = [line[3:] for line in status.splitlines() if len(line) > 3]
@@ -1471,7 +1505,7 @@ def _checkout_head(repo: Path, *, allow_dirty: bool) -> str:
         )
     if changed:
         print(
-            "--allow-dirty: shipping HEAD; the uncommitted changes to "
+            f"{said_by}: shipping HEAD; the uncommitted changes to "
             f"{', '.join(changed)} are not included",
             file=sys.stderr,
         )
@@ -1522,7 +1556,8 @@ def _probe_for_job(remote: Remote, name: str, *, facts: bool = False) -> list[st
     """
     script = (
         f"if findmnt -no TARGET -M {WORK} >/dev/null 2>&1; then echo work=mounted; fi; "
-        f"{_LIST_JOBS} 2>/dev/null; {_JOB_FACTS if facts else ''}true"
+        f"{_LIST_JOBS} 2>/dev/null; {vm_dev_evict.list_script(f'{WORK}/scratch')}; "
+        f"{_JOB_FACTS if facts else ''}true"
     )
     try:
         result = run(remote, script, timeout=_JOB_PROBE_TIMEOUT)

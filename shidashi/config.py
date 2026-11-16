@@ -23,6 +23,9 @@ _CACHE_ENV = "SHIDASHI_CACHE"
 _SEEDS_ENV = "SHIDASHI_SEEDS_DIR"
 _RUNS_ENV = "SHIDASHI_RUNS"
 _DEV_ISO_ENV = "SHIDASHI_DEV_ISO_DIR"
+_DEV_WORKER_ENV = "SHIDASHI_DEV_WORKER"
+#: Set, by a host's relay, for the Shidashi it runs on a worker (:func:`dev_relayed`).
+DEV_RELAYED_ENV = "SHIDASHI_DEV_RELAYED"
 
 #: Where a system install (the app-misc/shidashi ebuild) puts the recipes and the
 #: pins: ``<share>/variants`` and ``<share>/seeds``. A module attribute so tests can
@@ -245,6 +248,28 @@ def dev_iso_dir() -> Path:
     if override:
         return Path(override)
     return Path("/var/tmp/shidashi-isos")
+
+
+def dev_worker() -> str | None:
+    """The paired worker ``vm start --dev`` runs its VM on when ``--worker`` names none.
+
+    ``SHIDASHI_DEV_WORKER`` (read on every call); unset or blank: None, the VM runs on
+    this host. ``--local`` overrides it for one start. Only a start reads it: ``vm run``
+    and ``vm stop`` go where the session was recorded.
+    """
+    return os.environ.get(_DEV_WORKER_ENV, "").strip() or None
+
+
+def dev_relayed() -> bool:
+    """Whether a host's relay started this Shidashi, on a build worker.
+
+    ``SHIDASHI_DEV_RELAYED`` (read on every call), set by
+    :mod:`shidashi.vm_dev_remote_shell` in every line it sends. Such a ``vm start``,
+    ``vm run`` or ``vm stop`` is the end of the chain: it never relays again, whatever
+    the worker's own environment or state directory names -- a session recorded there
+    under the same name would otherwise send the command round and round.
+    """
+    return bool(os.environ.get(DEV_RELAYED_ENV))
 
 
 def workers_dir() -> Path:

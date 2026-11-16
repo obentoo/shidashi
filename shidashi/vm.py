@@ -77,6 +77,8 @@ DEFAULT_CID = 42
 #: A VM's memory when ``vm start`` is given no ``--memory``. The CLI passes "not given"
 #: on as None: a caller that starts the VM elsewhere (a build worker) picks its own.
 DEFAULT_MEMORY = "8G"
+#: A VM's processors without ``--cpus``; "not given" is passed on as None likewise.
+DEFAULT_CPUS = 8
 
 #: The highest guest CID: 0xFFFFFFFF is VMADDR_CID_ANY.
 _CID_MAX = 0xFFFFFFFE
@@ -119,7 +121,7 @@ class VmSpec:
     uefi: bool = False
     cid: int = DEFAULT_CID
     memory: str = DEFAULT_MEMORY
-    cpus: int = 8
+    cpus: int = DEFAULT_CPUS
     display: str = "none"
     #: qcow2 disks attached as virtio (/dev/vda, /dev/vdb... in the guest).
     disks: tuple[Path, ...] = ()

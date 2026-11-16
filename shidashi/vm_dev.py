@@ -268,7 +268,7 @@ def start_dev(
     directory: Path,
     repo: Path,
     memory: str = vm.DEFAULT_MEMORY,
-    cpus: int = 8,
+    cpus: int = vm.DEFAULT_CPUS,
     display: str = "none",
     disk_size: str = DEFAULT_DISK_SIZE,
     download: bool = True,

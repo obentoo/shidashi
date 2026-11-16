@@ -5,7 +5,13 @@ stdout carries exactly one line, the VM as JSON (bentoolkit parses it); every hu
 message goes to stderr. Exit codes: 0 ready, :data:`vm_dev.NO_ISO_EXIT` no ISO to boot,
 1 any other failure, 2 a usage error -- an option ``--dev`` decides itself, a
 ``--max-life`` that is no positive number of hours, a ``--pins-json`` that is no pins
-block, either of the two without ``--dev``. A usage error is told before anything boots.
+block, ``--worker`` with ``--local``, any of the four without ``--dev``. A usage error is
+told before anything boots.
+
+The VM runs on a paired build worker when ``--worker`` or ``SHIDASHI_DEV_WORKER`` names
+one and ``--local`` does not say otherwise: the start is then
+:mod:`shidashi.vm_dev_remote_cli`'s, with the same line and the same exit codes. A name
+recorded on a worker is refused here: ``vm run`` and ``vm stop`` would go there.
 
 Without ``--work-dir`` the session lives in the user's state directory and the cache stays
 the shared one: ``--work-dir`` moves the cache too, and the trees a dev VM mounts are
@@ -25,7 +31,7 @@ from typing import NoReturn
 import typer
 
 import shidashi
-from shidashi import iso_pins, vm, vm_dev, vm_dev_expiry
+from shidashi import iso_pins, vm, vm_dev, vm_dev_expiry, vm_dev_remote, vm_dev_remote_cli
 
 #: Options ``--dev`` decides itself; given anyway, they are refused, never ignored.
 _MANAGED = ("--uefi", "--cid", "--disk", "--share", "--forward", "--no-wait")
@@ -51,31 +57,56 @@ def start(
     init: str,
     arch: str,
     memory: str | None,
-    cpus: int,
+    cpus: int | None,
     display: str,
     disk_size: str | None,
     work_dir: Path | None,
     managed: dict[str, bool],
     max_life: float | None = None,
     pins_json: str | None = None,
+    worker: str | None = None,
+    local: bool = False,
 ) -> None:
     """Start a dev VM, print it as JSON; raise :class:`typer.Exit` with the code above.
 
-    ``memory`` None is "not given": :data:`vm.DEFAULT_MEMORY`.
+    ``memory`` and ``cpus`` None are "not given": :data:`vm.DEFAULT_MEMORY` and
+    :data:`vm.DEFAULT_CPUS` on this host, a worker's own defaults there.
     """
     given = [opt for opt in _MANAGED if managed.get(opt)]
     if given:
         _usage_error(f"--dev decides {', '.join(given)} itself")
+    on_worker = vm_dev_remote_cli.chosen_worker(worker=worker, local=local)
     if max_life is not None:
         reason = vm_dev_expiry.max_life_error(max_life, now=vm_dev_expiry.utc_now())
         if reason is not None:
             _usage_error(f"--max-life: {reason}")
+    if on_worker is not None:
+        if pins_json is not None:
+            _usage_error("--pins-json is what a relay hands a worker: never given with one")
+        if display != "none":
+            _usage_error("--display shows a VM on this host: use --local")
+        vm_dev_remote_cli.start(
+            worker_name=on_worker,
+            request=vm_dev_remote.StartRequest(
+                name=name,
+                iso=iso,
+                init=init,
+                arch=arch,
+                memory=memory,
+                cpus=cpus,
+                max_life=max_life,
+                disk_size=disk_size,
+            ),
+            repo=Path(shidashi.__file__).resolve().parent.parent,
+        )
+        return
     pins = None
     if pins_json is not None:
         try:
             pins = iso_pins.handed_pins(json.loads(pins_json))
         except (ValueError, iso_pins.IsoPinsError) as err:  # JSONDecodeError is a ValueError
             _usage_error(f"--pins-json: {err}")
+    vm_dev_remote_cli.refuse_recorded(name)
     # cli._apply_work_dir has already pointed cache and scratch under --work-dir
     named_scratch = work_dir is not None or bool(os.environ.get("SHIDASHI_SCRATCH"))
     directory = vm.session_dir(name) if named_scratch else vm.user_session_dir(name)
@@ -88,7 +119,7 @@ def start(
             directory=directory,
             repo=Path(shidashi.__file__).resolve().parent.parent,
             memory=memory or vm.DEFAULT_MEMORY,
-            cpus=cpus,
+            cpus=cpus or vm.DEFAULT_CPUS,
             display=display,
             disk_size=disk_size or vm_dev.DEFAULT_DISK_SIZE,
             warn=lambda message: typer.echo(f"warning: {message}", err=True),

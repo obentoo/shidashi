@@ -2470,7 +2470,9 @@ def vm_start(
     memory: Annotated[
         str | None, typer.Option("--memory", help="The guest's memory (default 8G).")
     ] = None,
-    cpus: Annotated[int, typer.Option("--cpus", min=1)] = 8,
+    cpus: Annotated[
+        int | None, typer.Option("--cpus", min=1, help="The guest's processors (default 8).")
+    ] = None,
     display: Annotated[
         str, typer.Option("--display", help="none (headless) or sdl to watch it.")
     ] = "none",
@@ -2526,15 +2528,30 @@ def vm_start(
     ] = None,
     # how a relay hands a worker the ISO's pins (vm_dev_cli): not for a person to type
     pins_json: Annotated[str | None, typer.Option("--pins-json", hidden=True)] = None,
+    worker: Annotated[
+        str | None,
+        typer.Option(
+            "--worker",
+            metavar="NAME",
+            help="--dev: run the VM on this paired build worker (default: the one "
+            "SHIDASHI_DEV_WORKER names); `vm run` and `vm stop` then reach it there.",
+        ),
+    ] = None,
+    local: Annotated[
+        bool,
+        typer.Option("--local", help="--dev: on this host, whatever SHIDASHI_DEV_WORKER names."),
+    ] = False,
 ) -> None:
     """Start ``iso`` in a VM reachable with `shidashi vm run`."""
-    from shidashi import vm, vm_dev_cli
+    from shidashi import vm, vm_dev_cli, vm_dev_remote_cli
 
     _apply_work_dir(work_dir)
     if dev:
         vm_dev_cli.start(
             max_life=max_life,
             pins_json=pins_json,
+            worker=worker,
+            local=local,
             iso=dev_iso or iso,
             name=name,
             init=init,
@@ -2555,11 +2572,17 @@ def vm_start(
         )
         return
     vm_dev_cli.refuse_dev_only(
-        {"--max-life": max_life is not None, "--pins-json": pins_json is not None}
+        {
+            "--max-life": max_life is not None,
+            "--pins-json": pins_json is not None,
+            "--worker": worker is not None,
+            "--local": local,
+        }
     )
     if iso is None or dev_iso is not None:
         _err_console.print("[bold red]error:[/bold red] give the ISO to boot (or use --dev)")
         raise typer.Exit(2)
+    vm_dev_remote_cli.refuse_recorded(name)
     cid = vm.DEFAULT_CID if cid is None else cid
     try:
         shares = tuple(vm.parse_share(s) for s in share or ())
@@ -2571,7 +2594,7 @@ def vm_start(
         uefi=uefi,
         cid=cid,
         memory=memory or vm.DEFAULT_MEMORY,
-        cpus=cpus,
+        cpus=cpus or vm.DEFAULT_CPUS,
         display=display,
         disks=disks,
         shares=shares,
@@ -2611,10 +2634,12 @@ def vm_run(
     """Run a command as root in the VM; its exit code becomes ours. Our stdin is the
     command's (``tar -c … | shidashi vm run -- tar -x``). A command stopped by
     ``--timeout``, Ctrl+C, SIGTERM or SIGHUP is stopped in the guest too, with all it
-    started; past its timeout it exits 124, on a signal 128 + its number."""
-    from shidashi import vm, vm_exec
+    started; past its timeout it exits 124, on a signal 128 + its number. A session
+    started on a build worker (``vm start --dev --worker``) is reached there."""
+    from shidashi import vm, vm_dev_remote_cli, vm_exec
 
     _apply_work_dir(work_dir)
+    vm_dev_remote_cli.run_if_on_worker(name, command, timeout=timeout, stream=stream)
     limit = timeout or None
     try:
         session = vm.load_session(name)
@@ -2648,11 +2673,17 @@ def vm_screenshot(
 def vm_stop(
     name: Annotated[str, typer.Option("--name")] = "bentoo",
     work_dir: Annotated[Path | None, typer.Option("--work-dir")] = None,
+    # how `worker job` clears the dev VMs off its worker (vm_dev_evict): not for a person
+    every_dev: Annotated[bool, typer.Option("--every-dev", hidden=True)] = False,
 ) -> None:
-    """Power the VM off; a ``--dev`` session's directory, work disk included, goes too."""
-    from shidashi import vm, vm_dev
+    """Power the VM off; a ``--dev`` session's directory, work disk included, goes too.
+    A session on a build worker is stopped there, and forgotten when it is gone."""
+    from shidashi import vm, vm_dev, vm_dev_evict, vm_dev_remote_cli
 
     _apply_work_dir(work_dir)
+    if every_dev:
+        raise typer.Exit(vm_dev_evict.stop_every_dev_session())
+    vm_dev_remote_cli.stop_if_on_worker(name)
     try:
         session = vm.load_session(name)
         session.stop()
