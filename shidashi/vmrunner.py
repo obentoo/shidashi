@@ -38,7 +38,7 @@ from typing import Any
 
 import yaml
 
-from shidashi import audit, config, locks, toolbox, vm
+from shidashi import audit, config, locks, toolbox, vm, vmrunner_prune
 from shidashi.recipe import TOOLBOX_STAGE, RecipeChainError, RecipeSourceError
 from shidashi.seed import SeedError, load_pointer
 from shidashi.tree import load_pin_id
@@ -408,6 +408,16 @@ def ensure_image(tarball: Path, *, runner: Runner = subprocess.run) -> str:
                 f"cannot import the runner image from {tarball} "
                 f"(podman rc {done.returncode}): {done.stderr.strip()}"
             )
+        # a new toolbox's image supersedes the old ones (vmrunner_prune): still under
+        # the import lock, so no other boot test is importing meanwhile
+        pruned = vmrunner_prune.prune_runner_images(tag, runner)
+        audit.current().event(
+            "vm.runner.prune",
+            removed=list(pruned.removed),
+            kept=list(pruned.kept),
+            refused=[name for name, _ in pruned.refused],
+            error=pruned.error,
+        )
     return tag
 
 

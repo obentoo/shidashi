@@ -20,7 +20,11 @@ SLOT = Path(__file__).resolve().parent.parent / "contrib" / "worker" / "slot"
 def slot_env(tmp_path: Path) -> dict[str, str]:
     env = dict(os.environ)
     env.update(
-        SLOT_ROOT=str(tmp_path / "slots"), SLOT_CPUS="16", SLOT_MEMORY_GIB="40", SLOT_POLL="0.1"
+        SLOT_ROOT=str(tmp_path / "slots"),
+        SLOT_CPUS="16",
+        SLOT_MEMORY_GIB="40",
+        SLOT_POLL="0.1",
+        SLOT_MIN_FREE_GIB="0",
     )
     return env
 
@@ -336,3 +340,32 @@ def test_a_run_publishes_itself_for_other_consumers(slot_env: dict[str, str]) ->
     installed.chmod(0o755)
     run_slot(slot_env, "run", "--owner", "p", "--cpus", "1", "--memory", "1", "--", "true")
     assert "SLOT_VERSION=99" in installed.read_text()
+
+
+def test_a_work_disk_below_its_floor_refuses_every_run_at_once(slot_env: dict[str, str]) -> None:
+    env = {**slot_env, "SLOT_MIN_FREE_GIB": "999999"}
+    start = time.monotonic()
+    done = run_slot(
+        env, "run", "--owner", "big:job", "--cpus", "1", "--memory", "1", "--", "echo", "ran"
+    )
+    assert done.returncode == 75 and "ran" not in done.stdout
+    assert "below its 999999 GiB floor" in done.stderr and "slot du" in done.stderr
+    assert time.monotonic() - start < 5, "a disk floor must refuse, not wait"
+
+
+def test_du_names_each_consumer_of_the_work_disk(slot_env: dict[str, str], tmp_path: Path) -> None:
+    for name in ("zeo-lab", "lab", "cache"):
+        (tmp_path / name).mkdir()
+        (tmp_path / name / "f").write_bytes(b"x" * 4096)
+    out = run_slot(slot_env, "du").stdout
+    assert out.startswith(f"disk {tmp_path} free_gib=")
+    assert "floor_gib=0" in out
+    for name in ("zeo-lab", "lab", "cache"):
+        assert any(row.startswith(f"use {name} ") for row in out.splitlines()), out
+    assert "zeo lab.sh" in out and "shidashi" in out
+
+
+def test_the_usage_is_the_whole_header(slot_env: dict[str, str]) -> None:
+    done = run_slot(slot_env)
+    assert done.returncode == 64
+    assert "slot du" in done.stdout and "Do not edit the installed copy." in done.stdout

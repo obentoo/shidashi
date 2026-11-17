@@ -13,6 +13,7 @@ checked from a second open file description (``flock`` is per description).
 
 import errno
 import fcntl
+import json
 import os
 import subprocess
 from collections.abc import Sequence
@@ -35,6 +36,10 @@ class _Podman:
         self.import_stderr = ""
         #: images that appear after the first ``exists`` (another process imported them)
         self.appear_after_first_check: set[str] = set()
+        #: an image's creation time (unix seconds), for ``podman images``
+        self.created: dict[str, int] = {}
+        #: images a container uses: ``rmi`` refuses them
+        self.in_use: set[str] = set()
 
     def lock_held(self) -> bool:
         if not self.lock.exists():
@@ -67,7 +72,16 @@ class _Podman:
             if self.import_rc != 0:
                 return subprocess.CompletedProcess(argv, self.import_rc, "", self.import_stderr)
             self.images.add(argv[-1])
+            self.created[argv[-1]] = 10_000 + len(self.created)
             return subprocess.CompletedProcess(argv, 0, "sha256:feed\n", "")
+        if argv[1] == "images":
+            listing = [{"Names": [i], "Created": self.created.get(i, 0)} for i in self.images]
+            return subprocess.CompletedProcess(argv, 0, json.dumps(listing), "")
+        if argv[1] == "rmi":
+            if argv[2] in self.in_use:
+                return subprocess.CompletedProcess(argv, 2, "", "image is in use by a container")
+            self.images.discard(argv[2])
+            return subprocess.CompletedProcess(argv, 0, "", "")
         raise AssertionError(f"unexpected podman call: {argv}")
 
     def imports(self) -> list[list[str]]:
@@ -158,7 +172,8 @@ def test_an_absent_image_is_imported_from_the_tarball(tarball: Path, podman: _Po
 def test_no_registry_is_contacted(tarball: Path, podman: _Podman) -> None:
     vmrunner.ensure_image(tarball, runner=podman)
     verbs = {tuple(c[1:3]) if c[1] == "image" else (c[1],) for c in podman.calls}
-    assert verbs <= {("image", "exists"), ("import",)}
+    # images and rmi are the local prune after the import (vmrunner_prune)
+    assert verbs <= {("image", "exists"), ("import",), ("images",), ("rmi",)}
     assert not any("pull" in a or "login" in a or "push" in a for c in podman.calls for a in c)
 
 
@@ -178,3 +193,49 @@ def test_a_failed_import_names_the_tarball_and_podmans_reason(
     assert len(podman.imports()) == 1  # no retry
     assert vmrunner.image_tag(tarball) not in podman.images
     assert not podman.lock_held()
+
+
+# --- superseded images go (worker disk policy, vmrunner_prune) ---------------------------
+
+
+def test_an_import_keeps_the_new_image_and_the_one_before_and_removes_the_rest(
+    tarball: Path, podman: _Podman
+) -> None:
+    old = [f"localhost/shidashi-vm-runner:{n:016x}" for n in range(4)]
+    podman.images |= set(old)
+    podman.created |= {tag: 1_000 + i for i, tag in enumerate(old)}  # old[3] is the newest
+    podman.in_use.add(old[0])
+    tag = vmrunner.ensure_image(tarball, runner=podman)
+    assert podman.images == {tag, old[3], old[0]}  # old[0] refused: a container uses it
+    assert [c[2] for c in podman.calls if c[1] == "rmi"] == [old[2], old[1], old[0]]
+
+
+def test_an_image_already_present_prunes_nothing(tarball: Path, podman: _Podman) -> None:
+    tag = vmrunner.image_tag(tarball)
+    podman.images |= {tag, "localhost/shidashi-vm-runner:0000000000000001"}
+    vmrunner.ensure_image(tarball, runner=podman)
+    assert not [c for c in podman.calls if c[1] in ("images", "rmi")]
+
+
+def test_a_failed_listing_never_fails_the_import(tarball: Path, podman: _Podman) -> None:
+    from shidashi import vmrunner_prune
+
+    def broken(argv: Sequence[str], **kw: object) -> subprocess.CompletedProcess[str]:
+        if list(argv)[1] == "images":
+            return subprocess.CompletedProcess(list(argv), 125, "", "storage is locked")
+        return podman(argv, **kw)
+
+    tag = vmrunner.ensure_image(tarball, runner=broken)
+    assert tag in podman.images
+    result = vmrunner_prune.prune_runner_images(tag, broken)
+    assert result.error == "podman images failed: storage is locked" and not result.removed
+
+
+def test_the_plan_keeps_the_current_and_the_newest_other() -> None:
+    from shidashi import vmrunner_prune
+
+    kept, removed = vmrunner_prune.plan_runner_prune(
+        [("a", 1), ("b", 3), ("c", 2), ("cur", 0)], "cur"
+    )
+    assert kept == ["cur", "b"] and removed == ["c", "a"]
+    assert vmrunner_prune.plan_runner_prune([("cur", 5)], "cur") == (["cur"], [])

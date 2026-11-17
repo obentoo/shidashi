@@ -3,6 +3,7 @@
 #
 #     slot run --owner WHO --cpus N|all --memory GIB [--wait SECONDS] -- COMMAND...
 #     slot list
+#     slot du                  disk use per consumer of the work disk, and podman's
 #
 # Shidashi (worker jobs, CI VMs, dev VMs), the `lab` tool and Zeo's lab.sh each used
 # to take a lock of their own and none saw the others: a Zeo build (16 threads,
@@ -27,8 +28,12 @@
 # than the budget is refused at once; one that does not fit now waits up to --wait
 # seconds (default: forever; 0 = refuse at once), printing one `slot: queued` line.
 #
-# Exit: COMMAND's own; 64 usage; 75 no room within --wait (EX_TEMPFAIL); 69 the
-# request can never fit (EX_UNAVAILABLE).
+# Disk: a run refuses to start (exit 75, at once: disk does not free itself) while
+# the filesystem of $SLOT_ROOT has less than SLOT_MIN_FREE_GIB free (default 30, the
+# `lab` tool's min_free_gb): a full work disk breaks every consumer at once.
+#
+# Exit: COMMAND's own; 64 usage; 75 no room within --wait, or the disk is below its
+# floor (EX_TEMPFAIL); 69 the request can never fit (EX_UNAVAILABLE).
 #
 # Lives in Shidashi (contrib/worker/slot). Shidashi runs it from the tree it ships
 # (/mnt/work/src/<commit>/contrib/worker/slot), and every `run` from such a copy
@@ -36,9 +41,10 @@
 # other consumers call. Do not edit the installed copy.
 set -uo pipefail
 
-SLOT_VERSION=1
+SLOT_VERSION=2
 ROOT="${SLOT_ROOT:-/mnt/work/slots}"
 POLL="${SLOT_POLL:-5}"
+MIN_FREE_GIB="${SLOT_MIN_FREE_GIB:-30}"
 
 die() { printf 'slot: %s\n' "$2" >&2; exit "$1"; }
 
@@ -156,6 +162,11 @@ cmd_run() {
 	(( memory > tm )) && die 69 "$owner asks for ${memory} GiB; the budget is ${tm} GiB"
 
 	mkdir -p "$ROOT/leases" || die 69 "cannot create $ROOT/leases"
+	local free_gib
+	free_gib=$(df -BG --output=avail "$ROOT" | tail -n 1 | tr -dc 0-9)
+	if (( free_gib < MIN_FREE_GIB )); then
+		die 75 "$owner refused: ${free_gib} GiB free on the work disk, below its ${MIN_FREE_GIB} GiB floor (see: slot du)"
+	fi
 	publish
 	local start=$SECONDS queued=0 id lease
 	while :; do
@@ -190,9 +201,36 @@ cmd_run() {
 	exec "$@"
 }
 
+# cmd_du — what each consumer of the work disk ($ROOT's parent) holds. du counts what
+# btrfs stores compressed at its full size and shared extents once per path: the
+# free space line is the one to trust.
+cmd_du() {
+	local work entry who
+	work=$(dirname "$ROOT")
+	printf 'disk %s free_gib=%s floor_gib=%s\n' "$work" \
+		"$(df -BG --output=avail "$work" | tail -n 1 | tr -dc 0-9)" "$MIN_FREE_GIB"
+	for entry in "$work"/* "$work"/.[!.]*; do
+		[[ -e $entry ]] || continue
+		case "$(basename "$entry")" in
+		zeo-lab) who="zeo lab.sh" ;;
+		lab) who="lab" ;;
+		containers) who="podman storage" ;;
+		slots) who="slot" ;;
+		swapfile) who="swap" ;;
+		*) who="shidashi" ;;
+		esac
+		printf 'use %-28s %8s  %s\n' "$(basename "$entry")" \
+			"$(du -sxh "$entry" 2>/dev/null | cut -f1)" "$who"
+	done
+	if command -v podman >/dev/null; then
+		podman system df 2>/dev/null | sed 's/^/podman /'
+	fi
+}
+
 case "${1:-}" in
 run) shift; cmd_run "$@" ;;
 list) cmd_list ;;
+du) cmd_du ;;
 version) echo "slot $SLOT_VERSION" ;;
-*) sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//'; exit 64 ;;
+*) sed -n '2,/^set -uo pipefail$/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; exit 64 ;;
 esac

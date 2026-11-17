@@ -632,6 +632,8 @@ class _Recording:
         if argv[1] == "import":
             self.imported = True
             return subprocess.CompletedProcess(argv, 0, "", "")
+        if argv[1] == "images":  # the prune after an import (vmrunner_prune): nothing else
+            return subprocess.CompletedProcess(argv, 0, "[]", "")
         raise AssertionError(f"unexpected podman call: {argv}")
 
 

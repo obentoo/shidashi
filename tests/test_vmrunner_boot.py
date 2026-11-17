@@ -93,6 +93,8 @@ class _Podman:
             return self.inner(inner, None if report is None else Path(report))
         if argv[1] == "rm":
             return subprocess.CompletedProcess(argv, self.rm_rc, "", "Error: no such container")
+        if argv[1] == "images":  # the prune after an import (vmrunner_prune): nothing else
+            return subprocess.CompletedProcess(argv, 0, "[]", "")
         raise AssertionError(f"unexpected podman call: {argv}")
 
     def runs(self) -> list[list[str]]:

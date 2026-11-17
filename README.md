@@ -795,6 +795,23 @@ ssh <worker> /mnt/work/slots/slot list
 # lease id=… owner=shidashi-vm:dev cpus=4 memory_gib=8 started=… pid=…
 ```
 
+The disk is shared too. `slot run` refuses to start, at once, while the work disk has
+less than 30 GiB free (`SLOT_MIN_FREE_GIB`): a full disk breaks every consumer. `slot du`
+says who holds what:
+
+```sh
+ssh <worker> /mnt/work/slots/slot du
+# disk /mnt/work free_gib=151 floor_gib=30
+# use cache      226G  shidashi
+# use zeo-lab     28G  zeo lab.sh
+# use lab        1,8G  lab
+# podman Images  27 …  12.76GB (100%) reclaimable
+```
+
+Shidashi prunes what it leaves behind: importing a new runner image (`vm.runner.prune`
+in the audit) keeps it and the one before, and removes older
+`localhost/shidashi-vm-runner` images unless a container still uses one.
+
 Shidashi runs the script from the tree it ships; each run publishes it as
 `/mnt/work/slots/slot`, the stable path the other consumers call. Its header is the
 contract, for a consumer that cannot call it: file layout, `flock` rules, exit codes

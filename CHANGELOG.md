@@ -34,6 +34,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   held by QEMU, a second VM refused, the share freed by `vm stop`; a `lab` run queued
   behind a full budget; a Zeo build reserving 16 CPUs / 30 GiB. See the README's
   "Sharing a worker".
+- **A floor and a report for the worker's disk.** `slot run` refuses to start while the
+  work disk has less than 30 GiB free, for every consumer at once; `slot du` reports what
+  each consumer holds (Shidashi's trees, Zeo's `zeo-lab`, `lab`, podman's images, swap).
+- **Superseded runner images are pruned.** Importing a new
+  `localhost/shidashi-vm-runner` image keeps it and the one before, and removes the
+  older ones (not one a container uses); nothing removed them before — eight, ~50 GB, on
+  bentoo-lab on 2026-11-16.
 
 ### Fixed
 
