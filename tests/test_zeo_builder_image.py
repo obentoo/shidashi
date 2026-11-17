@@ -71,6 +71,11 @@ def test_the_plan_takes_the_newest_zeo_and_the_requested_rust(trees: dict[str, s
     assert "=dev-lang/rust-bin-1.100.0" in done.stdout
     assert "eselect rust set rust-bin-1.100.0" in done.stdout
     assert 'LLVM_SLOT="23"' in done.stdout
+    # the trees and zeo's USE are inside the image, before any emerge uses them
+    file = done.stdout.split("--- Containerfile", 1)[1]
+    copy = file.index("cp -a /mnt/trees/gentoo /var/db/repos/gentoo")
+    assert copy < file.index("emerge ") and "cp -a /mnt/trees/bentoo /var/db/repos/bentoo" in file
+    assert "cp /mnt/trees/zeo.use /etc/portage/package.use/zeo" in file
     assert "x11-base/xorg-server xvfb minimal" in done.stdout  # no drivers (mesa[X])
     assert 'INPUT_DEVICES="" VIDEO_CARDS=""' in done.stdout
     assert (
