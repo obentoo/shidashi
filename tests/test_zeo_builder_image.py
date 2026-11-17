@@ -47,7 +47,6 @@ def trees(tmp_path: Path) -> dict[str, str]:
         ZEO_BUILDER_OVERLAY=str(overlay),
         ZEO_BUILDER_USE=str(use),
         ZEO_BUILDER_RUST="1.100.0",
-        ZEO_BUILDER_LLVM_SLOT="23",
     )
     return env
 
@@ -71,6 +70,7 @@ def test_the_plan_takes_the_newest_zeo_and_the_requested_rust(trees: dict[str, s
     assert "=dev-lang/rust-bin-1.100.0" in done.stdout
     assert "eselect rust set rust-bin-1.100.0" in done.stdout
     assert 'LLVM_SLOT="23"' in done.stdout
+    assert "-ccache" in done.stdout  # userpriv cannot write the base's ccache dir
     # the trees and zeo's USE are inside the image, before any emerge uses them
     file = done.stdout.split("--- Containerfile", 1)[1]
     copy = file.index("cp -a /mnt/trees/gentoo /var/db/repos/gentoo")
@@ -107,3 +107,13 @@ def test_missing_inputs_are_refused_by_name(trees: dict[str, str], tmp_path: Pat
     assert done.returncode == 2 and "no ::gentoo tree" in done.stderr
     done = _dry_run({**trees, "ZEO_BUILDER_USE": str(tmp_path / "none.use")})
     assert done.returncode == 2 and "no package.use for app-editors/zeo" in done.stderr
+
+
+def test_the_llvm_slot_comes_from_zeos_package_use(trees: dict[str, str], tmp_path: Path) -> None:
+    # make.conf may say otherwise; zeo's own llvm_slot_NN is what it builds against
+    done = _dry_run(trees)
+    assert 'LLVM_SLOT="23"' in done.stdout, done.stdout
+    use = tmp_path / "zeo-nollvm.use"
+    use.write_text("app-editors/zeo ai-jail\n")
+    done = _dry_run({**trees, "ZEO_BUILDER_USE": str(use), "ZEO_BUILDER_LLVM_SLOT": "21"})
+    assert 'LLVM_SLOT="21"' in done.stdout

@@ -337,6 +337,27 @@ session's `Host` is kept beside it, and goes when the session is stopped.
 - A VM for an editor's agent rarely needs the worker whole: size it with `--cpus` and
   `--memory`.
 
+#### A VM for work that needs root, on a worker
+
+A container is enough for most heavy work (`lab`, or Zeo's builder image below); a dev VM
+is for what needs a kernel or root of its own -- namespaces, landlock, an `emerge` that
+installs. On a worker:
+
+- **Disk.** The live root is RAM; the work disk (`/dev/vda`, new on every start) holds
+  `/var/tmp`, `DISTDIR` and `PKGDIR`. It is 40G unless `--disk-size` says otherwise
+  (`--disk-size 120G` for a large compile); the worker's shared budget reserves the VM's
+  `--cpus` and `--memory` and refuses a start that does not fit.
+- **A tree from this machine.** With the session's `Host` (above), `rsync` sends a
+  checkout to the guest's work disk, e.g.
+  `rsync -a --exclude=.git ./ shidashi-NAME:/var/tmp/src/`; `vm run --name NAME -- '…'`
+  then works in it. Without an editor `Host`, `tar -c . | ssh shidashi-NAME tar -x -C
+  /var/tmp/src` does the same.
+- **Packages.** The guest's binhost and trees are the pin's (`/mnt/binpool`,
+  `/var/db/repos`): what the pinned ::gentoo and ::bentoo carry installs from binaries.
+  Something newer than the pin -- Rust 1.100 and zeo-0.12 as of 2026-11-17 -- compiles,
+  with its whole dependency tree; until a pin carries it, use the builder image
+  (`scripts/zeo-builder-image.sh`) instead.
+
 ## Usage
 
 ```sh
