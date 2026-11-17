@@ -41,6 +41,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `localhost/shidashi-vm-runner` image keeps it and the one before, and removes the
   older ones (not one a container uses); nothing removed them before — eight, ~50 GB, on
   bentoo-lab on 2026-11-16.
+- **`scripts/zeo-builder-image.sh`: the image Zeo's heavy work runs in on a worker.**
+  Builds `localhost/shidashi-zeo-builder:<date>-<overlay commit>` in the worker's podman
+  storage, inside the shared budget: the pin's `desktop` fork point plus, from this
+  machine's ::gentoo and ::bentoo, app-editors/zeo's build dependencies,
+  `dev-lang/rust-bin` (the machine's Rust), cargo-nextest, rustup with wasm32-wasip2,
+  a driverless Xvfb, twm, dbus and fonts. Binpkgs it compiles stay on the worker for the
+  next build. Labels record the trees, the overlay commit and the Rust. Not from the
+  pin, on purpose: zeo-0.12 needs Rust 1.100, which only ::bentoo carries, and today's
+  ::bentoo does not load against the pinned ::gentoo. Proven on bentoo-lab (2026-11-17):
+  `rustc 1.100.0 (0ef1bc386 2026-11-09)` as on the desktop, and `emerge -pv --onlydeps`
+  of zeo-0.12.0 inside it has nothing to build.
 
 ### Fixed
 
