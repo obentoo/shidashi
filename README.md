@@ -769,6 +769,37 @@ gpg --verify SHA256SUMS.asc SHA256SUMS
 sha256sum -c --ignore-missing SHA256SUMS   # the bucket has no run bundle, and you skipped some ISOs
 ```
 
+### Sharing a worker: one CPU and memory budget
+
+A worker serves more than Shidashi: the `lab` tool runs other projects' test suites
+there, and Zeo's `lab.sh` its release build. Every consumer reserves a share of ONE
+budget — the worker's CPUs and its memory minus 4 GiB — before it starts, through
+`contrib/worker/slot`, so nobody starves anybody:
+
+| Consumer | Reserves | When the budget is full |
+|---|---|---|
+| `worker job` | every CPU, 24 GiB | waits |
+| CI VM (`ci pool`) | half the CPUs, the guest's MemoryMax | waits |
+| `vm start --dev --worker` | its `--cpus` / `--memory` | refused at once, holders named |
+| `lab` (another repository) | the run's `cpus` / `memory` | waits (`slot: queued`) |
+| Zeo `lab.sh build` | `--jobs` CPUs, 30 GiB | waits |
+
+A reservation lasts exactly as long as its command: `slot run` holds an `flock` on the
+reservation's lock file and execs the command with that descriptor open, so every
+process inheriting it keeps the share — a dev VM's QEMU, which outlives the command that
+started it, included. A dead holder's reservation is swept by the next `slot run`.
+
+```sh
+ssh <worker> /mnt/work/slots/slot list
+# budget cpus=16 memory_gib=42 used_cpus=4 used_memory_gib=8
+# lease id=… owner=shidashi-vm:dev cpus=4 memory_gib=8 started=… pid=…
+```
+
+Shidashi runs the script from the tree it ships; each run publishes it as
+`/mnt/work/slots/slot`, the stable path the other consumers call. Its header is the
+contract, for a consumer that cannot call it: file layout, `flock` rules, exit codes
+(75: no room within `--wait`; 69: the request can never fit).
+
 ### The weekly release on the builder VM
 
 A release takes hours, so it runs where a build cannot touch the host: the

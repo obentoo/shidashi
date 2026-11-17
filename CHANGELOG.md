@@ -23,6 +23,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`/run/shidashi-env/NAME`, 0600) and exported by `/etc/profile.d/shidashi-env.sh` --
   the environment an editor's remote server and its agents start from. A value typed at a
   terminal is refused, since it would be echoed.
+- **One CPU and memory budget shared by every consumer of a worker.** Worker jobs, CI
+  VMs and dev VMs now reserve their share through `contrib/worker/slot` before they
+  start, beside the `lab` tool and Zeo's `lab.sh`, which call the same script at
+  `/mnt/work/slots/slot` (published there by every Shidashi run). Jobs and CI VMs wait
+  their turn; a dev VM that does not fit is refused at once, the holders named. The
+  reservation lasts as long as its command — a dev VM's QEMU inherits it — and a dead
+  one is swept by the next run. Before, each consumer had a lock of its own and a Zeo
+  build could run beside a CI VM. Proven on bentoo-lab (2026-11-17): a dev VM's share
+  held by QEMU, a second VM refused, the share freed by `vm stop`; a `lab` run queued
+  behind a full budget; a Zeo build reserving 16 CPUs / 30 GiB. See the README's
+  "Sharing a worker".
 
 ### Fixed
 
