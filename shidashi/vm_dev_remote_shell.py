@@ -26,7 +26,7 @@ import shlex
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-from shidashi import config, vm_exec, worker
+from shidashi import config, vm_exec, worker, worker_slots
 
 #: Where a shipped Shidashi keeps its VM sessions (its ``SHIDASHI_SCRATCH``/vm).
 SESSIONS = f"{worker.WORK}/scratch/vm"
@@ -151,6 +151,17 @@ def relayed_start_command(
     if disk_size:
         args += ["--disk-size", disk_size]
     start = worker.shipped_shell(commit, args, also=_RELAYED)
+    # The session's share of the worker's budget, refused at once when it does not fit
+    # (the holders are named): QEMU inherits the reservation's descriptor (vm.py), so the
+    # share lasts as long as the VM, not as long as this start command.
+    reserve = worker_slots.slot_prefix(
+        f"{worker.WORK}/src/{commit}",
+        worker_slots.slot_owner("vm", name),
+        cpus="all" if cpus is None else cpus,
+        memory=worker_slots.memory_gib(memory),
+        wait_s=worker_slots.WAIT_REFUSE,
+    )
+    start = f"{shlex.join(reserve)} /bin/bash -c {shlex.quote(start)}"
     started = vm_exec.guarded(start, start_pidfile(name))
     return f"mkdir -p {SESSIONS} && {started}"
 

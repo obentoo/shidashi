@@ -64,6 +64,15 @@ root@vsock/*) mapped=$last ;;
     echo "ssh: connect to host 192.0.2.10 port 22: No route to host" >&2
     exit 255
   fi
+  # FakeSlotTool: the shipped tree here has no contrib/worker/slot, so a reservation
+  # (`/bin/bash <tree>/contrib/worker/slot run --owner O --cpus C --memory M --wait W --`)
+  # is logged and dropped, and its command runs as it would once granted. The real
+  # script is tested on its own (tests/test_worker_slot_tool.py).
+  w='[^ ]*'
+  reserve="run --owner $w --cpus $w --memory $w --wait $w --"
+  printf '%s\n' "$last" | grep -o "contrib/worker/slot $reserve" >> "$FAKE_WORKER_SHELL/slot.log"
+  tree='/bin/bash /mnt/work/src/[0-9a-f]*/contrib/worker/slot'
+  last=$(printf '%s' "$last" | sed "s#$tree $reserve ##g")
   mapped=$(printf '%s' "$last" | sed "s#/mnt/work#$FAKE_WORKER_SHELL/root/mnt/work#g")
   PATH="$FAKE_WORKER_SHELL/worker-bin:$PATH"
   export PATH

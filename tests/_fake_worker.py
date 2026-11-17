@@ -1263,6 +1263,13 @@ def _systemd_run(argv: list[str]) -> int:
         elif key == "--working-directory":
             wd = value
     cmd = argv[i:]
+    # FakeSlotTool: a unit's reservation in the worker's shared budget
+    # (`/bin/bash <tree>/contrib/worker/slot run ... --`) is logged and dropped; the
+    # fake worker has no budget to share. The real script: tests/test_worker_slot_tool.py.
+    if len(cmd) > 2 and cmd[1].endswith("/contrib/worker/slot") and "--" in cmd[2:]:
+        reservation = cmd[: cmd.index("--", 2) + 1]
+        cmd = cmd[len(reservation) :]
+        _log("slot", reservation=reservation)
     name = _unit_name(unit or f"run-fake{os.getpid()}")
     _log("systemd-run", argv=argv, unit=name, env=env, wd=wd, cmd=cmd, flags=flags)
     marker = _state() / "units" / f"{name}.active"

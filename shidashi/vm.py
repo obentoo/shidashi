@@ -51,6 +51,7 @@ from typing import Any
 
 from shidashi import audit, config, locks
 from shidashi.system import SystemConfig, display_manager, load_system_config
+from shidashi.worker_slots import worker_slot_fd
 
 _SSH_PROXY = "/usr/lib/systemd/systemd-ssh-proxy"
 
@@ -476,12 +477,19 @@ class Session:
             share_sockets=sockets,
         )
         handover: dict[str, Any] = {}
+        inherited: list[int] = []
         if cid_lock is not None:
             try:
-                handover["pass_fds"] = (locks.held_fd(cid_lock),)
+                inherited.append(locks.held_fd(cid_lock))
             except locks.LockError as err:
                 self._stop_shares()
                 raise VmError(f"vsock CID {self.spec.cid} is not locked: {err}") from err
+        if (slot_fd := worker_slot_fd(os.environ)) is not None:
+            # a worker's dev VM: the reservation in the shared budget lives as long as
+            # QEMU holds this descriptor (worker_slots, contrib/worker/slot)
+            inherited.append(slot_fd)
+        if inherited:
+            handover["pass_fds"] = tuple(inherited)
         done = self.runner(argv, capture_output=True, text=True, **handover)
         if done.returncode != 0:
             self._stop_shares()

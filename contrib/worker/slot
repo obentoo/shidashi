@@ -1,0 +1,198 @@
+#!/usr/bin/env bash
+# slot — the worker's one CPU and memory budget, shared by every consumer.
+#
+#     slot run --owner WHO --cpus N|all --memory GIB [--wait SECONDS] -- COMMAND...
+#     slot list
+#
+# Shidashi (worker jobs, CI VMs, dev VMs), the `lab` tool and Zeo's lab.sh each used
+# to take a lock of their own and none saw the others: a Zeo build (16 threads,
+# ~30 GB) and a CI VM could run at once and starve both. A consumer now reserves a
+# share of ONE budget before it starts, here, and the reservation lasts exactly as
+# long as its command: `run` takes an flock on the reservation's lock file and execs
+# COMMAND with that descriptor open (number in $SLOT_FD), so every process that
+# inherits it — a QEMU outliving the shell that started it included — keeps the
+# share. When the last holder exits the kernel drops the lock, and the next `run`
+# removes the dead reservation. Nothing has to release anything.
+#
+# Contract, for consumers that cannot call this script (all paths under $SLOT_ROOT):
+#   ledger.lock               flock'd while the budget is read and a reservation added
+#   leases/<id>.lease         key=value lines: owner cpus memory_gib started pid host
+#   leases/<id>.lock          flock'd by the reservation's holders; free = reservation dead
+# A reservation is live while its .lock is flock'd. Add one only while holding
+# ledger.lock, and take its .lock before releasing ledger.lock.
+#
+# Budget: SLOT_CPUS (default: nproc) and SLOT_MEMORY_GIB (default: MemTotal minus
+# 4 GiB for the worker itself). `--cpus all` asks for every CPU, `--cpus half` for
+# half of them, at least 2 (a CI VM's share, ci_guest_vm.cpus_for). A request larger
+# than the budget is refused at once; one that does not fit now waits up to --wait
+# seconds (default: forever; 0 = refuse at once), printing one `slot: queued` line.
+#
+# Exit: COMMAND's own; 64 usage; 75 no room within --wait (EX_TEMPFAIL); 69 the
+# request can never fit (EX_UNAVAILABLE).
+#
+# Lives in Shidashi (contrib/worker/slot). Shidashi runs it from the tree it ships
+# (/mnt/work/src/<commit>/contrib/worker/slot), and every `run` from such a copy
+# publishes itself as $SLOT_ROOT/slot when that is missing or older: the stable path
+# other consumers call. Do not edit the installed copy.
+set -uo pipefail
+
+SLOT_VERSION=1
+ROOT="${SLOT_ROOT:-/mnt/work/slots}"
+POLL="${SLOT_POLL:-5}"
+
+die() { printf 'slot: %s\n' "$2" >&2; exit "$1"; }
+
+total_cpus() { echo "${SLOT_CPUS:-$(nproc)}"; }
+total_memory() {
+	if [[ -n ${SLOT_MEMORY_GIB:-} ]]; then echo "$SLOT_MEMORY_GIB"; return; fi
+	local kib
+	kib=$(awk '/^MemTotal:/ {print $2}' /proc/meminfo)
+	echo $(( kib / 1048576 - 4 ))
+}
+
+# live_lease FILE.lock — true while some process holds it
+live_lease() {
+	local lock=$1
+	[[ -e $lock ]] || return 1
+	! flock -n "$lock" true 2>/dev/null
+}
+
+# lease_field FILE KEY
+lease_field() { sed -n "s/^$2=//p" "$1" | head -n 1; }
+
+# sweep — remove dead reservations; caller holds ledger.lock
+sweep() {
+	local lease
+	for lease in "$ROOT"/leases/*.lease; do
+		[[ -e $lease ]] || continue
+		live_lease "${lease%.lease}.lock" || rm -f -- "$lease" "${lease%.lease}.lock"
+	done
+}
+
+# used — "cpus memory" reserved by live reservations
+used() {
+	local lease c=0 m=0
+	for lease in "$ROOT"/leases/*.lease; do
+		[[ -e $lease ]] || continue
+		live_lease "${lease%.lease}.lock" || continue
+		c=$(( c + $(lease_field "$lease" cpus) ))
+		m=$(( m + $(lease_field "$lease" memory_gib) ))
+	done
+	echo "$c $m"
+}
+
+holders() {
+	local lease
+	for lease in "$ROOT"/leases/*.lease; do
+		[[ -e $lease ]] || continue
+		live_lease "${lease%.lease}.lock" || continue
+		printf ' %s(%scpu,%sG)' "$(lease_field "$lease" owner)" \
+			"$(lease_field "$lease" cpus)" "$(lease_field "$lease" memory_gib)"
+	done
+}
+
+# publish — install this copy as $ROOT/slot unless an equal or newer one is there.
+# Best effort: a failed copy leaves the old one and never blocks a run.
+publish() {
+	local self installed have
+	self=$(readlink -f "$0")
+	installed="$ROOT/slot"
+	[[ $self == "$(readlink -f "$installed" 2>/dev/null)" ]] && return 0
+	if [[ -x $installed ]]; then
+		have=$(sed -n 's/^SLOT_VERSION=//p' "$installed" | head -n 1)
+		[[ $have =~ ^[0-9]+$ ]] && (( have > SLOT_VERSION )) && return 0
+		cmp -s "$self" "$installed" && return 0
+	fi
+	if ! { install -m 0755 "$self" "$installed.tmp.$$" 2>/dev/null &&
+		mv -f "$installed.tmp.$$" "$installed"; }; then
+		rm -f "$installed.tmp.$$"
+	fi
+}
+
+cmd_list() {
+	local lease n=0
+	mkdir -p "$ROOT/leases" 2>/dev/null
+	read -r uc um <<<"$(used)"
+	printf 'budget cpus=%s memory_gib=%s used_cpus=%s used_memory_gib=%s\n' \
+		"$(total_cpus)" "$(total_memory)" "$uc" "$um"
+	for lease in "$ROOT"/leases/*.lease; do
+		[[ -e $lease ]] || continue
+		live_lease "${lease%.lease}.lock" || continue
+		printf 'lease id=%s owner=%s cpus=%s memory_gib=%s started=%s pid=%s\n' \
+			"$(basename "$lease" .lease)" "$(lease_field "$lease" owner)" \
+			"$(lease_field "$lease" cpus)" "$(lease_field "$lease" memory_gib)" \
+			"$(lease_field "$lease" started)" "$(lease_field "$lease" pid)"
+		n=$(( n + 1 ))
+	done
+	(( n == 0 )) && echo "no live reservation"
+	return 0
+}
+
+cmd_run() {
+	local owner="" cpus="" memory="" wait=-1
+	while (( $# )); do
+		case "$1" in
+		--owner) owner=${2:-}; shift 2 || die 64 "--owner needs a value" ;;
+		--cpus) cpus=${2:-}; shift 2 || die 64 "--cpus needs a value" ;;
+		--memory) memory=${2:-}; shift 2 || die 64 "--memory needs a value" ;;
+		--wait) wait=${2:-}; shift 2 || die 64 "--wait needs a value" ;;
+		--) shift; break ;;
+		*) die 64 "unknown argument: $1 (slot run --owner WHO --cpus N|all --memory GIB [--wait S] -- CMD...)" ;;
+		esac
+	done
+	(( $# )) || die 64 "run: no command after --"
+	[[ $owner =~ ^[A-Za-z0-9_.:@/-]{1,120}$ ]] || die 64 "--owner must be 1-120 of [A-Za-z0-9_.:@/-]"
+	[[ $memory =~ ^[0-9]+$ ]] || die 64 "--memory must be whole GiB, got: '$memory'"
+	[[ $wait =~ ^-?[0-9]+$ ]] || die 64 "--wait must be seconds (-1 = forever), got: '$wait'"
+	local tc tm
+	tc=$(total_cpus)
+	tm=$(total_memory)
+	[[ $cpus == all ]] && cpus=$tc
+	[[ $cpus == half ]] && cpus=$(( tc / 2 < 2 ? 2 : tc / 2 ))
+	if ! [[ $cpus =~ ^[0-9]+$ ]] || (( cpus == 0 )); then
+		die 64 "--cpus must be a positive number or 'all', got: '$cpus'"
+	fi
+	(( cpus > tc )) && cpus=$tc  # a VM sized for a bigger host still runs, alone
+	(( memory > tm )) && die 69 "$owner asks for ${memory} GiB; the budget is ${tm} GiB"
+
+	mkdir -p "$ROOT/leases" || die 69 "cannot create $ROOT/leases"
+	publish
+	local start=$SECONDS queued=0 id lease
+	while :; do
+		exec 8>"$ROOT/ledger.lock"
+		flock 8 || die 69 "cannot lock $ROOT/ledger.lock"
+		sweep
+		read -r uc um <<<"$(used)"
+		if (( uc + cpus <= tc && um + memory <= tm )); then
+			id="$(date -u +%Y%m%dT%H%M%SZ)-$$"
+			lease="$ROOT/leases/$id"
+			exec 9>"$lease.lock"
+			flock -n 9 || die 69 "cannot lock $lease.lock"
+			printf 'owner=%s\ncpus=%s\nmemory_gib=%s\nstarted=%s\npid=%s\nhost=%s\nversion=%s\n' \
+				"$owner" "$cpus" "$memory" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$$" "$(hostname)" \
+				"$SLOT_VERSION" >"$lease.lease.tmp" && mv -f "$lease.lease.tmp" "$lease.lease"
+			exec 8>&-
+			break
+		fi
+		exec 8>&-
+		if (( wait >= 0 && SECONDS - start >= wait )); then
+			die 75 "no room for $owner (${cpus} cpus, ${memory} GiB): free $(( tc - uc )) cpus, $(( tm - um )) GiB; held by:$(holders)"
+		fi
+		if (( ! queued )); then
+			printf 'slot: queued %s (%s cpus, %s GiB): free %s cpus, %s GiB; held by:%s\n' \
+				"$owner" "$cpus" "$memory" "$(( tc - uc ))" "$(( tm - um ))" "$(holders)" >&2
+			queued=1
+		fi
+		sleep "$POLL"
+	done
+	(( queued )) && printf 'slot: granted %s after %ss\n' "$owner" "$(( SECONDS - start ))" >&2
+	export SLOT_FD=9 SLOT_ID=$id SLOT_CPUS_GRANTED=$cpus SLOT_MEMORY_GIB_GRANTED=$memory
+	exec "$@"
+}
+
+case "${1:-}" in
+run) shift; cmd_run "$@" ;;
+list) cmd_list ;;
+version) echo "slot $SLOT_VERSION" ;;
+*) sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//'; exit 64 ;;
+esac

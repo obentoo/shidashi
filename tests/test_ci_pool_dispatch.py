@@ -149,7 +149,20 @@ def test_dispatch_runs_ci_guest_run_from_the_shipped_tree_and_venv(
         ("--min-free-gib", "20"),
     ):
         assert option in tail and tail[tail.index(option) + 1] == value, (option, tail)
-    assert not [w for w in argv if w.startswith("--cpus")], "the worker derives the vCPUs"
+    assert not [w for w in tail if w.startswith("--cpus")], "the worker derives the vCPUs"
+    # the guest's half of the CPUs and its MemoryMax are reserved in the shared budget
+    at = argv.index("--owner")
+    assert argv[at - 2].endswith("/contrib/worker/slot") and argv[at - 1] == "run"
+    assert argv[at : at + 8] == [
+        "--owner",
+        "shidashi-ci:" + argv[at + 1].split(":", 1)[1],
+        "--cpus",
+        "half",
+        "--memory",
+        "9",
+        "--wait",
+        "-1",
+    ]
 
 
 def test_dispatch_keeps_a_repository_with_dots_and_dashes_whole(tmp_path: Path, cfg: Any) -> None:

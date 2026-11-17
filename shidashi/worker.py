@@ -29,7 +29,17 @@ from pathlib import Path, PurePosixPath
 import yaml
 
 import shidashi
-from shidashi import audit, binhost, config, isaguard, ownership, phases, vm_dev_evict, workers
+from shidashi import (
+    audit,
+    binhost,
+    config,
+    isaguard,
+    ownership,
+    phases,
+    vm_dev_evict,
+    worker_slots,
+    workers,
+)
 from shidashi.recipe import RecipeChainError, RecipeSourceError
 from shidashi.remote import (
     Remote,
@@ -612,7 +622,16 @@ def job_unit_argv(job: str, commit: str, args: Sequence[str]) -> list[str]:
         f'[ -z "$new" ] || printf "%s\\n" "$new" > "{jobs}.runs"; '
         f'echo $rc > "{jobs}.rc.tmp" && mv -f "{jobs}.rc.tmp" "{jobs}.rc"'
     )
-    exec_start = ["/bin/bash", "-c", script, "bash", *_SHIPPED_APP, *command]
+    # the job reserves the worker's whole CPU budget first (worker_slots), waiting while
+    # a CI VM, a dev VM or another consumer holds part of it
+    reserve = worker_slots.slot_prefix(
+        src,
+        worker_slots.slot_owner("job", job),
+        cpus="all",
+        memory=worker_slots.JOB_MEMORY_GIB,
+        wait_s=worker_slots.WAIT_FOREVER,
+    )
+    exec_start = [*reserve, "/bin/bash", "-c", script, "bash", *_SHIPPED_APP, *command]
     return [
         "systemd-run",
         f"--unit=shidashi-job-{job}",

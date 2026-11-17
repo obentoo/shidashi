@@ -14,7 +14,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Protocol
 
-from shidashi import remote, worker
+from shidashi import remote, worker, worker_slots
 
 #: A Shidashi job runs at systemd's default weight (100); a CI VM at a fifth of it (R7.2).
 CPU_WEIGHT = 20
@@ -91,6 +91,15 @@ def unit_argv(job: str, repo: str, commit: str, limits: VmLimits) -> list[str]:
         "-p",
         f"MemoryMax={limits.memory_gib + QEMU_OVERHEAD_GIB}G",
         *shipped,
+        # the guest's half of the CPUs (ci_guest_vm.cpus_for) and its MemoryMax, reserved
+        # in the worker's shared budget; the unit waits while other consumers hold it
+        *worker_slots.slot_prefix(
+            f"{worker.WORK}/src/{commit}",
+            worker_slots.slot_owner("ci", job),
+            cpus="half",
+            memory=limits.memory_gib + QEMU_OVERHEAD_GIB,
+            wait_s=worker_slots.WAIT_FOREVER,
+        ),
         f"{worker.WORKER_VENV}/bin/python",
         "-c",
         "from shidashi.cli import app; app()",

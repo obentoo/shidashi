@@ -33,11 +33,29 @@ _SHIPPED = f"cd /mnt/work/src/{_COMMIT} && {_ENV} {_APP}"
 _RELAYED = f"cd /mnt/work/src/{_COMMIT} && {_ENV} SHIDASHI_DEV_RELAYED=1 {_APP}"
 
 
-def _inner(line: str) -> str:
+def _guarded_word(line: str) -> str:
     """The command ``vm_exec.guarded`` wrapped: the one word after its ``sh -c``."""
     words = shlex.split(line.split("; sh -c ", 1)[1].rsplit("; rc=$?", 1)[0])
     assert len(words) == 1
     return words[0]
+
+
+def _reservation(line: str) -> list[str]:
+    """The ``slot run ... --`` words the start runs inside (worker_slots)."""
+    words = shlex.split(_guarded_word(line))
+    return words[: words.index("--") + 1]
+
+
+def _inner(line: str) -> str:
+    """The worker's own command: a run line's guarded word, or a start line's command
+    once its reservation is granted."""
+    word = _guarded_word(line)
+    words = shlex.split(word)
+    if not any(w.endswith("/contrib/worker/slot") for w in words):
+        return word
+    rest = words[words.index("--") + 1 :]
+    assert rest[:2] == ["/bin/bash", "-c"] and len(rest) == 3
+    return rest[2]
 
 
 # --- the shipped Shidashi ---------------------------------------------------------------
@@ -82,15 +100,32 @@ def test_the_start_line_is_the_workers_own_vm_start_dev() -> None:
         f"--pins-json '{pins}' --memory 24G --max-life 12.0 --cpus 16"
     )
     assert _inner(line) == start
+    # refused at once when the worker's budget lacks room, the holders named
+    reserve = _reservation(line)
+    assert reserve[1] == f"/mnt/work/src/{_COMMIT}/contrib/worker/slot"
+    assert reserve[2:] == [
+        "run",
+        "--owner",
+        "shidashi-vm:dev",
+        "--cpus",
+        "16",
+        "--memory",
+        "24",
+        "--wait",
+        "0",
+        "--",
+    ]
     pidfile = "/mnt/work/scratch/vm/dev.start.pid"
-    assert line == f"mkdir -p /mnt/work/scratch/vm && {vm_exec.guarded(start, pidfile)}"
+    reserved = f"{shlex.join(reserve)} /bin/bash -c {shlex.quote(start)}"
+    assert line == f"mkdir -p /mnt/work/scratch/vm && {vm_exec.guarded(reserved, pidfile)}"
 
 
 def test_the_start_line_leaves_the_workers_cpus_alone_when_none_are_known() -> None:
     line = shell.relayed_start_command(
         _COMMIT, "dev", iso="/i.iso", pins=_PINS, memory="8G", cpus=None, max_life=0.5
     )
-    assert "--cpus" not in line and "--max-life 0.5" in _inner(line)
+    assert "--cpus" not in _inner(line) and "--max-life 0.5" in _inner(line)
+    assert _reservation(line)[5:7] == ["--cpus", "all"]  # the worker's own count
     assert "--disk-size" not in line
 
 

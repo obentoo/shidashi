@@ -38,6 +38,9 @@ def _setenv(argv: list[str]) -> dict[str, str]:
     return dict(v.split("=", 1) for v in option_values(argv, "--setenv", "-E"))
 
 
+_SLOT_TOOL = Path(__file__).resolve().parent.parent / "contrib" / "worker" / "slot"
+
+
 def _wrapped(argv: list[str]) -> list[str]:
     """The unit's command: what follows systemd-run's own options."""
     i = 1
@@ -72,10 +75,14 @@ def _run_unit_locally(argv: list[str], root: Path) -> tuple[list[str], str, str]
     for a in words[:1] + systemd_expand(words[1:], _setenv(argv)):
         if a.endswith("/runtime/venv/bin/python"):
             cmd.append(str(fake))
+        elif a.endswith("/contrib/worker/slot"):
+            # the reservation runs the repository's real slot script on a budget of its own
+            cmd.append(str(_SLOT_TOOL))
         else:
             cmd.append(a.replace("/mnt/work", str(root / "mnt/work")))
     (root / "mnt/work/out/jobs").mkdir(parents=True, exist_ok=True)
-    subprocess.run(cmd, check=False, timeout=30)
+    budget = {"SLOT_ROOT": str(root / "slots"), "SLOT_CPUS": "8", "SLOT_MEMORY_GIB": "64"}
+    subprocess.run(cmd, check=False, timeout=30, env={**os.environ, **budget})
     jobs = root / "mnt/work/out/jobs"
     log = next(jobs.glob("*.log")).read_text()
     rc = next(jobs.glob("*.rc")).read_text().strip()
@@ -150,6 +157,21 @@ def test_unit_argv_writes_the_log_and_exit_code_and_keeps_every_argument_whole(
     assert "ran" in log
     assert rc == "4"
     assert not list(tmp_path.rglob("PWNED"))
+    # the job held the worker's whole budget while it ran (worker_slots)
+    at = argv.index("run")
+    assert argv[at - 1].endswith(f"/src/{COMMIT}/contrib/worker/slot")
+    assert argv[at : at + 10] == [
+        "run",
+        "--owner",
+        "shidashi-job:fac-v3",
+        "--cpus",
+        "all",
+        "--memory",
+        "24",
+        "--wait",
+        "-1",
+        "--",
+    ]
     jobs = tmp_path / "mnt/work/out/jobs"
     assert {p.name for p in jobs.iterdir()} == {"fac-v3.log", "fac-v3.rc"}
 
