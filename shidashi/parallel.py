@@ -43,7 +43,7 @@ from rich.live import Live
 from rich.table import Table
 from rich.text import Text
 
-from shidashi import progress
+from shidashi import i18n, progress
 
 #: The command a child runs before its ``assemble`` arguments (no ``__main__`` in the package).
 #: ``-P``: ``-c`` would put the working directory first on ``sys.path``, so a build started
@@ -230,13 +230,29 @@ def summarize(results: Sequence[ChildResult]) -> tuple[int, list[str]]:
 
 
 def ended_line(result: ChildResult) -> str:
-    """An ended image's last line: ``<image>  done|failed  <its duration>``. Pure."""
-    state = "failed" if result.failed else "done"
+    """An ended image's last line: ``<image>  done|failed  <its duration>``, the state in
+    the language shown. Pure."""
+    state = shown_step("failed" if result.failed else "done")
     return f"{result.image}  {state}  {progress.elapsed(result.duration_s)}"
 
 
 #: The status a child writes when its assemble ends; the image's row stops its clock there.
 ENDED_STEPS = ("done", "failed")
+
+#: The grid's own words for a step, by the word a status file holds (or ``None``: no file
+#: yet). Translated when shown, never when written: the parent reads ``done``/``failed``.
+_STATE_WORDS = {
+    None: i18n.mark("starting"),
+    "done": i18n.mark("done"),
+    "failed": i18n.mark("failed"),
+}
+
+
+def shown_step(step: str | None) -> str:
+    """A status file's step as the grid shows it: the state words translated, an audit
+    step's name (``seed``, ``assemble:kde``) as the run named it. Pure."""
+    word = _STATE_WORDS.get(step)
+    return i18n.t(word) if word is not None else str(step)
 
 
 def _read_status(path: Path) -> tuple[str, float | None] | None:
@@ -287,7 +303,7 @@ class _Watch:
         until = self.ended.get(image, now)
         return (
             image,
-            self.steps[image] or "starting",
+            shown_step(self.steps[image]),
             progress.elapsed(max(0.0, until - self.started[image])),
         )
 

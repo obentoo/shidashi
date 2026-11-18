@@ -21,6 +21,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   extracted and compiled by `python -m shidashi.i18n_catalog` — no new dependency. Machine
   translated with Lara Translate, then reviewed; see the README's "Translations".
 
+- **More of the runtime output is translated.** `world` (and `world --check`: one aligned
+  column in any language), `release` (summary, `sign`, `upload`, `report`), the parallel
+  build's grid and ended lines, the build plan and report, `doctor`'s detail column, a worker
+  job left running and the fork points a sync skips, and the dev VM notices. A line that
+  reports a failure stays English, and so does every copy a program reads: the status files
+  the grid shows (only `starting`/`done`/`failed` are translated, at display), the release
+  summary in the audit trail, the `release: <dir>` line, the `doctor` error a build raises.
+  New `i18n.english()` builds such a copy in English while the catalog stays loaded.
+
 - **`shidashi vm ssh-config`: open a dev VM in an editor.** It writes a `Host`
   (`shidashi-NAME`) beside the session that lands as root in the guest, so an editor's
   remote project (Zeo, Zed, VS Code) or a plain `ssh` reaches it; one `Include` of

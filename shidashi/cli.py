@@ -30,6 +30,7 @@ from typing import Annotated, Any, TextIO
 
 import typer
 import yaml
+from rich.cells import cell_len
 from rich.console import Console
 from rich.markup import escape
 from rich.prompt import Prompt
@@ -1792,8 +1793,10 @@ def _resume_lines(arch: str, jobs: Sequence[schedule.WorkerJob]) -> list[str]:
     lines = []
     for job in jobs:
         follow, pull = _resume_commands(arch, job)
-        lines.append(f"{job.worker}  job {job.job} keeps running; follow it: {follow}")
-        lines.append(f"{job.worker}  then pull its results: {pull}")
+        running = i18n.t("job {job} keeps running; follow it: {command}")
+        lines.append(f"{job.worker}  {running.format(job=job.job, command=follow)}")
+        then = i18n.t("then pull its results: {command}").format(command=pull)
+        lines.append(f"{job.worker}  {then}")
     return lines
 
 
@@ -2377,6 +2380,13 @@ def world(
     from shidashi.resolve import ResolveError
 
     stale: list[str] = []
+    # one column, as wide as the widest of the three words in the language shown
+    labels = {"ok": i18n.t("ok"), "stale": i18n.t("stale"), "written": i18n.t("written")}
+    width = max(cell_len(label) for label in labels.values()) + 1
+
+    def tag(state: str) -> str:
+        return labels[state] + " " * (width - cell_len(labels[state]))
+
     try:
         recipes = _world_recipes()
     except (RecipeFileError, RecipeChainError) as err:
@@ -2392,14 +2402,16 @@ def world(
         current = path.read_text(encoding="utf-8") if path.is_file() else None
         rel = path.relative_to(config.variants_dir().parent)
         if current == text:
-            typer.echo(f"ok      {rel}")
+            typer.echo(f"{tag('ok')}{rel}")
             continue
         if check:
             stale.append(str(rel))
-            typer.echo(f"stale   {rel}")
+            typer.echo(f"{tag('stale')}{rel}")
         else:
             path.write_text(text, encoding="utf-8")
-            typer.echo(f"written {rel} ({len(world_mod.read(path))} packages)")
+            count = len(world_mod.read(path))
+            packages = i18n.tn("{n} package", "{n} packages", count).format(n=count)
+            typer.echo(f"{tag('written')}{rel} ({packages})")
     if stale:
         _err_console.print(
             f"[bold red]error:[/bold red] {len(stale)} world file(s) out of date; "

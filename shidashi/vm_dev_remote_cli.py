@@ -39,6 +39,7 @@ import typer
 
 from shidashi import (
     config,
+    i18n,
     stop_signals,
     vm,
     vm_dev,
@@ -171,8 +172,8 @@ def _why_gone(session: vm_dev_record.WorkerSession) -> str:
     """What most likely ended a session the worker no longer has. Pure but for the clock."""
     now = vm_dev_expiry.utc_stamp(vm_dev_expiry.utc_now())
     if session.expires is not None and session.expires <= now:  # one format, UTC: sortable
-        return f"its maximum life ended at {session.expires}"
-    return "the worker restarted, or a job took its place"
+        return i18n.t("its maximum life ended at {stamp}").format(stamp=session.expires)
+    return i18n.t("the worker restarted, or a job took its place")
 
 
 def stop_if_on_worker(name: str) -> None:
@@ -191,9 +192,8 @@ def stop_if_on_worker(name: str) -> None:
     except _RELAY_ERRORS as err:
         _relay_error(f"{err} -- session {name} is still recorded on {session.worker}")
     if not there:
+        gone = i18n.t("VM session {name} was no longer on {worker} ({reason}): forgotten")
         typer.echo(
-            f"VM session {name} was no longer on {session.worker} ({_why_gone(session)}): "
-            "forgotten",
-            err=True,
+            gone.format(name=name, worker=session.worker, reason=_why_gone(session)), err=True
         )
     raise typer.Exit(0)

@@ -4,13 +4,26 @@ Pure: :func:`render` reads a parsed manifest and returns text. It prints tables 
 logs -- GitHub caps a step summary at 1 MiB. ``release.json`` is read as story 030's
 ``release.manifest`` writes it (status ``ok``; a refused build's successor under
 ``toolchain_refusal``) plus story 032's top-level ``signed``.
+
+The headings and the signing state are in the language shown; the cells are what
+``release.json`` holds.
 """
 
 from collections.abc import Mapping, Sequence
 
+from rich.cells import cell_len
+
+from shidashi import i18n
+
 #: A failure message longer than this is cut: a summary row is a pointer, the run log has the rest.
 _MESSAGE_LIMIT = 200
-_HEADERS = ("Variant", "Status", "ISOs", "Generation", "Notes")
+_HEADERS = (
+    i18n.mark("Variant"),
+    i18n.mark("Status"),
+    i18n.mark("ISOs"),
+    i18n.mark("Generation"),
+    i18n.mark("Notes"),
+)
 
 
 class ReleaseReportError(Exception):
@@ -65,11 +78,14 @@ def _cell(text: str) -> str:
     return text.replace("|", "\\|")
 
 
-def _plain_table(rows: Sequence[tuple[str, ...]]) -> list[str]:
-    table = [_HEADERS, *rows]
-    widths = [max(len(row[i]) for row in table) for i in range(len(_HEADERS))]
+def _plain_table(headers: tuple[str, ...], rows: Sequence[tuple[str, ...]]) -> list[str]:
+    table = [headers, *rows]
+    # terminal cells, not characters: a CJK heading takes two per character
+    widths = [max(cell_len(row[i]) for row in table) for i in range(len(headers))]
     return [
-        "  ".join(cell.ljust(w) for cell, w in zip(row, widths, strict=True)).rstrip()
+        "  ".join(
+            cell + " " * (w - cell_len(cell)) for cell, w in zip(row, widths, strict=True)
+        ).rstrip()
         for row in table
     ]
 
@@ -87,12 +103,19 @@ def render(manifest: Mapping[str, object], *, markdown: bool) -> str:
     signed = _signed(manifest)
     rows = [_variant_row(entry, i) for i, entry in enumerate(variants)]
     date = manifest.get("date")
-    title = f"Release {date}" if isinstance(date, str) else "Release"
-    signing = "signed" if signed else "unsigned — sign on the host (story 033)"
+    title = (
+        i18n.t("Release {date}").format(date=date) if isinstance(date, str) else i18n.t("Release")
+    )
+    signing = (
+        i18n.t("Signing: signed")
+        if signed
+        else i18n.t("Signing: unsigned — sign on the host (story 033)")
+    )
+    headers = tuple(i18n.t(header) for header in _HEADERS)
     if not markdown:
-        return "\n".join([title, f"Signing: {signing}", "", *_plain_table(rows)]) + "\n"
-    lines = [f"## {title}", "", f"Signing: {signing}", ""]
-    lines.append("| " + " | ".join(_HEADERS) + " |")
-    lines.append("|" + "|".join("---" for _ in _HEADERS) + "|")
+        return "\n".join([title, signing, "", *_plain_table(headers, rows)]) + "\n"
+    lines = [f"## {title}", "", signing, ""]
+    lines.append("| " + " | ".join(_cell(header) for header in headers) + " |")
+    lines.append("|" + "|".join("---" for _ in headers) + "|")
     lines.extend("| " + " | ".join(_cell(c) for c in row) + " |" for row in rows)
     return "\n".join(lines) + "\n"
