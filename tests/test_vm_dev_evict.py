@@ -152,7 +152,7 @@ def test_evict_runs_the_command_and_records_who_was_stopped(
             "exit_code": 0,
         }
     ]
-    assert "stopped the dev VM session(s) dev-a, dev-b on bentoo-lab" in capsys.readouterr().err
+    assert "stopped the dev VM sessions dev-a, dev-b on bentoo-lab" in capsys.readouterr().err
 
 
 def test_evict_refuses_to_go_on_when_a_session_was_not_stopped(

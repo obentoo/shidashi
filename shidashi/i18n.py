@@ -30,10 +30,12 @@ prompt answers (y/yes), and error and warning messages, so they stay searchable 
 can be pasted into an issue.
 """
 
+import contextlib
+import contextvars
 import gettext
 import os
 import sys
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from pathlib import Path
 
 DOMAIN = "shidashi"
@@ -44,6 +46,16 @@ LOCALEDIR_ENV = "SHIDASHI_LOCALEDIR"
 
 _NULL = gettext.NullTranslations()
 _active: gettext.NullTranslations = _NULL
+
+# Set by english(): a context variable, not a swap of _active, so the block forces English
+# for its own thread alone -- a display thread (the parallel build's grid) keeps translating.
+_english_only: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "shidashi_i18n_english_only", default=False
+)
+
+
+def _catalog() -> gettext.NullTranslations:
+    return _NULL if _english_only.get() else _active
 
 
 def default_localedir() -> Path:
@@ -62,7 +74,7 @@ def mark(message: str) -> str:
 
 def t(message: str) -> str:
     """Return the loaded catalog's translation of ``message``, or ``message`` itself."""
-    return _active.gettext(message)
+    return _catalog().gettext(message)
 
 
 def tn(singular: str, plural: str, count: int) -> str:
@@ -71,7 +83,21 @@ def tn(singular: str, plural: str, count: int) -> str:
     In English (no catalog): ``singular`` when ``count`` is 1, ``plural`` otherwise. The
     result is a format string; the caller fills its ``{n}`` (or other fields).
     """
-    return _active.ngettext(singular, plural, count)
+    return _catalog().ngettext(singular, plural, count)
+
+
+@contextlib.contextmanager
+def english() -> Iterator[None]:
+    """Within the block, :func:`t` and :func:`tn` return English, the catalog left loaded.
+
+    For text built by code that also shows it translated, when this copy is one a program
+    or a paste reads: an audit trail's summary, an error message.
+    """
+    token = _english_only.set(True)
+    try:
+        yield
+    finally:
+        _english_only.reset(token)
 
 
 def _strip_locale(value: str) -> str:

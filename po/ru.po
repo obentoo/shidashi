@@ -1306,6 +1306,16 @@ msgid "ISO {arch} × {flavor} × {init} -- {name}"
 msgstr "ISO {arch} × {flavor} × {init} -- {name}"
 
 #: shidashi/cli.py
+#, python-brace-format
+msgid "job {job} keeps running; follow it: {command}"
+msgstr "задание {job} продолжает выполняться; следить за ним: {command}"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "then pull its results: {command}"
+msgstr "затем забрать его результаты: {command}"
+
+#: shidashi/cli.py
 msgid "(listed above)"
 msgstr "(перечислено выше)"
 
@@ -1363,6 +1373,18 @@ msgstr[2] "{n} только в каталоге"
 #, python-brace-format
 msgid "{image}: {packages} {kits}, {excluded}, {catalog} ({stages})"
 msgstr "{image}: {packages} {kits}, {excluded}, {catalog} ({stages})"
+
+#: shidashi/cli.py
+msgid "ok"
+msgstr "ok"
+
+#: shidashi/cli.py
+msgid "stale"
+msgstr "устарел"
+
+#: shidashi/cli.py
+msgid "written"
+msgstr "записан"
 
 #: shidashi/cli.py
 msgid "check"
@@ -1439,10 +1461,6 @@ msgstr "результат"
 #: shidashi/cli.py
 msgid "got"
 msgstr "получено"
-
-#: shidashi/cli.py
-msgid "ok"
-msgstr "ok"
 
 #: shidashi/cli.py
 msgid "FAIL"
@@ -1525,7 +1543,7 @@ msgstr "cpu"
 msgid "{model}, {threads}"
 msgstr "{model}, {threads}"
 
-#: shidashi/cli.py
+#: shidashi/cli.py shidashi/doctor.py
 msgid "unknown"
 msgstr "неизвестно"
 
@@ -1701,6 +1719,147 @@ msgstr "binhost: binpkgs и индекс {arch} обновлены"
 msgid "released {arch}'s owner lock (job {job} ended, results pulled)"
 msgstr "блокировка владельца {arch} снята (задание {job} завершено, результаты получены)"
 
+#: shidashi/doctor.py
+msgid "boots the ISO"
+msgstr "загружает ISO"
+
+#: shidashi/doctor.py
+msgid "reads the ISO's build.json"
+msgstr "читает build.json из ISO"
+
+#: shidashi/doctor.py
+#, python-brace-format
+msgid "missing: {why}"
+msgstr "отсутствует: {why}"
+
+#: shidashi/doctor.py
+msgid "podman (emerge app-containers/podman)"
+msgstr "podman (emerge app-containers/podman)"
+
+#: shidashi/doctor.py
+#, python-brace-format
+msgid "the runner tarball ({error}; then {fix})"
+msgstr "tar-архив раннера ({error}; затем {fix})"
+
+#: shidashi/doctor.py
+#, python-brace-format
+msgid "the runner tarball {path} ({fix})"
+msgstr "tar-архив раннера {path} ({fix})"
+
+#: shidashi/doctor.py
+#, python-brace-format
+msgid "missing here: boot tests run in the {runner} toolbox container"
+msgstr "здесь отсутствует: тесты загрузки выполняются в контейнере toolbox {runner}"
+
+#: shidashi/doctor.py
+#, python-brace-format
+msgid "the boot-test runner lacks {what}"
+msgstr "раннеру тестов загрузки не хватает: {what}"
+
+#: shidashi/doctor.py
+#, python-brace-format
+msgid "{path} unused without {qemu}; {runner}"
+msgstr "{path} не используется без {qemu}; {runner}"
+
+#: shidashi/doctor.py
+msgid "names this CPU for the ISA check"
+msgstr "определяет этот процессор для проверки ISA"
+
+#: shidashi/doctor.py
+msgid "cannot name this CPU (cc1 missing?): the ISA check of built images is skipped"
+msgstr "не удаётся определить этот процессор (нет cc1?): проверка ISA собранных образов пропускается"
+
+#: shidashi/doctor.py
+#, python-brace-format
+msgid "names this CPU: {arch}"
+msgstr "определяет этот процессор: {arch}"
+
+#: shidashi/doctor.py
+msgid "every build runs in it (a systemd host, package systemd-container on Debian)"
+msgstr "в нём выполняется каждая сборка (хост с systemd; пакет systemd-container в Debian)"
+
+#: shidashi/doctor.py
+msgid "cannot read its version"
+msgstr "не удаётся прочитать версию"
+
+#: shidashi/doctor.py
+#, python-brace-format
+msgid "systemd {version}; needs {minimum} or newer"
+msgstr "systemd {version}; нужна версия {minimum} или новее"
+
+#: shidashi/doctor.py
+msgid "GNU tar (stage3, fork points, toolbox)"
+msgstr "GNU tar (stage3, точки ветвления, toolbox)"
+
+#: shidashi/doctor.py
+msgid "not GNU tar: the rootfs needs --xattrs and --acls"
+msgstr "не GNU tar: rootfs нужны --xattrs и --acls"
+
+#: shidashi/doctor.py
+#, python-brace-format
+msgid "GNU tar without {options}"
+msgstr "GNU tar без {options}"
+
+#: shidashi/doctor.py
+msgid "read/write"
+msgstr "чтение/запись"
+
+#: shidashi/doctor.py
+#, python-brace-format
+msgid "no read/write access: {why}"
+msgstr "нет доступа на чтение/запись: {why}"
+
+#: shidashi/doctor.py
+#, python-brace-format
+msgid "{fstype} at {path} (copies are reflinks; the assemble keeps checkpoints)"
+msgstr "{fstype} в {path} (копии — reflink; assemble сохраняет контрольные точки)"
+
+#: shidashi/doctor.py
+#, python-brace-format
+msgid "{fstype} at {path} (on btrfs the 8 GB squashfs copy is instant and the assemble resumes from checkpoints after a failure)"
+msgstr "{fstype} в {path} (на btrfs копирование squashfs в 8 ГБ мгновенно, а assemble после сбоя продолжает с контрольных точек)"
+
+#: shidashi/doctor.py
+#, python-brace-format
+msgid "{found}; needs {minimum} (uv python install)"
+msgstr "{found}; нужна {minimum} (uv python install)"
+
+#: shidashi/doctor.py
+msgid "verifies the stage3 and the ::gentoo snapshot"
+msgstr "проверяет stage3 и снимок ::gentoo"
+
+#: shidashi/doctor.py
+msgid "fetches the pinned overlays"
+msgstr "загружает закреплённые overlay"
+
+#: shidashi/doctor.py
+msgid "hashes the live user's password"
+msgstr "хеширует пароль пользователя live"
+
+#: shidashi/doctor.py
+msgid "the ISA check of a built image (binutils)"
+msgstr "проверка ISA собранного образа (binutils)"
+
+#: shidashi/doctor.py
+msgid "running as root"
+msgstr "запущено от root"
+
+#: shidashi/doctor.py
+msgid "not root: factory, assemble and build need it"
+msgstr "не root: он нужен factory, assemble и build"
+
+#: shidashi/doctor.py
+msgid "add the user to the kvm group"
+msgstr "добавьте пользователя в группу kvm"
+
+#: shidashi/doctor.py
+msgid "the test talks to the guest over vsock"
+msgstr "тест общается с гостем через vsock"
+
+#: shidashi/doctor.py
+msgid "the ISO's SBOM"
+msgstr "SBOM для ISO"
+
 #: shidashi/fork_points_cli.py
 msgid "apparent sizes: a compressed filesystem frees less"
 msgstr "кажущиеся размеры: сжатая файловая система освобождает меньше"
@@ -1815,6 +1974,18 @@ msgstr "{number}) {name}  {address}:{port}  образ {image}"
 msgid "Which worker (1-{count})"
 msgstr "Какой воркер (1-{count})"
 
+#: shidashi/parallel.py
+msgid "starting"
+msgstr "запуск"
+
+#: shidashi/parallel.py shidashi/progress.py
+msgid "done"
+msgstr "готово"
+
+#: shidashi/parallel.py
+msgid "failed"
+msgstr "ошибка"
+
 #: shidashi/progress.py
 msgid "binpkg"
 msgstr "binpkg"
@@ -1840,10 +2011,6 @@ msgid "done (binpkg)"
 msgstr "готово (binpkg)"
 
 #: shidashi/progress.py
-msgid "done"
-msgstr "готово"
-
-#: shidashi/progress.py
 #, python-brace-format
 msgid "failed to {action}"
 msgstr "сбой: {action}"
@@ -1864,6 +2031,33 @@ msgid_plural "… {n} more"
 msgstr[0] "… ещё {n}"
 msgstr[1] "… ещё {n}"
 msgstr[2] "… ещё {n}"
+
+#: shidashi/release.py
+msgid "signing: skipped (unsigned release)"
+msgstr "подпись: пропущена (неподписанный релиз)"
+
+#: shidashi/release.py
+#, python-brace-format
+msgid "{n} ISO"
+msgid_plural "{n} ISOs"
+msgstr[0] "{n} ISO"
+msgstr[1] "{n} ISO"
+msgstr[2] "{n} ISO"
+
+#: shidashi/release.py
+#, python-brace-format
+msgid "{variant}: {status} — {isos}; publish: {publish}"
+msgstr "{variant}: {status} — {isos}; публикация: {publish}"
+
+#: shidashi/release.py
+#, python-brace-format
+msgid "{init}: upstream stage3 {latest} is newer than the pin {pinned}"
+msgstr "{init}: upstream stage3 {latest} новее закреплённого {pinned}"
+
+#: shidashi/release.py
+#, python-brace-format
+msgid "signing: verified — {file}"
+msgstr "подпись: проверена — {file}"
 
 #: shidashi/release_prune_cli.py
 #, python-brace-format
@@ -1895,6 +2089,124 @@ msgstr "{name} перемещено в {dir}/"
 msgid "deleted {path}"
 msgstr "удалено {path}"
 
+#: shidashi/release_publish_cli.py
+#, python-brace-format
+msgid "signed and verified by {key}"
+msgstr "подписано и проверено ключом {key}"
+
+#: shidashi/release_publish_cli.py
+#, python-brace-format
+msgid "public key: {file}"
+msgstr "открытый ключ: {file}"
+
+#: shidashi/release_publish_cli.py
+#, python-brace-format
+msgid "signature: {file}"
+msgstr "подпись: {file}"
+
+#: shidashi/release_publish_cli.py
+msgid "upload set (data, then seal):"
+msgstr "набор для загрузки (данные, затем печать):"
+
+#: shidashi/release_publish_cli.py
+#, python-brace-format
+msgid "purge: {path}"
+msgstr "удалить: {path}"
+
+#: shidashi/release_publish_cli.py
+msgid "dry run: nothing copied, moved or purged"
+msgstr "пробный запуск: ничего не скопировано, не перемещено и не удалено"
+
+#: shidashi/release_publish_cli.py
+#, python-brace-format
+msgid "kept, no host copy (--yes deletes it): {release}"
+msgstr "оставлен, копии на хосте нет (--yes удаляет его): {release}"
+
+#: shidashi/release_publish_cli.py
+#, python-brace-format
+msgid "purged: {path}"
+msgstr "удалено: {path}"
+
+#: shidashi/release_publish_cli.py
+#, python-brace-format
+msgid "published: {path}"
+msgstr "опубликовано: {path}"
+
+#: shidashi/release_publish_cli.py
+#, python-brace-format
+msgid "index: {files}"
+msgstr "индекс: {files}"
+
+#: shidashi/release_report.py
+msgid "Variant"
+msgstr "Вариант"
+
+#: shidashi/release_report.py
+msgid "Status"
+msgstr "Статус"
+
+#: shidashi/release_report.py
+msgid "ISOs"
+msgstr "ISO"
+
+#: shidashi/release_report.py
+msgid "Generation"
+msgstr "Поколение"
+
+#: shidashi/release_report.py
+msgid "Notes"
+msgstr "Примечания"
+
+#: shidashi/release_report.py
+#, python-brace-format
+msgid "Release {date}"
+msgstr "Релиз {date}"
+
+#: shidashi/release_report.py
+msgid "Release"
+msgstr "Релиз"
+
+#: shidashi/release_report.py
+msgid "Signing: signed"
+msgstr "Подпись: подписан"
+
+#: shidashi/release_report.py
+msgid "Signing: unsigned — sign on the host (story 033)"
+msgstr "Подпись: не подписан — подпишите на хосте (story 033)"
+
+#: shidashi/schedule.py
+msgid "no SBOM (syft absent on the worker)"
+msgstr "нет SBOM (на воркере нет syft)"
+
+#: shidashi/schedule.py
+#, python-brace-format
+msgid "trunk install ~{duration}"
+msgstr "установка ствола ~{duration}"
+
+#: shidashi/schedule.py
+#, python-brace-format
+msgid "not built: {reason}"
+msgstr "не собран: {reason}"
+
+#: shidashi/schedule.py
+#, python-brace-format
+msgid "plan: {method} search, makespan ~{duration}"
+msgstr "план: поиск {method}, makespan ~{duration}"
+
+#: shidashi/schedule.py
+#, python-brace-format
+msgid "skipped: {reason}"
+msgstr "пропущен: {reason}"
+
+#: shidashi/schedule.py
+msgid "no ISO"
+msgstr "нет ISO"
+
+#: shidashi/schedule.py
+#, python-brace-format
+msgid "ok in {duration} (estimated {estimate})"
+msgstr "ok за {duration} (оценка {estimate})"
+
 #: shidashi/vm_access_cli.py
 #, python-brace-format
 msgid "written to {path}; reach it with `ssh {alias}` once ~/.ssh/config has: {include}"
@@ -1904,3 +2216,51 @@ msgstr "записано в {path}; подключайтесь через `ssh {
 #, python-brace-format
 msgid "{variable} set in {name} for login shells (kept in RAM)"
 msgstr "{variable} задана в {name} для login-оболочек (хранится в RAM)"
+
+#: shidashi/vm_dev_evict.py
+#, python-brace-format
+msgid "a job has priority: stopped the dev VM session {names} on {worker}"
+msgid_plural "a job has priority: stopped the dev VM sessions {names} on {worker}"
+msgstr[0] "у задания приоритет: остановлена dev-сессия VM {names} на {worker}"
+msgstr[1] "у задания приоритет: остановлены dev-сессии VM {names} на {worker}"
+msgstr[2] "у задания приоритет: остановлены dev-сессии VM {names} на {worker}"
+
+#: shidashi/vm_dev_remote_cli.py
+#, python-brace-format
+msgid "its maximum life ended at {stamp}"
+msgstr "её максимальный срок жизни истёк в {stamp}"
+
+#: shidashi/vm_dev_remote_cli.py
+msgid "the worker restarted, or a job took its place"
+msgstr "воркер перезапустился, или её место заняло задание"
+
+#: shidashi/vm_dev_remote_cli.py
+#, python-brace-format
+msgid "VM session {name} was no longer on {worker} ({reason}): forgotten"
+msgstr "сессии VM {name} больше нет на {worker} ({reason}): забыта"
+
+#: shidashi/worker.py
+#, python-brace-format
+msgid "skipped {n} fork point of other pins or build keys"
+msgid_plural "skipped {n} fork points of other pins or build keys"
+msgstr[0] "пропущена {n} точка ветвления других закреплений или ключей сборки"
+msgstr[1] "пропущены {n} точки ветвления других закреплений или ключей сборки"
+msgstr[2] "пропущено {n} точек ветвления других закреплений или ключей сборки"
+
+#: shidashi/worker.py
+#, python-brace-format
+msgid "job {job} keeps running on {worker}; {arch}'s owner lock stays held by it."
+msgstr "задание {job} продолжает выполняться на {worker}; блокировка владельца {arch} остаётся за ним."
+
+#: shidashi/worker.py
+#, python-brace-format
+msgid "job {job} keeps running on {worker}."
+msgstr "задание {job} продолжает выполняться на {worker}."
+
+#: shidashi/worker.py
+msgid "follow it:"
+msgstr "следить за ним:"
+
+#: shidashi/worker.py
+msgid "pull its results after:"
+msgstr "затем забрать результаты:"

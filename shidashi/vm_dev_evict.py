@@ -27,7 +27,7 @@ import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
-from shidashi import audit
+from shidashi import audit, i18n
 from shidashi.remote import Remote, SyncError, run
 
 #: The ``shidashi`` arguments that stop every dev session where they run.
@@ -75,11 +75,12 @@ def evict(remote: Remote, command: str, rec: audit.Recorder) -> list[str]:
         tail = "\n".join(result.stderr.strip().splitlines()[-5:])
         raise SyncError("stop the dev sessions", result.exit_code, tail)
     if stopped:
-        print(
-            f"a job has priority: stopped the dev VM session(s) {', '.join(stopped)} "
-            f"on {remote.name}",
-            file=sys.stderr,
+        said = i18n.tn(
+            "a job has priority: stopped the dev VM session {names} on {worker}",
+            "a job has priority: stopped the dev VM sessions {names} on {worker}",
+            len(stopped),
         )
+        print(said.format(names=", ".join(stopped), worker=remote.name), file=sys.stderr)
     return stopped
 
 

@@ -27,12 +27,14 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 import yaml
+from rich.cells import cell_len
 
 import shidashi
 from shidashi import (
     audit,
     binhost,
     config,
+    i18n,
     isaguard,
     ownership,
     phases,
@@ -565,7 +567,12 @@ def _restorable_fork_points(names: Sequence[str], *, commit: str, arch: str) -> 
         return []
     kept, skipped = select_fork_points(names, keys)
     if skipped:
-        print(f"skipped {skipped} fork points of other pins or build keys", file=sys.stderr)
+        said = i18n.tn(
+            "skipped {n} fork point of other pins or build keys",
+            "skipped {n} fork points of other pins or build keys",
+            skipped,
+        )
+        print(said.format(n=skipped), file=sys.stderr)
     rec.event("worker.fork_points", arch=arch, commit=commit, copied=len(kept), skipped=skipped)
     return kept
 
@@ -1864,13 +1871,22 @@ def _tell(text: str) -> None:
 def _left_running(
     name: str, job: str, locked: str | None, resume: tuple[str, str], *, why: str | None
 ) -> None:
-    """Say the job keeps running on the worker and how to pick it up again."""
+    """Say the job keeps running on the worker and how to pick it up again; ``why``, the
+    cause of a lost follow, stays the English it was written in."""
     head = f"{why}: " if why else ""
-    lock = f"; {locked}'s owner lock stays held by it" if locked else ""
+    if locked:
+        said = i18n.t("job {job} keeps running on {worker}; {arch}'s owner lock stays held by it.")
+    else:
+        said = i18n.t("job {job} keeps running on {worker}.")
+    labels = (i18n.t("follow it:"), i18n.t("pull its results after:"))
+    width = max(cell_len(label) for label in labels) + 1
     _tell(
-        f"{head}job {job} keeps running on {name}{lock}.\n"
-        f"  follow it:              {resume[0]}\n"
-        f"  pull its results after: {resume[1]}"
+        head
+        + said.format(job=job, worker=name, arch=locked)
+        + "".join(
+            f"\n  {label}{' ' * (width - cell_len(label))}{command}"
+            for label, command in zip(labels, resume, strict=True)
+        )
     )
 
 

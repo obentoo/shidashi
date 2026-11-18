@@ -18,7 +18,7 @@ from typing import Annotated, Any
 import typer
 from rich.markup import escape
 
-from shidashi import audit, config, gpgsign, publish, release_sign
+from shidashi import audit, config, gpgsign, i18n, publish, release_sign
 from shidashi import release as release_core
 from shidashi import release_upload as up
 from shidashi.build_outcome import ReleaseError
@@ -112,11 +112,14 @@ def _open_trail(
 
 
 def _signed_lines(directory: Path, fingerprint: str) -> list[str]:
-    """What a signed release prints: the verified signer, then every ``*.asc`` it holds."""
-    lines = [f"signed and verified by {fingerprint}"]
+    """What a signed release prints: the verified signer, then every ``*.asc`` it holds. The
+    last line, ``release: <dir>``, stays English: a script reads it, as it does ``release``'s."""
+    lines = [i18n.t("signed and verified by {key}").format(key=fingerprint)]
     for asc in sorted(directory.glob("*.asc")):
-        what = "public key" if asc.name == release_sign.RELEASE_KEY_FILE else "signature"
-        lines.append(f"{what}: {asc.name}")
+        if asc.name == release_sign.RELEASE_KEY_FILE:
+            lines.append(i18n.t("public key: {file}").format(file=asc.name))
+        else:
+            lines.append(i18n.t("signature: {file}").format(file=asc.name))
     return [*lines, f"release: {directory}"]
 
 
@@ -335,11 +338,17 @@ def _publish_index(runner: up.RcloneRunner, index: Mapping[str, Any]) -> None:
 def _dry_run_lines(
     plan: up.UploadPlan, merged: Mapping[str, Any], kept: up.RetentionPlan
 ) -> list[str]:
-    lines = ["upload set (data, then seal):", *(f"  {n}" for n in (*plan.data, *plan.seal))]
+    lines = [i18n.t("upload set (data, then seal):")]
+    lines += [f"  {n}" for n in (*plan.data, *plan.seal)]
     lines += ["index.json:", json.dumps(merged, indent=2)]
-    lines += [f"purge: releases/{e['date']}" for e in kept.drop]
-    lines += [f"kept, no host copy (--yes deletes it): {e['date']}" for e in kept.refused]
-    return [*lines, "dry run: nothing copied, moved or purged"]
+    purge = i18n.t("purge: {path}")
+    lines += [purge.format(path=f"releases/{e['date']}") for e in kept.drop]
+    lines += [_kept_line(e["date"]) for e in kept.refused]
+    return [*lines, i18n.t("dry run: nothing copied, moved or purged")]
+
+
+def _kept_line(what: str) -> str:
+    return i18n.t("kept, no host copy (--yes deletes it): {release}").format(release=what)
 
 
 def upload(
@@ -392,7 +401,7 @@ def upload(
             kept = up.retention(merged, keep, date, host, yes)
             _publish_index(runner, kept.index)  # before any purge (R5.1)
             for item in kept.refused:
-                typer.echo(f"kept, no host copy (--yes deletes it): releases/{item['date']}")
+                typer.echo(_kept_line(f"releases/{item['date']}"))
             left: list[str] = []
             for item in kept.drop:  # each one tried: the index no longer names any of them
                 try:
@@ -400,7 +409,7 @@ def upload(
                 except up.UploadError as err:
                     left.append(str(err))
                     continue
-                typer.echo(f"purged: releases/{item['date']}")
+                typer.echo(i18n.t("purged: {path}").format(path=f"releases/{item['date']}"))
             if left:
                 raise up.UploadError(
                     "; ".join(left) + " -- the index no longer names them: purge them by hand"
@@ -410,6 +419,7 @@ def upload(
     except KeyboardInterrupt:
         cli._err_console.print("[bold red]interrupted:[/bold red] the upload stopped")
         raise typer.Exit(_SIGN_INTERRUPTED_EXIT) from None
+    published = i18n.t("published: {path}")
     for name in (*plan.data, *plan.seal):
-        typer.echo(f"published: releases/{date}/{name}")
-    typer.echo(f"index: {up.INDEX_OBJECT}, {LATEST_OBJECT}")
+        typer.echo(published.format(path=f"releases/{date}/{name}"))
+    typer.echo(i18n.t("index: {files}").format(files=f"{up.INDEX_OBJECT}, {LATEST_OBJECT}"))

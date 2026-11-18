@@ -1296,6 +1296,16 @@ msgid "ISO {arch} × {flavor} × {init} -- {name}"
 msgstr "ISO {arch} × {flavor} × {init} -- {name}"
 
 #: shidashi/cli.py
+#, python-brace-format
+msgid "job {job} keeps running; follow it: {command}"
+msgstr "任务 {job} 仍在运行；跟踪它：{command}"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "then pull its results: {command}"
+msgstr "然后拉取其结果：{command}"
+
+#: shidashi/cli.py
 msgid "(listed above)"
 msgstr "（见上文）"
 
@@ -1345,6 +1355,18 @@ msgstr[0] "{n} 个仅在目录中"
 #, python-brace-format
 msgid "{image}: {packages} {kits}, {excluded}, {catalog} ({stages})"
 msgstr "{image}：{packages} {kits}，{excluded}，{catalog}（{stages}）"
+
+#: shidashi/cli.py
+msgid "ok"
+msgstr "正常"
+
+#: shidashi/cli.py
+msgid "stale"
+msgstr "过期"
+
+#: shidashi/cli.py
+msgid "written"
+msgstr "已写入"
 
 #: shidashi/cli.py
 msgid "check"
@@ -1417,10 +1439,6 @@ msgstr "结果"
 #: shidashi/cli.py
 msgid "got"
 msgstr "实际值"
-
-#: shidashi/cli.py
-msgid "ok"
-msgstr "正常"
 
 #: shidashi/cli.py
 msgid "FAIL"
@@ -1501,7 +1519,7 @@ msgstr "CPU"
 msgid "{model}, {threads}"
 msgstr "{model}，{threads}"
 
-#: shidashi/cli.py
+#: shidashi/cli.py shidashi/doctor.py
 msgid "unknown"
 msgstr "未知"
 
@@ -1677,6 +1695,147 @@ msgstr "binhost：{arch} 的 binpkg 和索引已更新"
 msgid "released {arch}'s owner lock (job {job} ended, results pulled)"
 msgstr "已释放 {arch} 的所有者锁（任务 {job} 已结束，结果已拉取）"
 
+#: shidashi/doctor.py
+msgid "boots the ISO"
+msgstr "启动 ISO"
+
+#: shidashi/doctor.py
+msgid "reads the ISO's build.json"
+msgstr "读取 ISO 的 build.json"
+
+#: shidashi/doctor.py
+#, python-brace-format
+msgid "missing: {why}"
+msgstr "缺失：{why}"
+
+#: shidashi/doctor.py
+msgid "podman (emerge app-containers/podman)"
+msgstr "podman（emerge app-containers/podman）"
+
+#: shidashi/doctor.py
+#, python-brace-format
+msgid "the runner tarball ({error}; then {fix})"
+msgstr "runner tarball（{error}；然后 {fix}）"
+
+#: shidashi/doctor.py
+#, python-brace-format
+msgid "the runner tarball {path} ({fix})"
+msgstr "runner tarball {path}（{fix}）"
+
+#: shidashi/doctor.py
+#, python-brace-format
+msgid "missing here: boot tests run in the {runner} toolbox container"
+msgstr "此处缺失：启动测试在 {runner} toolbox 容器中运行"
+
+#: shidashi/doctor.py
+#, python-brace-format
+msgid "the boot-test runner lacks {what}"
+msgstr "启动测试 runner 缺少 {what}"
+
+#: shidashi/doctor.py
+#, python-brace-format
+msgid "{path} unused without {qemu}; {runner}"
+msgstr "{path} 在没有 {qemu} 时不使用；{runner}"
+
+#: shidashi/doctor.py
+msgid "names this CPU for the ISA check"
+msgstr "为 ISA 检查识别本机 CPU"
+
+#: shidashi/doctor.py
+msgid "cannot name this CPU (cc1 missing?): the ISA check of built images is skipped"
+msgstr "无法识别本机 CPU（缺少 cc1？）：跳过已构建镜像的 ISA 检查"
+
+#: shidashi/doctor.py
+#, python-brace-format
+msgid "names this CPU: {arch}"
+msgstr "识别本机 CPU：{arch}"
+
+#: shidashi/doctor.py
+msgid "every build runs in it (a systemd host, package systemd-container on Debian)"
+msgstr "每次构建都在其中运行（systemd 主机；Debian 上为 systemd-container 软件包）"
+
+#: shidashi/doctor.py
+msgid "cannot read its version"
+msgstr "无法读取其版本"
+
+#: shidashi/doctor.py
+#, python-brace-format
+msgid "systemd {version}; needs {minimum} or newer"
+msgstr "systemd {version}；需要 {minimum} 或更新版本"
+
+#: shidashi/doctor.py
+msgid "GNU tar (stage3, fork points, toolbox)"
+msgstr "GNU tar（stage3、分叉点、toolbox）"
+
+#: shidashi/doctor.py
+msgid "not GNU tar: the rootfs needs --xattrs and --acls"
+msgstr "不是 GNU tar：rootfs 需要 --xattrs 和 --acls"
+
+#: shidashi/doctor.py
+#, python-brace-format
+msgid "GNU tar without {options}"
+msgstr "GNU tar 不支持 {options}"
+
+#: shidashi/doctor.py
+msgid "read/write"
+msgstr "可读写"
+
+#: shidashi/doctor.py
+#, python-brace-format
+msgid "no read/write access: {why}"
+msgstr "无读写权限：{why}"
+
+#: shidashi/doctor.py
+#, python-brace-format
+msgid "{fstype} at {path} (copies are reflinks; the assemble keeps checkpoints)"
+msgstr "{fstype}，位于 {path}（副本为 reflink；assemble 会保留检查点）"
+
+#: shidashi/doctor.py
+#, python-brace-format
+msgid "{fstype} at {path} (on btrfs the 8 GB squashfs copy is instant and the assemble resumes from checkpoints after a failure)"
+msgstr "{fstype}，位于 {path}（在 btrfs 上，8 GB 的 squashfs 复制瞬间完成，且 assemble 失败后可从检查点恢复）"
+
+#: shidashi/doctor.py
+#, python-brace-format
+msgid "{found}; needs {minimum} (uv python install)"
+msgstr "{found}；需要 {minimum}（uv python install）"
+
+#: shidashi/doctor.py
+msgid "verifies the stage3 and the ::gentoo snapshot"
+msgstr "验证 stage3 和 ::gentoo 快照"
+
+#: shidashi/doctor.py
+msgid "fetches the pinned overlays"
+msgstr "获取锁定版本的 overlay"
+
+#: shidashi/doctor.py
+msgid "hashes the live user's password"
+msgstr "为 live 用户的密码计算哈希"
+
+#: shidashi/doctor.py
+msgid "the ISA check of a built image (binutils)"
+msgstr "已构建镜像的 ISA 检查（binutils）"
+
+#: shidashi/doctor.py
+msgid "running as root"
+msgstr "以 root 身份运行"
+
+#: shidashi/doctor.py
+msgid "not root: factory, assemble and build need it"
+msgstr "非 root：factory、assemble 和 build 需要 root"
+
+#: shidashi/doctor.py
+msgid "add the user to the kvm group"
+msgstr "将用户加入 kvm 组"
+
+#: shidashi/doctor.py
+msgid "the test talks to the guest over vsock"
+msgstr "测试通过 vsock 与客户机通信"
+
+#: shidashi/doctor.py
+msgid "the ISO's SBOM"
+msgstr "ISO 的 SBOM"
+
 #: shidashi/fork_points_cli.py
 msgid "apparent sizes: a compressed filesystem frees less"
 msgstr "表观大小：压缩文件系统实际释放的空间更少"
@@ -1783,6 +1942,18 @@ msgstr "{number}) {name}  {address}:{port}  镜像 {image}"
 msgid "Which worker (1-{count})"
 msgstr "选择哪个工作节点 (1-{count})"
 
+#: shidashi/parallel.py
+msgid "starting"
+msgstr "正在启动"
+
+#: shidashi/parallel.py shidashi/progress.py
+msgid "done"
+msgstr "完成"
+
+#: shidashi/parallel.py
+msgid "failed"
+msgstr "失败"
+
 #: shidashi/progress.py
 msgid "binpkg"
 msgstr "binpkg"
@@ -1808,10 +1979,6 @@ msgid "done (binpkg)"
 msgstr "完成（binpkg）"
 
 #: shidashi/progress.py
-msgid "done"
-msgstr "完成"
-
-#: shidashi/progress.py
 #, python-brace-format
 msgid "failed to {action}"
 msgstr "{action} 失败"
@@ -1830,6 +1997,31 @@ msgstr "传输 {size} 后失败"
 msgid "… {n} more"
 msgid_plural "… {n} more"
 msgstr[0] "… 还有 {n} 个"
+
+#: shidashi/release.py
+msgid "signing: skipped (unsigned release)"
+msgstr "签名：已跳过（未签名的发布）"
+
+#: shidashi/release.py
+#, python-brace-format
+msgid "{n} ISO"
+msgid_plural "{n} ISOs"
+msgstr[0] "{n} 个 ISO"
+
+#: shidashi/release.py
+#, python-brace-format
+msgid "{variant}: {status} — {isos}; publish: {publish}"
+msgstr "{variant}：{status} — {isos}；发布：{publish}"
+
+#: shidashi/release.py
+#, python-brace-format
+msgid "{init}: upstream stage3 {latest} is newer than the pin {pinned}"
+msgstr "{init}：上游 stage3 {latest} 比锁定版本 {pinned} 更新"
+
+#: shidashi/release.py
+#, python-brace-format
+msgid "signing: verified — {file}"
+msgstr "签名：已验证 — {file}"
 
 #: shidashi/release_prune_cli.py
 #, python-brace-format
@@ -1861,6 +2053,124 @@ msgstr "已将 {name} 移至 {dir}/"
 msgid "deleted {path}"
 msgstr "已删除 {path}"
 
+#: shidashi/release_publish_cli.py
+#, python-brace-format
+msgid "signed and verified by {key}"
+msgstr "已由 {key} 签名并验证"
+
+#: shidashi/release_publish_cli.py
+#, python-brace-format
+msgid "public key: {file}"
+msgstr "公钥：{file}"
+
+#: shidashi/release_publish_cli.py
+#, python-brace-format
+msgid "signature: {file}"
+msgstr "签名：{file}"
+
+#: shidashi/release_publish_cli.py
+msgid "upload set (data, then seal):"
+msgstr "上传集（先数据，后封印）："
+
+#: shidashi/release_publish_cli.py
+#, python-brace-format
+msgid "purge: {path}"
+msgstr "清除：{path}"
+
+#: shidashi/release_publish_cli.py
+msgid "dry run: nothing copied, moved or purged"
+msgstr "演练：未复制、移动或清除任何内容"
+
+#: shidashi/release_publish_cli.py
+#, python-brace-format
+msgid "kept, no host copy (--yes deletes it): {release}"
+msgstr "已保留，主机上无副本（--yes 会删除它）：{release}"
+
+#: shidashi/release_publish_cli.py
+#, python-brace-format
+msgid "purged: {path}"
+msgstr "已清除：{path}"
+
+#: shidashi/release_publish_cli.py
+#, python-brace-format
+msgid "published: {path}"
+msgstr "已发布：{path}"
+
+#: shidashi/release_publish_cli.py
+#, python-brace-format
+msgid "index: {files}"
+msgstr "索引：{files}"
+
+#: shidashi/release_report.py
+msgid "Variant"
+msgstr "变体"
+
+#: shidashi/release_report.py
+msgid "Status"
+msgstr "状态"
+
+#: shidashi/release_report.py
+msgid "ISOs"
+msgstr "ISO"
+
+#: shidashi/release_report.py
+msgid "Generation"
+msgstr "代"
+
+#: shidashi/release_report.py
+msgid "Notes"
+msgstr "备注"
+
+#: shidashi/release_report.py
+#, python-brace-format
+msgid "Release {date}"
+msgstr "发布 {date}"
+
+#: shidashi/release_report.py
+msgid "Release"
+msgstr "发布"
+
+#: shidashi/release_report.py
+msgid "Signing: signed"
+msgstr "签名：已签名"
+
+#: shidashi/release_report.py
+msgid "Signing: unsigned — sign on the host (story 033)"
+msgstr "签名：未签名 — 请在主机上签名（story 033）"
+
+#: shidashi/schedule.py
+msgid "no SBOM (syft absent on the worker)"
+msgstr "无 SBOM（工作节点上没有 syft）"
+
+#: shidashi/schedule.py
+#, python-brace-format
+msgid "trunk install ~{duration}"
+msgstr "主干安装 ~{duration}"
+
+#: shidashi/schedule.py
+#, python-brace-format
+msgid "not built: {reason}"
+msgstr "未构建：{reason}"
+
+#: shidashi/schedule.py
+#, python-brace-format
+msgid "plan: {method} search, makespan ~{duration}"
+msgstr "计划：{method} 搜索，总耗时 ~{duration}"
+
+#: shidashi/schedule.py
+#, python-brace-format
+msgid "skipped: {reason}"
+msgstr "已跳过：{reason}"
+
+#: shidashi/schedule.py
+msgid "no ISO"
+msgstr "无 ISO"
+
+#: shidashi/schedule.py
+#, python-brace-format
+msgid "ok in {duration} (estimated {estimate})"
+msgstr "正常，耗时 {duration}（预计 {estimate}）"
+
 #: shidashi/vm_access_cli.py
 #, python-brace-format
 msgid "written to {path}; reach it with `ssh {alias}` once ~/.ssh/config has: {include}"
@@ -1870,3 +2180,47 @@ msgstr "已写入 {path}；当 ~/.ssh/config 包含 {include} 后，即可用 `s
 #, python-brace-format
 msgid "{variable} set in {name} for login shells (kept in RAM)"
 msgstr "已在 {name} 中为登录 shell 设置 {variable}（保存在 RAM 中）"
+
+#: shidashi/vm_dev_evict.py
+#, python-brace-format
+msgid "a job has priority: stopped the dev VM session {names} on {worker}"
+msgid_plural "a job has priority: stopped the dev VM sessions {names} on {worker}"
+msgstr[0] "有任务优先：已停止 {worker} 上的开发 VM 会话 {names}"
+
+#: shidashi/vm_dev_remote_cli.py
+#, python-brace-format
+msgid "its maximum life ended at {stamp}"
+msgstr "其最长存活期已于 {stamp} 结束"
+
+#: shidashi/vm_dev_remote_cli.py
+msgid "the worker restarted, or a job took its place"
+msgstr "工作节点已重启，或有任务占用了它的位置"
+
+#: shidashi/vm_dev_remote_cli.py
+#, python-brace-format
+msgid "VM session {name} was no longer on {worker} ({reason}): forgotten"
+msgstr "VM 会话 {name} 已不在 {worker} 上（{reason}）：已遗忘"
+
+#: shidashi/worker.py
+#, python-brace-format
+msgid "skipped {n} fork point of other pins or build keys"
+msgid_plural "skipped {n} fork points of other pins or build keys"
+msgstr[0] "已跳过 {n} 个属于其他锁定版本或构建键的分叉点"
+
+#: shidashi/worker.py
+#, python-brace-format
+msgid "job {job} keeps running on {worker}; {arch}'s owner lock stays held by it."
+msgstr "任务 {job} 仍在 {worker} 上运行；{arch} 的所有者锁仍由它持有。"
+
+#: shidashi/worker.py
+#, python-brace-format
+msgid "job {job} keeps running on {worker}."
+msgstr "任务 {job} 仍在 {worker} 上运行。"
+
+#: shidashi/worker.py
+msgid "follow it:"
+msgstr "跟踪它："
+
+#: shidashi/worker.py
+msgid "pull its results after:"
+msgstr "之后拉取其结果："

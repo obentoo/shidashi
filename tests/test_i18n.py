@@ -106,3 +106,23 @@ def test_a_corrupt_catalog_raises_and_leaves_english(tmp_path: Path) -> None:
 
 def test_the_default_catalog_directory_is_the_prefix_share_locale() -> None:
     assert i18n.default_localedir().parts[-2:] == ("share", "locale")
+
+
+def test_an_english_block_ignores_the_loaded_catalog_on_its_own_thread_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import threading
+
+    localedir = write_test_catalog(
+        tmp_path, "pt_BR", {"none": "nenhum"}, plurals={("{n} kit", "{n} kits"): ["kit", "kits"]}
+    )
+    seen: list[str] = []
+    with loaded_catalog(monkeypatch, localedir, "pt_BR.UTF-8"):
+        with i18n.english():
+            assert i18n.t("none") == "none"
+            assert i18n.tn("{n} kit", "{n} kits", 2) == "{n} kits"
+            other = threading.Thread(target=lambda: seen.append(i18n.t("none")))
+            other.start()
+            other.join()
+        assert i18n.t("none") == "nenhum"
+    assert seen == ["nenhum"]

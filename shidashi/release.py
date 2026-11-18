@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from types import FrameType
 
-from shidashi import config, parallel, publish
+from shidashi import config, i18n, parallel, publish
 from shidashi.build_outcome import BuildOutcome, ReleaseError
 from shidashi.release_sign import RELEASE_KEY_FILE as RELEASE_KEY_FILE
 from shidashi.release_sign import SUMS_FILE as SUMS_FILE
@@ -40,7 +40,7 @@ _ROUTED_SIGNALS = (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
 #: The release manifest's file name in the release directory (R5.1).
 MANIFEST_FILE = "release.json"
 #: The summary line of a release made with --unsigned (story 032 R1.5).
-UNSIGNED_LINE = "signing: skipped (unsigned release)"
+UNSIGNED_LINE = i18n.mark("signing: skipped (unsigned release)")
 
 
 @dataclass(frozen=True)
@@ -393,11 +393,20 @@ def read_earlier(directory: Path) -> dict[str, object] | None:
 
 
 def _variant_line(r: VariantResult) -> str:
-    """``<arch>/<init>: <status> — <ISOs or reason>; publish: <result>`` (R8.1, R8.2)."""
+    """``<arch>/<init>: <status> — <ISOs or reason>; publish: <result>`` (R8.1, R8.2).
+
+    An ``ok`` line is in the language shown, its status and publish result the words
+    ``release.json`` holds; a failed one stays English, as every error does."""
     o = r.outcome
     if o.status == "ok":
-        detail = f"{len(o.isos)} ISOs"
-    elif o.status == "images-failed":
+        isos = i18n.tn("{n} ISO", "{n} ISOs", len(o.isos)).format(n=len(o.isos))
+        return i18n.t("{variant}: {status} — {isos}; publish: {publish}").format(
+            variant=f"{r.variant.arch}/{r.variant.init}",
+            status=o.status,
+            isos=isos,
+            publish=r.publish,
+        )
+    if o.status == "images-failed":
         detail = ", ".join(o.failed_images)
     elif o.status == "toolchain-refused" and o.toolchain is not None:
         refusal = o.toolchain
@@ -412,7 +421,9 @@ def _upstream_line(u: UpstreamStage3) -> str | None:
     if u.latest is None:
         return f"{u.init}: upstream stage3 unknown: {u.note}"
     if u.newer:
-        return f"{u.init}: upstream stage3 {u.latest} is newer than the pin {u.pinned}"
+        return i18n.t("{init}: upstream stage3 {latest} is newer than the pin {pinned}").format(
+            init=u.init, latest=u.latest, pinned=u.pinned
+        )
     return None
 
 
@@ -431,20 +442,21 @@ def summary(
     (story 032 R1.5, R1.6).
 
     One line per variant, one per init whose upstream is newer (R7.2) or unknown (R7.4),
-    then the signing line. Exit 0 only when every variant is ``ok``, every publish was
+    then the signing line; what reports a success is in the language shown, a failure stays
+    English. Exit 0 only when every variant is ``ok``, every publish was
     ``published`` or ``skipped:`` (another host owns that arch), and the release is signed
     with every signature verified (R8.3); 1 otherwise (R8.4). An upstream is only reported.
     """
     lines = [_variant_line(r) for r in results]
     lines.extend(line for u in upstream if (line := _upstream_line(u)) is not None)
     if unsigned:
-        lines.append(UNSIGNED_LINE)
+        lines.append(i18n.t(UNSIGNED_LINE))
     elif verify_failures:
         lines.append(f"signing: failed — {'; '.join(verify_failures)}")
     elif not signed:
         lines.append(f"signing: failed — {SUMS_FILE} left unattested")
     else:
-        lines.append(f"signing: verified — {SUMS_FILE}.asc")
+        lines.append(i18n.t("signing: verified — {file}").format(file=f"{SUMS_FILE}.asc"))
     good = (
         all(r.outcome.status == "ok" for r in results)
         and all(r.publish.startswith(("published", "skipped:")) for r in results)

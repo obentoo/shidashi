@@ -54,6 +54,7 @@ from shidashi import (
     assembler,
     checkpoint,
     config,
+    i18n,
     isaguard,
     kyomei_protocol,
     locks,
@@ -75,7 +76,7 @@ DEFAULT_SEC_PER_PKG = 1.7
 EXHAUSTIVE_CAP = 4096
 
 #: What the report says of a worker ISO that arrived without its SBOM (R4.9).
-NO_SBOM = "no SBOM (syft absent on the worker)"
+NO_SBOM = i18n.mark("no SBOM (syft absent on the worker)")
 
 
 @dataclass(frozen=True)
@@ -953,7 +954,9 @@ def _duration(seconds: float) -> str:
 def render_plan(plan: Plan, estimates: Mapping[tuple[str, str], Estimate]) -> list[str]:
     """One line per image (node, estimate, source), then the trunks each node installs
     (once per node, as the planner counts them), the unplaceable images, the skipped
-    workers with their reasons and the search method (R1.5, R1.7, R3.1)."""
+    workers with their reasons and the search method (R1.5, R1.7, R3.1). The words are in
+    the language shown; the estimate's source and the search method stay the keywords
+    they are, the reasons as the probes said them."""
     lines = []
     work: dict[str, float] = {}
     for key, node in sorted(plan.assignments.items()):
@@ -964,34 +967,50 @@ def render_plan(plan: Plan, estimates: Mapping[tuple[str, str], Estimate]) -> li
         # a node's finish holds each of its trunks once: what its images do not account for
         trunks = plan.finish.get(node, seconds) - seconds
         if trunks > 0.5:
-            lines.append(f"{node}  trunk install ~{_duration(trunks)}")
-    lines += [f"{key}  not built: {why}" for key, why in sorted(plan.unplaceable.items())]
-    lines += [f"{name}  skipped: {why}" for name, why in sorted(plan.skipped_nodes.items())]
-    lines.append(f"plan: {plan.method} search, makespan ~{_duration(plan.makespan)}")
+            trunk = i18n.t("trunk install ~{duration}").format(duration=_duration(trunks))
+            lines.append(f"{node}  {trunk}")
+    not_built = i18n.t("not built: {reason}")
+    lines += [
+        f"{key}  {not_built.format(reason=why)}" for key, why in sorted(plan.unplaceable.items())
+    ]
+    lines += _skipped_lines(plan)
+    lines.append(
+        i18n.t("plan: {method} search, makespan ~{duration}").format(
+            method=plan.method, duration=_duration(plan.makespan)
+        )
+    )
     return lines
+
+
+def _skipped_lines(plan: Plan) -> list[str]:
+    skipped = i18n.t("skipped: {reason}")
+    return [
+        f"{name}  {skipped.format(reason=why)}" for name, why in sorted(plan.skipped_nodes.items())
+    ]
 
 
 def render_report(plan: Plan, outcomes: Sequence[Outcome]) -> tuple[int, list[str]]:
     """The build's exit code -- 1 when any image failed (R4.5) -- and one line per image:
     its node, measured and estimated durations, its ISOs or its failure with the log
-    (R4.4, R4.9); then the plan's skipped workers with their reasons (R3.1)."""
+    (R4.4, R4.9); then the plan's skipped workers with their reasons (R3.1). An ok line is
+    in the language shown; a failed one stays English, as every error does."""
     lines = []
     for outcome in outcomes:
         node = outcome.node or "-"
         if outcome.ok:
-            isos = " ".join(str(iso) for iso in outcome.isos) or "no ISO"
-            line = (
-                f"{outcome.image}  {node}  ok in {_duration(outcome.duration_s)}"
-                f" (estimated {_duration(outcome.estimate_s)})  {isos}"
+            isos = " ".join(str(iso) for iso in outcome.isos) or i18n.t("no ISO")
+            took = i18n.t("ok in {duration} (estimated {estimate})").format(
+                duration=_duration(outcome.duration_s), estimate=_duration(outcome.estimate_s)
             )
+            line = f"{outcome.image}  {node}  {took}  {isos}"
             if not outcome.sbom:
-                line += f"  {NO_SBOM}"
+                line += f"  {i18n.t(NO_SBOM)}"
         else:
             line = f"{outcome.image}  {node}  FAILED: {outcome.error or 'failed'}"
             if outcome.log is not None:
                 line += f"  log: {outcome.log}"
         lines.append(line)
-    lines += [f"{name}  skipped: {why}" for name, why in sorted(plan.skipped_nodes.items())]
+    lines += _skipped_lines(plan)
     return (0 if all(o.ok for o in outcomes) else 1), lines
 
 

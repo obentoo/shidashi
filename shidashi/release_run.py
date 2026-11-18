@@ -23,6 +23,7 @@ from shidashi import (
     build_outcome,
     config,
     generation,
+    i18n,
     parallel,
     publish,
     publish_pool,
@@ -168,7 +169,8 @@ def run(
     images: str,
     download: bool,
 ) -> tuple[list[str], int]:
-    """Everything after the preflight; the summary lines and the exit code.
+    """Everything after the preflight; the summary lines, in the language shown, and the exit
+    code. The audit trail records them in English.
 
     ``key`` is ``None`` for an ``--unsigned`` release: nothing is published or signed, each
     built variant's publish reads ``skipped: unsigned``, and ``release.json`` says so (R1)."""
@@ -223,15 +225,22 @@ def run(
             state.signing = True
             failures = release_sign.sign_and_verify(trail, dest, key)
             attested = not failures
-    lines, code = release_core.summary(
-        results, found, signed=attested, verify_failures=failures, unsigned=key is None
-    )
+
+    def summary() -> tuple[list[str], int]:
+        return release_core.summary(
+            results, found, signed=attested, verify_failures=failures, unsigned=key is None
+        )
+
+    with i18n.english():
+        recorded, code = summary()
+    shown, _code = summary()
     if notes:  # a corrupt fingerprint or manifest is the release's failure too
-        lines += notes
+        recorded += notes
+        shown += notes
         code = max(code, 1)
     with trail.step("summary") as step:
-        step.add(exit_code=code, lines=lines)
-    return lines, code
+        step.add(exit_code=code, lines=recorded)
+    return shown, code
 
 
 def interrupted(state: Progress) -> None:
