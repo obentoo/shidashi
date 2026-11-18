@@ -213,6 +213,8 @@ cmd_du() {
 		[[ -e $entry ]] || continue
 		case "$(basename "$entry")" in
 		zeo-lab) who="zeo lab.sh" ;;
+		# the Zeo Windows build guest (zeo-patches release/windows/guest-lab.sh), 2026-11-18
+		zeo-win) who="zeo windows guest" ;;
 		lab) who="lab" ;;
 		containers) who="podman storage" ;;
 		slots) who="slot" ;;
