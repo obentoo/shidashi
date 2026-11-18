@@ -937,6 +937,31 @@ the cloud image by SHA-256, the apt snapshot, the packages — are in
 [`lab/vm/runner.env`](lab/vm/runner.env). A guest VM reaches the network the worker is on:
 serve only repositories you trust.
 
+### Translations
+
+The help and the human reports speak Spanish, Brazilian Portuguese, Russian and Simplified
+Chinese; English is the source and the fallback. The language comes from `LANGUAGE`, `LC_ALL`,
+`LC_MESSAGES` and `LANG`, as GNU gettext reads them (a `C` or `POSIX` locale, or English ranked
+first in `LANGUAGE`, keeps English). Error and warning messages, logs, `--format json` and every
+other output a program reads stay English on purpose, as do the answers a prompt accepts.
+
+The catalogs are `po/<lang>.po`, installed compiled as
+`<prefix>/share/locale/<lang>/LC_MESSAGES/shidashi.mo` (Gentoo installs only the languages in
+`L10N`). Only the `shidashi` script loads one: `app()` — the tests, the parallel children, a
+worker's relayed commands — always prints English. To try a checkout's catalogs:
+
+```sh
+uv run --frozen python -m shidashi.i18n_catalog compile build/locale
+SHIDASHI_LOCALEDIR=build/locale LANGUAGE= LANG=pt_BR.UTF-8 uv run --frozen shidashi --help
+```
+
+A changed message: run `uv run --frozen python -m shidashi.i18n_catalog update` (rewrites
+`po/shidashi.pot` and merges it into every `.po`), translate what it added, and keep each
+`{placeholder}`, rich tag, backticked command and `--option` as written —
+`tests/test_i18n_catalogs.py` fails otherwise. Typer's help is read from the built command tree,
+so a docstring or `help=` needs no marker; other text is marked with `i18n.t`, `i18n.tn`
+(plurals) or `i18n.mark` (see `shidashi/i18n.py`).
+
 ## Contributing
 
 Issues and pull requests are welcome. Before pushing, run the checks above; the CI job can be

@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The CLI speaks Spanish, Brazilian Portuguese, Russian and Simplified Chinese.** Every
+  command's help (Typer's own labels included) and the human reports and prompts of `recipe`,
+  `pretend`, `factory`, `assemble`, `doctor`, `kits`, `vm start`/`vm test`, `kyomei`, `worker`
+  (provision, status, locks, cache owner, push/pull), `binhost`, `fork-points gc`,
+  `release prune`, `vm ssh-config`/`vm env` and the build progress follow `LANGUAGE`/`LC_ALL`/
+  `LC_MESSAGES`/`LANG`. Error and warning messages, logs, `--format json` and other machine
+  output stay English on purpose, as do accepted prompt answers; only the `shidashi` script
+  (now `shidashi.cli:main`) loads a catalog, so `app()` children print English. Catalogs are
+  stdlib gettext `.mo` files under `<prefix>/share/locale` (`SHIDASHI_LOCALEDIR` overrides it),
+  extracted and compiled by `python -m shidashi.i18n_catalog` — no new dependency. Machine
+  translated with Lara Translate, then reviewed; see the README's "Translations".
+
 - **`shidashi vm ssh-config`: open a dev VM in an editor.** It writes a `Host`
   (`shidashi-NAME`) beside the session that lands as root in the guest, so an editor's
   remote project (Zeo, Zed, VS Code) or a plain `ssh` reaches it; one `Include` of
