@@ -10,7 +10,7 @@ from typing import Annotated, NoReturn
 
 import typer
 
-from shidashi import config, fork_point_gc, ownership
+from shidashi import config, fork_point_gc, i18n, ownership
 from shidashi.fork_point_gc import ForkPointFile, ForkPointGcPlan
 from shidashi.tree import TreeError, load_pin_id
 
@@ -20,7 +20,7 @@ app = typer.Typer(
 
 #: After every total: the sizes are ``st_size``, and on the v3 worker's zstd btrfs 79.8 GiB
 #: of tarballs freed 33 GiB (2026-11-15) -- a total read as space to win misleads.
-_APPARENT_SIZES_NOTE = "apparent sizes: a compressed filesystem frees less"
+_APPARENT_SIZES_NOTE = i18n.mark("apparent sizes: a compressed filesystem frees less")
 
 
 def _fork_points_exit(message: object) -> NoReturn:
@@ -37,7 +37,8 @@ def _fork_points_size(files: Sequence[ForkPointFile]) -> str:
 
 def _kept_pins_line(plan: ForkPointGcPlan) -> str:
     current, *others = plan.kept_pins
-    return "kept pins: " + ", ".join([f"{current} (current)", *others])
+    current_pin = i18n.t("{pin} (current)").format(pin=current)
+    return i18n.t("kept pins: {pins}").format(pins=", ".join([current_pin, *others]))
 
 
 @app.command("gc")
@@ -89,12 +90,28 @@ def gc_fork_points(
             fork_point_gc.scan_fork_points(directory, arch), current_pin=current, keep=keep
         )
         for item in plan.delete:
-            typer.echo(f"would delete {item.path.name} ({cli._size(item.size)})")
+            typer.echo(
+                i18n.t("would delete {name} ({size})").format(
+                    name=item.path.name, size=cli._size(item.size)
+                )
+            )
         typer.echo(_kept_pins_line(plan))
+        deleting = i18n.tn(
+            "{n} fork point of {arch} would be deleted ({size})",
+            "{n} fork points of {arch} would be deleted ({size})",
+            len(plan.delete),
+        ).format(n=len(plan.delete), arch=arch, size=_fork_points_size(plan.delete))
         typer.echo(
-            f"{len(plan.delete)} fork points of {arch} would be deleted "
-            f"({_fork_points_size(plan.delete)}); {len(plan.keep)} kept "
-            f"({_fork_points_size(plan.keep)}) -- {_APPARENT_SIZES_NOTE}"
+            i18n.tn(
+                "{deleting}; {n} kept ({size}) -- {note}",
+                "{deleting}; {n} kept ({size}) -- {note}",
+                len(plan.keep),
+            ).format(
+                deleting=deleting,
+                n=len(plan.keep),
+                size=_fork_points_size(plan.keep),
+                note=i18n.t(_APPARENT_SIZES_NOTE),
+            )
         )
         return
     try:
@@ -110,11 +127,26 @@ def gc_fork_points(
     except (ownership.OwnedElsewhere, ownership.PullRunning, ownership.LockError) as err:
         _fork_points_exit(err)
     for item in deleted:
-        typer.echo(f"deleted {item.path.name} ({cli._size(item.size)})")
+        typer.echo(
+            i18n.t("deleted {name} ({size})").format(name=item.path.name, size=cli._size(item.size))
+        )
     typer.echo(_kept_pins_line(plan))
+    deleted_line = i18n.tn(
+        "deleted {n} fork point of {arch} ({size})",
+        "deleted {n} fork points of {arch} ({size})",
+        len(deleted),
+    ).format(n=len(deleted), arch=arch, size=_fork_points_size(deleted))
     typer.echo(
-        f"deleted {len(deleted)} fork points of {arch} ({_fork_points_size(deleted)}); "
-        f"kept {len(plan.keep)} ({_fork_points_size(plan.keep)}) -- {_APPARENT_SIZES_NOTE}"
+        i18n.tn(
+            "{deleted}; kept {n} ({size}) -- {note}",
+            "{deleted}; kept {n} ({size}) -- {note}",
+            len(plan.keep),
+        ).format(
+            deleted=deleted_line,
+            n=len(plan.keep),
+            size=_fork_points_size(plan.keep),
+            note=i18n.t(_APPARENT_SIZES_NOTE),
+        )
     )
     if failures:
         _fork_points_exit("\n".join(failures))

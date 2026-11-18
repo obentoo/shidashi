@@ -25,7 +25,7 @@ dev = [
 ]
 
 [project.scripts]
-shidashi = "shidashi.cli:app"
+shidashi = "shidashi.cli:main"
 
 [build-system]
 requires = ["hatchling"]

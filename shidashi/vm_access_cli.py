@@ -15,7 +15,7 @@ from typing import Annotated
 
 import typer
 
-from shidashi import vm, vm_access, vm_dev_record
+from shidashi import i18n, vm, vm_access, vm_dev_record
 
 _KEYGEN_TIMEOUT = 30
 #: Seconds the guest gets for a key or a variable: a few file writes.
@@ -118,8 +118,13 @@ def vm_ssh_config(
     path.chmod(0o600)
     sys.stdout.write(block)
     print(
-        f"written to {path}; reach it with `ssh {vm_access.host_alias(name)}` once "
-        f"~/.ssh/config has: Include {path.parent.parent}/*/{vm_dev_record.SSH_CONFIG}",
+        i18n.t(
+            "written to {path}; reach it with `ssh {alias}` once ~/.ssh/config has: {include}"
+        ).format(
+            path=path,
+            alias=vm_access.host_alias(name),
+            include=f"Include {path.parent.parent}/*/{vm_dev_record.SSH_CONFIG}",
+        ),
         file=sys.stderr,
     )
 
@@ -180,4 +185,9 @@ def vm_env(
         raise _fail(err) from err
     if code != 0:
         raise _fail(f"the guest of {name} did not take {variable} (exit {code})")
-    print(f"{variable} set in {name} for login shells (kept in RAM)", file=sys.stderr)
+    print(
+        i18n.t("{variable} set in {name} for login shells (kept in RAM)").format(
+            variable=variable, name=name
+        ),
+        file=sys.stderr,
+    )

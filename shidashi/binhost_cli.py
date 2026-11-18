@@ -14,7 +14,15 @@ from typing import Annotated, Any, NoReturn
 
 import typer
 
-from shidashi import binhost, binhost_quarantine, config, ownership, publish_pool, toolbox
+from shidashi import (
+    binhost,
+    binhost_quarantine,
+    config,
+    i18n,
+    ownership,
+    publish_pool,
+    toolbox,
+)
 from shidashi.binhost import BinhostError, BinpkgRef, Kind
 from shidashi.config import UnknownAxisError
 from shidashi.recipe import TOOLBOX_STAGE
@@ -251,7 +259,13 @@ def _collect(arch: str, init: str, *, keep: int, dry_run: bool, also: list[str])
             if dry_run:
                 for rel in paths:
                     typer.echo(rel)
-                typer.echo(f"{len(paths)} binpkgs would move to quarantine")
+                typer.echo(
+                    i18n.tn(
+                        "{n} binpkg would move to quarantine",
+                        "{n} binpkgs would move to quarantine",
+                        len(paths),
+                    ).format(n=len(paths))
+                )
                 return
             # before the first move: an index naming moved files fails the next emerge (R3.12)
             tools = _toolbox_for(arch, init, stack, rw={_POOL_MOUNT: pkgdir})
@@ -264,7 +278,12 @@ def _collect(arch: str, init: str, *, keep: int, dry_run: bool, also: list[str])
         failures = [outcome.failure] if outcome.failure else []
         if (reindex_failure := _reindex(tools, pkgdir)) is not None:
             failures.append(reindex_failure)
-    typer.echo(f"moved {len(outcome.moved)} binpkgs to {root}")
+    moved = len(outcome.moved)
+    typer.echo(
+        i18n.tn("moved {n} binpkg to {path}", "moved {n} binpkgs to {path}", moved).format(
+            n=moved, path=root
+        )
+    )
     if failures:
         _die("\n".join(failures))
 
@@ -313,8 +332,18 @@ def publish_command(
             result = publish_pool.publish(pkgdir, target, key=key, toolbox_for=toolbox_for)
         except (BinhostError, SeedError, UnknownAxisError) as err:
             _die(err)
-    typer.echo(f"published {result.published} binpkgs to {result.dest}")
-    typer.echo(f"{result.skipped_unrecorded} unrecorded binpkgs left out")
+    typer.echo(
+        i18n.tn(
+            "published {n} binpkg to {path}", "published {n} binpkgs to {path}", result.published
+        ).format(n=result.published, path=result.dest)
+    )
+    typer.echo(
+        i18n.tn(
+            "{n} unrecorded binpkg left out",
+            "{n} unrecorded binpkgs left out",
+            result.skipped_unrecorded,
+        ).format(n=result.skipped_unrecorded)
+    )
 
 
 @app.command("verify")
@@ -341,4 +370,6 @@ def verify_command(
         _die(err)
     if failures:
         _die("\n".join(failures))
-    typer.echo(f"verified {target}: every gpkg is signed by {pubkey}")
+    typer.echo(
+        i18n.t("verified {path}: every gpkg is signed by {key}").format(path=target, key=pubkey)
+    )

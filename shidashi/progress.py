@@ -41,7 +41,7 @@ from rich.spinner import Spinner
 from rich.table import Table
 from rich.text import Text
 
-from shidashi import audit
+from shidashi import audit, i18n
 
 __all__ = [
     "EmergeTracker",
@@ -258,6 +258,13 @@ class _Transfer:
 
 #: Packages in flight listed in the footer; the rest are counted.
 _MAX_ACTIVE = 8
+
+# A merge's state as the footer shows it; the keys are EmergeTracker's own words.
+_MERGE_STATES = {
+    "binpkg": i18n.mark("binpkg"),
+    "building": i18n.mark("building"),
+    "installing": i18n.mark("installing"),
+}
 _BAR_WIDTH = 30
 
 
@@ -336,12 +343,13 @@ class View(Reporter):
     def _merge_line(self, event: MergeEvent) -> Text:
         line = Text.assemble("   ", (f"({event.n}/{event.total})", "dim"), " ", event.cpv, "  ")
         if event.kind == "start":
-            line.append("binpkg…" if event.binary else "building…", "yellow")
+            line.append(i18n.t("binpkg…") if event.binary else i18n.t("building…"), "yellow")
         elif event.kind == "done":
-            line.append("done (binpkg)" if event.binary else "done", "green")
+            line.append(i18n.t("done (binpkg)") if event.binary else i18n.t("done"), "green")
             line.append(f"  {duration(event.seconds)}", "dim")
         else:
-            line.append(f"failed to {event.action}", "bold red")
+            # the action is emerge's own word (fetch, emerge, merge): it stays as emerge said it
+            line.append(i18n.t("failed to {action}").format(action=event.action), "bold red")
             line.append(f"  {duration(event.seconds)}", "dim")
         return line
 
@@ -419,7 +427,7 @@ class View(Reporter):
             if self._live is None:
                 self._header(out)
                 known = f" ({size(total)})" if total else ""
-                out.append(Text(f"   {label}  downloading{known}", style="dim"))
+                out.append(Text(f"   {label}  {i18n.t('downloading')}{known}", style="dim"))
         self._emit(out)
 
         def advance(n: int) -> None:
@@ -438,7 +446,7 @@ class View(Reporter):
                 if ok:
                     out.append(Text.assemble("   ", label, f"  {size(item.done)}", (took, "dim")))
                 else:
-                    failed = f"failed after {size(item.done)}"
+                    failed = i18n.t("failed after {size}").format(size=size(item.done))
                     out.append(Text.assemble("   ", label, "  ", (failed, "bold red")))
             self._emit(out)
 
@@ -505,11 +513,14 @@ class View(Reporter):
         for merge in active[:_MAX_ACTIVE]:
             grid.add_row(
                 Text.assemble("    ", (f"({merge.n}/{emerge.total})", "dim"), " ", merge.cpv),
-                Text(f"{merge.state}…", style="yellow"),
+                Text(i18n.t(_MERGE_STATES.get(merge.state, merge.state)) + "…", style="yellow"),
                 Text(elapsed(now - merge.start), style="dim"),
             )
         if len(active) > _MAX_ACTIVE:
-            grid.add_row(Text(f"    … {len(active) - _MAX_ACTIVE} more", style="dim"))
+            more = len(active) - _MAX_ACTIVE
+            grid.add_row(
+                Text("    " + i18n.tn("… {n} more", "… {n} more", more).format(n=more), style="dim")
+            )
         return grid
 
 

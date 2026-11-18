@@ -1,0 +1,1872 @@
+# Simplified Chinese translation of Shidashi.
+# Machine-translated with Lara Translate, then reviewed.
+msgid ""
+msgstr ""
+"Project-Id-Version: shidashi\n"
+"PO-Revision-Date: 2026-11-18 00:00+0000\n"
+"Last-Translator: Shidashi maintainers\n"
+"Language-Team: none\n"
+"Language: zh_CN\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=1; plural=0;\n"
+
+#: shidashi/cli.py
+msgid "Shidashi — catering of bentoo builds and ISOs."
+msgstr "Shidashi — 承办 bentoo 的构建与 ISO。"
+
+#: shidashi/cli.py
+msgid "Install completion for the current shell."
+msgstr "为当前 shell 安装补全。"
+
+#: shidashi/cli.py
+msgid "Show completion for the current shell, to copy it or customize the installation."
+msgstr "显示当前 shell 的补全脚本，以便复制或自定义安装。"
+
+#: shidashi/cli.py
+msgid ""
+"Resolve the recipe against the real tree via ``emerge --pretend`` (R1.1–R1.4).\n"
+"\n"
+"Success (even with reported cycles) → package list + suggestions and exit 0.\n"
+"Known errors → friendly message + exit 1, no traceback. On a hard-conflict\n"
+"(``ResolveError`` with ``raw_output``) the raw emerge output goes to stderr."
+msgstr ""
+"通过 ``emerge --pretend`` 对照真实的树解析配方（R1.1–R1.4）。\n"
+"\n"
+"成功（即使报告了循环）→ 软件包列表 + 建议，退出码 0。\n"
+"已知错误 → 友好提示 + 退出码 1，不显示 traceback。发生硬冲突时\n"
+"（带 ``raw_output`` 的 ``ResolveError``），原始 emerge 输出写入 stderr。"
+
+#: shidashi/cli.py
+msgid "Output format: pretty (default) or json."
+msgstr "输出格式：pretty（默认）或 json。"
+
+#: shidashi/cli.py
+msgid "Use the cache only; never touch the network."
+msgstr "仅使用缓存；绝不访问网络。"
+
+#: shidashi/cli.py
+msgid "Keep the scratch rootfs after the run."
+msgstr "运行结束后保留临时 rootfs。"
+
+#: shidashi/cli.py
+msgid "Work root (cache+scratch under <DIR>)."
+msgstr "工作根目录（缓存与临时目录位于 <DIR> 下）。"
+
+#: shidashi/cli.py
+msgid "Also print every line the build prints, as it runs."
+msgstr "同时在运行过程中打印构建输出的每一行。"
+
+#: shidashi/cli.py
+msgid ""
+"Build the recipe's binpkgs (stage4) in an nspawn container (R1.1–R1.5/R8.x).\n"
+"\n"
+"Without ``--step``/``--until``/``--reset`` it runs story 003's one-shot (R8.2);\n"
+"any of them routes to the resumable step-by-step build (``--step`` makes it\n"
+"interactive, with checkpoints and failure prompts). Success → report of\n"
+"phases/atoms/fork point (+ ``stopped_at``/diffs in stepwise) + exit 0. Known\n"
+"errors (``FactoryError``/``StaleStateError``/``SeedError``/``ResolveError``/\n"
+"unknown axis/recipe conflict/invalid ``--until``), including the root guard,\n"
+"become a friendly message + exit 1, no traceback; a ``FactoryError`` prints\n"
+"the phase that failed and the emerge ``output``."
+msgstr ""
+"在 nspawn 容器中构建配方的 binpkg（stage4）（R1.1–R1.5/R8.x）。\n"
+"\n"
+"不带 ``--step``/``--until``/``--reset`` 时，运行 story 003 的一次性构建（R8.2）；\n"
+"任一选项都会转到可恢复的分步构建（``--step`` 使其成为\n"
+"交互式，带检查点和失败提示）。成功 → 报告\n"
+"阶段/atom/分叉点（分步模式下另含 ``stopped_at``/差异）+ 退出码 0。已知\n"
+"错误（``FactoryError``/``StaleStateError``/``SeedError``/``ResolveError``/\n"
+"未知轴/配方冲突/无效的 ``--until``），包括 root 守卫，\n"
+"会变为友好提示 + 退出码 1，不显示 traceback；``FactoryError`` 会打印\n"
+"失败的阶段以及 emerge 的 ``output``。"
+
+#: shidashi/cli.py
+msgid "Rebuild the whole tree (--emptytree, default) or reuse binpkgs."
+msgstr "重新构建整个树（--emptytree，默认）或复用 binpkg。"
+
+#: shidashi/cli.py
+msgid "Host-side output PKGDIR (default: per arch)."
+msgstr "主机侧的输出 PKGDIR（默认：按架构）。"
+
+#: shidashi/cli.py
+msgid "Keep the scratch rootfs after the build."
+msgstr "构建结束后保留临时 rootfs。"
+
+#: shidashi/cli.py
+msgid "Interactive build: pause at a checkpoint after each phase."
+msgstr "交互式构建：每个阶段结束后在检查点暂停。"
+
+#: shidashi/cli.py
+msgid "Stop after the named phase (seed + the recipe's phases)."
+msgstr "在指定阶段之后停止（seed + 配方的各阶段）。"
+
+#: shidashi/cli.py
+msgid "Discard the persisted state/rootfs and start over from scratch."
+msgstr "丢弃已保存的状态/rootfs，从头开始。"
+
+#: shidashi/cli.py
+msgid "Resume a stale state without starting over."
+msgstr "恢复过期的状态，而不从头开始。"
+
+#: shidashi/cli.py
+msgid "Work root: cache+scratch under <DIR> (beats SHIDASHI_CACHE/_SCRATCH)."
+msgstr "工作根目录：缓存与临时目录位于 <DIR> 下（优先于 SHIDASHI_CACHE/_SCRATCH）。"
+
+#: shidashi/cli.py
+msgid "This host's jobs, over the recipe's, in every phase: MAKEOPTS=-jN -lN and emerge --jobs=N --load-average=N."
+msgstr "本主机的并行任务数，覆盖配方的设置，用于每个阶段：MAKEOPTS=-jN -lN 和 emerge --jobs=N --load-average=N。"
+
+#: shidashi/cli.py
+msgid "Stop after this STAGE (its fork point written); the next run resumes there."
+msgstr "在此 STAGE 之后停止（写入其分叉点）；下次运行从此处继续。"
+
+#: shidashi/cli.py
+msgid "Weekly update of the built image within its generation (D26): -uDN --changed-deps over the pinned tree; refuses a toolchain change."
+msgstr "在同一代内每周更新已构建的镜像（D26）：基于锁定的树执行 -uDN --changed-deps；拒绝工具链变更。"
+
+#: shidashi/cli.py
+msgid ""
+"Assemble the recipe's live ISO from the binhost (OVERVIEW §7).\n"
+"\n"
+"Seeds a stage3, overlays the recipe's layers (final USE = that of the binpkgs,\n"
+"§18.6), pulls the flavor's slice with ``emerge --usepkgonly`` and produces the\n"
+"hybrid ISO (squashfs + dracut ``dmsquash-live`` + grub-mkrescue). Success →\n"
+"ISO path + exit 0. Known errors (root guard, missing kernel, unknown\n"
+"axis/recipe conflict, seed/resolve, emerge/dracut failure, squashfs/ISO\n"
+"failure) become a friendly message + exit 1, no traceback."
+msgstr ""
+"从 binhost 组装配方的 live ISO（OVERVIEW §7）。\n"
+"\n"
+"播种一个 stage3，叠加配方的各层（最终 USE = binpkg 的 USE，\n"
+"§18.6），用 ``emerge --usepkgonly`` 拉取该风格的切片，并生成\n"
+"混合 ISO（squashfs + dracut ``dmsquash-live`` + grub-mkrescue）。成功 →\n"
+"ISO 路径 + 退出码 0。已知错误（root 守卫、缺少内核、未知\n"
+"轴/配方冲突、seed/resolve、emerge/dracut 失败、squashfs/ISO\n"
+"失败）会变为友好提示 + 退出码 1，不显示 traceback。"
+
+#: shidashi/cli.py
+msgid "Directory of the ISO(s) and their artifacts (bentoo-<date>-<flavor>-<init>-<arch>.iso, .DIGESTS, SHA256SUMS...)."
+msgstr "ISO 及其附属文件的目录（bentoo-<date>-<flavor>-<init>-<arch>.iso、.DIGESTS、SHA256SUMS...）。"
+
+#: shidashi/cli.py
+msgid "zstd (default: the faster live session), xz (the smaller download), or both (two ISOs)."
+msgstr "zstd（默认：live 会话更快）、xz（下载更小）或 both（两个 ISO）。"
+
+#: shidashi/cli.py
+msgid "Also publish the configured system as a stage4 tarball (tar.xz, xz -9e), made before the live user is added."
+msgstr "同时将配置好的系统发布为 stage4 tarball（tar.xz，xz -9e），在添加 live 用户之前制作。"
+
+#: shidashi/cli.py
+msgid "Do not generate the SBOM (syft)."
+msgstr "不生成 SBOM（syft）。"
+
+#: shidashi/cli.py
+msgid "Host-side output binhost (publish-pool) (default: per arch)."
+msgstr "主机侧的输出 binhost（发布池）（默认：按架构）。"
+
+#: shidashi/cli.py
+msgid "Keep the scratch rootfs after the assembly."
+msgstr "组装结束后保留临时 rootfs。"
+
+#: shidashi/cli.py
+msgid "Restore no checkpoint, not even the trunk: install from the stage3 again."
+msgstr "不恢复任何检查点，连主干也不恢复：重新从 stage3 安装。"
+
+#: shidashi/cli.py
+msgid "Install a flavor whole from the stage3, not on top of its trunk (desktop)."
+msgstr "从 stage3 完整安装一个风格，而不是在其主干（desktop）之上安装。"
+
+#: shidashi/cli.py
+msgid "emerge --jobs N (binpkgs merged in parallel), mksquashfs/unsquashfs -processors N and the stage4's xz -TN. Default: emerge one package at a time, the others on every CPU."
+msgstr "emerge --jobs N（并行合并 binpkg）、mksquashfs/unsquashfs -processors N 以及 stage4 的 xz -TN。默认：emerge 一次合并一个软件包，其余工具使用全部 CPU。"
+
+#: shidashi/cli.py
+msgid "Then boot the ISO on BIOS and UEFI and check it (shidashi vm test); a failed check fails the assemble."
+msgstr "然后在 BIOS 和 UEFI 上启动该 ISO 并检查（shidashi vm test）；检查失败则组装失败。"
+
+#: shidashi/cli.py
+msgid "vsock CID of the --boot-test VM: the first one from N upward that no other boot test on this machine holds."
+msgstr "--boot-test VM 的 vsock CID：从 N 开始向上，取本机上其他启动测试均未占用的第一个。"
+
+#: shidashi/cli.py
+msgid ""
+"Build a tree of images in one audited run: the plan, the factory, then every ISO.\n"
+"\n"
+"``sudo shidashi build v3 systemd --images minimal,kde,gnome`` plans the images\n"
+"across this host and the workers paired by the invoking user (story 010): each\n"
+"image goes to the node estimated to finish the whole build first. The plan is\n"
+"recorded in the build's audit trail (step ``plan``); ``--plan`` prints it and stops,\n"
+"``--local`` keeps every image on this host. The factory then runs here (unless a\n"
+"worker owns the arch's binhost), and every node builds its share at once: here one\n"
+"``assemble`` process per image with its share of ``--jobs`` (``--serial``: one after\n"
+"another, each with every job), on a worker one ``shidashi worker job``. A failed\n"
+"image never stops the others: the build reports every image's node, duration and\n"
+"ISOs or log, and exits 1 if any failed."
+msgstr ""
+"在一次审计的运行中构建一组镜像：计划、factory，然后是每个 ISO。\n"
+"\n"
+"``sudo shidashi build v3 systemd --images minimal,kde,gnome`` 将镜像规划到\n"
+"本主机和调用用户配对的工作节点上（story 010）：每个\n"
+"镜像分配给预计最先完成整个构建的节点。计划\n"
+"记录在构建的审计记录中（步骤 ``plan``）；``--plan`` 打印计划后停止，\n"
+"``--local`` 让所有镜像都留在本主机。随后 factory 在此运行（除非\n"
+"某个工作节点拥有该架构的 binhost），各节点同时构建各自的部分：此处每个镜像\n"
+"一个 ``assemble`` 进程，分得相应份额的 ``--jobs``（``--serial``：逐个\n"
+"执行，每个使用全部任务数），工作节点上则是一个 ``shidashi worker job``。一个失败的\n"
+"镜像绝不会阻止其他镜像：构建会报告每个镜像的节点、耗时以及\n"
+"ISO 或日志，任一失败则退出码为 1。"
+
+#: shidashi/cli.py
+msgid "Comma-separated images (minimal, kde, gnome...) or all."
+msgstr "逗号分隔的镜像（minimal、kde、gnome...）或 all。"
+
+#: shidashi/cli.py
+msgid "Directory of the ISOs and artifacts."
+msgstr "ISO 及附属文件的目录。"
+
+#: shidashi/cli.py
+msgid "zstd, xz or both (two ISOs per image)."
+msgstr "zstd、xz 或 both（每个镜像两个 ISO）。"
+
+#: shidashi/cli.py
+msgid "Also a stage4 per image."
+msgstr "每个镜像另加一个 stage4。"
+
+#: shidashi/cli.py
+msgid "No SBOM (syft)."
+msgstr "不生成 SBOM（syft）。"
+
+#: shidashi/cli.py
+msgid "Assemble from the binpkgs already built."
+msgstr "从已构建的 binpkg 组装。"
+
+#: shidashi/cli.py
+msgid "In the factory MAKEOPTS -jN -lN and emerge --jobs=N --load-average=N; in the assemble emerge --jobs N, mksquashfs/unsquashfs -processors N and the stage4's xz -TN."
+msgstr "factory 中为 MAKEOPTS -jN -lN 和 emerge --jobs=N --load-average=N；assemble 中为 emerge --jobs N、mksquashfs/unsquashfs -processors N 以及 stage4 的 xz -TN。"
+
+#: shidashi/cli.py
+msgid "Keep the build rootfs."
+msgstr "保留构建 rootfs。"
+
+#: shidashi/cli.py
+msgid "Cache only; never touch the network."
+msgstr "仅使用缓存；绝不访问网络。"
+
+#: shidashi/cli.py
+msgid "Boot every ISO on BIOS and UEFI and check it (shidashi vm test); a failed check fails the build."
+msgstr "在 BIOS 和 UEFI 上启动每个 ISO 并检查（shidashi vm test）；检查失败则构建失败。"
+
+#: shidashi/cli.py shidashi/release_cli.py
+msgid "Root of cache, scratch and runs."
+msgstr "缓存、临时目录和运行记录的根目录。"
+
+#: shidashi/cli.py
+msgid "Assemble the host's images one after another in one process, each with every job, instead of one concurrent `assemble` process per image."
+msgstr "在一个进程中逐个组装本主机的镜像，每个使用全部任务数，而不是每个镜像一个并发的 `assemble` 进程。"
+
+#: shidashi/cli.py
+msgid "Print which node builds each image, with its estimate, and exit without building."
+msgstr "打印每个镜像由哪个节点构建及其预估，然后退出，不进行构建。"
+
+#: shidashi/cli.py
+msgid "Build every image on this host; probe no worker."
+msgstr "在本主机上构建所有镜像；不探测任何工作节点。"
+
+#: shidashi/cli.py
+msgid "Let a worker take images although the working tree has uncommitted or untracked changes (a worker builds the last commit)."
+msgstr "即使工作树有未提交或未跟踪的更改，也允许工作节点接收镜像（工作节点构建最新的 commit）。"
+
+#: shidashi/cli.py
+msgid "Write how this build ended, as JSON (used by shidashi release)."
+msgstr "以 JSON 写出本次构建的结束情况（供 shidashi release 使用）。"
+
+#: shidashi/cli.py
+msgid "Used by shidashi release"
+msgstr "供 shidashi release 使用"
+
+#: shidashi/cli.py
+msgid ""
+"Write (or check) every image's world file, variants/<stage>/world.<init>.\n"
+"\n"
+"The flat list of packages each image asks for, generated from the kits: the\n"
+"other end of the set composition. Run it after changing a kit or a stage's\n"
+"sets, and commit the diff with the change.\n"
+"\n"
+"With an image (``shidashi world kde systemd``) it writes nothing: it prints\n"
+"that image's packages kit by kit, with the atoms ``exclude:`` takes out.\n"
+"``base`` and ``desktop`` are accepted too: the stages images grow from.\n"
+"Dependencies are not listed -- only what the image asks for."
+msgstr ""
+"写入（或检查）每个镜像的 world 文件 variants/<stage>/world.<init>。\n"
+"\n"
+"每个镜像所请求软件包的扁平列表，由套件生成：\n"
+"即 set 组合的另一端。修改套件或某个 stage 的\n"
+"set 之后运行它，并将差异随该更改一起 commit。\n"
+"\n"
+"指定镜像时（``shidashi world kde systemd``）不写入任何内容：它按套件\n"
+"逐个打印该镜像的软件包，并列出被 ``exclude:`` 排除的 atom。\n"
+"也接受 ``base`` 和 ``desktop``：镜像由这些 stage 衍生而来。\n"
+"不列出依赖 —— 只列出镜像所请求的内容。"
+
+#: shidashi/cli.py
+msgid "Print this image's (or stage's) packages instead of writing files."
+msgstr "打印该镜像（或 stage）的软件包，而不写入文件。"
+
+#: shidashi/cli.py
+msgid "Only this init (default: every init)."
+msgstr "仅此 init（默认：所有 init）。"
+
+#: shidashi/cli.py
+msgid "Do not write: exit 1 if any world file is stale."
+msgstr "不写入：若有任何 world 文件过时，则退出码为 1。"
+
+#: shidashi/cli.py
+msgid ""
+"Check what this host must provide to build images and boot them.\n"
+"\n"
+"Needs no root and changes nothing. Exits 1 when something a build needs is\n"
+"missing (``build``); what only ``shidashi vm`` needs (``vm``) and the\n"
+"``optional`` tools are reported without failing."
+msgstr ""
+"检查本主机构建和启动镜像必须具备的条件。\n"
+"\n"
+"无需 root，不做任何更改。缺少构建所需的条件（``build``）时\n"
+"退出码为 1；仅 ``shidashi vm`` 需要的（``vm``）和\n"
+"``optional`` 工具只报告，不导致失败。"
+
+#: shidashi/cli.py
+msgid "Work root to check (its filesystem)."
+msgstr "要检查的工作根目录（其文件系统）。"
+
+#: shidashi/cli.py
+msgid "Find a worker announcing itself, pick it, type the code it shows, pair."
+msgstr "查找正在广播自身的工作节点，选择它，输入它显示的代码，完成配对。"
+
+#: shidashi/cli.py
+msgid "The worker's name (and hostname)."
+msgstr "工作节点的名称（以及主机名）。"
+
+#: shidashi/cli.py
+msgid "IPv4[:PORT] of the worker, skipping discovery (across networks)."
+msgstr "工作节点的 IPv4[:PORT]，跳过发现（跨网络时）。"
+
+#: shidashi/cli.py
+msgid "Seconds to listen for workers."
+msgstr "监听工作节点的秒数。"
+
+#: shidashi/cli.py
+msgid "Pair a worker booted with this host's shidashi.trust."
+msgstr "配对一个用本主机的 shidashi.trust 启动的工作节点。"
+
+#: shidashi/cli.py
+msgid "Print this host's shidashi.trust kernel parameter."
+msgstr "打印本主机的 shidashi.trust 内核参数。"
+
+#: shidashi/cli.py
+msgid "Replace a worker already paired under this name with another host key."
+msgstr "将此名称下已配对的工作节点替换为另一个主机密钥。"
+
+#: shidashi/cli.py
+msgid "Inspect and validate resolved recipes."
+msgstr "检查并验证解析后的配方。"
+
+#: shidashi/cli.py
+msgid "Resolve, merge and render the recipe (R4.1–R4.3)."
+msgstr "解析、合并并渲染配方（R4.1–R4.3）。"
+
+#: shidashi/cli.py
+msgid "Output format."
+msgstr "输出格式。"
+
+#: shidashi/cli.py
+msgid "Validate load+merge: success → exit 0; conflict/unknown axis → exit 1 (R5.1/R5.2)."
+msgstr "验证加载+合并：成功 → 退出码 0；冲突/未知轴 → 退出码 1（R5.1/R5.2）。"
+
+#: shidashi/cli.py
+msgid ""
+"List what can be asked for: arches, TARGETS (delivered images) and inits (R6.1).\n"
+"\n"
+"The target is ``minimal`` or a flavor (D24) -- not the ``flavor`` axis, where\n"
+"``minimal`` no longer lives. The base is implicit: every chain starts there."
+msgstr ""
+"列出可请求的内容：架构、TARGETS（交付的镜像）和 init（R6.1）。\n"
+"\n"
+"目标为 ``minimal`` 或某个风格（D24）—— 而不是 ``flavor`` 轴，``minimal``\n"
+"已不在该轴中。base 是隐含的：每条链都从那里开始。"
+
+#: shidashi/cli.py
+msgid "Boot an ISO in a VM and drive it over SSH on vsock (no network, no screen)."
+msgstr "在 VM 中启动 ISO，并通过 vsock 上的 SSH 操控它（无网络、无屏幕）。"
+
+#: shidashi/vm_access_cli.py
+msgid ""
+"Print an ssh ``Host`` (``shidashi-NAME``) that lands as root in the VM, and keep it\n"
+"beside the session as ``ssh_config``. One ``Include`` of\n"
+"``~/.local/state/shidashi/vm/*/ssh_config`` in ``~/.ssh/config`` makes every session\n"
+"that ran this reachable -- by an editor's remote project (Zeo, Zed, VS Code) or by\n"
+"``ssh shidashi-NAME``. A session on a build worker is reached through the worker with\n"
+"a key made here; it goes when the session is stopped."
+msgstr ""
+"打印一个以 root 身份登录 VM 的 ssh ``Host``（``shidashi-NAME``），并将其作为\n"
+"``ssh_config`` 保存在会话旁。在 ``~/.ssh/config`` 中加入一行\n"
+"``Include`` ``~/.local/state/shidashi/vm/*/ssh_config``，即可让每个运行过此命令的\n"
+"会话都可访问 —— 通过编辑器的远程项目（Zeo、Zed、VS Code）或\n"
+"``ssh shidashi-NAME``。构建工作节点上的会话经由该工作节点访问，使用\n"
+"在此生成的密钥；会话停止时密钥随之删除。"
+
+#: shidashi/vm_access_cli.py
+msgid ""
+"Set a variable in the VM from stdin, for every login shell there -- the\n"
+"environment an editor's remote server and its agents start from. The value never\n"
+"is a command-line word and never reaches a disk: it is kept in RAM in the guest\n"
+"(``/run``, mode 0600) and goes with the VM. Pipe it in, e.g.\n"
+"``secret-tool lookup service anthropic purpose X | shidashi vm env --name dev\n"
+"CLAUDE_CODE_OAUTH_TOKEN``."
+msgstr ""
+"从 stdin 在 VM 中设置一个变量，供其中的每个登录 shell 使用 —— 即\n"
+"编辑器的远程服务器及其代理启动时的环境。该值绝不会\n"
+"作为命令行参数出现，也绝不写入磁盘：它保存在客户机的 RAM 中\n"
+"（``/run``，权限 0600），随 VM 一同消失。通过管道传入，例如\n"
+"``secret-tool lookup service anthropic purpose X | shidashi vm env --name dev\n"
+"CLAUDE_CODE_OAUTH_TOKEN``。"
+
+#: shidashi/vm_access_cli.py
+msgid "The variable's name, e.g. CLAUDE_CODE_OAUTH_TOKEN."
+msgstr "变量的名称，例如 CLAUDE_CODE_OAUTH_TOKEN。"
+
+#: shidashi/vm_access_cli.py
+msgid "Join stdin and stdout to the guest's sshd on vsock (a ``ProxyCommand``)."
+msgstr "将 stdin 和 stdout 连接到客户机 vsock 上的 sshd（一个 ``ProxyCommand``）。"
+
+#: shidashi/cli.py
+msgid "Start ``iso`` in a VM reachable with `shidashi vm run`."
+msgstr "在 VM 中启动 ``iso``，可通过 `shidashi vm run` 访问。"
+
+#: shidashi/cli.py
+msgid "The ISO to boot (optional with --dev)."
+msgstr "要启动的 ISO（使用 --dev 时可选）。"
+
+#: shidashi/cli.py
+msgid "Boot with OVMF instead of BIOS."
+msgstr "使用 OVMF 而非 BIOS 启动。"
+
+#: shidashi/cli.py
+msgid "Session name."
+msgstr "会话名称。"
+
+#: shidashi/cli.py
+msgid "The guest's vsock CID (default 42)."
+msgstr "客户机的 vsock CID（默认 42）。"
+
+#: shidashi/cli.py
+msgid "The guest's memory (default 8G)."
+msgstr "客户机的内存（默认 8G）。"
+
+#: shidashi/cli.py
+msgid "The guest's processors (default 8)."
+msgstr "客户机的处理器数（默认 8）。"
+
+#: shidashi/cli.py
+msgid "none (headless) or sdl to watch it."
+msgstr "none（无界面）或 sdl（可观看画面）。"
+
+#: shidashi/cli.py
+msgid "Wait for SSH."
+msgstr "等待 SSH 就绪。"
+
+#: shidashi/cli.py
+msgid "A qcow2 disk for the guest (/dev/vda, vdb...); repeatable."
+msgstr "客户机的 qcow2 磁盘（/dev/vda、vdb...）；可重复。"
+
+#: shidashi/cli.py
+msgid "Create a missing --disk with this size (e.g. 200G)."
+msgstr "以此大小创建缺失的 --disk（例如 200G）。"
+
+#: shidashi/cli.py
+msgid "TAG=DIR[:rw]: a host directory the guest mounts with `mount -t virtiofs TAG <dir>`; read-only unless :rw. Repeatable."
+msgstr "TAG=DIR[:rw]：客户机用 `mount -t virtiofs TAG <dir>` 挂载的主机目录；除非指定 :rw，否则只读。可重复。"
+
+#: shidashi/cli.py
+msgid "Make the guest's TCP port GUEST reachable on the host's 127.0.0.1:HOST (e.g. 2222:22). Repeatable."
+msgstr "使客户机的 TCP 端口 GUEST 可在主机的 127.0.0.1:HOST 上访问（例如 2222:22）。可重复。"
+
+#: shidashi/cli.py
+msgid "A VM ready to build ebuilds (bentoolkit): the ISO's pinned trees, a fresh work disk, /var/db/repos/staged, a binhost; prints one JSON line. Exit 3: no ISO."
+msgstr "一个可构建 ebuild 的 VM（bentoolkit）：ISO 的锁定树、全新的工作磁盘、/var/db/repos/staged、一个 binhost；打印一行 JSON。退出码 3：无 ISO。"
+
+#: shidashi/cli.py
+msgid "--dev: this ISO, not the newest minimal."
+msgstr "--dev：使用此 ISO，而不是最新的 minimal。"
+
+#: shidashi/cli.py
+msgid "--dev: the ISO's init."
+msgstr "--dev：该 ISO 的 init。"
+
+#: shidashi/cli.py
+msgid "--dev: the ISO's arch."
+msgstr "--dev：该 ISO 的架构。"
+
+#: shidashi/cli.py
+msgid "--dev: after HOURS (fractions allowed) the session powers itself off and is removed, as `vm stop` does; without it, never."
+msgstr "--dev：HOURS 小时后（允许小数）会话自行关机并被移除，与 `vm stop` 相同；不指定则永不。"
+
+#: shidashi/cli.py
+msgid "--dev: run the VM on this paired build worker (default: the one SHIDASHI_DEV_WORKER names); `vm run` and `vm stop` then reach it there."
+msgstr "--dev：在此已配对的构建工作节点上运行 VM（默认：SHIDASHI_DEV_WORKER 指定的那个）；之后 `vm run` 和 `vm stop` 会到那里访问它。"
+
+#: shidashi/cli.py
+msgid "--dev: on this host, whatever SHIDASHI_DEV_WORKER names."
+msgstr "--dev：在本主机上运行，无论 SHIDASHI_DEV_WORKER 指定了什么。"
+
+#: shidashi/cli.py
+msgid ""
+"Run a command as root in the VM; its exit code becomes ours. Our stdin is the\n"
+"command's (``tar -c … | shidashi vm run -- tar -x``). A command stopped by\n"
+"``--timeout``, Ctrl+C, SIGTERM or SIGHUP is stopped in the guest too, with all it\n"
+"started; past its timeout it exits 124, on a signal 128 + its number. A session\n"
+"started on a build worker (``vm start --dev --worker``) is reached there."
+msgstr ""
+"在 VM 中以 root 身份运行命令；其退出码即为我们的退出码。我们的 stdin 即\n"
+"该命令的 stdin（``tar -c … | shidashi vm run -- tar -x``）。被\n"
+"``--timeout``、Ctrl+C、SIGTERM 或 SIGHUP 停止的命令，在客户机中也会连同它启动的\n"
+"所有进程一起停止；超时后退出码为 124，收到信号时为 128 + 信号编号。在构建\n"
+"工作节点上启动的会话（``vm start --dev --worker``）会到那里访问。"
+
+#: shidashi/cli.py
+msgid "The command, run by the guest's shell."
+msgstr "命令，由客户机的 shell 运行。"
+
+#: shidashi/cli.py
+msgid "Seconds before giving up on the command; 0: no limit."
+msgstr "放弃该命令前的秒数；0：无限制。"
+
+#: shidashi/cli.py
+msgid "Pass the output through line by line as the guest writes it, instead of when the command ends."
+msgstr "在客户机写出输出时逐行转发，而不是等命令结束后再输出。"
+
+#: shidashi/cli.py
+msgid "Save the VM's screen (PNG) -- for when looking is really needed."
+msgstr "保存 VM 的屏幕（PNG）—— 用于确实需要看一眼的时候。"
+
+#: shidashi/cli.py
+msgid ""
+"Power the VM off; a ``--dev`` session's directory, work disk included, goes too.\n"
+"A session on a build worker is stopped there, and forgotten when it is gone."
+msgstr ""
+"关闭 VM；``--dev`` 会话的目录（包括工作磁盘）也一并删除。\n"
+"构建工作节点上的会话在那里停止，消失后即被遗忘。"
+
+#: shidashi/cli.py
+msgid ""
+"The automated boot test: boot ``iso`` and check what its system.yaml declared.\n"
+"\n"
+"Audited like a build, the report attached as boot-test.json. Exit 1 when any\n"
+"check fails. Natively the run also records the steps boot:<firmware> and\n"
+"check:<name>; on a node without QEMU the boot test runs in the v3-systemd\n"
+"toolbox container (:mod:`shidashi.vmrunner`), whose inner steps are not\n"
+"recorded -- the boot-test attachment carries every check's result, the metrics\n"
+"and the ssh time per firmware all the same. The CID lock is held here, around\n"
+"either."
+msgstr ""
+"自动启动测试：启动 ``iso`` 并检查其 system.yaml 声明的内容。\n"
+"\n"
+"像构建一样被审计，报告以附件 boot-test.json 保存。任一\n"
+"检查失败时退出码为 1。在本机运行时还会记录步骤 boot:<firmware> 和\n"
+"check:<name>；在没有 QEMU 的节点上，启动测试在 v3-systemd\n"
+"toolbox 容器（:mod:`shidashi.vmrunner`）中运行，其内部步骤不会\n"
+"被记录 —— 但 boot-test 附件同样包含每项检查的结果、指标\n"
+"以及每种固件的 ssh 时间。CID 锁在此处持有，涵盖\n"
+"这两种情况。"
+
+#: shidashi/cli.py
+msgid "bios, uefi or both."
+msgstr "bios、uefi 或 both。"
+
+#: shidashi/cli.py
+msgid "Also save a screenshot per boot here."
+msgstr "同时在此处为每次启动保存一张截图。"
+
+#: shidashi/cli.py
+msgid ""
+"The runner container's side of a boot test: ``vm.boot_test`` into ``--report``.\n"
+"\n"
+"No CID lock (the outer caller holds it host-wide; this container's ``/tmp`` is not\n"
+"the host's) and no audit run (the outer run records the report). Exit 0 with the\n"
+"report written, whatever its ``passed``; on any exception ``{\"error\": <text>}`` is\n"
+"written instead and the exit is 2 -- an error is never a verdict."
+msgstr ""
+"启动测试在 runner 容器一侧的部分：``vm.boot_test`` 写入 ``--report``。\n"
+"\n"
+"不持 CID 锁（外层调用者在整台主机范围持有；此容器的 ``/tmp`` 不是\n"
+"主机的）且不运行审计（外层运行会记录报告）。写入报告后退出码为 0，\n"
+"无论其 ``passed`` 如何；出现任何异常时改为写入 ``{\"error\": <text>}``，\n"
+"退出码为 2 —— 错误绝不是判定结果。"
+
+#: shidashi/cli.py
+msgid "Where the JSON report lands."
+msgstr "JSON 报告的存放位置。"
+
+#: shidashi/cli.py
+msgid "The runner container's side of ``vm.read_build_info``: the ISO's build.json as JSON."
+msgstr "``vm.read_build_info`` 在 runner 容器一侧的部分：以 JSON 输出 ISO 的 build.json。"
+
+#: shidashi/cli.py
+msgid "The kit library: every package Bentoo builds."
+msgstr "套件库：Bentoo 构建的所有软件包。"
+
+#: shidashi/cli.py
+msgid ""
+"Every kit atom must exist in the pinned trees; every @ref must name a kit.\n"
+"\n"
+"Read-only. Exit 1 with one line per problem (kit:line: atom -- why)."
+msgstr ""
+"每个套件 atom 都必须存在于锁定的树中；每个 @ref 都必须指向一个套件。\n"
+"\n"
+"只读。退出码 1，每个问题一行（kit:line: atom -- 原因）。"
+
+#: shidashi/cli.py
+msgid "Use the cached pinned trees only."
+msgstr "仅使用已缓存的锁定树。"
+
+#: shidashi/cli.py
+msgid "Drive a paired worker (shidashi kyomei)."
+msgstr "操控已配对的工作节点（shidashi kyomei）。"
+
+#: shidashi/cli.py
+msgid "Give worker NAME its identity and a personalized ISO that boots already paired."
+msgstr "为工作节点 NAME 生成身份，以及一个启动即已配对的个性化 ISO。"
+
+#: shidashi/cli.py
+msgid "The worker's name (one RFC 1123 label)."
+msgstr "工作节点的名称（一个 RFC 1123 标签）。"
+
+#: shidashi/cli.py
+msgid "The generic worker ISO to personalize."
+msgstr "要个性化的通用工作节点 ISO。"
+
+#: shidashi/cli.py
+msgid "Replace NAME's identity (a lost medium)."
+msgstr "替换 NAME 的身份（介质丢失时）。"
+
+#: shidashi/cli.py
+msgid "Join this WPA-PSK Wi-Fi network at boot; the passphrase is asked without echo on a terminal, else read as one line from stdin."
+msgstr "启动时加入此 WPA-PSK Wi-Fi 网络；在终端上以不回显方式询问密码，否则从 stdin 读取一行。"
+
+#: shidashi/cli.py
+msgid "Make DISK the worker's SHIDASHI-WORK disk -- only with its serial confirmed."
+msgstr "将 DISK 设为工作节点的 SHIDASHI-WORK 磁盘 —— 仅在确认其序列号后。"
+
+#: shidashi/cli.py
+msgid "The paired worker's name."
+msgstr "已配对工作节点的名称。"
+
+#: shidashi/cli.py
+msgid "The disk to prepare, e.g. /dev/sda."
+msgstr "要准备的磁盘，例如 /dev/sda。"
+
+#: shidashi/cli.py
+msgid "The disk's serial (lsblk -o NAME,SERIAL)."
+msgstr "磁盘的序列号（lsblk -o NAME,SERIAL）。"
+
+#: shidashi/cli.py
+msgid ""
+"A worker's CPU, targets, load, memory, work disk, image, SMART, checkpoints and\n"
+"jobs; without a name, one line per paired worker (at most 5 s each)."
+msgstr ""
+"工作节点的 CPU、目标、负载、内存、工作磁盘、镜像、SMART、检查点和\n"
+"任务；不指定名称时，每个已配对工作节点一行（每个最多 5 秒）。"
+
+#: shidashi/cli.py
+msgid "A paired worker's name; every one when omitted."
+msgstr "已配对工作节点的名称；省略时为全部。"
+
+#: shidashi/cli.py
+msgid "Reach the worker there, without the mDNS lookup; recorded once it answers with its pinned key."
+msgstr "直接到该地址访问工作节点，不进行 mDNS 查找；一旦它以锁定的密钥应答即记录下来。"
+
+#: shidashi/cli.py
+msgid ""
+"Run COMMAND on the worker, every argument quoted; its output streams here and\n"
+"its exit code is ours."
+msgstr ""
+"在工作节点上运行 COMMAND，每个参数都加引号；其输出流式传回此处，\n"
+"其退出码即为我们的退出码。"
+
+#: shidashi/cli.py
+msgid "The command and its arguments (after --)."
+msgstr "命令及其参数（在 -- 之后）。"
+
+#: shidashi/cli.py
+msgid "Print a job's log; with -f, follow it until the job ends."
+msgstr "打印任务的日志；使用 -f 时持续跟踪，直到任务结束。"
+
+#: shidashi/cli.py
+msgid "The job's name."
+msgstr "任务的名称。"
+
+#: shidashi/cli.py
+msgid "Follow the log until the job ends."
+msgstr "持续跟踪日志，直到任务结束。"
+
+#: shidashi/cli.py
+msgid ""
+"Release ARCH's owner lock once its holder -- a worker job, or a host build by its\n"
+"pid -- has ended; with --force, now."
+msgstr ""
+"在持有者（工作节点任务，或按 pid 识别的主机构建）结束后，释放 ARCH 的所有者锁；\n"
+"使用 --force 则立即释放。"
+
+#: shidashi/cli.py
+msgid "The arch whose owner lock to release."
+msgstr "要释放其所有者锁的架构。"
+
+#: shidashi/cli.py
+msgid "Release it without checking that its holder has ended."
+msgstr "释放它，不检查其持有者是否已结束。"
+
+#: shidashi/cli.py
+msgid ""
+"Keep ARCH's binpkgs, fork points, distfiles and ccache on WORKER only; with\n"
+"--off, under the host again; without --arch, list what WORKER owns. Nothing is\n"
+"copied or deleted on either side."
+msgstr ""
+"仅在 WORKER 上保存 ARCH 的 binpkg、分叉点、distfiles 和 ccache；使用\n"
+"--off 则重新放回主机下；不带 --arch 时，列出 WORKER 拥有的内容。双方都\n"
+"不会复制或删除任何内容。"
+
+#: shidashi/cli.py
+msgid "The arch whose cache stays on WORKER."
+msgstr "缓存保存在 WORKER 上的架构。"
+
+#: shidashi/cli.py
+msgid "Bring ARCH's cache back under the host."
+msgstr "将 ARCH 的缓存重新放回主机下。"
+
+#: shidashi/cli.py
+msgid "Power the worker off; refused while a Shidashi job runs on it, unless --force."
+msgstr "关闭工作节点；其上有 Shidashi 任务运行时拒绝，除非使用 --force。"
+
+#: shidashi/cli.py
+msgid "Power off even while a Shidashi job runs."
+msgstr "即使有 Shidashi 任务在运行也关机。"
+
+#: shidashi/cli.py
+msgid ""
+"Run ``shidashi ARGS…`` on the worker from this checkout's HEAD: follow its log,\n"
+"bring its results back and exit with its exit code."
+msgstr ""
+"以此 checkout 的 HEAD 在工作节点上运行 ``shidashi ARGS…``：跟踪其日志，\n"
+"取回其结果，并以其退出码退出。"
+
+#: shidashi/cli.py
+msgid "The job's name: a-z, 0-9 and '-' only."
+msgstr "任务的名称：仅限 a-z、0-9 和 '-'。"
+
+#: shidashi/cli.py
+msgid "The shidashi command and its arguments (after --)."
+msgstr "shidashi 命令及其参数（在 -- 之后）。"
+
+#: shidashi/cli.py
+msgid "Run HEAD although the checkout has uncommitted changes (they are not shipped)."
+msgstr "即使 checkout 有未提交的更改也运行 HEAD（这些更改不会被传送）。"
+
+#: shidashi/cli.py
+msgid "Start the job and return; follow and pull it later."
+msgstr "启动任务后立即返回；稍后再跟踪并拉取。"
+
+#: shidashi/cli.py
+msgid "Where its log, rc and ISOs land (default ./worker-results/NAME/JOB)."
+msgstr "其日志、rc 和 ISO 的存放位置（默认 ./worker-results/NAME/JOB）。"
+
+#: shidashi/cli.py
+msgid "Cap every transfer at K KiB/s."
+msgstr "将每次传输限速为 K KiB/s。"
+
+#: shidashi/cli.py
+msgid "Copy an arch's cache to a worker, and results back from it."
+msgstr "将某架构的缓存复制到工作节点，并从中取回结果。"
+
+#: shidashi/cli.py
+msgid ""
+"Send the worker ARCH's cache -- PKGDIR, distfiles and ccache, the pinned\n"
+"trees and repositories, the stage3 and the fork points -- and the runtime venv."
+msgstr ""
+"向工作节点发送 ARCH 的缓存 —— PKGDIR、distfiles 和 ccache、锁定的\n"
+"树和仓库、stage3 和分叉点 —— 以及运行时 venv。"
+
+#: shidashi/cli.py
+msgid "The arch whose cache to send."
+msgstr "要发送其缓存的架构。"
+
+#: shidashi/cli.py
+msgid "The init whose stage3 generation to send."
+msgstr "要发送其 stage3 代的 init。"
+
+#: shidashi/cli.py
+msgid ""
+"Bring back ARCH's new distfiles and ccache entries and, with --job, that job's\n"
+"log, rc, runs and ISOs. The binhost comes back, and the arch's owner lock is\n"
+"released, only for the lock holder's job once it has ended."
+msgstr ""
+"取回 ARCH 新的 distfiles 和 ccache 条目，使用 --job 时还取回该任务的\n"
+"日志、rc、运行记录和 ISO。仅对锁持有者的任务、且在其结束后，binhost 才会取回，\n"
+"该架构的所有者锁也才会释放。"
+
+#: shidashi/cli.py
+msgid "The arch whose caches come back (omit only for an archless job)."
+msgstr "其缓存要取回的架构（仅无架构的任务可省略）。"
+
+#: shidashi/cli.py
+msgid "The init whose stage3 generation the binhost is."
+msgstr "binhost 所属 stage3 代的 init。"
+
+#: shidashi/cli.py
+msgid "The job whose log, rc, runs and ISOs come back (./worker-results/)."
+msgstr "要取回其日志、rc、运行记录和 ISO 的任务（./worker-results/）。"
+
+#: shidashi/cli.py
+msgid "Where the job's log, rc, runs and ISOs land (default ./worker-results/NAME/JOB); needs --job."
+msgstr "任务的日志、rc、运行记录和 ISO 的存放位置（默认 ./worker-results/NAME/JOB）；需要 --job。"
+
+#: shidashi/cli.py
+msgid "The build pool: classify, trim and publish binpkgs."
+msgstr "构建池：分类、修剪并发布 binpkg。"
+
+#: shidashi/binhost_cli.py
+msgid "Print each binpkg instance with its kind (final, transient, old, unrecorded)."
+msgstr "打印每个 binpkg 实例及其类别（final、transient、old、unrecorded）。"
+
+#: shidashi/binhost_cli.py
+msgid "Microarchitecture whose pool to read (e.g. v3)."
+msgstr "要读取其池的微架构（例如 v3）。"
+
+#: shidashi/binhost_cli.py
+msgid "Init flavor whose PKGDIR and toolbox to use."
+msgstr "要使用其 PKGDIR 和 toolbox 的 init 类型。"
+
+#: shidashi/binhost_cli.py
+msgid "Generation (stage3 snapshot) to read; default is the one factory builds."
+msgstr "要读取的代（stage3 快照）；默认为 factory 构建的那一代。"
+
+#: shidashi/binhost_cli.py
+msgid "Quarantine the binpkgs whose ebuild is gone, beyond --keep per package, and reindex."
+msgstr "隔离 ebuild 已不存在的 binpkg（每个软件包超出 --keep 的部分），并重建索引。"
+
+#: shidashi/binhost_cli.py
+msgid "Newest CPVs kept per (package, SLOT) once gone."
+msgstr "ebuild 消失后，每个（软件包, SLOT）保留的最新 CPV 数量。"
+
+#: shidashi/binhost_cli.py
+msgid "Print the planned PATHs; move and write nothing."
+msgstr "打印计划的 PATH；不移动、不写入任何内容。"
+
+#: shidashi/binhost_cli.py
+msgid "A CPV (cat/pkg-1.0) to quarantine too, whatever its ebuild: for a binpkg built from an overlay that dropped it while ::gentoo still ships the CPV."
+msgstr "额外隔离的 CPV（cat/pkg-1.0），不论其 ebuild 如何：用于从某个已删除它的 overlay 构建、而 ::gentoo 仍提供该 CPV 的 binpkg。"
+
+#: shidashi/binhost_cli.py
+msgid "Build the signed publish pool of one generation: its recorded finals, and no more."
+msgstr "构建某一代的已签名发布池：仅包含其已记录的 final，别无其他。"
+
+#: shidashi/binhost_cli.py
+msgid "Fingerprint of the maintainer's key that signs."
+msgstr "用于签名的维护者密钥指纹。"
+
+#: shidashi/binhost_cli.py
+msgid "Where the signed pool is made; default <cache>/publish/<arch>/<generation>."
+msgstr "已签名池的生成位置；默认 <cache>/publish/<arch>/<generation>。"
+
+#: shidashi/binhost_cli.py
+msgid "Check every signature of the publish pool against --pubkey; exit 1 on any failure."
+msgstr "用 --pubkey 检查发布池的每个签名；任一失败则退出码为 1。"
+
+#: shidashi/binhost_cli.py
+msgid "Armored public key file: the only key trusted."
+msgstr "ASCII-armored 公钥文件：唯一受信任的密钥。"
+
+#: shidashi/binhost_cli.py
+msgid "The signed pool to check; default <cache>/publish/<arch>/<generation>."
+msgstr "要检查的已签名池；默认 <cache>/publish/<arch>/<generation>。"
+
+#: shidashi/cli.py
+msgid "The restore points: tarballs of finished build stages."
+msgstr "还原点：已完成构建 stage 的 tarball。"
+
+#: shidashi/fork_points_cli.py
+msgid "Delete the fork points of every pin but the current one and the --keep newest others."
+msgstr "删除所有锁定版本的分叉点，但保留当前锁定版本及 --keep 个最新的其他锁定版本。"
+
+#: shidashi/fork_points_cli.py
+msgid "Microarchitecture whose fork points to collect (e.g. v3)."
+msgstr "要回收其分叉点的微架构（例如 v3）。"
+
+#: shidashi/fork_points_cli.py
+msgid "Other pins whose fork points stay besides the current pin's, newest first."
+msgstr "除当前锁定版本外，其分叉点也予以保留的其他锁定版本，按最新优先。"
+
+#: shidashi/fork_points_cli.py
+msgid "Print the plan; delete nothing, take no lock."
+msgstr "打印计划；不删除任何内容，不获取锁。"
+
+#: shidashi/cli.py
+msgid "GitHub calls from the host: runner config, dispatch."
+msgstr "从主机发起的 GitHub 调用：runner 配置、dispatch。"
+
+#: shidashi/ci_cli.py
+msgid "Print the encoded JIT configuration of a new one-job runner (stdout, nothing else)."
+msgstr "打印新的单任务 runner 的编码 JIT 配置（输出到 stdout，别无其他）。"
+
+#: shidashi/ci_cli.py
+msgid "OWNER/NAME of the repository."
+msgstr "仓库的 OWNER/NAME。"
+
+#: shidashi/ci_cli.py
+msgid "File holding the token: yours, mode 0600 or 0400."
+msgstr "保存令牌的文件：属于你，权限 0600 或 0400。"
+
+#: shidashi/ci_cli.py
+msgid "Label the runner carries."
+msgstr "runner 携带的标签。"
+
+#: shidashi/ci_cli.py
+msgid "Name the runner registers as."
+msgstr "runner 注册时使用的名称。"
+
+#: shidashi/ci_cli.py
+msgid "Request a workflow_dispatch of WORKFLOW on REF."
+msgstr "请求在 REF 上对 WORKFLOW 执行 workflow_dispatch。"
+
+#: shidashi/ci_cli.py
+msgid "Workflow file name."
+msgstr "工作流文件名。"
+
+#: shidashi/ci_cli.py
+msgid "Branch or tag to run it on."
+msgstr "运行它的分支或标签。"
+
+#: shidashi/ci_pool_cli.py
+msgid "Hand queued jobs of the allowlisted private repositories to the worker."
+msgstr "将白名单中私有仓库的排队任务交给工作节点。"
+
+#: shidashi/ci_pool_cli.py
+msgid "ci.toml (default: $XDG_CONFIG_HOME/shidashi/ci.toml)."
+msgstr "ci.toml（默认：$XDG_CONFIG_HOME/shidashi/ci.toml）。"
+
+#: shidashi/ci_pool_cli.py
+msgid "One round, then exit 0."
+msgstr "只执行一轮，然后以退出码 0 退出。"
+
+#: shidashi/cli.py
+msgid "The worker as a CI runner: one job per VM (root)."
+msgstr "将工作节点用作 CI runner：每个 VM 一个任务（root）。"
+
+#: shidashi/ci_guest_cli.py
+msgid "Download the pinned Ubuntu cloud image to the work disk, verified."
+msgstr "将锁定的 Ubuntu 云镜像下载到工作磁盘并校验。"
+
+#: shidashi/ci_guest_cli.py
+msgid "Prepare the guest image once for the current pins (Docker, runner, units)."
+msgstr "为当前锁定版本一次性准备客户机镜像（Docker、runner、单元）。"
+
+#: shidashi/ci_guest_cli.py
+msgid "Run one job in one ephemeral VM: exit 0 pass, 1 fail, 3 low disk, 4 timeout."
+msgstr "在一个临时 VM 中运行一个任务：退出码 0 通过，1 失败，3 磁盘不足，4 超时。"
+
+#: shidashi/ci_guest_cli.py
+msgid "GitHub job id (digits)."
+msgstr "GitHub 任务 id（数字）。"
+
+#: shidashi/ci_guest_cli.py
+msgid "OWNER/NAME the runner was minted for."
+msgstr "为其签发 runner 的 OWNER/NAME。"
+
+#: shidashi/ci_guest_cli.py
+msgid "Delete job directories and JIT configs whose VM no longer runs."
+msgstr "删除 VM 已不再运行的任务目录和 JIT 配置。"
+
+#: shidashi/ci_guest_cli.py
+msgid "Inside the toolbox container: exec one allowlisted tool with its arguments."
+msgstr "在 toolbox 容器内：带参数执行一个白名单中的工具。"
+
+#: shidashi/ci_guest_cli.py
+msgid "Inside the toolbox container: copy its OVMF code and variables template to DEST."
+msgstr "在 toolbox 容器内：将其 OVMF 代码和变量模板复制到 DEST。"
+
+#: shidashi/ci_guest_cli.py
+msgid "Directory to copy OVMF into."
+msgstr "要将 OVMF 复制到的目录。"
+
+#: shidashi/cli.py
+msgid "Build, sign and report one dated release."
+msgstr "构建、签名并报告一个带日期的发布版。"
+
+#: shidashi/release_cli.py
+msgid ""
+"Build every variant asked for, publish each arch's binhost, and sign one dated release.\n"
+"\n"
+"``sudo shidashi release v3 systemd --key FPR`` (or ``--unsigned``) runs one\n"
+"``shidashi build --images all`` per variant into ``<cache>/releases/<YYYY.MM.DD>`` (the\n"
+"start date in UTC), publishes the signed binhost of each arch that built, writes\n"
+"``release.json`` and signs ``SHA256SUMS`` and every ``DIGESTS`` with the maintainer's\n"
+"key. Exit 0 only when every variant built, published and the signatures verified;\n"
+"``--unsigned`` publishes and signs\n"
+"nothing and exits 0 when every variant built."
+msgstr ""
+"构建所请求的每个变体，发布每个架构的 binhost，并签名一个带日期的发布版。\n"
+"\n"
+"``sudo shidashi release v3 systemd --key FPR``（或 ``--unsigned``）为每个变体运行一次\n"
+"``shidashi build --images all``，输出到 ``<cache>/releases/<YYYY.MM.DD>``（\n"
+"UTC 开始日期），发布每个已构建架构的已签名 binhost，写入\n"
+"``release.json``，并用维护者的密钥对 ``SHA256SUMS`` 和每个 ``DIGESTS``\n"
+"签名。仅当每个变体都已构建、已发布且签名均已验证时退出码为 0；\n"
+"``--unsigned`` 不发布、\n"
+"不签名任何内容，每个变体都构建成功时退出码为 0。"
+
+#: shidashi/release_cli.py
+msgid "Arch axis (e.g. v3); not with --all."
+msgstr "架构轴（例如 v3）；不可与 --all 同用。"
+
+#: shidashi/release_cli.py
+msgid "Init axis (systemd, openrc); not with --all."
+msgstr "init 轴（systemd、openrc）；不可与 --all 同用。"
+
+#: shidashi/release_cli.py
+msgid "Release every arch × init of the recipe axes."
+msgstr "发布配方各轴的每个架构 × init 组合。"
+
+#: shidashi/release_cli.py
+msgid "Parent of the dated release directories; default <cache>/releases."
+msgstr "带日期发布目录的父目录；默认 <cache>/releases。"
+
+#: shidashi/release_cli.py
+msgid "Boot-test every ISO (build --boot-test)."
+msgstr "对每个 ISO 进行启动测试（build --boot-test）。"
+
+#: shidashi/release_cli.py
+msgid "Cache only: no upstream stage3 check, no fetch in the builds."
+msgstr "仅用缓存：不检查上游 stage3，构建中不下载。"
+
+#: shidashi/release_cli.py
+msgid "Passed to every build."
+msgstr "传递给每次构建。"
+
+#: shidashi/release_cli.py
+msgid "Comma list of images every build makes (default all)."
+msgstr "每次构建生成的镜像，逗号分隔（默认 all）。"
+
+#: shidashi/release_cli.py
+msgid "Fingerprint of the maintainer's key that signs the release."
+msgstr "用于签名发布版的维护者密钥指纹。"
+
+#: shidashi/release_cli.py
+msgid "No key: skip the binhost publish and the signature; sign later on the host."
+msgstr "无密钥：跳过 binhost 发布和签名；稍后在主机上签名。"
+
+#: shidashi/release_prune_cli.py
+msgid "Move every release but the newest --keep into <root>/.pruned; delete only on request."
+msgstr "将除最新 --keep 个以外的所有发布版移入 <root>/.pruned；仅在要求时删除。"
+
+#: shidashi/release_prune_cli.py
+msgid "Releases that stay in the root."
+msgstr "保留在根目录中的发布版数量。"
+
+#: shidashi/release_prune_cli.py
+msgid "Parent of the dated releases; default <cache>/releases."
+msgstr "带日期发布版的父目录；默认 <cache>/releases。"
+
+#: shidashi/release_prune_cli.py
+msgid "Print the plan; move and delete nothing."
+msgstr "打印计划；不移动、不删除任何内容。"
+
+#: shidashi/release_prune_cli.py
+msgid "Also delete the .pruned entries beyond --keep."
+msgstr "同时删除超出 --keep 的 .pruned 条目。"
+
+#: shidashi/release_publish_cli.py
+msgid ""
+"Sign an unsigned release in place, as `shidashi release --key` would have, and\n"
+"verify every signature; exit 0 only once they all verified."
+msgstr ""
+"像 `shidashi release --key` 那样就地签名一个未签名的发布版，并\n"
+"验证每个签名；仅当全部验证通过后退出码为 0。"
+
+#: shidashi/release_publish_cli.py
+msgid "A release directory made with `shidashi release --unsigned`."
+msgstr "用 `shidashi release --unsigned` 生成的发布目录。"
+
+#: shidashi/release_publish_cli.py
+msgid "Fingerprint of the maintainer's key that signs it."
+msgstr "用于对其签名的维护者密钥指纹。"
+
+#: shidashi/release_publish_cli.py
+msgid ""
+"Verify a signed release, copy its public files to the bucket (signatures last),\n"
+"rewrite the public index, then delete from the bucket the releases beyond --keep."
+msgstr ""
+"验证已签名的发布版，将其公开文件复制到存储桶（签名最后复制），\n"
+"重写公开索引，然后从存储桶中删除超出 --keep 的发布版。"
+
+#: shidashi/release_publish_cli.py
+msgid "A release directory signed on this host."
+msgstr "在本主机上签名的发布目录。"
+
+#: shidashi/release_publish_cli.py
+msgid "The rclone remote and bucket, e.g. r2:bentoo."
+msgstr "rclone 远程和存储桶，例如 r2:bentoo。"
+
+#: shidashi/release_publish_cli.py
+msgid "Releases the bucket keeps."
+msgstr "存储桶保留的发布版数量。"
+
+#: shidashi/release_publish_cli.py
+msgid "Print the plan; copy, move and purge nothing."
+msgstr "打印计划；不复制、不移动、不清除任何内容。"
+
+#: shidashi/release_publish_cli.py
+msgid "Also delete a release the host holds no copy of."
+msgstr "同时删除主机上没有副本的发布版。"
+
+#: shidashi/release_publish_cli.py
+msgid "Where the host keeps releases (default: DIR/..)."
+msgstr "主机保存发布版的位置（默认：DIR/..）。"
+
+#: shidashi/release_cli.py
+msgid "Print one release's variants, ISOs and why any failed; reads release.json, writes nothing."
+msgstr "打印一个发布版的变体、ISO 以及任何失败的原因；读取 release.json，不写入任何内容。"
+
+#: shidashi/release_cli.py
+msgid "A release directory holding release.json."
+msgstr "包含 release.json 的发布目录。"
+
+#: shidashi/release_cli.py
+msgid "Print a Markdown table (a job summary)."
+msgstr "打印 Markdown 表格（任务摘要）。"
+
+#: shidashi/binhost_cli.py
+#, python-brace-format
+msgid "{n} binpkg would move to quarantine"
+msgid_plural "{n} binpkgs would move to quarantine"
+msgstr[0] "{n} 个 binpkg 将被移入隔离区"
+
+#: shidashi/binhost_cli.py
+#, python-brace-format
+msgid "moved {n} binpkg to {path}"
+msgid_plural "moved {n} binpkgs to {path}"
+msgstr[0] "已将 {n} 个 binpkg 移至 {path}"
+
+#: shidashi/binhost_cli.py
+#, python-brace-format
+msgid "published {n} binpkg to {path}"
+msgid_plural "published {n} binpkgs to {path}"
+msgstr[0] "已将 {n} 个 binpkg 发布到 {path}"
+
+#: shidashi/binhost_cli.py
+#, python-brace-format
+msgid "{n} unrecorded binpkg left out"
+msgid_plural "{n} unrecorded binpkgs left out"
+msgstr[0] "{n} 个未记录的 binpkg 被排除"
+
+#: shidashi/binhost_cli.py
+#, python-brace-format
+msgid "verified {path}: every gpkg is signed by {key}"
+msgstr "已验证 {path}：每个 gpkg 都由 {key} 签名"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "recipe {arch} × {flavor} × {init}"
+msgstr "配方 {arch} × {flavor} × {init}"
+
+#: shidashi/cli.py
+msgid "field"
+msgstr "字段"
+
+#: shidashi/cli.py
+msgid "value"
+msgstr "值"
+
+#: shidashi/cli.py
+msgid "phases"
+msgstr "阶段"
+
+#: shidashi/cli.py
+msgid "name"
+msgstr "名称"
+
+#: shidashi/cli.py
+msgid "stage"
+msgstr "stage"
+
+#: shidashi/cli.py
+msgid "targets"
+msgstr "目标"
+
+#: shidashi/cli.py
+msgid "layers in effect"
+msgstr "生效的层"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "{phase} (ships)"
+msgstr "{phase}（交付）"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "valid: {arch} × {flavor} × {init}"
+msgstr "有效：{arch} × {flavor} × {init}"
+
+#: shidashi/cli.py
+msgid "(none)"
+msgstr "（无）"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "pretend {arch} × {flavor} × {init}"
+msgstr "pretend {arch} × {flavor} × {init}"
+
+#: shidashi/cli.py
+msgid "resolved packages"
+msgstr "已解析的软件包"
+
+#: shidashi/cli.py
+msgid "cycle-break suggestions (use_break)"
+msgstr "打破循环的建议（use_break）"
+
+#: shidashi/cli.py
+msgid "atom"
+msgstr "atom"
+
+#: shidashi/cli.py
+msgid "(no cycles)"
+msgstr "（无循环）"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "factory {arch} × {flavor} × {init}"
+msgstr "factory {arch} × {flavor} × {init}"
+
+#: shidashi/cli.py
+msgid "reused"
+msgstr "已复用"
+
+#: shidashi/cli.py
+msgid "created"
+msgstr "已创建"
+
+#: shidashi/cli.py
+msgid "— (resumed from a checkpoint)"
+msgstr "—（从检查点恢复）"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "[green]{n}[/green] package installed from the generation's binpkgs"
+msgid_plural "[green]{n}[/green] packages installed from the generation's binpkgs"
+msgstr[0] "从该代的 binpkg 安装了 [green]{n}[/green] 个软件包"
+
+#: shidashi/cli.py
+msgid "built atoms"
+msgstr "已构建的 atom"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "phase {phase}"
+msgstr "阶段 {phase}"
+
+#: shidashi/cli.py
+msgid "stepwise"
+msgstr "分步"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "[bold green]checkpoint[/bold green] after phase {phase}"
+msgstr "阶段 {phase} 之后的 [bold green]检查点[/bold green]"
+
+#: shidashi/cli.py
+msgid "continue/stop/shell"
+msgstr "继续(continue)/停止(stop)/shell"
+
+#: shidashi/cli.py
+msgid "reset/proceed/cancel"
+msgstr "重置(reset)/继续(proceed)/取消(cancel)"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "ISO {arch} × {flavor} × {init} -- {name}"
+msgstr "ISO {arch} × {flavor} × {init} -- {name}"
+
+#: shidashi/cli.py
+msgid "(listed above)"
+msgstr "（见上文）"
+
+#: shidashi/cli.py
+msgid "excluded"
+msgstr "已排除"
+
+#: shidashi/cli.py
+msgid "catalog only"
+msgstr "仅在目录中"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "excluded by {layer}"
+msgstr "被 {layer} 排除"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "; included by {stage}"
+msgstr "；由 {stage} 包含"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "{n} package"
+msgid_plural "{n} packages"
+msgstr[0] "{n} 个软件包"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "from {n} kit"
+msgid_plural "from {n} kits"
+msgstr[0] "来自 {n} 个套件"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "{n} excluded"
+msgid_plural "{n} excluded"
+msgstr[0] "{n} 个已排除"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "{n} catalog only"
+msgid_plural "{n} catalog only"
+msgstr[0] "{n} 个仅在目录中"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "{image}: {packages} {kits}, {excluded}, {catalog} ({stages})"
+msgstr "{image}：{packages} {kits}，{excluded}，{catalog}（{stages}）"
+
+#: shidashi/cli.py
+msgid "check"
+msgstr "检查项"
+
+#: shidashi/cli.py
+msgid "for"
+msgstr "用于"
+
+#: shidashi/cli.py
+msgid "detail"
+msgstr "详情"
+
+#: shidashi/cli.py
+msgid "[green]ok[/green]"
+msgstr "[green]正常[/green]"
+
+#: shidashi/cli.py
+msgid "[red]missing[/red]"
+msgstr "[red]缺失[/red]"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "builds: ok; `shidashi vm` also needs: {checks}"
+msgstr "构建：正常；`shidashi vm` 还需要：{checks}"
+
+#: shidashi/cli.py
+msgid "builds and `shidashi vm`: ok"
+msgstr "构建和 `shidashi vm`：正常"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "{n} atom checked"
+msgid_plural "{n} atoms checked"
+msgstr[0] "已检查 {n} 个 atom"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "{n} problem"
+msgid_plural "{n} problems"
+msgstr[0] "{n} 个问题"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "{checked} against {pins}: {problems}"
+msgstr "{checked}，对照 {pins}：{problems}"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "ssh up after {seconds} s (vsock/{cid})"
+msgstr "{seconds} 秒后 ssh 就绪（vsock/{cid}）"
+
+#: shidashi/cli.py
+msgid "PASSED"
+msgstr "通过"
+
+#: shidashi/cli.py
+msgid "FAILED"
+msgstr "未通过"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "boot test {firmware}: {verdict} (ssh after {seconds} s)"
+msgstr "启动测试 {firmware}：{verdict}（{seconds} 秒后 ssh 就绪）"
+
+#: shidashi/cli.py
+msgid "result"
+msgstr "结果"
+
+#: shidashi/cli.py
+msgid "got"
+msgstr "实际值"
+
+#: shidashi/cli.py
+msgid "ok"
+msgstr "正常"
+
+#: shidashi/cli.py
+msgid "FAIL"
+msgstr "失败"
+
+#: shidashi/cli.py
+msgid "Code shown on the worker's screen"
+msgstr "工作节点屏幕上显示的代码"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "Replace it with {address}'s key {fingerprint}? Compare it with the host key on the worker's screen"
+msgstr "替换为 {address} 的密钥 {fingerprint}？请将其与工作节点屏幕上的主机密钥比对"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "paired {name} at {address}"
+msgstr "已配对 {name}，地址 {address}"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "host key {fingerprint} pinned"
+msgstr "主机密钥 {fingerprint} 已锁定"
+
+#: shidashi/cli.py
+msgid "trusted on first use: the key was not authenticated by a code; check that this fingerprint matches the one on the worker's screen"
+msgstr "首次使用即信任：该密钥未经代码认证；请确认此指纹与工作节点屏幕上显示的一致"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "reach it with: ssh {name} (or shidashi worker ...)"
+msgstr "访问方式：ssh {name}（或 shidashi worker ...）"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "provisioned {name}"
+msgstr "已置备 {name}"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "host key: {fingerprint}"
+msgstr "主机密钥：{fingerprint}"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "write it with: {command}"
+msgstr "写入方式：{command}"
+
+#: shidashi/cli.py
+msgid "the medium holds this worker's private key: keep it like a credential, and run with --replace if it is lost"
+msgstr "该介质保存着此工作节点的私钥：请像凭据一样妥善保管，若丢失请使用 --replace 运行"
+
+#: shidashi/cli.py
+msgid "none"
+msgstr "无"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "{name} ({address}): unreachable: {reason}"
+msgstr "{name} ({address})：无法访问：{reason}"
+
+#: shidashi/cli.py
+msgid "unknown: the image has no smartctl"
+msgstr "未知：该镜像没有 smartctl"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "{n} thread"
+msgid_plural "{n} threads"
+msgstr[0] "{n} 个线程"
+
+#: shidashi/cli.py
+msgid "cpu"
+msgstr "CPU"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "{model}, {threads}"
+msgstr "{model}，{threads}"
+
+#: shidashi/cli.py
+msgid "unknown"
+msgstr "未知"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "{arches} (highest: {target})"
+msgstr "{arches}（最高：{target}）"
+
+#: shidashi/cli.py
+msgid "load"
+msgstr "负载"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "{load} (1 min)"
+msgstr "{load}（1 分钟）"
+
+#: shidashi/cli.py
+msgid "memory"
+msgstr "内存"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "{available} available of {total}"
+msgstr "{available} 可用，共 {total}"
+
+#: shidashi/cli.py
+msgid "work disk"
+msgstr "工作磁盘"
+
+#: shidashi/cli.py
+msgid "image"
+msgstr "镜像"
+
+#: shidashi/cli.py
+msgid "unknown (no BUILD_ID)"
+msgstr "未知（无 BUILD_ID）"
+
+#: shidashi/cli.py
+msgid "checkpoints"
+msgstr "检查点"
+
+#: shidashi/cli.py
+msgid "jobs"
+msgstr "任务"
+
+#: shidashi/cli.py
+msgid "accepts jobs"
+msgstr "接受任务"
+
+#: shidashi/cli.py
+msgid "yes"
+msgstr "是"
+
+#: shidashi/cli.py
+msgid "no"
+msgstr "否"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "{name} ({address}): reachable"
+msgstr "{name} ({address})：可访问"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "no work disk ({path} not mounted: takes no jobs)"
+msgstr "无工作磁盘（{path} 未挂载：不接受任务）"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "{path} mounted, free space unknown"
+msgstr "{path} 已挂载，可用空间未知"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "{size} free on {path}"
+msgstr "{path} 上可用 {size}"
+
+#: shidashi/cli.py
+msgid "no answer"
+msgstr "无应答"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "{name}  refused: {reason}"
+msgstr "{name}  拒绝：{reason}"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "{name}  unreachable: {reason}"
+msgstr "{name}  无法访问：{reason}"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "{name}  reachable  max {target}  {threads}  load {load}  {disk}  jobs: {jobs}"
+msgstr "{name}  可访问  最高 {target}  {threads}  负载 {load}  {disk}  任务：{jobs}"
+
+#: shidashi/cli.py
+msgid "no paired worker (pair one with: shidashi kyomei)"
+msgstr "没有已配对的工作节点（用此命令配对：shidashi kyomei）"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "{name}  not reached yet: run shidashi worker status {name}"
+msgstr "{name}  尚未连接：请运行 shidashi worker status {name}"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "removed {arch}'s unreadable owner lock ({path})"
+msgstr "已移除 {arch} 无法读取的所有者锁（{path}）"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "{arch} is not locked"
+msgstr "{arch} 未被锁定"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "released {arch} (was held by {holder})"
+msgstr "已释放 {arch}（原由 {holder} 持有）"
+
+#: shidashi/cli.py
+msgid "no arch"
+msgstr "无架构"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "{worker} owns the cache of: {archs}"
+msgstr "{worker} 拥有以下架构的缓存：{archs}"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "{worker} does not own {arch}'s cache"
+msgstr "{worker} 不拥有 {arch} 的缓存"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "{worker} already owns {arch}'s cache"
+msgstr "{worker} 已拥有 {arch} 的缓存"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "{arch}'s cache is under the host again (was on {worker})"
+msgstr "{arch} 的缓存已重新放回主机下（原在 {worker} 上）"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "{arch}'s cache now stays on {worker}"
+msgstr "{arch} 的缓存现在保存在 {worker} 上"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "{worker} is powering off"
+msgstr "{worker} 正在关机"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "pushed {arch} ({init}) to {worker}: {size} sent"
+msgstr "已将 {arch}（{init}）推送到 {worker}：已发送 {size}"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "pulled from {worker}: {size} received"
+msgstr "已从 {worker} 拉取：已接收 {size}"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "binhost: {arch}'s binpkgs and index updated"
+msgstr "binhost：{arch} 的 binpkg 和索引已更新"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "released {arch}'s owner lock (job {job} ended, results pulled)"
+msgstr "已释放 {arch} 的所有者锁（任务 {job} 已结束，结果已拉取）"
+
+#: shidashi/fork_points_cli.py
+msgid "apparent sizes: a compressed filesystem frees less"
+msgstr "表观大小：压缩文件系统实际释放的空间更少"
+
+#: shidashi/fork_points_cli.py
+#, python-brace-format
+msgid "{pin} (current)"
+msgstr "{pin}（当前）"
+
+#: shidashi/fork_points_cli.py
+#, python-brace-format
+msgid "kept pins: {pins}"
+msgstr "保留的锁定版本：{pins}"
+
+#: shidashi/fork_points_cli.py
+#, python-brace-format
+msgid "would delete {name} ({size})"
+msgstr "将删除 {name}（{size}）"
+
+#: shidashi/fork_points_cli.py
+#, python-brace-format
+msgid "{n} fork point of {arch} would be deleted ({size})"
+msgid_plural "{n} fork points of {arch} would be deleted ({size})"
+msgstr[0] "将删除 {arch} 的 {n} 个分叉点（{size}）"
+
+#: shidashi/fork_points_cli.py
+#, python-brace-format
+msgid "{deleting}; {n} kept ({size}) -- {note}"
+msgid_plural "{deleting}; {n} kept ({size}) -- {note}"
+msgstr[0] "{deleting}；保留 {n} 个（{size}）—— {note}"
+
+#: shidashi/fork_points_cli.py
+#, python-brace-format
+msgid "deleted {name} ({size})"
+msgstr "已删除 {name}（{size}）"
+
+#: shidashi/fork_points_cli.py
+#, python-brace-format
+msgid "deleted {n} fork point of {arch} ({size})"
+msgid_plural "deleted {n} fork points of {arch} ({size})"
+msgstr[0] "已删除 {arch} 的 {n} 个分叉点（{size}）"
+
+#: shidashi/fork_points_cli.py
+#, python-brace-format
+msgid "{deleted}; kept {n} ({size}) -- {note}"
+msgid_plural "{deleted}; kept {n} ({size}) -- {note}"
+msgstr[0] "{deleted}；保留了 {n} 个（{size}）—— {note}"
+
+#: shidashi/i18n_help.py
+msgid "Arguments"
+msgstr "参数"
+
+#: shidashi/i18n_help.py
+msgid "Options"
+msgstr "选项"
+
+#: shidashi/i18n_help.py
+msgid "Commands"
+msgstr "命令"
+
+#: shidashi/i18n_help.py
+#, python-brace-format
+msgid "[default: {}]"
+msgstr "[默认：{}]"
+
+#: shidashi/i18n_help.py
+#, python-brace-format
+msgid "[env var: {}]"
+msgstr "[环境变量：{}]"
+
+#: shidashi/i18n_help.py
+msgid "[required]"
+msgstr "[必需]"
+
+#: shidashi/i18n_help.py
+msgid "(deprecated) "
+msgstr "(已弃用) "
+
+#: shidashi/i18n_help.py
+#, python-brace-format
+msgid "Try [blue]'{command_path} {help_option}'[/] for help."
+msgstr "请尝试 [blue]'{command_path} {help_option}'[/] 获取帮助。"
+
+#: shidashi/i18n_help.py
+msgid "Show this message and exit."
+msgstr "显示此消息并退出。"
+
+#: shidashi/kyomei.py
+#, python-brace-format
+msgid "Pair {name} ({address})?"
+msgstr "配对 {name} ({address})？"
+
+#: shidashi/kyomei.py
+msgid "trusted"
+msgstr "已信任"
+
+#: shidashi/kyomei.py
+#, python-brace-format
+msgid "{number}) {name}  {address}:{port}  image {image}"
+msgstr "{number}) {name}  {address}:{port}  镜像 {image}"
+
+#: shidashi/kyomei.py
+#, python-brace-format
+msgid "Which worker (1-{count})"
+msgstr "选择哪个工作节点 (1-{count})"
+
+#: shidashi/progress.py
+msgid "binpkg"
+msgstr "binpkg"
+
+#: shidashi/progress.py
+msgid "building"
+msgstr "构建中"
+
+#: shidashi/progress.py
+msgid "installing"
+msgstr "安装中"
+
+#: shidashi/progress.py
+msgid "binpkg…"
+msgstr "binpkg…"
+
+#: shidashi/progress.py
+msgid "building…"
+msgstr "构建中…"
+
+#: shidashi/progress.py
+msgid "done (binpkg)"
+msgstr "完成（binpkg）"
+
+#: shidashi/progress.py
+msgid "done"
+msgstr "完成"
+
+#: shidashi/progress.py
+#, python-brace-format
+msgid "failed to {action}"
+msgstr "{action} 失败"
+
+#: shidashi/progress.py
+msgid "downloading"
+msgstr "下载中"
+
+#: shidashi/progress.py
+#, python-brace-format
+msgid "failed after {size}"
+msgstr "传输 {size} 后失败"
+
+#: shidashi/progress.py
+#, python-brace-format
+msgid "… {n} more"
+msgid_plural "… {n} more"
+msgstr[0] "… 还有 {n} 个"
+
+#: shidashi/release_prune_cli.py
+#, python-brace-format
+msgid "skipped {name}: not a release directory"
+msgstr "已跳过 {name}：不是发布目录"
+
+#: shidashi/release_prune_cli.py
+#, python-brace-format
+msgid "would move {name} to {dir}/"
+msgstr "将把 {name} 移至 {dir}/"
+
+#: shidashi/release_prune_cli.py
+#, python-brace-format
+msgid "would delete {path}"
+msgstr "将删除 {path}"
+
+#: shidashi/release_prune_cli.py
+#, python-brace-format
+msgid "left {name}: a release holds its lock"
+msgstr "保留 {name}：有发布版持有其锁"
+
+#: shidashi/release_prune_cli.py
+#, python-brace-format
+msgid "moved {name} to {dir}/"
+msgstr "已将 {name} 移至 {dir}/"
+
+#: shidashi/release_prune_cli.py
+#, python-brace-format
+msgid "deleted {path}"
+msgstr "已删除 {path}"
+
+#: shidashi/vm_access_cli.py
+#, python-brace-format
+msgid "written to {path}; reach it with `ssh {alias}` once ~/.ssh/config has: {include}"
+msgstr "已写入 {path}；当 ~/.ssh/config 包含 {include} 后，即可用 `ssh {alias}` 访问"
+
+#: shidashi/vm_access_cli.py
+#, python-brace-format
+msgid "{variable} set in {name} for login shells (kept in RAM)"
+msgstr "已在 {name} 中为登录 shell 设置 {variable}（保存在 RAM 中）"
