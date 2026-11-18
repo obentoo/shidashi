@@ -27,8 +27,8 @@ from typing import Any
 
 import typer
 
+from shidashi import i18n, remote, workers
 from shidashi import kyomei_protocol as P
-from shidashi import remote, workers
 from shidashi.mdns import Found
 
 #: How long :func:`complete` keeps trying the first SSH connection while the worker's
@@ -226,18 +226,23 @@ def choose(
         )
     if len(found) == 1:
         (only,) = found
-        if not confirm(f"Pair {_shown(only.name)} ({only.address})?"):
+        question = i18n.t("Pair {name} ({address})?")
+        if not confirm(question.format(name=_shown(only.name), address=only.address)):
             raise PairingError("cancelled")
         return Target(only.address, only.port, only.name)
     for number, item in enumerate(found, start=1):
         txt = dict(item.txt)
-        trusted = "  trusted" if txt.get("trusted") == "yes" else ""
-        typer.echo(
-            f"  {number}) {_shown(item.name)}  {item.address}:{item.port}  "
-            f"image {_shown(txt.get('image', '?'))}{trusted}"
+        trusted = "  " + i18n.t("trusted") if txt.get("trusted") == "yes" else ""
+        line = i18n.t("{number}) {name}  {address}:{port}  image {image}").format(
+            number=number,
+            name=_shown(item.name),
+            address=item.address,
+            port=item.port,
+            image=_shown(txt.get("image", "?")),
         )
+        typer.echo(f"  {line}{trusted}")
     while True:
-        answer = str(ask(f"Which worker (1-{len(found)})")).strip()
+        answer = str(ask(i18n.t("Which worker (1-{count})").format(count=len(found)))).strip()
         if answer.isdigit() and 1 <= int(answer) <= len(found):
             item = found[int(answer) - 1]
             return Target(item.address, item.port, item.name)

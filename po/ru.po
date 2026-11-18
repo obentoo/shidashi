@@ -1,0 +1,1900 @@
+# Russian translation of Shidashi.
+# Machine-translated with Lara Translate, then reviewed.
+msgid ""
+msgstr ""
+"Project-Id-Version: shidashi\n"
+"PO-Revision-Date: 2026-11-18 00:00+0000\n"
+"Last-Translator: Shidashi maintainers\n"
+"Language-Team: none\n"
+"Language: ru\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=3; plural=(n%10==1 && n%100!=11 ? 0 : n%10>=2 && n%10<=4 && (n%100<10 || n%100>=20) ? 1 : 2);\n"
+
+#: shidashi/cli.py
+msgid "Shidashi — catering of bentoo builds and ISOs."
+msgstr "Shidashi — кейтеринг сборок bentoo и ISO."
+
+#: shidashi/cli.py
+msgid "Install completion for the current shell."
+msgstr "Установить автодополнение для текущей оболочки."
+
+#: shidashi/cli.py
+msgid "Show completion for the current shell, to copy it or customize the installation."
+msgstr "Показать автодополнение для текущей оболочки, чтобы скопировать его или настроить установку."
+
+#: shidashi/cli.py
+msgid ""
+"Resolve the recipe against the real tree via ``emerge --pretend`` (R1.1–R1.4).\n"
+"\n"
+"Success (even with reported cycles) → package list + suggestions and exit 0.\n"
+"Known errors → friendly message + exit 1, no traceback. On a hard-conflict\n"
+"(``ResolveError`` with ``raw_output``) the raw emerge output goes to stderr."
+msgstr ""
+"Разрешить рецепт по реальному дереву через ``emerge --pretend`` (R1.1–R1.4).\n"
+"\n"
+"Успех (даже с найденными циклами) → список пакетов + рекомендации и код выхода 0.\n"
+"Известные ошибки → понятное сообщение + код выхода 1, без трассировки. При жёстком конфликте\n"
+"(``ResolveError`` с ``raw_output``) необработанный вывод emerge идёт в stderr."
+
+#: shidashi/cli.py
+msgid "Output format: pretty (default) or json."
+msgstr "Формат вывода: pretty (по умолчанию) или json."
+
+#: shidashi/cli.py
+msgid "Use the cache only; never touch the network."
+msgstr "Использовать только кэш; никогда не обращаться к сети."
+
+#: shidashi/cli.py
+msgid "Keep the scratch rootfs after the run."
+msgstr "Сохранить временный rootfs после запуска."
+
+#: shidashi/cli.py
+msgid "Work root (cache+scratch under <DIR>)."
+msgstr "Рабочий корень (кэш+временные файлы в <DIR>)."
+
+#: shidashi/cli.py
+msgid "Also print every line the build prints, as it runs."
+msgstr "Также выводить каждую строку, которую печатает сборка, по ходу выполнения."
+
+#: shidashi/cli.py
+msgid ""
+"Build the recipe's binpkgs (stage4) in an nspawn container (R1.1–R1.5/R8.x).\n"
+"\n"
+"Without ``--step``/``--until``/``--reset`` it runs story 003's one-shot (R8.2);\n"
+"any of them routes to the resumable step-by-step build (``--step`` makes it\n"
+"interactive, with checkpoints and failure prompts). Success → report of\n"
+"phases/atoms/fork point (+ ``stopped_at``/diffs in stepwise) + exit 0. Known\n"
+"errors (``FactoryError``/``StaleStateError``/``SeedError``/``ResolveError``/\n"
+"unknown axis/recipe conflict/invalid ``--until``), including the root guard,\n"
+"become a friendly message + exit 1, no traceback; a ``FactoryError`` prints\n"
+"the phase that failed and the emerge ``output``."
+msgstr ""
+"Собрать binpkgs рецепта (stage4) в контейнере nspawn (R1.1–R1.5/R8.x).\n"
+"\n"
+"Без ``--step``/``--until``/``--reset`` выполняется однократный запуск из story 003 (R8.2);\n"
+"любой из них переключает на возобновляемую пошаговую сборку (``--step`` делает её\n"
+"интерактивной, с контрольными точками и запросами при сбоях). Успех → отчёт о\n"
+"фазах/атомах/точке ветвления (+ ``stopped_at``/различия в пошаговом режиме) + код выхода 0. Известные\n"
+"ошибки (``FactoryError``/``StaleStateError``/``SeedError``/``ResolveError``/\n"
+"неизвестная ось/конфликт рецепта/неверный ``--until``), включая проверку прав root,\n"
+"дают понятное сообщение + код выхода 1, без трассировки; ``FactoryError`` выводит\n"
+"фазу, завершившуюся сбоем, и ``output`` emerge."
+
+#: shidashi/cli.py
+msgid "Rebuild the whole tree (--emptytree, default) or reuse binpkgs."
+msgstr "Пересобрать всё дерево (--emptytree, по умолчанию) или повторно использовать binpkgs."
+
+#: shidashi/cli.py
+msgid "Host-side output PKGDIR (default: per arch)."
+msgstr "Выходной PKGDIR на стороне хоста (по умолчанию: для каждой архитектуры)."
+
+#: shidashi/cli.py
+msgid "Keep the scratch rootfs after the build."
+msgstr "Сохранить временный rootfs после сборки."
+
+#: shidashi/cli.py
+msgid "Interactive build: pause at a checkpoint after each phase."
+msgstr "Интерактивная сборка: пауза на контрольной точке после каждой фазы."
+
+#: shidashi/cli.py
+msgid "Stop after the named phase (seed + the recipe's phases)."
+msgstr "Остановиться после указанной фазы (seed + фазы рецепта)."
+
+#: shidashi/cli.py
+msgid "Discard the persisted state/rootfs and start over from scratch."
+msgstr "Отбросить сохранённое состояние/rootfs и начать с нуля."
+
+#: shidashi/cli.py
+msgid "Resume a stale state without starting over."
+msgstr "Возобновить устаревшее состояние, не начиная заново."
+
+#: shidashi/cli.py
+msgid "Work root: cache+scratch under <DIR> (beats SHIDASHI_CACHE/_SCRATCH)."
+msgstr "Рабочий корень: кэш+временные файлы в <DIR> (приоритетнее SHIDASHI_CACHE/_SCRATCH)."
+
+#: shidashi/cli.py
+msgid "This host's jobs, over the recipe's, in every phase: MAKEOPTS=-jN -lN and emerge --jobs=N --load-average=N."
+msgstr "Число заданий этого хоста вместо заданного рецептом, в каждой фазе: MAKEOPTS=-jN -lN и emerge --jobs=N --load-average=N."
+
+#: shidashi/cli.py
+msgid "Stop after this STAGE (its fork point written); the next run resumes there."
+msgstr "Остановиться после этой STAGE (её точка ветвления записана); следующий запуск продолжит отсюда."
+
+#: shidashi/cli.py
+msgid "Weekly update of the built image within its generation (D26): -uDN --changed-deps over the pinned tree; refuses a toolchain change."
+msgstr "Еженедельное обновление собранного образа в пределах его поколения (D26): -uDN --changed-deps по закреплённому дереву; смена тулчейна отклоняется."
+
+#: shidashi/cli.py
+msgid ""
+"Assemble the recipe's live ISO from the binhost (OVERVIEW §7).\n"
+"\n"
+"Seeds a stage3, overlays the recipe's layers (final USE = that of the binpkgs,\n"
+"§18.6), pulls the flavor's slice with ``emerge --usepkgonly`` and produces the\n"
+"hybrid ISO (squashfs + dracut ``dmsquash-live`` + grub-mkrescue). Success →\n"
+"ISO path + exit 0. Known errors (root guard, missing kernel, unknown\n"
+"axis/recipe conflict, seed/resolve, emerge/dracut failure, squashfs/ISO\n"
+"failure) become a friendly message + exit 1, no traceback."
+msgstr ""
+"Собрать live ISO рецепта из binhost (OVERVIEW §7).\n"
+"\n"
+"Разворачивает stage3, накладывает слои рецепта (итоговые USE = USE binpkgs,\n"
+"§18.6), подтягивает срез разновидности через ``emerge --usepkgonly`` и создаёт\n"
+"гибридный ISO (squashfs + dracut ``dmsquash-live`` + grub-mkrescue). Успех →\n"
+"путь к ISO + код выхода 0. Известные ошибки (проверка прав root, нет ядра,\n"
+"неизвестная ось/конфликт рецепта, seed/resolve, сбой emerge/dracut, сбой\n"
+"squashfs/ISO) дают понятное сообщение + код выхода 1, без трассировки."
+
+#: shidashi/cli.py
+msgid "Directory of the ISO(s) and their artifacts (bentoo-<date>-<flavor>-<init>-<arch>.iso, .DIGESTS, SHA256SUMS...)."
+msgstr "Каталог ISO и их артефактов (bentoo-<date>-<flavor>-<init>-<arch>.iso, .DIGESTS, SHA256SUMS...)."
+
+#: shidashi/cli.py
+msgid "zstd (default: the faster live session), xz (the smaller download), or both (two ISOs)."
+msgstr "zstd (по умолчанию: более быстрая live-сессия), xz (меньше скачивать) или both (оба: два ISO)."
+
+#: shidashi/cli.py
+msgid "Also publish the configured system as a stage4 tarball (tar.xz, xz -9e), made before the live user is added."
+msgstr "Также опубликовать настроенную систему как tarball stage4 (tar.xz, xz -9e), созданный до добавления live-пользователя."
+
+#: shidashi/cli.py
+msgid "Do not generate the SBOM (syft)."
+msgstr "Не генерировать SBOM (syft)."
+
+#: shidashi/cli.py
+msgid "Host-side output binhost (publish-pool) (default: per arch)."
+msgstr "Выходной binhost на стороне хоста (publish-pool) (по умолчанию: для каждой архитектуры)."
+
+#: shidashi/cli.py
+msgid "Keep the scratch rootfs after the assembly."
+msgstr "Сохранить временный rootfs после сборки ISO."
+
+#: shidashi/cli.py
+msgid "Restore no checkpoint, not even the trunk: install from the stage3 again."
+msgstr "Не восстанавливать ни одной контрольной точки, даже ствол: снова установить из stage3."
+
+#: shidashi/cli.py
+msgid "Install a flavor whole from the stage3, not on top of its trunk (desktop)."
+msgstr "Установить разновидность целиком из stage3, а не поверх её ствола (desktop)."
+
+#: shidashi/cli.py
+msgid "emerge --jobs N (binpkgs merged in parallel), mksquashfs/unsquashfs -processors N and the stage4's xz -TN. Default: emerge one package at a time, the others on every CPU."
+msgstr "emerge --jobs N (binpkgs устанавливаются параллельно), mksquashfs/unsquashfs -processors N и xz -TN для stage4. По умолчанию: emerge по одному пакету за раз, остальное — на всех CPU."
+
+#: shidashi/cli.py
+msgid "Then boot the ISO on BIOS and UEFI and check it (shidashi vm test); a failed check fails the assemble."
+msgstr "Затем загрузить ISO в BIOS и UEFI и проверить его (shidashi vm test); неудачная проверка проваливает assemble."
+
+#: shidashi/cli.py
+msgid "vsock CID of the --boot-test VM: the first one from N upward that no other boot test on this machine holds."
+msgstr "vsock CID VM для --boot-test: первый, начиная с N, который не занят другим тестом загрузки на этой машине."
+
+#: shidashi/cli.py
+msgid ""
+"Build a tree of images in one audited run: the plan, the factory, then every ISO.\n"
+"\n"
+"``sudo shidashi build v3 systemd --images minimal,kde,gnome`` plans the images\n"
+"across this host and the workers paired by the invoking user (story 010): each\n"
+"image goes to the node estimated to finish the whole build first. The plan is\n"
+"recorded in the build's audit trail (step ``plan``); ``--plan`` prints it and stops,\n"
+"``--local`` keeps every image on this host. The factory then runs here (unless a\n"
+"worker owns the arch's binhost), and every node builds its share at once: here one\n"
+"``assemble`` process per image with its share of ``--jobs`` (``--serial``: one after\n"
+"another, each with every job), on a worker one ``shidashi worker job``. A failed\n"
+"image never stops the others: the build reports every image's node, duration and\n"
+"ISOs or log, and exits 1 if any failed."
+msgstr ""
+"Собрать дерево образов за один аудируемый запуск: план, фабрика, затем каждый ISO.\n"
+"\n"
+"``sudo shidashi build v3 systemd --images minimal,kde,gnome`` распределяет образы\n"
+"между этим хостом и воркерами, сопряжёнными вызвавшим пользователем (story 010): каждый\n"
+"образ отправляется на узел, который, по оценке, первым завершит всю сборку. План\n"
+"записывается в журнал аудита сборки (шаг ``plan``); ``--plan`` выводит его и останавливается,\n"
+"``--local`` оставляет все образы на этом хосте. Затем здесь запускается фабрика (если только\n"
+"binhost архитектуры не принадлежит воркеру), и каждый узел сразу собирает свою долю: здесь один\n"
+"процесс ``assemble`` на образ со своей долей ``--jobs`` (``--serial``: один за\n"
+"другим, каждый со всеми заданиями), на воркере — один ``shidashi worker job``. Сбой\n"
+"образа никогда не останавливает остальные: сборка сообщает узел, длительность и\n"
+"ISO или журнал каждого образа и завершается с кодом 1, если хоть один не удался."
+
+#: shidashi/cli.py
+msgid "Comma-separated images (minimal, kde, gnome...) or all."
+msgstr "Образы через запятую (minimal, kde, gnome...) или all."
+
+#: shidashi/cli.py
+msgid "Directory of the ISOs and artifacts."
+msgstr "Каталог ISO и артефактов."
+
+#: shidashi/cli.py
+msgid "zstd, xz or both (two ISOs per image)."
+msgstr "zstd, xz или both (два ISO на образ)."
+
+#: shidashi/cli.py
+msgid "Also a stage4 per image."
+msgstr "Также stage4 для каждого образа."
+
+#: shidashi/cli.py
+msgid "No SBOM (syft)."
+msgstr "Без SBOM (syft)."
+
+#: shidashi/cli.py
+msgid "Assemble from the binpkgs already built."
+msgstr "Собрать из уже собранных binpkgs."
+
+#: shidashi/cli.py
+msgid "In the factory MAKEOPTS -jN -lN and emerge --jobs=N --load-average=N; in the assemble emerge --jobs N, mksquashfs/unsquashfs -processors N and the stage4's xz -TN."
+msgstr "В фабрике MAKEOPTS -jN -lN и emerge --jobs=N --load-average=N; в assemble emerge --jobs N, mksquashfs/unsquashfs -processors N и xz -TN для stage4."
+
+#: shidashi/cli.py
+msgid "Keep the build rootfs."
+msgstr "Сохранить rootfs сборки."
+
+#: shidashi/cli.py
+msgid "Cache only; never touch the network."
+msgstr "Только кэш; никогда не обращаться к сети."
+
+#: shidashi/cli.py
+msgid "Boot every ISO on BIOS and UEFI and check it (shidashi vm test); a failed check fails the build."
+msgstr "Загрузить каждый ISO в BIOS и UEFI и проверить его (shidashi vm test); неудачная проверка проваливает сборку."
+
+#: shidashi/cli.py shidashi/release_cli.py
+msgid "Root of cache, scratch and runs."
+msgstr "Корень кэша, временных файлов и запусков."
+
+#: shidashi/cli.py
+msgid "Assemble the host's images one after another in one process, each with every job, instead of one concurrent `assemble` process per image."
+msgstr "Собирать образы хоста один за другим в одном процессе, каждый со всеми заданиями, вместо отдельного параллельного процесса `assemble` на каждый образ."
+
+#: shidashi/cli.py
+msgid "Print which node builds each image, with its estimate, and exit without building."
+msgstr "Вывести, какой узел собирает каждый образ, с оценкой, и выйти без сборки."
+
+#: shidashi/cli.py
+msgid "Build every image on this host; probe no worker."
+msgstr "Собрать все образы на этом хосте; не опрашивать воркеры."
+
+#: shidashi/cli.py
+msgid "Let a worker take images although the working tree has uncommitted or untracked changes (a worker builds the last commit)."
+msgstr "Позволить воркеру брать образы, хотя в рабочем дереве есть незакоммиченные или неотслеживаемые изменения (воркер собирает последний commit)."
+
+#: shidashi/cli.py
+msgid "Write how this build ended, as JSON (used by shidashi release)."
+msgstr "Записать, чем завершилась эта сборка, в JSON (используется shidashi release)."
+
+#: shidashi/cli.py
+msgid "Used by shidashi release"
+msgstr "Используется shidashi release"
+
+#: shidashi/cli.py
+msgid ""
+"Write (or check) every image's world file, variants/<stage>/world.<init>.\n"
+"\n"
+"The flat list of packages each image asks for, generated from the kits: the\n"
+"other end of the set composition. Run it after changing a kit or a stage's\n"
+"sets, and commit the diff with the change.\n"
+"\n"
+"With an image (``shidashi world kde systemd``) it writes nothing: it prints\n"
+"that image's packages kit by kit, with the atoms ``exclude:`` takes out.\n"
+"``base`` and ``desktop`` are accepted too: the stages images grow from.\n"
+"Dependencies are not listed -- only what the image asks for."
+msgstr ""
+"Записать (или проверить) world-файл каждого образа, variants/<stage>/world.<init>.\n"
+"\n"
+"Плоский список пакетов, которые запрашивает каждый образ, сгенерированный из комплектов:\n"
+"другой конец композиции наборов. Запускайте после изменения комплекта или наборов\n"
+"стадии и закоммитьте diff вместе с изменением.\n"
+"\n"
+"С образом (``shidashi world kde systemd``) ничего не записывается: выводятся\n"
+"пакеты этого образа по комплектам, с атомами, которые убирает ``exclude:``.\n"
+"Также принимаются ``base`` и ``desktop``: стадии, из которых вырастают образы.\n"
+"Зависимости не перечисляются -- только то, что запрашивает образ."
+
+#: shidashi/cli.py
+msgid "Print this image's (or stage's) packages instead of writing files."
+msgstr "Вывести пакеты этого образа (или стадии) вместо записи файлов."
+
+#: shidashi/cli.py
+msgid "Only this init (default: every init)."
+msgstr "Только этот init (по умолчанию: все init)."
+
+#: shidashi/cli.py
+msgid "Do not write: exit 1 if any world file is stale."
+msgstr "Не записывать: код выхода 1, если какой-либо world-файл устарел."
+
+#: shidashi/cli.py
+msgid ""
+"Check what this host must provide to build images and boot them.\n"
+"\n"
+"Needs no root and changes nothing. Exits 1 when something a build needs is\n"
+"missing (``build``); what only ``shidashi vm`` needs (``vm``) and the\n"
+"``optional`` tools are reported without failing."
+msgstr ""
+"Проверить, что этот хост должен предоставить для сборки образов и их загрузки.\n"
+"\n"
+"Не требует root и ничего не меняет. Код выхода 1, если не хватает того, что нужно\n"
+"сборке (``build``); то, что нужно только ``shidashi vm`` (``vm``), и\n"
+"инструменты ``optional`` сообщаются без ошибки."
+
+#: shidashi/cli.py
+msgid "Work root to check (its filesystem)."
+msgstr "Рабочий корень для проверки (его файловая система)."
+
+#: shidashi/cli.py
+msgid "Find a worker announcing itself, pick it, type the code it shows, pair."
+msgstr "Найти воркер, который объявляет о себе, выбрать его, ввести показанный им код, сопрячь."
+
+#: shidashi/cli.py
+msgid "The worker's name (and hostname)."
+msgstr "Имя воркера (и имя хоста)."
+
+#: shidashi/cli.py
+msgid "IPv4[:PORT] of the worker, skipping discovery (across networks)."
+msgstr "IPv4[:PORT] воркера, без обнаружения (между сетями)."
+
+#: shidashi/cli.py
+msgid "Seconds to listen for workers."
+msgstr "Сколько секунд ждать объявлений воркеров."
+
+#: shidashi/cli.py
+msgid "Pair a worker booted with this host's shidashi.trust."
+msgstr "Сопрячь воркер, загруженный с shidashi.trust этого хоста."
+
+#: shidashi/cli.py
+msgid "Print this host's shidashi.trust kernel parameter."
+msgstr "Вывести параметр ядра shidashi.trust этого хоста."
+
+#: shidashi/cli.py
+msgid "Replace a worker already paired under this name with another host key."
+msgstr "Заменить воркер, уже сопряжённый под этим именем, с другим ключом хоста."
+
+#: shidashi/cli.py
+msgid "Inspect and validate resolved recipes."
+msgstr "Просмотр и проверка разрешённых рецептов."
+
+#: shidashi/cli.py
+msgid "Resolve, merge and render the recipe (R4.1–R4.3)."
+msgstr "Разрешить, объединить и отобразить рецепт (R4.1–R4.3)."
+
+#: shidashi/cli.py
+msgid "Output format."
+msgstr "Формат вывода."
+
+#: shidashi/cli.py
+msgid "Validate load+merge: success → exit 0; conflict/unknown axis → exit 1 (R5.1/R5.2)."
+msgstr "Проверить загрузку+объединение: успех → код выхода 0; конфликт/неизвестная ось → код выхода 1 (R5.1/R5.2)."
+
+#: shidashi/cli.py
+msgid ""
+"List what can be asked for: arches, TARGETS (delivered images) and inits (R6.1).\n"
+"\n"
+"The target is ``minimal`` or a flavor (D24) -- not the ``flavor`` axis, where\n"
+"``minimal`` no longer lives. The base is implicit: every chain starts there."
+msgstr ""
+"Перечислить, что можно запросить: архитектуры, TARGETS (поставляемые образы) и init (R6.1).\n"
+"\n"
+"Цель — ``minimal`` или разновидность (D24) -- не ось ``flavor``, где\n"
+"``minimal`` больше не находится. База подразумевается: с неё начинается каждая цепочка."
+
+#: shidashi/cli.py
+msgid "Boot an ISO in a VM and drive it over SSH on vsock (no network, no screen)."
+msgstr "Загрузить ISO в VM и управлять им по SSH через vsock (без сети, без экрана)."
+
+#: shidashi/vm_access_cli.py
+msgid ""
+"Print an ssh ``Host`` (``shidashi-NAME``) that lands as root in the VM, and keep it\n"
+"beside the session as ``ssh_config``. One ``Include`` of\n"
+"``~/.local/state/shidashi/vm/*/ssh_config`` in ``~/.ssh/config`` makes every session\n"
+"that ran this reachable -- by an editor's remote project (Zeo, Zed, VS Code) or by\n"
+"``ssh shidashi-NAME``. A session on a build worker is reached through the worker with\n"
+"a key made here; it goes when the session is stopped."
+msgstr ""
+"Вывести ssh ``Host`` (``shidashi-NAME``), который входит в VM как root, и сохранить его\n"
+"рядом с сеансом как ``ssh_config``. Один ``Include``\n"
+"``~/.local/state/shidashi/vm/*/ssh_config`` в ``~/.ssh/config`` делает каждый сеанс,\n"
+"где это запускалось, доступным -- для удалённого проекта редактора (Zeo, Zed, VS Code) или через\n"
+"``ssh shidashi-NAME``. Сеанс на сборочном воркере доступен через воркер по\n"
+"ключу, созданному здесь; ключ удаляется при остановке сеанса."
+
+#: shidashi/vm_access_cli.py
+msgid ""
+"Set a variable in the VM from stdin, for every login shell there -- the\n"
+"environment an editor's remote server and its agents start from. The value never\n"
+"is a command-line word and never reaches a disk: it is kept in RAM in the guest\n"
+"(``/run``, mode 0600) and goes with the VM. Pipe it in, e.g.\n"
+"``secret-tool lookup service anthropic purpose X | shidashi vm env --name dev\n"
+"CLAUDE_CODE_OAUTH_TOKEN``."
+msgstr ""
+"Задать переменную в VM из stdin для каждой login-оболочки в ней -- это окружение,\n"
+"из которого стартуют удалённый сервер редактора и его агенты. Значение никогда\n"
+"не становится словом командной строки и не попадает на диск: оно хранится в RAM гостя\n"
+"(``/run``, режим 0600) и исчезает вместе с VM. Передайте его через конвейер, например\n"
+"``secret-tool lookup service anthropic purpose X | shidashi vm env --name dev\n"
+"CLAUDE_CODE_OAUTH_TOKEN``."
+
+#: shidashi/vm_access_cli.py
+msgid "The variable's name, e.g. CLAUDE_CODE_OAUTH_TOKEN."
+msgstr "Имя переменной, например CLAUDE_CODE_OAUTH_TOKEN."
+
+#: shidashi/vm_access_cli.py
+msgid "Join stdin and stdout to the guest's sshd on vsock (a ``ProxyCommand``)."
+msgstr "Соединить stdin и stdout с sshd гостя через vsock (``ProxyCommand``)."
+
+#: shidashi/cli.py
+msgid "Start ``iso`` in a VM reachable with `shidashi vm run`."
+msgstr "Запустить ``iso`` в VM, доступной через `shidashi vm run`."
+
+#: shidashi/cli.py
+msgid "The ISO to boot (optional with --dev)."
+msgstr "ISO для загрузки (необязателен с --dev)."
+
+#: shidashi/cli.py
+msgid "Boot with OVMF instead of BIOS."
+msgstr "Загрузка с OVMF вместо BIOS."
+
+#: shidashi/cli.py
+msgid "Session name."
+msgstr "Имя сеанса."
+
+#: shidashi/cli.py
+msgid "The guest's vsock CID (default 42)."
+msgstr "vsock CID гостя (по умолчанию 42)."
+
+#: shidashi/cli.py
+msgid "The guest's memory (default 8G)."
+msgstr "Память гостя (по умолчанию 8G)."
+
+#: shidashi/cli.py
+msgid "The guest's processors (default 8)."
+msgstr "Процессоры гостя (по умолчанию 8)."
+
+#: shidashi/cli.py
+msgid "none (headless) or sdl to watch it."
+msgstr "none (без экрана) или sdl, чтобы наблюдать."
+
+#: shidashi/cli.py
+msgid "Wait for SSH."
+msgstr "Ждать SSH."
+
+#: shidashi/cli.py
+msgid "A qcow2 disk for the guest (/dev/vda, vdb...); repeatable."
+msgstr "Диск qcow2 для гостя (/dev/vda, vdb...); можно повторять."
+
+#: shidashi/cli.py
+msgid "Create a missing --disk with this size (e.g. 200G)."
+msgstr "Создать отсутствующий --disk этого размера (например, 200G)."
+
+#: shidashi/cli.py
+msgid "TAG=DIR[:rw]: a host directory the guest mounts with `mount -t virtiofs TAG <dir>`; read-only unless :rw. Repeatable."
+msgstr "TAG=DIR[:rw]: каталог хоста, который гость монтирует через `mount -t virtiofs TAG <dir>`; только для чтения, если нет :rw. Можно повторять."
+
+#: shidashi/cli.py
+msgid "Make the guest's TCP port GUEST reachable on the host's 127.0.0.1:HOST (e.g. 2222:22). Repeatable."
+msgstr "Сделать TCP-порт гостя GUEST доступным на 127.0.0.1:HOST хоста (например, 2222:22). Можно повторять."
+
+#: shidashi/cli.py
+msgid "A VM ready to build ebuilds (bentoolkit): the ISO's pinned trees, a fresh work disk, /var/db/repos/staged, a binhost; prints one JSON line. Exit 3: no ISO."
+msgstr "VM, готовая к сборке ebuild (bentoolkit): закреплённые деревья ISO, свежий рабочий диск, /var/db/repos/staged, binhost; выводит одну строку JSON. Код выхода 3: нет ISO."
+
+#: shidashi/cli.py
+msgid "--dev: this ISO, not the newest minimal."
+msgstr "--dev: этот ISO, а не самый новый minimal."
+
+#: shidashi/cli.py
+msgid "--dev: the ISO's init."
+msgstr "--dev: init этого ISO."
+
+#: shidashi/cli.py
+msgid "--dev: the ISO's arch."
+msgstr "--dev: архитектура этого ISO."
+
+#: shidashi/cli.py
+msgid "--dev: after HOURS (fractions allowed) the session powers itself off and is removed, as `vm stop` does; without it, never."
+msgstr "--dev: через HOURS (допускаются дроби) сеанс сам выключается и удаляется, как при `vm stop`; без этого — никогда."
+
+#: shidashi/cli.py
+msgid "--dev: run the VM on this paired build worker (default: the one SHIDASHI_DEV_WORKER names); `vm run` and `vm stop` then reach it there."
+msgstr "--dev: запустить VM на этом сопряжённом сборочном воркере (по умолчанию: указанном в SHIDASHI_DEV_WORKER); `vm run` и `vm stop` затем обращаются к ней там."
+
+#: shidashi/cli.py
+msgid "--dev: on this host, whatever SHIDASHI_DEV_WORKER names."
+msgstr "--dev: на этом хосте, что бы ни указывал SHIDASHI_DEV_WORKER."
+
+#: shidashi/cli.py
+msgid ""
+"Run a command as root in the VM; its exit code becomes ours. Our stdin is the\n"
+"command's (``tar -c … | shidashi vm run -- tar -x``). A command stopped by\n"
+"``--timeout``, Ctrl+C, SIGTERM or SIGHUP is stopped in the guest too, with all it\n"
+"started; past its timeout it exits 124, on a signal 128 + its number. A session\n"
+"started on a build worker (``vm start --dev --worker``) is reached there."
+msgstr ""
+"Выполнить команду от root в VM; её код выхода становится нашим. Наш stdin —\n"
+"stdin команды (``tar -c … | shidashi vm run -- tar -x``). Команда, остановленная\n"
+"``--timeout``, Ctrl+C, SIGTERM или SIGHUP, останавливается и в госте вместе со всем, что\n"
+"она запустила; по таймауту код выхода 124, по сигналу 128 + его номер. Сеанс,\n"
+"запущенный на сборочном воркере (``vm start --dev --worker``), доступен там."
+
+#: shidashi/cli.py
+msgid "The command, run by the guest's shell."
+msgstr "Команда, выполняемая оболочкой гостя."
+
+#: shidashi/cli.py
+msgid "Seconds before giving up on the command; 0: no limit."
+msgstr "Секунд до отказа от команды; 0: без ограничения."
+
+#: shidashi/cli.py
+msgid "Pass the output through line by line as the guest writes it, instead of when the command ends."
+msgstr "Передавать вывод построчно по мере записи гостем, а не по завершении команды."
+
+#: shidashi/cli.py
+msgid "Save the VM's screen (PNG) -- for when looking is really needed."
+msgstr "Сохранить экран VM (PNG) -- когда действительно нужно посмотреть."
+
+#: shidashi/cli.py
+msgid ""
+"Power the VM off; a ``--dev`` session's directory, work disk included, goes too.\n"
+"A session on a build worker is stopped there, and forgotten when it is gone."
+msgstr ""
+"Выключить VM; каталог сеанса ``--dev``, включая рабочий диск, тоже удаляется.\n"
+"Сеанс на сборочном воркере останавливается там и забывается, когда его больше нет."
+
+#: shidashi/cli.py
+msgid ""
+"The automated boot test: boot ``iso`` and check what its system.yaml declared.\n"
+"\n"
+"Audited like a build, the report attached as boot-test.json. Exit 1 when any\n"
+"check fails. Natively the run also records the steps boot:<firmware> and\n"
+"check:<name>; on a node without QEMU the boot test runs in the v3-systemd\n"
+"toolbox container (:mod:`shidashi.vmrunner`), whose inner steps are not\n"
+"recorded -- the boot-test attachment carries every check's result, the metrics\n"
+"and the ssh time per firmware all the same. The CID lock is held here, around\n"
+"either."
+msgstr ""
+"Автоматический тест загрузки: загрузить ``iso`` и проверить то, что объявлено в его system.yaml.\n"
+"\n"
+"Аудируется как сборка, отчёт прилагается как boot-test.json. Код выхода 1, если какая-либо\n"
+"проверка не прошла. При нативном запуске также записываются шаги boot:<firmware> и\n"
+"check:<name>; на узле без QEMU тест загрузки выполняется в контейнере toolbox\n"
+"v3-systemd (:mod:`shidashi.vmrunner`), внутренние шаги которого не\n"
+"записываются -- вложение boot-test всё равно содержит результат каждой проверки, метрики\n"
+"и время до ssh для каждой прошивки. Блокировка CID удерживается здесь, в обоих\n"
+"случаях."
+
+#: shidashi/cli.py
+msgid "bios, uefi or both."
+msgstr "bios, uefi или both."
+
+#: shidashi/cli.py
+msgid "Also save a screenshot per boot here."
+msgstr "Также сохранять сюда скриншот каждой загрузки."
+
+#: shidashi/cli.py
+msgid ""
+"The runner container's side of a boot test: ``vm.boot_test`` into ``--report``.\n"
+"\n"
+"No CID lock (the outer caller holds it host-wide; this container's ``/tmp`` is not\n"
+"the host's) and no audit run (the outer run records the report). Exit 0 with the\n"
+"report written, whatever its ``passed``; on any exception ``{\"error\": <text>}`` is\n"
+"written instead and the exit is 2 -- an error is never a verdict."
+msgstr ""
+"Сторона контейнера runner в тесте загрузки: ``vm.boot_test`` в ``--report``.\n"
+"\n"
+"Без блокировки CID (внешний вызывающий держит её на весь хост; ``/tmp`` этого контейнера —\n"
+"не хостовый) и без аудируемого запуска (отчёт записывает внешний запуск). Код выхода 0 с\n"
+"записанным отчётом, каков бы ни был его ``passed``; при любом исключении вместо него записывается\n"
+"``{\"error\": <text>}`` и код выхода 2 -- ошибка никогда не является вердиктом."
+
+#: shidashi/cli.py
+msgid "Where the JSON report lands."
+msgstr "Куда записывается отчёт JSON."
+
+#: shidashi/cli.py
+msgid "The runner container's side of ``vm.read_build_info``: the ISO's build.json as JSON."
+msgstr "Сторона контейнера runner для ``vm.read_build_info``: build.json этого ISO в виде JSON."
+
+#: shidashi/cli.py
+msgid "The kit library: every package Bentoo builds."
+msgstr "Библиотека комплектов: все пакеты, которые собирает Bentoo."
+
+#: shidashi/cli.py
+msgid ""
+"Every kit atom must exist in the pinned trees; every @ref must name a kit.\n"
+"\n"
+"Read-only. Exit 1 with one line per problem (kit:line: atom -- why)."
+msgstr ""
+"Каждый атом комплекта должен существовать в закреплённых деревьях; каждая @ref должна указывать на комплект.\n"
+"\n"
+"Только чтение. Код выхода 1 с одной строкой на проблему (kit:line: atom -- why)."
+
+#: shidashi/cli.py
+msgid "Use the cached pinned trees only."
+msgstr "Использовать только кэшированные закреплённые деревья."
+
+#: shidashi/cli.py
+msgid "Drive a paired worker (shidashi kyomei)."
+msgstr "Управление сопряжённым воркером (shidashi kyomei)."
+
+#: shidashi/cli.py
+msgid "Give worker NAME its identity and a personalized ISO that boots already paired."
+msgstr "Выдать воркеру NAME его идентичность и персональный ISO, который загружается уже сопряжённым."
+
+#: shidashi/cli.py
+msgid "The worker's name (one RFC 1123 label)."
+msgstr "Имя воркера (одна метка RFC 1123)."
+
+#: shidashi/cli.py
+msgid "The generic worker ISO to personalize."
+msgstr "Универсальный ISO воркера для персонализации."
+
+#: shidashi/cli.py
+msgid "Replace NAME's identity (a lost medium)."
+msgstr "Заменить идентичность NAME (утерян носитель)."
+
+#: shidashi/cli.py
+msgid "Join this WPA-PSK Wi-Fi network at boot; the passphrase is asked without echo on a terminal, else read as one line from stdin."
+msgstr "Подключаться к этой сети Wi-Fi WPA-PSK при загрузке; парольная фраза запрашивается без эха в терминале, иначе читается одной строкой из stdin."
+
+#: shidashi/cli.py
+msgid "Make DISK the worker's SHIDASHI-WORK disk -- only with its serial confirmed."
+msgstr "Сделать DISK диском SHIDASHI-WORK воркера -- только после подтверждения его серийного номера."
+
+#: shidashi/cli.py
+msgid "The paired worker's name."
+msgstr "Имя сопряжённого воркера."
+
+#: shidashi/cli.py
+msgid "The disk to prepare, e.g. /dev/sda."
+msgstr "Диск для подготовки, например /dev/sda."
+
+#: shidashi/cli.py
+msgid "The disk's serial (lsblk -o NAME,SERIAL)."
+msgstr "Серийный номер диска (lsblk -o NAME,SERIAL)."
+
+#: shidashi/cli.py
+msgid ""
+"A worker's CPU, targets, load, memory, work disk, image, SMART, checkpoints and\n"
+"jobs; without a name, one line per paired worker (at most 5 s each)."
+msgstr ""
+"CPU, цели, нагрузка, память, рабочий диск, образ, SMART, контрольные точки и\n"
+"задания воркера; без имени — одна строка на каждый сопряжённый воркер (не более 5 с на каждый)."
+
+#: shidashi/cli.py
+msgid "A paired worker's name; every one when omitted."
+msgstr "Имя сопряжённого воркера; если не указано — все."
+
+#: shidashi/cli.py
+msgid "Reach the worker there, without the mDNS lookup; recorded once it answers with its pinned key."
+msgstr "Обращаться к воркеру по этому адресу, без поиска mDNS; запоминается, как только он ответит своим закреплённым ключом."
+
+#: shidashi/cli.py
+msgid ""
+"Run COMMAND on the worker, every argument quoted; its output streams here and\n"
+"its exit code is ours."
+msgstr ""
+"Выполнить COMMAND на воркере, каждый аргумент в кавычках; вывод передаётся сюда, а\n"
+"его код выхода становится нашим."
+
+#: shidashi/cli.py
+msgid "The command and its arguments (after --)."
+msgstr "Команда и её аргументы (после --)."
+
+#: shidashi/cli.py
+msgid "Print a job's log; with -f, follow it until the job ends."
+msgstr "Вывести журнал задания; с -f следить за ним до конца задания."
+
+#: shidashi/cli.py
+msgid "The job's name."
+msgstr "Имя задания."
+
+#: shidashi/cli.py
+msgid "Follow the log until the job ends."
+msgstr "Следить за журналом до конца задания."
+
+#: shidashi/cli.py
+msgid ""
+"Release ARCH's owner lock once its holder -- a worker job, or a host build by its\n"
+"pid -- has ended; with --force, now."
+msgstr ""
+"Снять блокировку владельца ARCH, когда её держатель -- задание воркера или сборка на хосте по её\n"
+"pid -- завершился; с --force — сразу."
+
+#: shidashi/cli.py
+msgid "The arch whose owner lock to release."
+msgstr "Архитектура, блокировку владельца которой нужно снять."
+
+#: shidashi/cli.py
+msgid "Release it without checking that its holder has ended."
+msgstr "Снять её, не проверяя, завершился ли держатель."
+
+#: shidashi/cli.py
+msgid ""
+"Keep ARCH's binpkgs, fork points, distfiles and ccache on WORKER only; with\n"
+"--off, under the host again; without --arch, list what WORKER owns. Nothing is\n"
+"copied or deleted on either side."
+msgstr ""
+"Хранить binpkgs, точки ветвления, distfiles и ccache архитектуры ARCH только на WORKER; с\n"
+"--off — снова на хосте; без --arch — перечислить, чем владеет WORKER. Ничего не\n"
+"копируется и не удаляется ни на одной стороне."
+
+#: shidashi/cli.py
+msgid "The arch whose cache stays on WORKER."
+msgstr "Архитектура, кэш которой остаётся на WORKER."
+
+#: shidashi/cli.py
+msgid "Bring ARCH's cache back under the host."
+msgstr "Вернуть кэш ARCH на хост."
+
+#: shidashi/cli.py
+msgid "Power the worker off; refused while a Shidashi job runs on it, unless --force."
+msgstr "Выключить воркер; отказ, пока на нём выполняется задание Shidashi, если нет --force."
+
+#: shidashi/cli.py
+msgid "Power off even while a Shidashi job runs."
+msgstr "Выключить, даже пока выполняется задание Shidashi."
+
+#: shidashi/cli.py
+msgid ""
+"Run ``shidashi ARGS…`` on the worker from this checkout's HEAD: follow its log,\n"
+"bring its results back and exit with its exit code."
+msgstr ""
+"Выполнить ``shidashi ARGS…`` на воркере из HEAD этой рабочей копии: следить за его журналом,\n"
+"вернуть результаты и выйти с его кодом выхода."
+
+#: shidashi/cli.py
+msgid "The job's name: a-z, 0-9 and '-' only."
+msgstr "Имя задания: только a-z, 0-9 и '-'."
+
+#: shidashi/cli.py
+msgid "The shidashi command and its arguments (after --)."
+msgstr "Команда shidashi и её аргументы (после --)."
+
+#: shidashi/cli.py
+msgid "Run HEAD although the checkout has uncommitted changes (they are not shipped)."
+msgstr "Запустить HEAD, хотя в рабочей копии есть незакоммиченные изменения (они не передаются)."
+
+#: shidashi/cli.py
+msgid "Start the job and return; follow and pull it later."
+msgstr "Запустить задание и вернуться; следить за ним и забрать результаты позже."
+
+#: shidashi/cli.py
+msgid "Where its log, rc and ISOs land (default ./worker-results/NAME/JOB)."
+msgstr "Куда попадают его журнал, rc и ISO (по умолчанию ./worker-results/NAME/JOB)."
+
+#: shidashi/cli.py
+msgid "Cap every transfer at K KiB/s."
+msgstr "Ограничить каждую передачу K КиБ/с."
+
+#: shidashi/cli.py
+msgid "Copy an arch's cache to a worker, and results back from it."
+msgstr "Копировать кэш архитектуры на воркер, а результаты — обратно с него."
+
+#: shidashi/cli.py
+msgid ""
+"Send the worker ARCH's cache -- PKGDIR, distfiles and ccache, the pinned\n"
+"trees and repositories, the stage3 and the fork points -- and the runtime venv."
+msgstr ""
+"Отправить воркеру кэш ARCH -- PKGDIR, distfiles и ccache, закреплённые\n"
+"деревья и репозитории, stage3 и точки ветвления -- и venv среды выполнения."
+
+#: shidashi/cli.py
+msgid "The arch whose cache to send."
+msgstr "Архитектура, кэш которой отправить."
+
+#: shidashi/cli.py
+msgid "The init whose stage3 generation to send."
+msgstr "init, поколение stage3 которого отправить."
+
+#: shidashi/cli.py
+msgid ""
+"Bring back ARCH's new distfiles and ccache entries and, with --job, that job's\n"
+"log, rc, runs and ISOs. The binhost comes back, and the arch's owner lock is\n"
+"released, only for the lock holder's job once it has ended."
+msgstr ""
+"Вернуть новые distfiles и записи ccache ARCH и, с --job, журнал, rc, запуски\n"
+"и ISO этого задания. binhost возвращается, а блокировка владельца архитектуры\n"
+"снимается, только для задания держателя блокировки после его завершения."
+
+#: shidashi/cli.py
+msgid "The arch whose caches come back (omit only for an archless job)."
+msgstr "Архитектура, кэши которой возвращаются (не указывать только для задания без архитектуры)."
+
+#: shidashi/cli.py
+msgid "The init whose stage3 generation the binhost is."
+msgstr "init, к поколению stage3 которого относится binhost."
+
+#: shidashi/cli.py
+msgid "The job whose log, rc, runs and ISOs come back (./worker-results/)."
+msgstr "Задание, чьи журнал, rc, запуски и ISO возвращаются (./worker-results/)."
+
+#: shidashi/cli.py
+msgid "Where the job's log, rc, runs and ISOs land (default ./worker-results/NAME/JOB); needs --job."
+msgstr "Куда попадают журнал, rc, запуски и ISO задания (по умолчанию ./worker-results/NAME/JOB); требует --job."
+
+#: shidashi/cli.py
+msgid "The build pool: classify, trim and publish binpkgs."
+msgstr "Сборочный пул: классифицировать, сократить и опубликовать binpkgs."
+
+#: shidashi/binhost_cli.py
+msgid "Print each binpkg instance with its kind (final, transient, old, unrecorded)."
+msgstr "Вывести каждый экземпляр binpkg с его видом (final, transient, old, unrecorded)."
+
+#: shidashi/binhost_cli.py
+msgid "Microarchitecture whose pool to read (e.g. v3)."
+msgstr "Микроархитектура, пул которой читать (например, v3)."
+
+#: shidashi/binhost_cli.py
+msgid "Init flavor whose PKGDIR and toolbox to use."
+msgstr "Разновидность init, чьи PKGDIR и toolbox использовать."
+
+#: shidashi/binhost_cli.py
+msgid "Generation (stage3 snapshot) to read; default is the one factory builds."
+msgstr "Поколение (снимок stage3) для чтения; по умолчанию то, которое собирает фабрика."
+
+#: shidashi/binhost_cli.py
+msgid "Quarantine the binpkgs whose ebuild is gone, beyond --keep per package, and reindex."
+msgstr "Поместить в карантин binpkgs, чей ebuild удалён, сверх --keep на пакет, и переиндексировать."
+
+#: shidashi/binhost_cli.py
+msgid "Newest CPVs kept per (package, SLOT) once gone."
+msgstr "Сколько новейших CPV сохранять на (пакет, SLOT) после удаления."
+
+#: shidashi/binhost_cli.py
+msgid "Print the planned PATHs; move and write nothing."
+msgstr "Вывести запланированные PATH; ничего не перемещать и не записывать."
+
+#: shidashi/binhost_cli.py
+msgid "A CPV (cat/pkg-1.0) to quarantine too, whatever its ebuild: for a binpkg built from an overlay that dropped it while ::gentoo still ships the CPV."
+msgstr "CPV (cat/pkg-1.0), который тоже поместить в карантин, каким бы ни был его ebuild: для binpkg, собранного из overlay, который его удалил, тогда как ::gentoo всё ещё поставляет этот CPV."
+
+#: shidashi/binhost_cli.py
+msgid "Build the signed publish pool of one generation: its recorded finals, and no more."
+msgstr "Собрать подписанный пул публикации одного поколения: его записанные final, и не более."
+
+#: shidashi/binhost_cli.py
+msgid "Fingerprint of the maintainer's key that signs."
+msgstr "Отпечаток ключа мейнтейнера, которым выполняется подпись."
+
+#: shidashi/binhost_cli.py
+msgid "Where the signed pool is made; default <cache>/publish/<arch>/<generation>."
+msgstr "Где создаётся подписанный пул; по умолчанию <cache>/publish/<arch>/<generation>."
+
+#: shidashi/binhost_cli.py
+msgid "Check every signature of the publish pool against --pubkey; exit 1 on any failure."
+msgstr "Проверить каждую подпись пула публикации по --pubkey; код выхода 1 при любом сбое."
+
+#: shidashi/binhost_cli.py
+msgid "Armored public key file: the only key trusted."
+msgstr "Файл открытого ключа в ASCII-armor: единственный доверенный ключ."
+
+#: shidashi/binhost_cli.py
+msgid "The signed pool to check; default <cache>/publish/<arch>/<generation>."
+msgstr "Подписанный пул для проверки; по умолчанию <cache>/publish/<arch>/<generation>."
+
+#: shidashi/cli.py
+msgid "The restore points: tarballs of finished build stages."
+msgstr "Точки восстановления: tarball завершённых стадий сборки."
+
+#: shidashi/fork_points_cli.py
+msgid "Delete the fork points of every pin but the current one and the --keep newest others."
+msgstr "Удалить точки ветвления всех закреплений, кроме текущего и --keep самых новых из остальных."
+
+#: shidashi/fork_points_cli.py
+msgid "Microarchitecture whose fork points to collect (e.g. v3)."
+msgstr "Микроархитектура, точки ветвления которой очищать (например, v3)."
+
+#: shidashi/fork_points_cli.py
+msgid "Other pins whose fork points stay besides the current pin's, newest first."
+msgstr "Сколько других закреплений сохраняют точки ветвления помимо текущего, начиная с самых новых."
+
+#: shidashi/fork_points_cli.py
+msgid "Print the plan; delete nothing, take no lock."
+msgstr "Вывести план; ничего не удалять, не брать блокировку."
+
+#: shidashi/cli.py
+msgid "GitHub calls from the host: runner config, dispatch."
+msgstr "Вызовы GitHub с хоста: конфигурация runner, dispatch."
+
+#: shidashi/ci_cli.py
+msgid "Print the encoded JIT configuration of a new one-job runner (stdout, nothing else)."
+msgstr "Вывести закодированную JIT-конфигурацию нового runner на одно задание (stdout, больше ничего)."
+
+#: shidashi/ci_cli.py
+msgid "OWNER/NAME of the repository."
+msgstr "OWNER/NAME репозитория."
+
+#: shidashi/ci_cli.py
+msgid "File holding the token: yours, mode 0600 or 0400."
+msgstr "Файл с токеном: ваш, режим 0600 или 0400."
+
+#: shidashi/ci_cli.py
+msgid "Label the runner carries."
+msgstr "Метка, которую несёт runner."
+
+#: shidashi/ci_cli.py
+msgid "Name the runner registers as."
+msgstr "Имя, под которым регистрируется runner."
+
+#: shidashi/ci_cli.py
+msgid "Request a workflow_dispatch of WORKFLOW on REF."
+msgstr "Запросить workflow_dispatch для WORKFLOW на REF."
+
+#: shidashi/ci_cli.py
+msgid "Workflow file name."
+msgstr "Имя файла workflow."
+
+#: shidashi/ci_cli.py
+msgid "Branch or tag to run it on."
+msgstr "Ветка или тег, на котором его запустить."
+
+#: shidashi/ci_pool_cli.py
+msgid "Hand queued jobs of the allowlisted private repositories to the worker."
+msgstr "Передавать воркеру задания из очереди разрешённых приватных репозиториев."
+
+#: shidashi/ci_pool_cli.py
+msgid "ci.toml (default: $XDG_CONFIG_HOME/shidashi/ci.toml)."
+msgstr "ci.toml (по умолчанию: $XDG_CONFIG_HOME/shidashi/ci.toml)."
+
+#: shidashi/ci_pool_cli.py
+msgid "One round, then exit 0."
+msgstr "Один цикл, затем код выхода 0."
+
+#: shidashi/cli.py
+msgid "The worker as a CI runner: one job per VM (root)."
+msgstr "Воркер как CI runner: одно задание на VM (root)."
+
+#: shidashi/ci_guest_cli.py
+msgid "Download the pinned Ubuntu cloud image to the work disk, verified."
+msgstr "Скачать закреплённый облачный образ Ubuntu на рабочий диск с проверкой."
+
+#: shidashi/ci_guest_cli.py
+msgid "Prepare the guest image once for the current pins (Docker, runner, units)."
+msgstr "Один раз подготовить гостевой образ для текущих закреплений (Docker, runner, юниты)."
+
+#: shidashi/ci_guest_cli.py
+msgid "Run one job in one ephemeral VM: exit 0 pass, 1 fail, 3 low disk, 4 timeout."
+msgstr "Выполнить одно задание в одной эфемерной VM: код выхода 0 успех, 1 сбой, 3 мало места на диске, 4 таймаут."
+
+#: shidashi/ci_guest_cli.py
+msgid "GitHub job id (digits)."
+msgstr "id задания GitHub (цифры)."
+
+#: shidashi/ci_guest_cli.py
+msgid "OWNER/NAME the runner was minted for."
+msgstr "OWNER/NAME, для которого был выпущен runner."
+
+#: shidashi/ci_guest_cli.py
+msgid "Delete job directories and JIT configs whose VM no longer runs."
+msgstr "Удалить каталоги заданий и JIT-конфигурации, чья VM больше не работает."
+
+#: shidashi/ci_guest_cli.py
+msgid "Inside the toolbox container: exec one allowlisted tool with its arguments."
+msgstr "Внутри контейнера toolbox: выполнить (exec) один разрешённый инструмент с его аргументами."
+
+#: shidashi/ci_guest_cli.py
+msgid "Inside the toolbox container: copy its OVMF code and variables template to DEST."
+msgstr "Внутри контейнера toolbox: скопировать его код OVMF и шаблон переменных в DEST."
+
+#: shidashi/ci_guest_cli.py
+msgid "Directory to copy OVMF into."
+msgstr "Каталог, в который скопировать OVMF."
+
+#: shidashi/cli.py
+msgid "Build, sign and report one dated release."
+msgstr "Собрать, подписать и описать один датированный релиз."
+
+#: shidashi/release_cli.py
+msgid ""
+"Build every variant asked for, publish each arch's binhost, and sign one dated release.\n"
+"\n"
+"``sudo shidashi release v3 systemd --key FPR`` (or ``--unsigned``) runs one\n"
+"``shidashi build --images all`` per variant into ``<cache>/releases/<YYYY.MM.DD>`` (the\n"
+"start date in UTC), publishes the signed binhost of each arch that built, writes\n"
+"``release.json`` and signs ``SHA256SUMS`` and every ``DIGESTS`` with the maintainer's\n"
+"key. Exit 0 only when every variant built, published and the signatures verified;\n"
+"``--unsigned`` publishes and signs\n"
+"nothing and exits 0 when every variant built."
+msgstr ""
+"Собрать все запрошенные варианты, опубликовать binhost каждой архитектуры и подписать один датированный релиз.\n"
+"\n"
+"``sudo shidashi release v3 systemd --key FPR`` (или ``--unsigned``) запускает один\n"
+"``shidashi build --images all`` на вариант в ``<cache>/releases/<YYYY.MM.DD>`` (дата\n"
+"начала в UTC), публикует подписанный binhost каждой собранной архитектуры, записывает\n"
+"``release.json`` и подписывает ``SHA256SUMS`` и каждый ``DIGESTS`` ключом\n"
+"мейнтейнера. Код выхода 0, только если каждый вариант собран, опубликован и подписи проверены;\n"
+"``--unsigned`` ничего не публикует и не\n"
+"подписывает и завершается с кодом 0, когда собран каждый вариант."
+
+#: shidashi/release_cli.py
+msgid "Arch axis (e.g. v3); not with --all."
+msgstr "Ось архитектуры (например, v3); не вместе с --all."
+
+#: shidashi/release_cli.py
+msgid "Init axis (systemd, openrc); not with --all."
+msgstr "Ось init (systemd, openrc); не вместе с --all."
+
+#: shidashi/release_cli.py
+msgid "Release every arch × init of the recipe axes."
+msgstr "Выпустить каждую комбинацию arch × init из осей рецепта."
+
+#: shidashi/release_cli.py
+msgid "Parent of the dated release directories; default <cache>/releases."
+msgstr "Родитель датированных каталогов релизов; по умолчанию <cache>/releases."
+
+#: shidashi/release_cli.py
+msgid "Boot-test every ISO (build --boot-test)."
+msgstr "Тест загрузки каждого ISO (build --boot-test)."
+
+#: shidashi/release_cli.py
+msgid "Cache only: no upstream stage3 check, no fetch in the builds."
+msgstr "Только кэш: без проверки upstream stage3, без скачивания в сборках."
+
+#: shidashi/release_cli.py
+msgid "Passed to every build."
+msgstr "Передаётся каждой сборке."
+
+#: shidashi/release_cli.py
+msgid "Comma list of images every build makes (default all)."
+msgstr "Список образов через запятую, которые делает каждая сборка (по умолчанию all)."
+
+#: shidashi/release_cli.py
+msgid "Fingerprint of the maintainer's key that signs the release."
+msgstr "Отпечаток ключа мейнтейнера, которым подписывается релиз."
+
+#: shidashi/release_cli.py
+msgid "No key: skip the binhost publish and the signature; sign later on the host."
+msgstr "Без ключа: пропустить публикацию binhost и подпись; подписать позже на хосте."
+
+#: shidashi/release_prune_cli.py
+msgid "Move every release but the newest --keep into <root>/.pruned; delete only on request."
+msgstr "Переместить все релизы, кроме --keep самых новых, в <root>/.pruned; удалять только по запросу."
+
+#: shidashi/release_prune_cli.py
+msgid "Releases that stay in the root."
+msgstr "Сколько релизов остаётся в корне."
+
+#: shidashi/release_prune_cli.py
+msgid "Parent of the dated releases; default <cache>/releases."
+msgstr "Родитель датированных релизов; по умолчанию <cache>/releases."
+
+#: shidashi/release_prune_cli.py
+msgid "Print the plan; move and delete nothing."
+msgstr "Вывести план; ничего не перемещать и не удалять."
+
+#: shidashi/release_prune_cli.py
+msgid "Also delete the .pruned entries beyond --keep."
+msgstr "Также удалить записи .pruned сверх --keep."
+
+#: shidashi/release_publish_cli.py
+msgid ""
+"Sign an unsigned release in place, as `shidashi release --key` would have, and\n"
+"verify every signature; exit 0 only once they all verified."
+msgstr ""
+"Подписать неподписанный релиз на месте, как сделал бы `shidashi release --key`, и\n"
+"проверить каждую подпись; код выхода 0, только когда все проверены."
+
+#: shidashi/release_publish_cli.py
+msgid "A release directory made with `shidashi release --unsigned`."
+msgstr "Каталог релиза, созданный `shidashi release --unsigned`."
+
+#: shidashi/release_publish_cli.py
+msgid "Fingerprint of the maintainer's key that signs it."
+msgstr "Отпечаток ключа мейнтейнера, которым он подписывается."
+
+#: shidashi/release_publish_cli.py
+msgid ""
+"Verify a signed release, copy its public files to the bucket (signatures last),\n"
+"rewrite the public index, then delete from the bucket the releases beyond --keep."
+msgstr ""
+"Проверить подписанный релиз, скопировать его публичные файлы в бакет (подписи последними),\n"
+"переписать публичный индекс, затем удалить из бакета релизы сверх --keep."
+
+#: shidashi/release_publish_cli.py
+msgid "A release directory signed on this host."
+msgstr "Каталог релиза, подписанный на этом хосте."
+
+#: shidashi/release_publish_cli.py
+msgid "The rclone remote and bucket, e.g. r2:bentoo."
+msgstr "Remote и бакет rclone, например r2:bentoo."
+
+#: shidashi/release_publish_cli.py
+msgid "Releases the bucket keeps."
+msgstr "Сколько релизов хранит бакет."
+
+#: shidashi/release_publish_cli.py
+msgid "Print the plan; copy, move and purge nothing."
+msgstr "Вывести план; ничего не копировать, не перемещать и не очищать."
+
+#: shidashi/release_publish_cli.py
+msgid "Also delete a release the host holds no copy of."
+msgstr "Также удалить релиз, копии которого нет на хосте."
+
+#: shidashi/release_publish_cli.py
+msgid "Where the host keeps releases (default: DIR/..)."
+msgstr "Где хост хранит релизы (по умолчанию: DIR/..)."
+
+#: shidashi/release_cli.py
+msgid "Print one release's variants, ISOs and why any failed; reads release.json, writes nothing."
+msgstr "Вывести варианты и ISO одного релиза и причины сбоев; читает release.json, ничего не записывает."
+
+#: shidashi/release_cli.py
+msgid "A release directory holding release.json."
+msgstr "Каталог релиза с release.json."
+
+#: shidashi/release_cli.py
+msgid "Print a Markdown table (a job summary)."
+msgstr "Вывести таблицу Markdown (сводку задания)."
+
+#: shidashi/binhost_cli.py
+#, python-brace-format
+msgid "{n} binpkg would move to quarantine"
+msgid_plural "{n} binpkgs would move to quarantine"
+msgstr[0] "{n} binpkg будет перемещён в карантин"
+msgstr[1] "{n} binpkg будут перемещены в карантин"
+msgstr[2] "{n} binpkg будут перемещены в карантин"
+
+#: shidashi/binhost_cli.py
+#, python-brace-format
+msgid "moved {n} binpkg to {path}"
+msgid_plural "moved {n} binpkgs to {path}"
+msgstr[0] "перемещён {n} binpkg в {path}"
+msgstr[1] "перемещено {n} binpkg в {path}"
+msgstr[2] "перемещено {n} binpkg в {path}"
+
+#: shidashi/binhost_cli.py
+#, python-brace-format
+msgid "published {n} binpkg to {path}"
+msgid_plural "published {n} binpkgs to {path}"
+msgstr[0] "опубликован {n} binpkg в {path}"
+msgstr[1] "опубликовано {n} binpkg в {path}"
+msgstr[2] "опубликовано {n} binpkg в {path}"
+
+#: shidashi/binhost_cli.py
+#, python-brace-format
+msgid "{n} unrecorded binpkg left out"
+msgid_plural "{n} unrecorded binpkgs left out"
+msgstr[0] "{n} неучтённый binpkg пропущен"
+msgstr[1] "{n} неучтённых binpkg пропущены"
+msgstr[2] "{n} неучтённых binpkg пропущено"
+
+#: shidashi/binhost_cli.py
+#, python-brace-format
+msgid "verified {path}: every gpkg is signed by {key}"
+msgstr "проверено {path}: каждый gpkg подписан ключом {key}"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "recipe {arch} × {flavor} × {init}"
+msgstr "рецепт {arch} × {flavor} × {init}"
+
+#: shidashi/cli.py
+msgid "field"
+msgstr "поле"
+
+#: shidashi/cli.py
+msgid "value"
+msgstr "значение"
+
+#: shidashi/cli.py
+msgid "phases"
+msgstr "фазы"
+
+#: shidashi/cli.py
+msgid "name"
+msgstr "имя"
+
+#: shidashi/cli.py
+msgid "stage"
+msgstr "стадия"
+
+#: shidashi/cli.py
+msgid "targets"
+msgstr "цели"
+
+#: shidashi/cli.py
+msgid "layers in effect"
+msgstr "действующие слои"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "{phase} (ships)"
+msgstr "{phase} (поставляется)"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "valid: {arch} × {flavor} × {init}"
+msgstr "корректно: {arch} × {flavor} × {init}"
+
+#: shidashi/cli.py
+msgid "(none)"
+msgstr "(нет)"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "pretend {arch} × {flavor} × {init}"
+msgstr "pretend {arch} × {flavor} × {init}"
+
+#: shidashi/cli.py
+msgid "resolved packages"
+msgstr "разрешённые пакеты"
+
+#: shidashi/cli.py
+msgid "cycle-break suggestions (use_break)"
+msgstr "предложения по разрыву циклов (use_break)"
+
+#: shidashi/cli.py
+msgid "atom"
+msgstr "атом"
+
+#: shidashi/cli.py
+msgid "(no cycles)"
+msgstr "(нет циклов)"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "factory {arch} × {flavor} × {init}"
+msgstr "фабрика {arch} × {flavor} × {init}"
+
+#: shidashi/cli.py
+msgid "reused"
+msgstr "использована повторно"
+
+#: shidashi/cli.py
+msgid "created"
+msgstr "создана"
+
+#: shidashi/cli.py
+msgid "— (resumed from a checkpoint)"
+msgstr "— (продолжено с контрольной точки)"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "[green]{n}[/green] package installed from the generation's binpkgs"
+msgid_plural "[green]{n}[/green] packages installed from the generation's binpkgs"
+msgstr[0] "[green]{n}[/green] пакет установлен из binpkgs поколения"
+msgstr[1] "[green]{n}[/green] пакета установлено из binpkgs поколения"
+msgstr[2] "[green]{n}[/green] пакетов установлено из binpkgs поколения"
+
+#: shidashi/cli.py
+msgid "built atoms"
+msgstr "собранные атомы"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "phase {phase}"
+msgstr "фаза {phase}"
+
+#: shidashi/cli.py
+msgid "stepwise"
+msgstr "пошагово"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "[bold green]checkpoint[/bold green] after phase {phase}"
+msgstr "[bold green]контрольная точка[/bold green] после фазы {phase}"
+
+#: shidashi/cli.py
+msgid "continue/stop/shell"
+msgstr "продолжить (c)/остановить (s)/shell (sh)"
+
+#: shidashi/cli.py
+msgid "reset/proceed/cancel"
+msgstr "сбросить (reset)/продолжить (proceed)/отменить (cancel)"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "ISO {arch} × {flavor} × {init} -- {name}"
+msgstr "ISO {arch} × {flavor} × {init} -- {name}"
+
+#: shidashi/cli.py
+msgid "(listed above)"
+msgstr "(перечислено выше)"
+
+#: shidashi/cli.py
+msgid "excluded"
+msgstr "исключено"
+
+#: shidashi/cli.py
+msgid "catalog only"
+msgstr "только в каталоге"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "excluded by {layer}"
+msgstr "исключено слоем {layer}"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "; included by {stage}"
+msgstr "; включено стадией {stage}"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "{n} package"
+msgid_plural "{n} packages"
+msgstr[0] "{n} пакет"
+msgstr[1] "{n} пакета"
+msgstr[2] "{n} пакетов"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "from {n} kit"
+msgid_plural "from {n} kits"
+msgstr[0] "из {n} комплекта"
+msgstr[1] "из {n} комплектов"
+msgstr[2] "из {n} комплектов"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "{n} excluded"
+msgid_plural "{n} excluded"
+msgstr[0] "{n} исключён"
+msgstr[1] "{n} исключены"
+msgstr[2] "{n} исключено"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "{n} catalog only"
+msgid_plural "{n} catalog only"
+msgstr[0] "{n} только в каталоге"
+msgstr[1] "{n} только в каталоге"
+msgstr[2] "{n} только в каталоге"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "{image}: {packages} {kits}, {excluded}, {catalog} ({stages})"
+msgstr "{image}: {packages} {kits}, {excluded}, {catalog} ({stages})"
+
+#: shidashi/cli.py
+msgid "check"
+msgstr "проверка"
+
+#: shidashi/cli.py
+msgid "for"
+msgstr "нужно для"
+
+#: shidashi/cli.py
+msgid "detail"
+msgstr "подробности"
+
+#: shidashi/cli.py
+msgid "[green]ok[/green]"
+msgstr "[green]ok[/green]"
+
+#: shidashi/cli.py
+msgid "[red]missing[/red]"
+msgstr "[red]отсутствует[/red]"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "builds: ok; `shidashi vm` also needs: {checks}"
+msgstr "сборки: ok; `shidashi vm` также нужно: {checks}"
+
+#: shidashi/cli.py
+msgid "builds and `shidashi vm`: ok"
+msgstr "сборки и `shidashi vm`: ok"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "{n} atom checked"
+msgid_plural "{n} atoms checked"
+msgstr[0] "{n} атом проверен"
+msgstr[1] "{n} атома проверено"
+msgstr[2] "{n} атомов проверено"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "{n} problem"
+msgid_plural "{n} problems"
+msgstr[0] "{n} проблема"
+msgstr[1] "{n} проблемы"
+msgstr[2] "{n} проблем"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "{checked} against {pins}: {problems}"
+msgstr "{checked} относительно {pins}: {problems}"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "ssh up after {seconds} s (vsock/{cid})"
+msgstr "ssh доступен через {seconds} с (vsock/{cid})"
+
+#: shidashi/cli.py
+msgid "PASSED"
+msgstr "ПРОЙДЕН"
+
+#: shidashi/cli.py
+msgid "FAILED"
+msgstr "НЕ ПРОЙДЕН"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "boot test {firmware}: {verdict} (ssh after {seconds} s)"
+msgstr "тест загрузки {firmware}: {verdict} (ssh через {seconds} с)"
+
+#: shidashi/cli.py
+msgid "result"
+msgstr "результат"
+
+#: shidashi/cli.py
+msgid "got"
+msgstr "получено"
+
+#: shidashi/cli.py
+msgid "ok"
+msgstr "ok"
+
+#: shidashi/cli.py
+msgid "FAIL"
+msgstr "СБОЙ"
+
+#: shidashi/cli.py
+msgid "Code shown on the worker's screen"
+msgstr "Код, показанный на экране воркера"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "Replace it with {address}'s key {fingerprint}? Compare it with the host key on the worker's screen"
+msgstr "Заменить его ключом {fingerprint} хоста {address}? Сравните его с ключом хоста на экране воркера"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "paired {name} at {address}"
+msgstr "сопряжён {name} по адресу {address}"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "host key {fingerprint} pinned"
+msgstr "ключ хоста {fingerprint} закреплён"
+
+#: shidashi/cli.py
+msgid "trusted on first use: the key was not authenticated by a code; check that this fingerprint matches the one on the worker's screen"
+msgstr "доверие при первом использовании: ключ не был подтверждён кодом; проверьте, что этот отпечаток совпадает с отпечатком на экране воркера"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "reach it with: ssh {name} (or shidashi worker ...)"
+msgstr "подключение: ssh {name} (или shidashi worker ...)"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "provisioned {name}"
+msgstr "подготовлен {name}"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "host key: {fingerprint}"
+msgstr "ключ хоста: {fingerprint}"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "write it with: {command}"
+msgstr "запишите его командой: {command}"
+
+#: shidashi/cli.py
+msgid "the medium holds this worker's private key: keep it like a credential, and run with --replace if it is lost"
+msgstr "носитель содержит закрытый ключ этого воркера: храните его как учётные данные и запустите с --replace, если он утерян"
+
+#: shidashi/cli.py
+msgid "none"
+msgstr "нет"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "{name} ({address}): unreachable: {reason}"
+msgstr "{name} ({address}): недоступен: {reason}"
+
+#: shidashi/cli.py
+msgid "unknown: the image has no smartctl"
+msgstr "неизвестно: в образе нет smartctl"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "{n} thread"
+msgid_plural "{n} threads"
+msgstr[0] "{n} поток"
+msgstr[1] "{n} потока"
+msgstr[2] "{n} потоков"
+
+#: shidashi/cli.py
+msgid "cpu"
+msgstr "cpu"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "{model}, {threads}"
+msgstr "{model}, {threads}"
+
+#: shidashi/cli.py
+msgid "unknown"
+msgstr "неизвестно"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "{arches} (highest: {target})"
+msgstr "{arches} (наивысшая: {target})"
+
+#: shidashi/cli.py
+msgid "load"
+msgstr "нагрузка"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "{load} (1 min)"
+msgstr "{load} (1 мин)"
+
+#: shidashi/cli.py
+msgid "memory"
+msgstr "память"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "{available} available of {total}"
+msgstr "{available} доступно из {total}"
+
+#: shidashi/cli.py
+msgid "work disk"
+msgstr "рабочий диск"
+
+#: shidashi/cli.py
+msgid "image"
+msgstr "образ"
+
+#: shidashi/cli.py
+msgid "unknown (no BUILD_ID)"
+msgstr "неизвестно (нет BUILD_ID)"
+
+#: shidashi/cli.py
+msgid "checkpoints"
+msgstr "контрольные точки"
+
+#: shidashi/cli.py
+msgid "jobs"
+msgstr "задания"
+
+#: shidashi/cli.py
+msgid "accepts jobs"
+msgstr "принимает задания"
+
+#: shidashi/cli.py
+msgid "yes"
+msgstr "да"
+
+#: shidashi/cli.py
+msgid "no"
+msgstr "нет"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "{name} ({address}): reachable"
+msgstr "{name} ({address}): доступен"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "no work disk ({path} not mounted: takes no jobs)"
+msgstr "нет рабочего диска ({path} не смонтирован: задания не принимаются)"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "{path} mounted, free space unknown"
+msgstr "{path} смонтирован, свободное место неизвестно"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "{size} free on {path}"
+msgstr "{size} свободно на {path}"
+
+#: shidashi/cli.py
+msgid "no answer"
+msgstr "нет ответа"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "{name}  refused: {reason}"
+msgstr "{name}  отказ: {reason}"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "{name}  unreachable: {reason}"
+msgstr "{name}  недоступен: {reason}"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "{name}  reachable  max {target}  {threads}  load {load}  {disk}  jobs: {jobs}"
+msgstr "{name}  доступен  макс. {target}  {threads}  нагрузка {load}  {disk}  задания: {jobs}"
+
+#: shidashi/cli.py
+msgid "no paired worker (pair one with: shidashi kyomei)"
+msgstr "нет сопряжённых воркеров (сопрягите воркер: shidashi kyomei)"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "{name}  not reached yet: run shidashi worker status {name}"
+msgstr "{name}  ещё не опрошен: выполните shidashi worker status {name}"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "removed {arch}'s unreadable owner lock ({path})"
+msgstr "удалена нечитаемая блокировка владельца {arch} ({path})"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "{arch} is not locked"
+msgstr "{arch} не заблокирована"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "released {arch} (was held by {holder})"
+msgstr "{arch} освобождена (держатель: {holder})"
+
+#: shidashi/cli.py
+msgid "no arch"
+msgstr "нет архитектуры"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "{worker} owns the cache of: {archs}"
+msgstr "{worker} владеет кэшем: {archs}"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "{worker} does not own {arch}'s cache"
+msgstr "{worker} не владеет кэшем {arch}"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "{worker} already owns {arch}'s cache"
+msgstr "{worker} уже владеет кэшем {arch}"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "{arch}'s cache is under the host again (was on {worker})"
+msgstr "кэш {arch} снова на хосте (был на {worker})"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "{arch}'s cache now stays on {worker}"
+msgstr "кэш {arch} теперь остаётся на {worker}"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "{worker} is powering off"
+msgstr "{worker} выключается"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "pushed {arch} ({init}) to {worker}: {size} sent"
+msgstr "{arch} ({init}) отправлена на {worker}: отправлено {size}"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "pulled from {worker}: {size} received"
+msgstr "получено с {worker}: {size}"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "binhost: {arch}'s binpkgs and index updated"
+msgstr "binhost: binpkgs и индекс {arch} обновлены"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "released {arch}'s owner lock (job {job} ended, results pulled)"
+msgstr "блокировка владельца {arch} снята (задание {job} завершено, результаты получены)"
+
+#: shidashi/fork_points_cli.py
+msgid "apparent sizes: a compressed filesystem frees less"
+msgstr "кажущиеся размеры: сжатая файловая система освобождает меньше"
+
+#: shidashi/fork_points_cli.py
+#, python-brace-format
+msgid "{pin} (current)"
+msgstr "{pin} (текущее)"
+
+#: shidashi/fork_points_cli.py
+#, python-brace-format
+msgid "kept pins: {pins}"
+msgstr "сохранённые закрепления: {pins}"
+
+#: shidashi/fork_points_cli.py
+#, python-brace-format
+msgid "would delete {name} ({size})"
+msgstr "будет удалено {name} ({size})"
+
+#: shidashi/fork_points_cli.py
+#, python-brace-format
+msgid "{n} fork point of {arch} would be deleted ({size})"
+msgid_plural "{n} fork points of {arch} would be deleted ({size})"
+msgstr[0] "{n} точка ветвления {arch} будет удалена ({size})"
+msgstr[1] "{n} точки ветвления {arch} будут удалены ({size})"
+msgstr[2] "{n} точек ветвления {arch} будут удалены ({size})"
+
+#: shidashi/fork_points_cli.py
+#, python-brace-format
+msgid "{deleting}; {n} kept ({size}) -- {note}"
+msgstr "{deleting}; {n} сохранено ({size}) -- {note}"
+
+#: shidashi/fork_points_cli.py
+#, python-brace-format
+msgid "deleted {name} ({size})"
+msgstr "удалено {name} ({size})"
+
+#: shidashi/fork_points_cli.py
+#, python-brace-format
+msgid "deleted {n} fork point of {arch} ({size})"
+msgid_plural "deleted {n} fork points of {arch} ({size})"
+msgstr[0] "удалена {n} точка ветвления {arch} ({size})"
+msgstr[1] "удалены {n} точки ветвления {arch} ({size})"
+msgstr[2] "удалено {n} точек ветвления {arch} ({size})"
+
+#: shidashi/fork_points_cli.py
+#, python-brace-format
+msgid "{deleted}; kept {n} ({size}) -- {note}"
+msgstr "{deleted}; сохранено {n} ({size}) -- {note}"
+
+#: shidashi/i18n_help.py
+msgid "Arguments"
+msgstr "Аргументы"
+
+#: shidashi/i18n_help.py
+msgid "Options"
+msgstr "Параметры"
+
+#: shidashi/i18n_help.py
+msgid "Commands"
+msgstr "Команды"
+
+#: shidashi/i18n_help.py
+#, python-brace-format
+msgid "[default: {}]"
+msgstr "[по умолчанию: {}]"
+
+#: shidashi/i18n_help.py
+#, python-brace-format
+msgid "[env var: {}]"
+msgstr "[переменная окружения: {}]"
+
+#: shidashi/i18n_help.py
+msgid "[required]"
+msgstr "[обязательно]"
+
+#: shidashi/i18n_help.py
+msgid "(deprecated) "
+msgstr "(устарело) "
+
+#: shidashi/i18n_help.py
+#, python-brace-format
+msgid "Try [blue]'{command_path} {help_option}'[/] for help."
+msgstr "Попробуйте [blue]'{command_path} {help_option}'[/] для справки."
+
+#: shidashi/i18n_help.py
+msgid "Show this message and exit."
+msgstr "Показать это сообщение и выйти."
+
+#: shidashi/kyomei.py
+#, python-brace-format
+msgid "Pair {name} ({address})?"
+msgstr "Сопрячь {name} ({address})?"
+
+#: shidashi/kyomei.py
+msgid "trusted"
+msgstr "доверенный"
+
+#: shidashi/kyomei.py
+#, python-brace-format
+msgid "{number}) {name}  {address}:{port}  image {image}"
+msgstr "{number}) {name}  {address}:{port}  образ {image}"
+
+#: shidashi/kyomei.py
+#, python-brace-format
+msgid "Which worker (1-{count})"
+msgstr "Какой воркер (1-{count})"
+
+#: shidashi/progress.py
+msgid "binpkg"
+msgstr "binpkg"
+
+#: shidashi/progress.py
+msgid "building"
+msgstr "сборка"
+
+#: shidashi/progress.py
+msgid "installing"
+msgstr "установка"
+
+#: shidashi/progress.py
+msgid "binpkg…"
+msgstr "binpkg…"
+
+#: shidashi/progress.py
+msgid "building…"
+msgstr "сборка…"
+
+#: shidashi/progress.py
+msgid "done (binpkg)"
+msgstr "готово (binpkg)"
+
+#: shidashi/progress.py
+msgid "done"
+msgstr "готово"
+
+#: shidashi/progress.py
+#, python-brace-format
+msgid "failed to {action}"
+msgstr "сбой: {action}"
+
+#: shidashi/progress.py
+msgid "downloading"
+msgstr "скачивание"
+
+#: shidashi/progress.py
+#, python-brace-format
+msgid "failed after {size}"
+msgstr "сбой после {size}"
+
+#: shidashi/progress.py
+#, python-brace-format
+msgid "… {n} more"
+msgid_plural "… {n} more"
+msgstr[0] "… ещё {n}"
+msgstr[1] "… ещё {n}"
+msgstr[2] "… ещё {n}"
+
+#: shidashi/release_prune_cli.py
+#, python-brace-format
+msgid "skipped {name}: not a release directory"
+msgstr "пропущено {name}: не каталог релиза"
+
+#: shidashi/release_prune_cli.py
+#, python-brace-format
+msgid "would move {name} to {dir}/"
+msgstr "{name} будет перемещено в {dir}/"
+
+#: shidashi/release_prune_cli.py
+#, python-brace-format
+msgid "would delete {path}"
+msgstr "будет удалено {path}"
+
+#: shidashi/release_prune_cli.py
+#, python-brace-format
+msgid "left {name}: a release holds its lock"
+msgstr "оставлено {name}: релиз удерживает свою блокировку"
+
+#: shidashi/release_prune_cli.py
+#, python-brace-format
+msgid "moved {name} to {dir}/"
+msgstr "{name} перемещено в {dir}/"
+
+#: shidashi/release_prune_cli.py
+#, python-brace-format
+msgid "deleted {path}"
+msgstr "удалено {path}"
+
+#: shidashi/vm_access_cli.py
+#, python-brace-format
+msgid "written to {path}; reach it with `ssh {alias}` once ~/.ssh/config has: {include}"
+msgstr "записано в {path}; подключайтесь через `ssh {alias}`, когда в ~/.ssh/config будет: {include}"
+
+#: shidashi/vm_access_cli.py
+#, python-brace-format
+msgid "{variable} set in {name} for login shells (kept in RAM)"
+msgstr "{variable} задана в {name} для login-оболочек (хранится в RAM)"

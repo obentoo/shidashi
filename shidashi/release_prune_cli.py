@@ -13,7 +13,7 @@ from typing import Annotated
 
 import typer
 
-from shidashi import config, locks, release_prune, release_sign
+from shidashi import config, i18n, locks, release_prune, release_sign
 
 
 def _entries(directory: Path) -> tuple[list[str], list[str]]:
@@ -76,13 +76,19 @@ def prune(
         raise typer.Exit(1) from err
     done = release_prune.plan(names, keep, [])
     for name in [*done.skipped, *stray]:
-        typer.echo(f"skipped {name}: not a release directory")
+        typer.echo(i18n.t("skipped {name}: not a release directory").format(name=name))
     if dry_run:
         for name in done.move:
-            typer.echo(f"would move {name} to {release_prune.PRUNED_DIR}/")
+            typer.echo(
+                i18n.t("would move {name} to {dir}/").format(
+                    name=name, dir=release_prune.PRUNED_DIR
+                )
+            )
         if purge_pruned:
             for name in _purge_plan(keep, [*pruned_names, *done.move]):
-                typer.echo(f"would delete {release_prune.PRUNED_DIR}/{name}")
+                typer.echo(
+                    i18n.t("would delete {path}").format(path=f"{release_prune.PRUNED_DIR}/{name}")
+                )
         return
     failed = False
     if done.move:
@@ -95,13 +101,15 @@ def prune(
     for name in done.move:
         why = _move_aside(root, name)
         if why == "busy":
-            typer.echo(f"left {name}: a release holds its lock")
+            typer.echo(i18n.t("left {name}: a release holds its lock").format(name=name))
         elif why is not None:
             _fail(f"cannot move {root / name}: {why}")
             failed = True
         else:
             moved.append(name)
-            typer.echo(f"moved {name} to {release_prune.PRUNED_DIR}/")
+            typer.echo(
+                i18n.t("moved {name} to {dir}/").format(name=name, dir=release_prune.PRUNED_DIR)
+            )
     # counted after the moves: the root keeps `keep` releases and so does .pruned, this
     # run's own moves included (a plan made before them left `keep` plus the week's moves)
     for name in _purge_plan(keep, [*pruned_names, *moved]) if purge_pruned else []:
@@ -111,6 +119,6 @@ def prune(
             _fail(f"cannot delete {pruned_root / name}: {err}")
             failed = True
         else:
-            typer.echo(f"deleted {release_prune.PRUNED_DIR}/{name}")
+            typer.echo(i18n.t("deleted {path}").format(path=f"{release_prune.PRUNED_DIR}/{name}"))
     if failed:
         raise typer.Exit(1)

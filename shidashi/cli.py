@@ -44,6 +44,7 @@ from shidashi import (
     config,
     doctor,
     fork_points_cli,
+    i18n,
     ownership,
     parallel,
     progress,
@@ -67,6 +68,7 @@ from shidashi.factory import (
     StaleStateError,
 )
 from shidashi.generation import GenerationMismatchError
+from shidashi.i18n_help import LocalizedGroup
 from shidashi.image import ImageError
 from shidashi.phases import phase_target
 from shidashi.recipe import (
@@ -83,7 +85,11 @@ from shidashi.system import ConfigurationError
 from shidashi.toolbox import ToolboxError
 from shidashi.world import StaleWorldError
 
-app = typer.Typer(no_args_is_help=True, help="Shidashi — catering of bentoo builds and ISOs.")
+app = typer.Typer(
+    cls=LocalizedGroup,
+    no_args_is_help=True,
+    help="Shidashi — catering of bentoo builds and ISOs.",
+)
 recipe_app = typer.Typer(no_args_is_help=True, help="Inspect and validate resolved recipes.")
 app.add_typer(recipe_app, name="recipe")
 vm_app = typer.Typer(
@@ -311,9 +317,13 @@ def _resolve(arch: str, flavor: str, init: str) -> ResolvedRecipe:
 def _render_pretty(resolved: ResolvedRecipe) -> None:
     """Render the resolved recipe as ``rich`` tables (meaningful on a TTY)."""
     console = Console()
-    summary = Table(title=f"recipe {resolved.arch} × {resolved.flavor} × {resolved.init}")
-    summary.add_column("field", style="bold cyan")
-    summary.add_column("value")
+    summary = Table(
+        title=i18n.t("recipe {arch} × {flavor} × {init}").format(
+            arch=resolved.arch, flavor=resolved.flavor, init=resolved.init
+        )
+    )
+    summary.add_column(i18n.t("field"), style="bold cyan")
+    summary.add_column(i18n.t("value"))
     summary.add_row("profile", resolved.profile)
     summary.add_row("tier", str(resolved.tier))
     summary.add_row("runnable_on_build_host", str(resolved.runnable_on_build_host))
@@ -326,15 +336,15 @@ def _render_pretty(resolved: ResolvedRecipe) -> None:
     summary.add_row("stages", " → ".join(resolved.stages))
     console.print(summary)
 
-    phases_table = Table(title="phases")
-    phases_table.add_column("name", style="bold")
-    phases_table.add_column("stage")
-    phases_table.add_column("targets")
-    phases_table.add_column("layers in effect")
+    phases_table = Table(title=i18n.t("phases"))
+    phases_table.add_column(i18n.t("name"), style="bold")
+    phases_table.add_column(i18n.t("stage"))
+    phases_table.add_column(i18n.t("targets"))
+    phases_table.add_column(i18n.t("layers in effect"))
     phases_table.add_column("use_break")
     for phase in resolved.phases:
         phases_table.add_row(
-            phase.name + (" (ships)" if phase.ships else ""),
+            i18n.t("{phase} (ships)").format(phase=phase.name) if phase.ships else phase.name,
             phase.stage or "—",
             " ".join(phase_target(phase, resolved)) or "—",
             " ".join(phase.layers) or "—",
@@ -377,7 +387,9 @@ def recipe_validate(arch: str, flavor: str, init: str) -> None:
     except (config.UnknownAxisError, RecipeChainError) as err:
         _err_console.print(f"[bold red]invalid:[/bold red] {escape(str(err))}")
         raise typer.Exit(1) from err
-    typer.echo(f"valid: {arch} × {flavor} × {init}")
+    typer.echo(
+        i18n.t("valid: {arch} × {flavor} × {init}").format(arch=arch, flavor=flavor, init=init)
+    )
 
 
 @recipe_app.command("list")
@@ -393,28 +405,32 @@ def recipe_list() -> None:
         ("init", config.available_names("init")),
     )
     for label, names in rows:
-        typer.echo(f"{label}: {', '.join(names) if names else '(none)'}")
+        typer.echo(f"{label}: {', '.join(names) if names else i18n.t('(none)')}")
 
 
 def _render_report_pretty(report: PretendReport) -> None:
     """Render the :class:`PretendReport` as ``rich`` tables (R1.1)."""
     console = Console()
-    pkgs = Table(title=f"pretend {report.arch} × {report.flavor} × {report.init}")
-    pkgs.add_column("resolved packages", style="bold cyan")
+    pkgs = Table(
+        title=i18n.t("pretend {arch} × {flavor} × {init}").format(
+            arch=report.arch, flavor=report.flavor, init=report.init
+        )
+    )
+    pkgs.add_column(i18n.t("resolved packages"), style="bold cyan")
     for atom in report.packages:
         pkgs.add_row(atom)
     if not report.packages:
         pkgs.add_row("—")
     console.print(pkgs)
 
-    cycles = Table(title="cycle-break suggestions (use_break)")
-    cycles.add_column("atom", style="bold")
+    cycles = Table(title=i18n.t("cycle-break suggestions (use_break)"))
+    cycles.add_column(i18n.t("atom"), style="bold")
     cycles.add_column("USE")
     for cb in report.cycle_breaks:
         sign = "+" if cb.enable else "-"
         cycles.add_row(cb.atom, f"{sign}{cb.flag}")
     if not report.cycle_breaks:
-        cycles.add_row("—", "(no cycles)")
+        cycles.add_row("—", i18n.t("(no cycles)"))
     console.print(cycles)
 
 
@@ -542,13 +558,17 @@ def _generation_pkgdir(arch: str, init: str) -> Path:
 def _render_factory_pretty(result: FactoryResult, arch: str, flavor: str, init: str) -> None:
     """Render the :class:`FactoryResult` as ``rich`` tables (R1.1)."""
     console = Console()
-    summary = Table(title=f"factory {arch} × {flavor} × {init}")
-    summary.add_column("field", style="bold cyan")
-    summary.add_column("value")
+    summary = Table(
+        title=i18n.t("factory {arch} × {flavor} × {init}").format(
+            arch=arch, flavor=flavor, init=init
+        )
+    )
+    summary.add_column(i18n.t("field"), style="bold cyan")
+    summary.add_column(i18n.t("value"))
     summary.add_row("pkgdir", str(result.pkgdir))
     summary.add_row("phases", " → ".join(result.phases) or "—")
     fork = str(result.fork_point) if result.fork_point is not None else "—"
-    reuse = "reused" if result.fork_point_reused else "created"
+    reuse = i18n.t("reused") if result.fork_point_reused else i18n.t("created")
     summary.add_row("fork_point", f"{fork} ({reuse})")
     if result.bootstrap is not None:
         b = result.bootstrap
@@ -557,15 +577,19 @@ def _render_factory_pretty(result: FactoryResult, arch: str, flavor: str, init: 
             f"binutils {b.binutils} · gcc {b.gcc} · locales {b.locales_before}→{b.locales_after}",
         )
     else:
-        summary.add_row("bootstrap", "— (resumed from a checkpoint)")
+        summary.add_row("bootstrap", i18n.t("— (resumed from a checkpoint)"))
     console.print(summary)
 
     summary_reuse = len(result.reused_atoms)
     if summary_reuse:
         console.print(
-            f"[green]{summary_reuse}[/green] packages installed from the generation's binpkgs"
+            i18n.tn(
+                "[green]{n}[/green] package installed from the generation's binpkgs",
+                "[green]{n}[/green] packages installed from the generation's binpkgs",
+                summary_reuse,
+            ).format(n=summary_reuse)
         )
-    atoms = Table(title="built atoms")
+    atoms = Table(title=i18n.t("built atoms"))
     atoms.add_column("built_atoms", style="green")
     for atom in result.built_atoms:
         atoms.add_row(atom)
@@ -589,9 +613,9 @@ def _render_phase_diff(diff: PhaseDiff, console: Console) -> None:
     the ``unexpected_rebuilds``, the ``use_changes`` and the ``blockers``. Used both
     in the interactive checkpoint (Task 7) and in the final per-phase report.
     """
-    table = Table(title=f"phase {diff.phase}")
-    table.add_column("field", style="bold cyan")
-    table.add_column("value")
+    table = Table(title=i18n.t("phase {phase}").format(phase=diff.phase))
+    table.add_column(i18n.t("field"), style="bold cyan")
+    table.add_column(i18n.t("value"))
     table.add_row("built", str(len(diff.built)))
     table.add_row("unexpected_rebuilds", "\n".join(diff.unexpected_rebuilds) or "—")
     table.add_row("use_changes", " ".join(diff.use_changes) or "—")
@@ -612,9 +636,9 @@ def _render_factory_stepwise_pretty(
     _render_factory_pretty(result, arch, flavor, init)
     console = Console()
     label = result.stopped_at if result.stopped_at is not None else "completed"
-    status = Table(title="stepwise")
-    status.add_column("field", style="bold cyan")
-    status.add_column("value")
+    status = Table(title=i18n.t("stepwise"))
+    status.add_column(i18n.t("field"), style="bold cyan")
+    status.add_column(i18n.t("value"))
     status.add_row("stopped_at", label)
     status.add_row("completed_phases", " → ".join(result.completed_phases) or "—")
     console.print(status)
@@ -669,9 +693,14 @@ def _on_checkpoint(phase: str, diff: PhaseDiff) -> CheckpointDecision:
     opens the shell and presents the SAME checkpoint again).
     """
     console = Console()
-    console.print(f"[bold green]checkpoint[/bold green] after phase {phase}")
+    console.print(
+        i18n.t("[bold green]checkpoint[/bold green] after phase {phase}").format(
+            phase=escape(phase)
+        )
+    )
     _render_phase_diff(diff, console)
-    choice = _prompt_choice("continue/stop/shell", ["c", "s", "sh"], "c")
+    # the answers (c, s, sh) stay English: they are what the prompt accepts
+    choice = _prompt_choice(i18n.t("continue/stop/shell"), ["c", "s", "sh"], "c")
     if choice == "s":
         return CheckpointDecision.STOP
     if choice == "sh":
@@ -1062,7 +1091,9 @@ def _resolve_stale_state(err: StaleStateError) -> tuple[bool, bool]:
         )
         raise typer.Exit(1) from err
 
-    choice = _prompt_choice("reset/proceed/cancel", ["reset", "proceed", "cancel"], "cancel")
+    choice = _prompt_choice(
+        i18n.t("reset/proceed/cancel"), ["reset", "proceed", "cancel"], "cancel"
+    )
     if choice == "cancel":
         raise typer.Exit(1) from err
     return (choice == "reset", choice == "proceed")
@@ -1071,9 +1102,13 @@ def _resolve_stale_state(err: StaleStateError) -> tuple[bool, bool]:
 def _render_assemble_pretty(result: AssembleResult, arch: str, flavor: str, init: str) -> None:
     """The ``assemble`` result as a ``rich`` table: the ISOs, then every artifact."""
     console = Console()
-    table = Table(title=f"ISO {arch} × {flavor} × {init} -- {result.name}")
-    table.add_column("field", style="bold cyan")
-    table.add_column("value")
+    table = Table(
+        title=i18n.t("ISO {arch} × {flavor} × {init} -- {name}").format(
+            arch=arch, flavor=flavor, init=init, name=result.name
+        )
+    )
+    table.add_column(i18n.t("field"), style="bold cyan")
+    table.add_column(i18n.t("value"))
     for iso in result.isos:
         table.add_row("iso", str(iso))
     for artifact in result.artifacts:
@@ -2216,17 +2251,17 @@ def _echo_kit(
     notes = notes or {}
     pad = "  " * depth
     if name in printed:
-        typer.echo(f"{pad}@{name}  (listed above)")
+        typer.echo(f"{pad}@{name}  {i18n.t('(listed above)')}")
         return
     printed.add(name)
     kit = by_name[name]
-    typer.echo(f"{pad}@{name}{'  (include:)' if kit.included else ''}")
+    typer.echo(f"{pad}@{name}{'  (include:)' if kit.included else ''}")  # include: is a recipe key
     for atom in kit.atoms:
         typer.echo(f"{pad}  {atom}")
     for atom in kit.dropped:
-        typer.echo(f"{pad}  {atom}  ({notes.get(atom, 'excluded')})")
+        typer.echo(f"{pad}  {atom}  ({notes.get(atom, i18n.t('excluded'))})")
     for entry in kit.catalog:
-        typer.echo(f"{pad}  {entry}  ({notes.get(entry, 'catalog only')})")
+        typer.echo(f"{pad}  {entry}  ({notes.get(entry, i18n.t('catalog only'))})")
     for ref in kit.refs:
         _echo_kit(by_name, ref, depth + 1, printed, notes)
 
@@ -2242,12 +2277,14 @@ def _world_notes(recipe: ResolvedRecipe, kits: list[KitView]) -> dict[str, str]:
     notes: dict[str, str] = {}
     for kit in kits:
         for atom in kit.dropped:
-            notes[atom] = f"excluded by {recipe.exclude_origin.get(atom, '?')}"
+            notes[atom] = i18n.t("excluded by {layer}").format(
+                layer=recipe.exclude_origin.get(atom, "?")
+            )
         for entry in kit.catalog:
-            notes[entry] = "catalog only"
+            notes[entry] = i18n.t("catalog only")
     for atom, stage in included_by.items():
         if atom in notes:
-            notes[atom] += f"; included by {stage}"
+            notes[atom] += i18n.t("; included by {stage}").format(stage=stage)
     return notes
 
 
@@ -2269,10 +2306,22 @@ def _show_world(target: str, inits: list[str]) -> None:
         atoms = {a for kit in kits for a in kit.atoms}
         dropped = {a for kit in kits for a in kit.dropped}
         catalog = {a for kit in kits for a in kit.catalog}
+        counts = {
+            "packages": i18n.tn("{n} package", "{n} packages", len(atoms)).format(n=len(atoms)),
+            "kits": i18n.tn("from {n} kit", "from {n} kits", len(kits)).format(n=len(kits)),
+            "excluded": i18n.tn("{n} excluded", "{n} excluded", len(dropped)).format(
+                n=len(dropped)
+            ),
+            "catalog": i18n.tn("{n} catalog only", "{n} catalog only", len(catalog)).format(
+                n=len(catalog)
+            ),
+        }
         typer.echo(
-            f"{target}/{init}: {len(atoms)} packages from {len(kits)} kits, "
-            f"{len(dropped)} excluded, {len(catalog)} catalog only "
-            f"({' -> '.join(recipe.stages) or BASE_STAGE})"
+            i18n.t("{image}: {packages} {kits}, {excluded}, {catalog} ({stages})").format(
+                image=f"{target}/{init}",
+                stages=" -> ".join(recipe.stages) or BASE_STAGE,
+                **counts,
+            )
         )
         by_name = {kit.name: kit for kit in kits}
         printed: set[str] = set()
@@ -2375,15 +2424,19 @@ def doctor_cmd(
     _apply_work_dir(work_dir)
     found = doctor.checks(config.scratch_dir())
     table = Table(title="shidashi doctor")
-    table.add_column("check", style="bold")
-    table.add_column("for")
+    table.add_column(i18n.t("check"), style="bold")
+    table.add_column(i18n.t("for"))
     table.add_column("", justify="center")
-    table.add_column("detail")
+    table.add_column(i18n.t("detail"))
     for c in found:
         mark = (
-            "[green]ok[/green]"
+            i18n.t("[green]ok[/green]")
             if c.ok
-            else ("[yellow]—[/yellow]" if c.scope in ("optional", "info") else "[red]missing[/red]")
+            else (
+                "[yellow]—[/yellow]"
+                if c.scope in ("optional", "info")
+                else i18n.t("[red]missing[/red]")
+            )
         )
         table.add_row(c.name, c.scope, mark, escape(c.detail))
     Console().print(table)
@@ -2395,9 +2448,13 @@ def doctor_cmd(
         raise typer.Exit(1)
     vm = doctor.missing(found, "vm")
     if vm:
-        typer.echo(f"builds: ok; `shidashi vm` also needs: {', '.join(c.name for c in vm)}")
+        typer.echo(
+            i18n.t("builds: ok; `shidashi vm` also needs: {checks}").format(
+                checks=", ".join(c.name for c in vm)
+            )
+        )
     else:
-        typer.echo("builds and `shidashi vm`: ok")
+        typer.echo(i18n.t("builds and `shidashi vm`: ok"))
 
 
 # story 030: the commands live in release_cli.py, which imports cli at call time
@@ -2430,7 +2487,13 @@ def kits_check(
     for problem in problems:
         typer.echo(problem)
     pins = ", ".join(f"::{name} ({path.name})" for name, path in repos.items())
-    typer.echo(f"{atoms} atoms checked against {pins}: {len(problems)} problem(s)")
+    checked = i18n.tn("{n} atom checked", "{n} atoms checked", atoms).format(n=atoms)
+    found_problems = i18n.tn("{n} problem", "{n} problems", len(problems)).format(n=len(problems))
+    typer.echo(
+        i18n.t("{checked} against {pins}: {problems}").format(
+            checked=checked, pins=pins, problems=found_problems
+        )
+    )
     if problems:
         raise typer.Exit(1)
 
@@ -2608,7 +2671,11 @@ def vm_start(
         with vm.hold_cid(cid) as cid_lock:
             session.start(cid_lock=cid_lock)
             if wait:
-                typer.echo(f"ssh up after {session.wait_ssh()} s (vsock/{cid})")
+                typer.echo(
+                    i18n.t("ssh up after {seconds} s (vsock/{cid})").format(
+                        seconds=session.wait_ssh(), cid=cid
+                    )
+                )
     except vm.VmError as err:
         raise _vm_error(err) from err
 
@@ -2733,17 +2800,20 @@ def vm_test(
 
     console = Console()
     for name, result in report["firmwares"].items():
+        verdict = i18n.t("PASSED") if result["passed"] else i18n.t("FAILED")
         table = Table(
-            title=f"boot test {name}: "
-            f"{'PASSED' if result['passed'] else 'FAILED'} "
-            f"(ssh after {result['ssh_after_s']} s)"
+            title=i18n.t("boot test {firmware}: {verdict} (ssh after {seconds} s)").format(
+                firmware=name, verdict=verdict, seconds=result["ssh_after_s"]
+            )
         )
-        table.add_column("check")
-        table.add_column("result")
-        table.add_column("got")
+        table.add_column(i18n.t("check"))
+        table.add_column(i18n.t("result"))
+        table.add_column(i18n.t("got"))
         for check in result["checks"]:
             table.add_row(
-                check["check"], "ok" if check["passed"] else "FAIL", escape(str(check["got"]))[:80]
+                check["check"],
+                i18n.t("ok") if check["passed"] else i18n.t("FAIL"),
+                escape(str(check["got"]))[:80],
             )
         for metric, value in result["metrics"].items():
             table.add_row(f"[dim]{metric}[/dim]", "", escape(value)[:80])
@@ -2999,7 +3069,7 @@ def kyomei_command(
             target = kyomei.choose(mdns.browse(kyomei_protocol.SERVICE, wait))
         code = None
         while not trusted:
-            typed = _read_code("Code shown on the worker's screen")
+            typed = _read_code(i18n.t("Code shown on the worker's screen"))
             try:
                 code = kyomei_protocol.normalize_code(typed)
                 break
@@ -3034,8 +3104,10 @@ def kyomei_command(
                 new = kyomei_protocol.fingerprint(paired.welcome.host_key)
                 try:
                     replace = typer.confirm(
-                        f"Replace it with {paired.address}'s key {new}? Compare it with the "
-                        "host key on the worker's screen",
+                        i18n.t(
+                            "Replace it with {address}'s key {fingerprint}? Compare it with "
+                            "the host key on the worker's screen"
+                        ).format(address=paired.address, fingerprint=new),
                         default=False,
                     )
                 except typer.Abort:
@@ -3062,14 +3134,18 @@ def kyomei_command(
     ) as err:
         _err_console.print(f"[bold red]error:[/bold red] {escape(str(err))}")
         raise typer.Exit(1) from err
-    typer.echo(f"paired {entry.name} at {entry.address}")
-    typer.echo(f"host key {entry.host_key_fingerprint} pinned")
+    typer.echo(i18n.t("paired {name} at {address}").format(name=entry.name, address=entry.address))
+    typer.echo(
+        i18n.t("host key {fingerprint} pinned").format(fingerprint=entry.host_key_fingerprint)
+    )
     if paired.trusted:
         typer.echo(
-            "trusted on first use: the key was not authenticated by a code; "
-            "check that this fingerprint matches the one on the worker's screen"
+            i18n.t(
+                "trusted on first use: the key was not authenticated by a code; "
+                "check that this fingerprint matches the one on the worker's screen"
+            )
         )
-    typer.echo(f"reach it with: ssh {entry.name} (or shidashi worker ...)")
+    typer.echo(i18n.t("reach it with: ssh {name} (or shidashi worker ...)").format(name=entry.name))
 
 
 def _wifi_passphrase(ssid: str) -> str:
@@ -3139,15 +3215,19 @@ def worker_provision(
     except (provision.ProvisionError, OSError) as err:
         _err_console.print(f"[bold red]error:[/bold red] {escape(str(err))}")
         raise typer.Exit(1) from err
-    typer.echo(f"provisioned {done.name}")
-    typer.echo(f"host key: {done.fingerprint}")
+    typer.echo(i18n.t("provisioned {name}").format(name=done.name))
+    typer.echo(i18n.t("host key: {fingerprint}").format(fingerprint=done.fingerprint))
     typer.echo(f"ISO: {done.iso_path}")
     typer.echo(
-        f"write it with: sudo dd if={done.iso_path} of=/dev/sdX bs=4M conv=fsync status=progress"
+        i18n.t("write it with: {command}").format(
+            command=f"sudo dd if={done.iso_path} of=/dev/sdX bs=4M conv=fsync status=progress"
+        )
     )
     typer.echo(
-        "the medium holds this worker's private key: keep it like a credential, "
-        "and run with --replace if it is lost"
+        i18n.t(
+            "the medium holds this worker's private key: keep it like a credential, "
+            "and run with --replace if it is lost"
+        )
     )
     if done.leftover is not None:
         _err_console.print(
@@ -3204,46 +3284,71 @@ def _size(nbytes: int) -> str:
 def _job_names(units: tuple[str, ...], ci: tuple[str, ...] = ()) -> str:
     names = [u.removeprefix("shidashi-job-") for u in units]
     names += [f"{u.removeprefix('shidashi-ci-')} (ci)" for u in ci]
-    return ", ".join(names) or "none"
+    return ", ".join(names) or i18n.t("none")
 
 
 def _print_worker_status(st: worker_mod.WorkerStatus, address: str) -> None:
     """``status NAME``: every field of the probe (R1.1-R1.3)."""
     if not st.reachable:
-        typer.echo(f"{st.name} ({address}): unreachable: {_unreachable_reason(st, address)}")
+        typer.echo(
+            i18n.t("{name} ({address}): unreachable: {reason}").format(
+                name=st.name, address=address, reason=_unreachable_reason(st, address)
+            )
+        )
         return
-    runs = ", ".join(st.runnable_arches) or "none"
-    smart = st.smart if st.smart is not None else "unknown: the image has no smartctl"
+    none = i18n.t("none")
+    runs = ", ".join(st.runnable_arches) or none
+    smart = st.smart if st.smart is not None else i18n.t("unknown: the image has no smartctl")
+    threads = i18n.tn("{n} thread", "{n} threads", st.threads).format(n=st.threads)
     rows = [
-        ("cpu", f"{st.cpu_model or 'unknown'}, {st.threads} threads"),
-        ("targets", f"{runs} (highest: {st.max_target or 'none'})"),
-        ("load", f"{st.load1:.2f} (1 min)"),
-        ("memory", f"{_size(st.mem_available)} available of {_size(st.mem_total)}"),
-        ("work disk", _work_disk(st)),
-        ("image", st.image or "unknown (no BUILD_ID)"),
+        (
+            i18n.t("cpu"),
+            i18n.t("{model}, {threads}").format(
+                model=st.cpu_model or i18n.t("unknown"), threads=threads
+            ),
+        ),
+        (
+            i18n.t("targets"),
+            i18n.t("{arches} (highest: {target})").format(
+                arches=runs, target=st.max_target or none
+            ),
+        ),
+        (i18n.t("load"), i18n.t("{load} (1 min)").format(load=f"{st.load1:.2f}")),
+        (
+            i18n.t("memory"),
+            i18n.t("{available} available of {total}").format(
+                available=_size(st.mem_available), total=_size(st.mem_total)
+            ),
+        ),
+        (i18n.t("work disk"), _work_disk(st)),
+        (i18n.t("image"), st.image or i18n.t("unknown (no BUILD_ID)")),
         ("smart", smart),
-        ("checkpoints", ", ".join(st.trunks) or "none"),
-        ("jobs", _job_names(st.jobs, st.ci_jobs)),
-        ("accepts jobs", "yes" if st.accepts_jobs else "no"),
+        (i18n.t("checkpoints"), ", ".join(st.trunks) or none),
+        (i18n.t("jobs"), _job_names(st.jobs, st.ci_jobs)),
+        (i18n.t("accepts jobs"), i18n.t("yes") if st.accepts_jobs else i18n.t("no")),
     ]
-    typer.echo(f"{st.name} ({address}): reachable")
+    typer.echo(i18n.t("{name} ({address}): reachable").format(name=st.name, address=address))
+    # 13 columns fit every English label; a translation may need more
+    width = max(13, *(len(label) for label, _ in rows))
     for label, value in rows:
-        typer.echo(f"  {label:<13} {value}")
+        typer.echo(f"  {label:<{width}} {value}")
 
 
 def _work_disk(st: worker_mod.WorkerStatus) -> str:
     """Free space on the work disk, or why there is none to report (R1.2)."""
     if not st.accepts_jobs:
-        return f"no work disk ({worker_mod.WORK} not mounted: takes no jobs)"
+        return i18n.t("no work disk ({path} not mounted: takes no jobs)").format(
+            path=worker_mod.WORK
+        )
     if st.work_free is None:
-        return f"{worker_mod.WORK} mounted, free space unknown"
-    return f"{_size(st.work_free)} free on {worker_mod.WORK}"
+        return i18n.t("{path} mounted, free space unknown").format(path=worker_mod.WORK)
+    return i18n.t("{size} free on {path}").format(size=_size(st.work_free), path=worker_mod.WORK)
 
 
 def _unreachable_reason(st: worker_mod.WorkerStatus, address: str) -> str:
     """The cause alone, on one line: the name and address are already on it."""
     reason = (st.reason or "").removeprefix(f"{st.name} ({address}) is unreachable")
-    return " ".join(reason.removeprefix(":").split()) or "no answer"
+    return " ".join(reason.removeprefix(":").split()) or i18n.t("no answer")
 
 
 def _status_line(
@@ -3251,13 +3356,24 @@ def _status_line(
 ) -> str:
     """One line of the listing (R1.4)."""
     if isinstance(outcome, Exception):
-        return f"{entry.name}  refused: {' '.join(str(outcome).split())}"
+        # the refusal is an error message: it stays English
+        return i18n.t("{name}  refused: {reason}").format(
+            name=entry.name, reason=" ".join(str(outcome).split())
+        )
     st = outcome
     if not st.reachable:
-        return f"{st.name}  unreachable: {_unreachable_reason(st, entry.address or '-')}"
-    return (
-        f"{st.name}  reachable  max {st.max_target or 'none'}  {st.threads} threads  "
-        f"load {st.load1:.2f}  {_work_disk(st)}  jobs: {_job_names(st.jobs)}"
+        return i18n.t("{name}  unreachable: {reason}").format(
+            name=st.name, reason=_unreachable_reason(st, entry.address or "-")
+        )
+    return i18n.t(
+        "{name}  reachable  max {target}  {threads}  load {load}  {disk}  jobs: {jobs}"
+    ).format(
+        name=st.name,
+        target=st.max_target or i18n.t("none"),
+        threads=i18n.tn("{n} thread", "{n} threads", st.threads).format(n=st.threads),
+        load=f"{st.load1:.2f}",
+        disk=_work_disk(st),
+        jobs=_job_names(st.jobs),
     )
 
 
@@ -3336,7 +3452,7 @@ def worker_status(
         _print_worker_status(probed, tried[-1])
         raise typer.Exit(0 if probed.reachable else 1)
     if not registry:
-        typer.echo("no paired worker (pair one with: shidashi kyomei)")
+        typer.echo(i18n.t("no paired worker (pair one with: shidashi kyomei)"))
         return
     every = [registry[name] for name in sorted(registry)]
     # a provisioned worker never reached has no address to probe: say how to reach it
@@ -3346,7 +3462,8 @@ def worker_status(
     with ThreadPoolExecutor(max_workers=max(1, min(8, len(entries)))) as pool:
         outcomes = list(pool.map(lambda e: _probe_or_error(e, _LIST_TIMEOUT), entries))
     lines = {
-        name: f"{name}  not reached yet: run shidashi worker status {name}" for name in unreached
+        name: i18n.t("{name}  not reached yet: run shidashi worker status {name}").format(name=name)
+        for name in unreached
     }
     for entry, outcome in zip(entries, outcomes, strict=True):
         if isinstance(outcome, worker_mod.WorkerStatus):
@@ -3606,12 +3723,16 @@ def worker_unlock(
             ownership.discard(arch)  # unreadable: nobody can be told apart, --force removes it
         except ownership.LockError as gone:
             raise _worker_error(gone) from gone
-        typer.echo(f"removed {arch}'s unreadable owner lock ({err.path})")
+        typer.echo(
+            i18n.t("removed {arch}'s unreadable owner lock ({path})").format(
+                arch=arch, path=err.path
+            )
+        )
         return
     except ownership.LockError as err:
         raise _worker_error(err) from err
     if holder is None:
-        typer.echo(f"{arch} is not locked")
+        typer.echo(i18n.t("{arch} is not locked").format(arch=arch))
         return
     who = _holder_text(holder)
     if not force:
@@ -3628,7 +3749,7 @@ def worker_unlock(
         ownership.release(arch, expected=holder)
     except (ownership.OwnedElsewhere, ownership.LockError) as err:
         raise _worker_error(err) from err
-    typer.echo(f"released {arch} (was held by {who})")
+    typer.echo(i18n.t("released {arch} (was held by {holder})").format(arch=arch, holder=who))
 
 
 @worker_app.command("cache-owner")
@@ -3659,8 +3780,10 @@ def worker_cache_owner(
     try:
         entry = _paired(worker)
         if arch is None:
-            owned = ", ".join(entry.cache_archs) or "no arch"
-            typer.echo(f"{worker} owns the cache of: {owned}")
+            owned = ", ".join(entry.cache_archs) or i18n.t("no arch")
+            typer.echo(
+                i18n.t("{worker} owns the cache of: {archs}").format(worker=worker, archs=owned)
+            )
             return
         registry = workers_mod.load_registry(path)
         owner = workers_mod.cache_owner(registry, arch)
@@ -3675,8 +3798,12 @@ def worker_cache_owner(
             else tuple(dict.fromkeys((*entry.cache_archs, arch)))
         )
         if wanted == entry.cache_archs:
-            state = "does not own" if off else "already owns"
-            typer.echo(f"{worker} {state} {arch}'s cache")
+            state = (
+                i18n.t("{worker} does not own {arch}'s cache")
+                if off
+                else i18n.t("{worker} already owns {arch}'s cache")
+            )
+            typer.echo(state.format(worker=worker, arch=arch))
             return
         # a running job pushes and pulls by the ownership it started with
         holder = ownership.current(arch)
@@ -3691,9 +3818,13 @@ def worker_cache_owner(
         raise _worker_error(err) from err
     audit.current().event("worker.cache_owner", worker=worker, arch=arch, owned=not off)
     if off:
-        typer.echo(f"{arch}'s cache is under the host again (was on {worker})")
+        typer.echo(
+            i18n.t("{arch}'s cache is under the host again (was on {worker})").format(
+                arch=arch, worker=worker
+            )
+        )
     else:
-        typer.echo(f"{arch}'s cache now stays on {worker}")
+        typer.echo(i18n.t("{arch}'s cache now stays on {worker}").format(arch=arch, worker=worker))
 
 
 @worker_app.command("poweroff")
@@ -3722,7 +3853,7 @@ def worker_poweroff(
         _on_worker(_paired(worker), address, power_off)
     except (workers_mod.RegistryError, remote_mod.RemoteError, OSError) as err:
         raise _worker_error(err) from err
-    typer.echo(f"{worker} is powering off")
+    typer.echo(i18n.t("{worker} is powering off").format(worker=worker))
 
 
 def _job_errors() -> tuple[type[Exception], ...]:
@@ -3851,7 +3982,11 @@ def worker_sync_push(
     except KeyboardInterrupt:
         typer.echo("interrupted: run the same command again to resume the transfer", err=True)
         raise typer.Exit(130) from None
-    typer.echo(f"pushed {arch} ({init}) to {worker}: {_size(sent)} sent")
+    typer.echo(
+        i18n.t("pushed {arch} ({init}) to {worker}: {size} sent").format(
+            arch=arch, init=init, worker=worker, size=_size(sent)
+        )
+    )
 
 
 #: What a pull without the binhost leaves alone (R6.8).
@@ -3986,10 +4121,14 @@ def worker_sync_pull(
         raise typer.Exit(130) from None
     owner = owners[0]
 
-    typer.echo(f"pulled from {worker}: {_size(pulled.bytes)} received")
+    typer.echo(
+        i18n.t("pulled from {worker}: {size} received").format(
+            worker=worker, size=_size(pulled.bytes)
+        )
+    )
     _print_results(pulled.log, pulled.isos, pulled.run_ids)
     if arch is not None and pulled.binhost:
-        typer.echo(f"  binhost: {arch}'s binpkgs and index updated")
+        typer.echo("  " + i18n.t("binhost: {arch}'s binpkgs and index updated").format(arch=arch))
     elif arch is not None:
         typer.echo(f"binhost not pulled: {kept or pulled.binhost_reason}", err=True)
     if owner is not None:
@@ -3997,8 +4136,27 @@ def worker_sync_pull(
             ownership.release(owner.arch, expected=owner)
         except (ownership.OwnedElsewhere, ownership.LockError) as err:
             raise _worker_error(err) from err
-        typer.echo(f"released {owner.arch}'s owner lock (job {owner.job} ended, results pulled)")
+        typer.echo(
+            i18n.t("released {arch}'s owner lock (job {job} ended, results pulled)").format(
+                arch=owner.arch, job=owner.job
+            )
+        )
 
 
 if __name__ == "__main__":
+    app()
+
+
+def main() -> None:
+    """The ``shidashi`` console script: load the user's language, then run :data:`app`.
+
+    Only this entry point loads a catalog. ``app()`` itself -- what tests, the
+    parallel children and a worker's relayed commands run -- stays English, so a
+    parent that reads a child's output never meets a translation.
+    """
+    try:
+        i18n.init()
+    except (OSError, ValueError) as err:
+        # A broken catalog must never stop a build: the text stays English.
+        _err_console.print(f"[yellow]warning:[/yellow] translations not loaded: {escape(str(err))}")
     app()
