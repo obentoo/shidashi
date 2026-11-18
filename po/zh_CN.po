@@ -1705,7 +1705,8 @@ msgstr[0] "将删除 {arch} 的 {n} 个分叉点（{size}）"
 #: shidashi/fork_points_cli.py
 #, python-brace-format
 msgid "{deleting}; {n} kept ({size}) -- {note}"
-msgstr "{deleting}；保留 {n} 个（{size}）—— {note}"
+msgid_plural "{deleting}; {n} kept ({size}) -- {note}"
+msgstr[0] "{deleting}；保留 {n} 个（{size}）—— {note}"
 
 #: shidashi/fork_points_cli.py
 #, python-brace-format
@@ -1721,7 +1722,8 @@ msgstr[0] "已删除 {arch} 的 {n} 个分叉点（{size}）"
 #: shidashi/fork_points_cli.py
 #, python-brace-format
 msgid "{deleted}; kept {n} ({size}) -- {note}"
-msgstr "{deleted}；保留了 {n} 个（{size}）—— {note}"
+msgid_plural "{deleted}; kept {n} ({size}) -- {note}"
+msgstr[0] "{deleted}；保留了 {n} 个（{size}）—— {note}"
 
 #: shidashi/i18n_help.py
 msgid "Arguments"

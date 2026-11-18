@@ -1593,7 +1593,9 @@ msgstr[1] ""
 #: shidashi/fork_points_cli.py
 #, python-brace-format
 msgid "{deleting}; {n} kept ({size}) -- {note}"
-msgstr ""
+msgid_plural "{deleting}; {n} kept ({size}) -- {note}"
+msgstr[0] ""
+msgstr[1] ""
 
 #: shidashi/fork_points_cli.py
 #, python-brace-format
@@ -1610,7 +1612,9 @@ msgstr[1] ""
 #: shidashi/fork_points_cli.py
 #, python-brace-format
 msgid "{deleted}; kept {n} ({size}) -- {note}"
-msgstr ""
+msgid_plural "{deleted}; kept {n} ({size}) -- {note}"
+msgstr[0] ""
+msgstr[1] ""
 
 #: shidashi/i18n_help.py
 msgid "Arguments"

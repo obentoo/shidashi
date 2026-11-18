@@ -1731,7 +1731,10 @@ msgstr[2] "{n} точек ветвления {arch} будут удалены ({
 #: shidashi/fork_points_cli.py
 #, python-brace-format
 msgid "{deleting}; {n} kept ({size}) -- {note}"
-msgstr "{deleting}; {n} сохранено ({size}) -- {note}"
+msgid_plural "{deleting}; {n} kept ({size}) -- {note}"
+msgstr[0] "{deleting}; сохранена {n} ({size}) -- {note}"
+msgstr[1] "{deleting}; сохранены {n} ({size}) -- {note}"
+msgstr[2] "{deleting}; сохранено {n} ({size}) -- {note}"
 
 #: shidashi/fork_points_cli.py
 #, python-brace-format
@@ -1749,7 +1752,10 @@ msgstr[2] "удалено {n} точек ветвления {arch} ({size})"
 #: shidashi/fork_points_cli.py
 #, python-brace-format
 msgid "{deleted}; kept {n} ({size}) -- {note}"
-msgstr "{deleted}; сохранено {n} ({size}) -- {note}"
+msgid_plural "{deleted}; kept {n} ({size}) -- {note}"
+msgstr[0] "{deleted}; сохранена {n} ({size}) -- {note}"
+msgstr[1] "{deleted}; сохранены {n} ({size}) -- {note}"
+msgstr[2] "{deleted}; сохранено {n} ({size}) -- {note}"
 
 #: shidashi/i18n_help.py
 msgid "Arguments"

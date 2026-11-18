@@ -1718,7 +1718,9 @@ msgstr[1] "se borrarían {n} puntos de bifurcación de {arch} ({size})"
 #: shidashi/fork_points_cli.py
 #, python-brace-format
 msgid "{deleting}; {n} kept ({size}) -- {note}"
-msgstr "{deleting}; se conservan {n} ({size}) -- {note}"
+msgid_plural "{deleting}; {n} kept ({size}) -- {note}"
+msgstr[0] "{deleting}; se conserva {n} ({size}) -- {note}"
+msgstr[1] "{deleting}; se conservan {n} ({size}) -- {note}"
 
 #: shidashi/fork_points_cli.py
 #, python-brace-format
@@ -1735,7 +1737,9 @@ msgstr[1] "borrados {n} puntos de bifurcación de {arch} ({size})"
 #: shidashi/fork_points_cli.py
 #, python-brace-format
 msgid "{deleted}; kept {n} ({size}) -- {note}"
-msgstr "{deleted}; conservados {n} ({size}) -- {note}"
+msgid_plural "{deleted}; kept {n} ({size}) -- {note}"
+msgstr[0] "{deleted}; conservado {n} ({size}) -- {note}"
+msgstr[1] "{deleted}; conservados {n} ({size}) -- {note}"
 
 #: shidashi/i18n_help.py
 msgid "Arguments"

@@ -102,7 +102,11 @@ def gc_fork_points(
             len(plan.delete),
         ).format(n=len(plan.delete), arch=arch, size=_fork_points_size(plan.delete))
         typer.echo(
-            i18n.t("{deleting}; {n} kept ({size}) -- {note}").format(
+            i18n.tn(
+                "{deleting}; {n} kept ({size}) -- {note}",
+                "{deleting}; {n} kept ({size}) -- {note}",
+                len(plan.keep),
+            ).format(
                 deleting=deleting,
                 n=len(plan.keep),
                 size=_fork_points_size(plan.keep),
@@ -133,7 +137,11 @@ def gc_fork_points(
         len(deleted),
     ).format(n=len(deleted), arch=arch, size=_fork_points_size(deleted))
     typer.echo(
-        i18n.t("{deleted}; kept {n} ({size}) -- {note}").format(
+        i18n.tn(
+            "{deleted}; kept {n} ({size}) -- {note}",
+            "{deleted}; kept {n} ({size}) -- {note}",
+            len(plan.keep),
+        ).format(
             deleted=deleted_line,
             n=len(plan.keep),
             size=_fork_points_size(plan.keep),
