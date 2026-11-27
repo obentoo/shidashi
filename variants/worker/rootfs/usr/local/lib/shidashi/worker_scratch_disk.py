@@ -46,6 +46,7 @@ SCRATCH_PATHS = {
 }
 #: Where the new filesystem's top level is mounted while its subvolumes are filled.
 STAGING = "run/shidashi-scratch"
+_STAGING_OPTIONS = "subvolid=5,noatime,compress=zstd:1"
 #: A job or CI unit running now would write into a path while it is moved.
 _JOB_UNITS = ("shidashi-job-*", "shidashi-ci-*")
 
@@ -93,7 +94,9 @@ def apply(
         staging.mkdir(parents=True, exist_ok=True)
     except OSError as err:
         raise DiskError(f"cannot create {staging}: {err}") from err
-    run_checked(run, ["mount", "-o", "subvolid=5", part, str(staging)])
+    # the fstab's compression too: what the copy writes stays as the mounts will write it
+    # (bentoo-lab, 2026-11-27: without it the first 91 GiB landed uncompressed)
+    run_checked(run, ["mount", "-o", _STAGING_OPTIONS, part, str(staging)])
     moved = _fill(run, work, staging)
     run_checked(run, ["umount", str(staging)])
 

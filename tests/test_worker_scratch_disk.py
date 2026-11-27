@@ -187,7 +187,8 @@ def test_apply_formats_fills_clears_and_mounts_in_order(
     work, staging = env["work"], env["root"] / "run" / "shidashi-scratch"
     mkfs = runner.first("mkfs.btrfs")
     assert LABEL in runner.calls[mkfs] and runner.calls[mkfs][-1] == "/dev/sda1"
-    stage = runner.first("mount", "subvolid=5")
+    stage = runner.first("mount", sd._STAGING_OPTIONS)
+    assert "compress=zstd:1" in sd._STAGING_OPTIONS.split(",")  # as the fstab rows write
     creates = [i for i, c in enumerate(runner.calls) if c[:3] == ["btrfs", "subvolume", "create"]]
     assert [runner.calls[i][3] for i in creates] == [str(staging / sv) for sv in sd.SCRATCH_PATHS]
     copy = runner.first("cp")
@@ -197,9 +198,7 @@ def test_apply_formats_fills_clears_and_mounts_in_order(
     delete = runner.first("find")
     assert runner.calls[delete][1] == str(work / "cache" / "distfiles")
     assert runner.tools().count("find") == 1
-    mounts = [
-        c[1] for c in runner.calls if os.path.basename(c[0]) == "mount" and "subvolid=5" not in c
-    ]
+    mounts = [c[1] for c in runner.calls if os.path.basename(c[0]) == "mount" and "-o" not in c]
     assert mounts == [str(work / p) for p in sd.SCRATCH_PATHS.values()]
     first_mount = runner.first("mount", str(work / "scratch"))
     assert mkfs < stage < creates[0] < copy < unstage < delete < first_mount
