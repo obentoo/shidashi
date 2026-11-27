@@ -671,6 +671,10 @@ msgid "The disk's serial (lsblk -o NAME,SERIAL)."
 msgstr "O número de série do disco (lsblk -o NAME,SERIAL)."
 
 #: shidashi/cli.py
+msgid "Make it the SHIDASHI-SCRATCH disk instead: the temporaries and re-downloadable caches under /mnt/work move onto it."
+msgstr "Em vez disso, fazer dele o disco SHIDASHI-SCRATCH: os temporários e os caches que podem ser baixados de novo, em /mnt/work, passam para ele."
+
+#: shidashi/cli.py
 msgid ""
 "A worker's CPU, targets, load, memory, work disk, image, SMART, checkpoints and\n"
 "jobs; without a name, one line per paired worker (at most 5 s each)."

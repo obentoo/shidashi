@@ -98,6 +98,14 @@ def test_fstab_boots_without_the_disk_without_waiting_for_it() -> None:
     assert "x-systemd.device-timeout=10s" in options
 
 
+def test_fstab_swaps_on_the_work_disk_file_without_blocking_boot() -> None:
+    """The root is in RAM: without this the swap file is on only when weekly-lab.sh turns it
+    on, and a reboot leaves a 48 GB worker running 32 GB jobs with no swap."""
+    (row,) = [row for row in _fstab_entries() if row[2] == "swap"]
+    assert row[0] == "/mnt/work/swapfile"
+    assert "nofail" in row[3].split(",")
+
+
 def test_fstab_never_names_a_disk_by_its_kernel_name() -> None:
     """A renamed device (sda <-> sdb) must never be mounted, let alone written."""
     for row in _fstab_entries():

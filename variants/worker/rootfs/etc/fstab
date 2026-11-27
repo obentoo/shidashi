@@ -5,3 +5,20 @@
 # nofail + a 10 s device timeout: a worker without the disk boots on at once instead
 # of waiting 90 s and dropping to emergency mode; its pairing then stays in RAM.
 LABEL=SHIDASHI-WORK /mnt/work btrfs noatime,compress=zstd:1,nofail,x-systemd.device-timeout=10s 0 0
+#
+# The scratch disk (`shidashi worker disk-init --scratch`, worker_scratch_disk.py): one
+# subvolume per temporary or re-downloadable path, mounted over it. systemd orders each
+# row after /mnt/work (a mount beneath another requires it), so none lands on the RAM
+# root when the work disk is missing; nofail: without this disk the paths are plain
+# directories on the work disk again.
+LABEL=SHIDASHI-SCRATCH /mnt/work/scratch btrfs subvol=@scratch,noatime,compress=zstd:1,nofail,x-systemd.device-timeout=10s 0 0
+LABEL=SHIDASHI-SCRATCH /mnt/work/tmp btrfs subvol=@tmp,noatime,compress=zstd:1,nofail,x-systemd.device-timeout=10s 0 0
+LABEL=SHIDASHI-SCRATCH /mnt/work/cache/distfiles btrfs subvol=@distfiles,noatime,compress=zstd:1,nofail,x-systemd.device-timeout=10s 0 0
+LABEL=SHIDASHI-SCRATCH /mnt/work/cache/ccache btrfs subvol=@ccache,noatime,compress=zstd:1,nofail,x-systemd.device-timeout=10s 0 0
+LABEL=SHIDASHI-SCRATCH /mnt/work/cache/binpkgs btrfs subvol=@binpkgs,noatime,compress=zstd:1,nofail,x-systemd.device-timeout=10s 0 0
+#
+# The root is in RAM and has no swap of its own, and a 32 GB build container or VM on this
+# 48 GB host was one allocation from the OOM killer (2026-11-20). The file is 16 GB, NOCOW,
+# made once on the work disk; nofail keeps a worker without the disk (or without the file)
+# booting. systemd orders a swap file after the mount holding it.
+/mnt/work/swapfile none swap nofail 0 0

@@ -575,6 +575,10 @@ msgid "The disk's serial (lsblk -o NAME,SERIAL)."
 msgstr ""
 
 #: shidashi/cli.py
+msgid "Make it the SHIDASHI-SCRATCH disk instead: the temporaries and re-downloadable caches under /mnt/work move onto it."
+msgstr ""
+
+#: shidashi/cli.py
 msgid ""
 "A worker's CPU, targets, load, memory, work disk, image, SMART, checkpoints and\n"
 "jobs; without a name, one line per paired worker (at most 5 s each)."

@@ -205,3 +205,17 @@ def test_disk_init_passes_the_carried_expected_fingerprint_to_the_transport(
     runner.invoke(app, ["worker", "disk-init", "bentoo-lab", "/dev/sda", "--confirm", SERIAL])
     rem = fake_remote.calls[0]["remote"]
     assert rem.expected_fingerprint == _fingerprint(_ed25519_line("bentoo-lab"))
+
+
+def test_disk_init_scratch_runs_the_workers_scratch_init_with_a_longer_wait(
+    fake_remote: _Remote,
+) -> None:
+    """The flag comes before the two words, which stay exactly two; the scratch disk
+    receives a copy of the caches it takes over, hence the hour."""
+    result = runner.invoke(
+        app, ["worker", "disk-init", "bentoo-lab", "/dev/sdb", "--confirm", SERIAL, "--scratch"]
+    )
+    assert result.exit_code == 0, _out(result)
+    (call,) = fake_remote.calls
+    assert _words_after_disk_init(call["command"]) == ["--scratch", "/dev/sdb", SERIAL]
+    assert call["timeout"] == 3600

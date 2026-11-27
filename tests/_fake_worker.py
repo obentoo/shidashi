@@ -203,6 +203,8 @@ MEM_AVAILABLE_KB = 30408704  # 29 GiB
 WORK_AVAIL = 500_107_862_016  # bytes free on the work disk (~465.8 GiB)
 WORK_SIZE = 1_000_204_886_016
 ROOT_AVAIL = 8 * GIB  # the RAM root: what df reports for an UNMOUNTED /mnt/work
+#: Paths a scratch disk is mounted over (``shidashi.worker.SCRATCH_PATHS``).
+SCRATCH_SUBPATHS = ("scratch", "tmp", "cache/distfiles", "cache/ccache", "cache/binpkgs")
 BUILD_ID = "20261005T101500Z-a1b2c3"
 
 #: Commands the worker side must never reach on the host, or that a shim replaces.
@@ -1505,7 +1507,24 @@ def _df(argv: list[str]) -> int:
             sys.stderr.write(f"df: {p}: No such file or directory\n")
             rc = 1
             continue
-        if cfg["mounted"] and (norm == work or norm.startswith(work + "/")):
+        scratch = next(
+            (
+                f"{work}/{sub}"
+                for sub in SCRATCH_SUBPATHS
+                if norm == f"{work}/{sub}" or norm.startswith(f"{work}/{sub}/")
+            ),
+            None,
+        )
+        if cfg["mounted"] and scratch and cfg.get("scratch_avail") is not None:
+            # a scratch disk mounted over that path (``set(scratch_avail=...)``)
+            src, fstype, size, avail, tgt = (
+                "/dev/sdb1",
+                "btrfs",
+                cfg["df_size"],
+                cfg["scratch_avail"],
+                scratch,
+            )
+        elif cfg["mounted"] and (norm == work or norm.startswith(work + "/")):
             src, fstype, size, avail, tgt = (
                 "/dev/sda1",
                 "btrfs",
