@@ -94,6 +94,10 @@ slim:
     - /usr/bin/blkid
     - /usr/bin/umount
     - /usr/bin/lsblk
+    # worker_scratch_disk.py (also btrfs, systemctl, mount and umount, listed elsewhere)
+    - /usr/bin/cp
+    - /usr/bin/chmod
+    - /usr/bin/find
     # the console entry (usr/local/bin/shidashi)
     - /usr/bin/bash
     - /usr/bin/sudo

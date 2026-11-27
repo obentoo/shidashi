@@ -3255,6 +3255,16 @@ def worker_disk_init(
     confirm: Annotated[
         str, typer.Option("--confirm", help="The disk's serial (lsblk -o NAME,SERIAL).")
     ],
+    scratch: Annotated[
+        bool,
+        typer.Option(
+            "--scratch",
+            help=(
+                "Make it the SHIDASHI-SCRATCH disk instead: the temporaries and "
+                "re-downloadable caches under /mnt/work move onto it."
+            ),
+        ),
+    ] = False,
 ) -> None:
     """Make DISK the worker's SHIDASHI-WORK disk -- only with its serial confirmed."""
     import shlex
@@ -3267,10 +3277,13 @@ def worker_disk_init(
         if entry is None:
             known = ", ".join(sorted(registry)) or "none"
             raise workers.RegistryError(f"no paired worker named {worker!r} (paired: {known})")
+        flag = "--scratch " if scratch else ""
         result = remote.run(
             remote.Remote.for_worker(entry),
-            f"/usr/local/bin/shidashi disk-init {shlex.quote(disk)} {shlex.quote(confirm)}",
-            timeout=600,
+            f"/usr/local/bin/shidashi disk-init {flag}{shlex.quote(disk)} {shlex.quote(confirm)}",
+            # the scratch disk receives a copy of the caches it takes over (84 GiB on
+            # bentoo-lab, 2026-11-27: minutes at SATA speed)
+            timeout=3600 if scratch else 600,
         )
     except (workers.RegistryError, remote.RemoteError) as err:
         _err_console.print(f"[bold red]error:[/bold red] {escape(str(err))}")

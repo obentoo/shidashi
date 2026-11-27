@@ -527,6 +527,19 @@ shidashi worker disk-init bentoo-lab /dev/sda --confirm <serial>
 It refuses a mounted disk, a serial that is not exactly that disk's, and a second
 `SHIDASHI-WORK` disk.
 
+A second disk can take the writes the worker can lose. `--scratch` makes it the
+`SHIDASHI-SCRATCH` disk: one btrfs subvolume each for `scratch`, `tmp`, `cache/distfiles`,
+`cache/ccache` and `cache/binpkgs`, mounted over those paths under `/mnt/work` by the image's
+fstab. What they already hold moves onto it (removed from the work disk only after the copy).
+It needs the work disk mounted and no job running. Without the scratch disk, the paths are
+plain directories on the work disk again. A push checks the free space on each disk separately.
+
+```sh
+shidashi worker disk-init bentoo-lab /dev/sdb --confirm <serial> --scratch
+```
+
+The image also turns on `/mnt/work/swapfile` (16 GB, made once on the work disk) at boot.
+
 A worker can also pair with nobody at its screen: boot it with this host's kernel parameter
 (added in GRUB, or served by network boot), then pair without a code:
 

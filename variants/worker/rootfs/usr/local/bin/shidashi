@@ -1,15 +1,16 @@
 #!/bin/bash
 # shidashi — the worker image's console tool (variants/worker).
 #
-#   shidashi kyomei | disk-init DISK SERIAL
+#   shidashi kyomei | disk-init [--scratch] DISK SERIAL
 #
 # kyomei (共鳴, "resonance") opens a new pairing window: the worker announces itself
 # over mDNS and shows a one-time code here; on the host, `shidashi kyomei` finds it
 # and asks for that code. Nothing is typed at the worker. The window the boot opened
 # (shidashi-kyomei.service) is stopped first, so this one owns the console.
 #
-# disk-init prepares the SHIDASHI-WORK disk; the host issues it with
-# `shidashi worker disk-init WORKER DISK --confirm SERIAL`.
+# disk-init prepares the SHIDASHI-WORK disk, or with --scratch the SHIDASHI-SCRATCH disk
+# that holds the temporaries and re-downloadable caches under /mnt/work; the host issues
+# it with `shidashi worker disk-init WORKER DISK --confirm SERIAL [--scratch]`.
 #
 # Both run as root (re-executed through sudo). Logins over the network are key-only
 # (/etc/ssh/sshd_config.d/10-shidashi-worker.conf).
@@ -30,6 +31,10 @@ case ${1:-} in
     ;;
   disk-init)
     shift
+    if [[ ${1:-} == --scratch ]]; then
+      shift
+      exec /usr/bin/python3 /usr/local/lib/shidashi/worker_scratch_disk.py "$@"
+    fi
     exec /usr/bin/python3 /usr/local/lib/shidashi/worker_disk.py "$@"
     ;;
   "" | -h | --help) usage ;;

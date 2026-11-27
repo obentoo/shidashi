@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **A worker's scratch disk: `shidashi worker disk-init --scratch`.** A second disk labelled
+  `SHIDASHI-SCRATCH` takes the writes a worker can lose: one btrfs subvolume each for
+  `scratch`, `tmp`, `cache/distfiles`, `cache/ccache` and `cache/binpkgs`, mounted over those
+  paths under `/mnt/work` by the image's fstab (`nofail`: without the disk the paths are
+  plain directories on the work disk again). It refuses without the work disk mounted, while a
+  job runs, or over a path already mounted. What those paths hold is copied onto the new disk
+  and removed from the work disk only after every copy succeeded. Made for bentoo-lab's worn
+  SATA SSD: on 2026-11-27 its 4 KiB random I/O measured on par with the NVMe work disk.
+- **The worker image turns its swap file on at boot.** `/mnt/work/swapfile` (16 GB, NOCOW) is
+  in the image's fstab, `nofail`; before, only `weekly-lab.sh` turned it on, and a reboot
+  left a 48 GB worker running 32 GB jobs without swap.
+
+### Changed
+
+- **A push measures free space on each of the worker's disks.** One `df` reads the work disk
+  and every scratch path; the bytes bound for a scratch path count against the scratch disk
+  (distfiles and ccache together: they are one disk), everything else against the work disk.
+  Without a scratch disk nothing changes.
+
 ## [0.5.0] - 2026-11-18
 
 The CLI speaks Spanish, Brazilian Portuguese, Russian and Simplified Chinese, and a

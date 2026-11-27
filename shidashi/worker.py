@@ -61,6 +61,10 @@ WORK = "/mnt/work"
 WORKER_CACHE = f"{WORK}/cache"
 #: Where the host's virtual environment runs on the worker.
 WORKER_VENV = f"{WORK}/runtime/venv"
+#: The paths under :data:`WORK` a scratch disk is mounted over, when the worker has one
+#: (``worker_scratch_disk.SCRATCH_PATHS`` in the worker image; a test pins both). A push
+#: measures free space on the filesystem each destination is really on.
+SCRATCH_PATHS = ("scratch", "tmp", "cache/distfiles", "cache/ccache", "cache/binpkgs")
 
 _SENT_RE = re.compile(r"^sent ([\d.,]+) bytes", re.M)
 _RECEIVED_RE = re.compile(r"^sent [\d.,]+ bytes\s+received ([\d.,]+) bytes", re.M)
@@ -856,38 +860,62 @@ def _runtime_transfer(remote: Remote) -> _Transfer:
 def _send(remote: Remote, transfers: Sequence[_Transfer], *, bwlimit: int | None) -> int:
     """Push ``transfers`` in order once they all fit on the work disk; bytes sent.
 
-    Every transfer is measured first (:func:`_measure`) and their sum compared, with
-    :data:`RESERVE` kept, to the work disk's free space read by ONE
-    ``df -B1 --output=avail /mnt/work`` (R3.6): short, :class:`SyncError` (``space``)
-    naming the worker, the bytes needed and the bytes free, and nothing is sent.
+    Every transfer is measured first (:func:`_measure`) and the sums per filesystem
+    compared, with :data:`RESERVE` kept, to that filesystem's free space -- all read by
+    ONE ``df`` (R3.6; :func:`_worker_free`): the work disk, and the scratch disk when
+    one is mounted over :data:`SCRATCH_PATHS`. Short anywhere, :class:`SyncError`
+    (``space``) naming the worker, the bytes needed and the bytes free, and nothing is sent.
     """
-    needed = sum(_measure(remote, tr, bwlimit=bwlimit, push=True) for tr in transfers)
-    if needed:
-        _check_space(f"{remote.name}:{WORK}", needed, _worker_free(remote))
+    measured = [(tr, _measure(remote, tr, bwlimit=bwlimit, push=True)) for tr in transfers]
+    if any(n for _, n in measured):
+        probes = _worker_free(remote)
+        needs: dict[str, tuple[str, int, int]] = {}  # source -> (where, needed, free)
+        for transfer, n in measured:
+            where, source, free = _probe_for(probes, transfer.dest)
+            first, total, _ = needs.get(source, (where, 0, free))
+            needs[source] = (first, total + n, free)
+        for where, n, free in needs.values():
+            if n:
+                _check_space(f"{remote.name}:{where}", n, free)
     sent = 0
     for transfer in transfers:
         sent += _rsync(remote, transfer, bwlimit=bwlimit, push=True)
     return sent
 
 
-def _worker_free(remote: Remote) -> int:
-    """The work disk's free bytes: ``df -B1 --output=avail /mnt/work`` on the worker.
+def _worker_free(remote: Remote) -> list[tuple[str, str, int]]:
+    """``(path, filesystem source, free bytes)`` of :data:`WORK` and each scratch path.
 
-    A failed call, or output that is not one integer under its header, raises
+    ONE call on the worker: ``mkdir -p`` the scratch paths (a push writes there anyway;
+    ``df`` refuses a missing one), then ``df -B1 --output=source,avail`` over them all,
+    one row per path in order. Without a scratch disk every row is the work disk's. A
+    failed call, or rows that are not one source and one integer per path, raises
     :class:`SyncError` (``space``) carrying the output.
     """
-    command = f"df -B1 --output=avail {WORK}"
+    paths = [WORK, *(f"{WORK}/{sub}" for sub in SCRATCH_PATHS)]
+    scratch = " ".join(shlex.quote(p) for p in paths[1:])
+    listed = " ".join(shlex.quote(p) for p in paths)
+    command = f"mkdir -p {scratch} && df -B1 --output=source,avail {listed}"
     result = run(remote, command, timeout=_PROBE_TIMEOUT)
     output = _tail("\n".join(p for p in (result.stdout, result.stderr) if p.strip()))
     if result.exit_code != 0:
         raise SyncError("space", result.exit_code, f"{command} on {remote.name}: {output}")
-    lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
-    values = lines[1:] if lines and not lines[0].isdigit() else lines  # the header
-    if len(values) != 1 or not values[0].isdigit():
+    rows = [line.split() for line in result.stdout.splitlines() if line.strip()]
+    if rows and not rows[0][-1].isdigit():
+        rows = rows[1:]  # the header
+    if len(rows) != len(paths) or any(len(r) != 2 or not r[1].isdigit() for r in rows):
         raise SyncError(
-            "space", None, f"{command} on {remote.name} printed no single byte count: {output}"
+            "space",
+            None,
+            f"{command} on {remote.name} printed no source and byte count per path: {output}",
         )
-    return int(values[0])
+    return [(path, row[0], int(row[1])) for path, row in zip(paths, rows, strict=True)]
+
+
+def _probe_for(probes: Sequence[tuple[str, str, int]], dest: str) -> tuple[str, str, int]:
+    """The probe of the deepest probed path holding ``dest``: :data:`WORK` at least."""
+    holding = [p for p in probes if dest.rstrip("/") == p[0] or dest.startswith(p[0] + "/")]
+    return max(holding, key=lambda p: len(p[0]), default=probes[0])
 
 
 def _measure(remote: Remote, transfer: _Transfer, *, bwlimit: int | None, push: bool) -> int:

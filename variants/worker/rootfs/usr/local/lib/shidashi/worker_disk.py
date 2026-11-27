@@ -56,8 +56,12 @@ class DiskPlan:
 # --- plan (5.1) ---------------------------------------------------------------------
 
 
-def plan(lsblk: dict[str, Any], disk: str, serial: str) -> DiskPlan:
-    """Every refusal, decided from the listing alone; the plan when none applies."""
+def plan(lsblk: dict[str, Any], disk: str, serial: str, *, label: str = LABEL) -> DiskPlan:
+    """Every refusal, decided from the listing alone; the plan when none applies.
+
+    ``label`` is the one the disk will carry: ``SHIDASHI-WORK`` here, ``SHIDASHI-SCRATCH``
+    for :mod:`worker_scratch_disk` -- each mount finds its disk by it alone.
+    """
     devices = lsblk.get("blockdevices") or []
     target = next((d for d in devices if d.get("path") == disk), None)
     if target is None or target.get("type") != "disk":
@@ -88,10 +92,10 @@ def plan(lsblk: dict[str, Any], disk: str, serial: str) -> DiskPlan:
         if other is target:
             continue
         for node in _walk(other):
-            if node.get("label") == LABEL:
+            if node.get("label") == label:
                 raise DiskRefused(
-                    f"{node.get('path')} already carries the label {LABEL}: two work disks "
-                    "would race for /mnt/work"
+                    f"{node.get('path')} already carries the label {label}: two disks "
+                    "with one label would race for its mount"
                 )
     return DiskPlan(
         path=disk,
@@ -119,27 +123,7 @@ def apply(
     sleep: Callable[[float], None] | None = None,
 ) -> None:
     """Partition, format, mount and persist; ``DiskError`` leaves /mnt/work unmounted."""
-    now = clock or _time.monotonic
-    wait = sleep or _time.sleep
-    part = _partition_path(disk.path)
-    _run(runner, ["wipefs", "-a", disk.path])
-    _run(runner, ["sgdisk", "-o", disk.path])
-    _run(runner, ["sgdisk", "-n", "1:0:0", "-t", "1:8300", "-c", f"1:{LABEL}", disk.path])
-    table = _run(runner, ["sgdisk", "-p", disk.path])
-    if not re.search(r"^\s*1\s+\d+\s+\d+", table, re.M):
-        raise DiskError(f"the partition table of {disk.path} came back without partition 1")
-    if runner(["partx", "-u", disk.path], capture_output=True, text=True).returncode != 0:
-        runner(["partx", "-a", disk.path], capture_output=True, text=True)
-    runner(["udevadm", "settle"], capture_output=True, text=True)
-    deadline = now() + NODE_TIMEOUT
-    while not os.path.exists(part):
-        if now() >= deadline:
-            raise DiskError(f"{part} never appeared after partitioning; nothing was formatted")
-        wait(0.2)
-    _run(runner, ["mkfs.btrfs", "-q", "-f", "-K", "-L", LABEL, part])
-    # the by-label link comes from an asynchronous udev event; the fstab mount unit is
-    # bound to it, and mounting before it exists gets the mount undone by systemd
-    runner(["udevadm", "settle"], capture_output=True, text=True)
+    part = format_disk(disk.path, LABEL, runner=runner, clock=clock, sleep=sleep)
     work = root / "mnt" / "work"
     try:
         work.mkdir(parents=True, exist_ok=True)
@@ -147,12 +131,12 @@ def apply(
         raise DiskError(f"cannot create {work}: {err}") from err
     if os.path.ismount(work):
         raise DiskError(f"{work} is already mounted: unmount it first; {part} stays unmounted")
-    _run(runner, ["mount", str(work)])  # through the fstab entry: LABEL, options, its unit
+    run_checked(runner, ["mount", str(work)])  # through the fstab entry: LABEL, options, its unit
     try:
         for sub in _WORK_DIRS:
             (work / sub).mkdir(parents=True, exist_ok=True)
         persist(root, require_mount=True)
-        found = _export(_run(runner, ["blkid", "-o", "export", part])).get("LABEL")
+        found = blkid_fields(run_checked(runner, ["blkid", "-o", "export", part])).get("LABEL")
         if found != LABEL:
             raise DiskError(f"{part} reads back the label {found!r}, not {LABEL}")
     except (OSError, PersistError, DiskError) as err:
@@ -162,19 +146,52 @@ def apply(
     print(f"{part} {LABEL} {disk.size} /mnt/work ({disk.model}, serial {disk.serial})")
 
 
+def format_disk(
+    disk: str,
+    label: str,
+    *,
+    runner: Runner,
+    clock: Callable[[], float] | None = None,
+    sleep: Callable[[float], None] | None = None,
+) -> str:
+    """One GPT partition named and formatted btrfs ``label`` over all of ``disk``; its path."""
+    now = clock or _time.monotonic
+    wait = sleep or _time.sleep
+    part = _partition_path(disk)
+    run_checked(runner, ["wipefs", "-a", disk])
+    run_checked(runner, ["sgdisk", "-o", disk])
+    run_checked(runner, ["sgdisk", "-n", "1:0:0", "-t", "1:8300", "-c", f"1:{label}", disk])
+    table = run_checked(runner, ["sgdisk", "-p", disk])
+    if not re.search(r"^\s*1\s+\d+\s+\d+", table, re.M):
+        raise DiskError(f"the partition table of {disk} came back without partition 1")
+    if runner(["partx", "-u", disk], capture_output=True, text=True).returncode != 0:
+        runner(["partx", "-a", disk], capture_output=True, text=True)
+    runner(["udevadm", "settle"], capture_output=True, text=True)
+    deadline = now() + NODE_TIMEOUT
+    while not os.path.exists(part):
+        if now() >= deadline:
+            raise DiskError(f"{part} never appeared after partitioning; nothing was formatted")
+        wait(0.2)
+    run_checked(runner, ["mkfs.btrfs", "-q", "-f", "-K", "-L", label, part])
+    # the by-label link comes from an asynchronous udev event; the fstab mount unit is
+    # bound to it, and mounting before it exists gets the mount undone by systemd
+    runner(["udevadm", "settle"], capture_output=True, text=True)
+    return part
+
+
 def _partition_path(disk: str) -> str:
     """``/dev/sda`` -> ``/dev/sda1``; ``/dev/nvme0n1`` -> ``/dev/nvme0n1p1``."""
     return f"{disk}p1" if disk[-1].isdigit() else f"{disk}1"
 
 
-def _run(runner: Runner, argv: list[str]) -> str:
+def run_checked(runner: Runner, argv: list[str]) -> str:
     done = runner(argv, capture_output=True, text=True)
     if done.returncode != 0:
         raise DiskError(f"{' '.join(argv)} failed: {(done.stderr or '').strip()}")
     return str(done.stdout or "")
 
 
-def _export(text: str) -> dict[str, str]:
+def blkid_fields(text: str) -> dict[str, str]:
     pairs = (line.partition("=") for line in text.splitlines())
     return {key: value for key, sep, value in pairs if sep}
 
@@ -184,9 +201,19 @@ def _export(text: str) -> dict[str, str]:
 
 def main(argv: list[str] | None = None) -> int:
     """``worker_disk.py DISK SERIAL``: plan from lsblk, then apply."""
+    return run_command(argv, plan, apply, "shidashi disk-init DISK SERIAL")
+
+
+def run_command(
+    argv: list[str] | None,
+    planner: Callable[[dict[str, Any], str, str], DiskPlan],
+    applier: Callable[[DiskPlan], None],
+    usage: str,
+) -> int:
+    """``DISK SERIAL`` from ``argv``, planned from lsblk then applied; the exit code."""
     args = sys.argv[1:] if argv is None else argv
     if len(args) != 2:
-        print("usage: shidashi disk-init DISK SERIAL", file=sys.stderr)
+        print(f"usage: {usage}", file=sys.stderr)
         return 2
     disk, serial = args
     listing = subprocess.run(["lsblk", "-J", "-O"], capture_output=True, text=True, check=False)
@@ -194,7 +221,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"disk-init: lsblk failed: {listing.stderr.strip()}", file=sys.stderr)
         return 1
     try:
-        apply(plan(json.loads(listing.stdout), disk, serial))
+        applier(planner(json.loads(listing.stdout), disk, serial))
     except (DiskRefused, DiskError, ValueError, OSError) as err:
         print(f"disk-init: {err}", file=sys.stderr)
         return 1
