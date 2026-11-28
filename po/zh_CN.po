@@ -651,6 +651,10 @@ msgid "Replace NAME's identity (a lost medium)."
 msgstr "替换 NAME 的身份（介质丢失时）。"
 
 #: shidashi/cli.py
+msgid "Re-issue the medium with NAME's existing identity: same host key, nothing re-paired (a new worker image)."
+msgstr "使用 NAME 现有的身份重新制作介质：主机密钥不变，无需重新配对（新的工作节点镜像）。"
+
+#: shidashi/cli.py
 msgid "Join this WPA-PSK Wi-Fi network at boot; the passphrase is asked without echo on a terminal, else read as one line from stdin."
 msgstr "启动时加入此 WPA-PSK Wi-Fi 网络；在终端上以不回显方式询问密码，否则从 stdin 读取一行。"
 
@@ -1494,6 +1498,11 @@ msgstr "写入方式：{command}"
 #: shidashi/cli.py
 msgid "the medium holds this worker's private key: keep it like a credential, and run with --replace if it is lost"
 msgstr "该介质保存着此工作节点的私钥：请像凭据一样妥善保管，若丢失请使用 --replace 运行"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "re-issued {name} with its identity"
+msgstr "已使用其原有身份重新制作 {name}"
 
 #: shidashi/cli.py
 msgid "none"

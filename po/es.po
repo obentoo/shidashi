@@ -651,6 +651,10 @@ msgid "Replace NAME's identity (a lost medium)."
 msgstr "Sustituir la identidad de NAME (un medio perdido)."
 
 #: shidashi/cli.py
+msgid "Re-issue the medium with NAME's existing identity: same host key, nothing re-paired (a new worker image)."
+msgstr "Volver a emitir el medio con la identidad existente de NAME: la misma clave de host, sin volver a emparejar (una nueva imagen del worker)."
+
+#: shidashi/cli.py
 msgid "Join this WPA-PSK Wi-Fi network at boot; the passphrase is asked without echo on a terminal, else read as one line from stdin."
 msgstr "Conectarse a esta red Wi-Fi WPA-PSK al arrancar; la frase de paso se pide sin eco en un terminal o, si no, se lee como una línea de stdin."
 
@@ -1505,6 +1509,11 @@ msgstr "escríbalo con: {command}"
 #: shidashi/cli.py
 msgid "the medium holds this worker's private key: keep it like a credential, and run with --replace if it is lost"
 msgstr "el medio contiene la clave privada de este worker: guárdelo como una credencial y ejecute con --replace si se pierde"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "re-issued {name} with its identity"
+msgstr "{name} reemitido con su identidad"
 
 #: shidashi/cli.py
 msgid "none"

@@ -429,6 +429,16 @@ new key and the old one is no longer accepted.
 shidashi worker provision bentoo-lab --iso <worker iso> --replace
 ```
 
+A new worker image for a worker already provisioned keeps its identity: `--keep-identity`
+writes the new ISO with the same host key and pairing record, so nothing is re-paired and the
+host's pin does not move. It refuses a worker the host has no identity for (one paired over
+`kyomei`), and an identity whose key is not the one the host pins — such a medium would boot
+a worker the host refuses.
+
+```sh
+shidashi worker provision bentoo-lab --iso <new worker iso> --keep-identity
+```
+
 A worker on Wi-Fi joins its network at boot when its medium carries the connection:
 
 ```sh
