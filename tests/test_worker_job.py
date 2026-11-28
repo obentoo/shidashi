@@ -81,7 +81,14 @@ def _run_unit_locally(argv: list[str], root: Path) -> tuple[list[str], str, str]
         else:
             cmd.append(a.replace("/mnt/work", str(root / "mnt/work")))
     (root / "mnt/work/out/jobs").mkdir(parents=True, exist_ok=True)
-    budget = {"SLOT_ROOT": str(root / "slots"), "SLOT_CPUS": "8", "SLOT_MEMORY_GIB": "64"}
+    # SLOT_MIN_FREE_GIB=0: the work disk here is the host's tmp_path, often a tmpfs of
+    # ~31 GiB, so slot's 30 GiB floor refused the run whenever /tmp held 2 GiB (2026-11-28)
+    budget = {
+        "SLOT_ROOT": str(root / "slots"),
+        "SLOT_CPUS": "8",
+        "SLOT_MEMORY_GIB": "64",
+        "SLOT_MIN_FREE_GIB": "0",
+    }
     subprocess.run(cmd, check=False, timeout=30, env={**os.environ, **budget})
     jobs = root / "mnt/work/out/jobs"
     log = next(jobs.glob("*.log")).read_text()
