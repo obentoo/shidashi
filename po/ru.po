@@ -651,6 +651,10 @@ msgid "Replace NAME's identity (a lost medium)."
 msgstr "Заменить идентичность NAME (утерян носитель)."
 
 #: shidashi/cli.py
+msgid "Re-issue the medium with NAME's existing identity: same host key, nothing re-paired (a new worker image)."
+msgstr "Перевыпустить носитель с текущей идентичностью NAME: тот же ключ хоста, без повторного сопряжения (новый образ воркера)."
+
+#: shidashi/cli.py
 msgid "Join this WPA-PSK Wi-Fi network at boot; the passphrase is asked without echo on a terminal, else read as one line from stdin."
 msgstr "Подключаться к этой сети Wi-Fi WPA-PSK при загрузке; парольная фраза запрашивается без эха в терминале, иначе читается одной строкой из stdin."
 
@@ -1516,6 +1520,11 @@ msgstr "запишите его командой: {command}"
 #: shidashi/cli.py
 msgid "the medium holds this worker's private key: keep it like a credential, and run with --replace if it is lost"
 msgstr "носитель содержит закрытый ключ этого воркера: храните его как учётные данные и запустите с --replace, если он утерян"
+
+#: shidashi/cli.py
+#, python-brace-format
+msgid "re-issued {name} with its identity"
+msgstr "{name} перевыпущен со своей идентичностью"
 
 #: shidashi/cli.py
 msgid "none"

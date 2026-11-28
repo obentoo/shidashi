@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`shidashi worker provision NAME --iso PATH --keep-identity`: a new worker image, the
+  same identity.** It writes `<workers dir>/NAME/NAME.iso` from the new generic ISO with the
+  identity NAME already has: same host key and pairing record, nothing re-pinned, the registry
+  untouched. It refuses a name with no identity on the host, a missing record or key, an
+  identity whose key the host does not pin (that medium would lock the host out), a non-worker
+  ISO, and `--replace`/`--wifi` (both change the identity). The copy is verified like
+  provision's and moved over the old one only then; a failure leaves the old one. Until now
+  only `--replace` (a new key) existed, and bentoo-lab's 2026-11-28 image had to be
+  personalized by hand.
+
 - **A worker's scratch disk: `shidashi worker disk-init --scratch`.** A second disk labelled
   `SHIDASHI-SCRATCH` takes the writes a worker can lose: one btrfs subvolume each for
   `scratch`, `tmp`, `cache/distfiles`, `cache/ccache` and `cache/binpkgs`, mounted over those

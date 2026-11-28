@@ -3199,6 +3199,14 @@ def worker_provision(
     replace: Annotated[
         bool, typer.Option("--replace", help="Replace NAME's identity (a lost medium).")
     ] = False,
+    keep_identity: Annotated[
+        bool,
+        typer.Option(
+            "--keep-identity",
+            help="Re-issue the medium with NAME's existing identity: same host key, "
+            "nothing re-paired (a new worker image).",
+        ),
+    ] = False,
     wifi: Annotated[
         str | None,
         typer.Option(
@@ -3213,6 +3221,9 @@ def worker_provision(
     from shidashi import provision
 
     wdir = config.workers_dir()
+    if keep_identity:
+        _reissue_medium(name, iso, wdir, replace=replace, wifi=wifi)
+        return
     try:
         network = None if wifi is None else (wifi, _wifi_passphrase(wifi))
         done = provision.provision(
@@ -3246,6 +3257,32 @@ def worker_provision(
             f"[yellow]warning:[/yellow] the previous identity, its private key included, "
             f"could not be removed: {escape(str(done.leftover))}"
         )
+
+
+def _reissue_medium(name: str, iso: Path, wdir: Path, *, replace: bool, wifi: str | None) -> None:
+    """``provision --keep-identity``: the new medium, the same identity."""
+    from shidashi import provision, provision_reissue
+
+    if replace or wifi is not None:
+        # both change the identity; keeping it means the medium carries it unchanged
+        _err_console.print(
+            "[bold red]error:[/bold red] --keep-identity keeps the identity as it is: "
+            "it takes neither --replace nor --wifi"
+        )
+        raise typer.Exit(2)
+    try:
+        done = provision_reissue.reissue(name, iso, workers_dir=wdir, runner=subprocess.run)
+    except (provision.ProvisionError, OSError) as err:
+        _err_console.print(f"[bold red]error:[/bold red] {escape(str(err))}")
+        raise typer.Exit(1) from err
+    typer.echo(i18n.t("re-issued {name} with its identity").format(name=done.name))
+    typer.echo(i18n.t("host key: {fingerprint}").format(fingerprint=done.fingerprint))
+    typer.echo(f"ISO: {done.iso_path}")
+    typer.echo(
+        i18n.t("write it with: {command}").format(
+            command=f"sudo dd if={done.iso_path} of=/dev/sdX bs=4M conv=fsync status=progress"
+        )
+    )
 
 
 @worker_app.command("disk-init")
